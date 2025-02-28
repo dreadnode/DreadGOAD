@@ -19,7 +19,3 @@
     executable: powershell.exe
   register: disable_windows_update_result
   failed_when: false
-
-- name: Check windows update disable status
-  debug:
-    msg: "Windows update disable status: {{ disable_windows_update_result }}"

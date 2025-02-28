@@ -1,51 +1,72 @@
 ---
-- name: "Read data files"
+- name: Read data files
   hosts: domain:extensions
-  connection: local
-  vars_files:
-    - "{{data_path}}/config.json"
+  gather_facts: true
   tasks:
-    - name: save the Json data to a Variable as a Fact
-      set_fact:
-        lab: "{{lab}}"
-        cacheable: yes
+    - name: Load JSON config as a variable
+      ansible.builtin.include_vars:
+        file: "{{ data_path }}/config.json"
       run_once: true
 
-    - name: find domain_adapter
-      set_fact:
-       domain_adapter="{{item.connection_name}}"
-      when: item.ipv4.address == hostvars[dict_key].ansible_host
-      with_items: "{{ ansible_interfaces }}"
+    - name: Save the JSON data to a variable as a fact
+      ansible.builtin.set_fact:
+        lab: "{{ lab }}"
+        cacheable: true
       run_once: true
 
-    - name: find nat_adapter
-      set_fact:
-       nat_adapter="{{item.connection_name}}"
-      when: item.ipv4.address != hostvars[dict_key].ansible_host
-      with_items: "{{ ansible_interfaces }}"
+    # Use the first interface's IP address for comparison
+    - name: Get primary interface IP address
+      ansible.builtin.set_fact:
+        primary_ip: "{{ ansible_interfaces[0].ipv4.address }}"
+      run_once: true
+      when: ansible_interfaces[0].ipv4 is defined
+
+    # Set domain adapter based on the first interface
+    - name: Set domain adapter from first interface
+      ansible.builtin.set_fact:
+        domain_adapter: "{{ ansible_interfaces[0].connection_name }}"
+      run_once: true
+      when: ansible_interfaces[0] is defined
+
+    # Set fallback domain adapter if it wasn't defined
+    - name: Set fallback domain adapter
+      ansible.builtin.set_fact:
+        domain_adapter: "Ethernet 3"
+      run_once: true
+      when: domain_adapter is not defined
+
+    # Set NAT adapter based on secondary interface if it exists
+    - name: Set NAT adapter from secondary interface
+      ansible.builtin.set_fact:
+        nat_adapter: "{{ ansible_interfaces[1].connection_name }}"
+      run_once: true
+      when: ansible_interfaces[1] is defined
+
+    # Determine the number of interfaces
+    - name: Determine the number of interfaces
+      ansible.builtin.set_fact:
+        number_of_interfaces: "{{ ansible_interfaces|length }}"
       run_once: true
 
-    - name: find number of interfaces
-      set_fact:
-       number_of_interfaces="{{ansible_interfaces|length}}"
+    # Determine if there are two adapters
+    - name: Determine if there are two adapters
+      ansible.builtin.set_fact:
+        two_adapters: "{{ 'yes' if number_of_interfaces|int > 1 else 'no' }}"
       run_once: true
 
-    - name: find if two adapters
-      set_fact:
-       two_adapters="{{ 'yes' if number_of_interfaces != '1' else 'no' }}"
+    # Set NAT adapter to domain adapter if only one interface
+    - name: Set NAT adapter to domain adapter
+      ansible.builtin.set_fact:
+        nat_adapter: "{{ domain_adapter }}"
       run_once: true
+      when: two_adapters == "no" or nat_adapter is not defined
 
-    - name: confirm nat_adapter
-      set_fact:
-       nat_adapter="{{domain_adapter}}"
-      when: not two_adapters
-      run_once: true
-
-#    - debug:
-#        msg: "domain interface : {{domain_adapter}}"
-#    - debug:
-#        msg: "number_of_interfaces : {{number_of_interfaces}}"
-#    - debug:
-#        msg: "two_adapters : {{two_adapters}}"
-#    - debug:
-#        msg: "nat interface : {{nat_adapter}}"
+    # # Debug the final values
+    # - name: Debug final values
+    #   ansible.builtin.debug:
+    #     msg: 
+    #       - "domain interface: {{ domain_adapter }}"
+    #       - "number_of_interfaces: {{ number_of_interfaces }}"
+    #       - "two_adapters: {{ two_adapters }}"
+    #       - "nat interface: {{ nat_adapter }}"
+    #   run_once: true

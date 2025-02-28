@@ -5,14 +5,14 @@
 
 - name: "synchronizes all domains"
   win_shell: repadmin /syncall /Ade
-  become: yes
+  become: true
   become_method: runas
   become_user: "{{domain_username}}"
   vars:
     ansible_become_pass: "{{domain_password}}"
 
 - name: "Add a domain user/group from another Domain in the multi-domain forest to a domain group : {{domain_server}}"
-  community.windows.win_domain_group_membership:
+  microsoft.ad.group:
     domain_server: "{{domain_server}}"
     domain_username: "{{domain_username}}"
     domain_password: "{{domain_password}}"
