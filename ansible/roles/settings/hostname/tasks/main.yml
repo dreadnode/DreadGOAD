@@ -1,6 +1,7 @@
-- name: "Change the hostname"
+---
+- name: Change the hostname
   win_hostname:
-    name: "{{hostname}}"
+    name: "{{ hostname }}"
   register: win_hostname
 
 - name: Reboot if needed

@@ -1,0 +1,77 @@
+; GLOBAL CONFIG
+[all:vars]
+; domain_name : folder inside ad/
+domain_name=GOAD
+
+; administrator user
+admin_user=goadmin
+
+; SSM connection (windows)
+ansible_connection=aws_ssm
+ansible_aws_ssm_bucket_name=dread-infra-alpha-operator-range-dev-us-west-2
+ansible_aws_ssm_region=us-west-2
+ansible_shell_type=powershell
+ansible_aws_ssm_s3_addressing_style=virtual
+
+; miscellaneous
+ansible_become=false
+data_path="~/dreadnode/DreadGOAD/ad/GOAD/data"
+
+; global settings inventory default value
+keyboard_layouts=["en-US", "da-DK", "fr-FR"]
+
+; modify this to add a default route
+add_route=no
+route_gateway=192.168.56.1
+route_network=10.0.0.0/8
+
+; modify this to enable http proxy
+enable_http_proxy=no
+ad_http_proxy=http://x.x.x.x:xxxx
+ad_https_proxy=http://x.x.x.x:xxxx
+
+;force_dns_server
+force_dns_server=no
+dns_server=1.1.1.1
+
+;dns server forwarder
+dns_server_forwarder=1.1.1.1
+
+; LAB SCENARIO CONFIGURATION -----------------------------
+
+[default]
+; Note: ansible_host *MUST* be an IPv4 address or setting things like DNS
+; servers will break.
+; ------------------------------------------------
+; sevenkingdoms.local
+; ------------------------------------------------
+dc01 ansible_host=i-09600ce164d63a916 dict_key=dc01 dns_domain=dc01 ansible_user=ansible
+; ------------------------------------------------
+; north.sevenkingdoms.local
+; ------------------------------------------------
+dc02 ansible_host=i-06b45899404d378d0 dict_key=dc02 dns_domain=dc01 ansible_user=ansible
+srv02 ansible_host=i-0e9793bb18a79336e dict_key=srv02 dns_domain=dc02 ansible_user=ansible
+; ------------------------------------------------
+; essos.local
+; ------------------------------------------------
+dc03 ansible_host=i-0b57044267cd98d62 dict_key=dc03 dns_domain=dc03 ansible_user=ansible
+srv03 ansible_host=i-0ae847e1d3af5e447 dict_key=srv03 dns_domain=dc03 ansible_user=ansible
+
+; These are the critical group definitions that the playbooks need
+[domain]
+dc01
+dc02
+dc03
+srv02
+srv03
+
+[no_update]
+dc01
+dc02
+dc03
+srv03
+
+[update]
+srv02
+
+[extensions]

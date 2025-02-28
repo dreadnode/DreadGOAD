@@ -1,19 +1,18 @@
 ---
 # Load datas
-- import_playbook: data.yml
-  vars:
-    data_path: "../ad/{{domain_name}}/data/"
+- ansible.builtin.import_playbook: data.yml
   tags: 'data'
 
 # set AD datas ==================================================================================================
 
-# parent controlers
+# parent controllers
 - name: Main DC AD configuration
   hosts: parent_dc
-  roles:
-  - { role: 'domain_controller', tags: 'dc_main_domains' }
+  gather_facts: true
   vars:
     domain: "{{lab.hosts[dict_key].domain}}"
     domain_username: "{{admin_user}}@{{domain}}"
     domain_password: "{{lab.domains[domain].domain_password}}"
     netbios_name: "{{lab.domains[domain].netbios_name}}"
+  roles:
+    - { role: 'domain_controller', tags: 'dc_main_domains' }
