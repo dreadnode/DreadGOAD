@@ -1,4 +1,4 @@
-; GLOBAL CONFIG
+; GLOBAL CONFIG ----------------------------
 [all:vars]
 ; domain_name : folder inside ad/
 domain_name=GOAD
@@ -37,27 +37,29 @@ dns_server=1.1.1.1
 ;dns server forwarder
 dns_server_forwarder=1.1.1.1
 
-; LAB SCENARIO CONFIGURATION -----------------------------
-
+; Default system settings ----------------------------
 [default]
 ; Note: ansible_host *MUST* be an IPv4 address or setting things like DNS
 ; servers will break.
 ; ------------------------------------------------
 ; sevenkingdoms.local
 ; ------------------------------------------------
-dc01 ansible_host=i-09600ce164d63a916 dict_key=dc01 dns_domain=dc01 ansible_user=ansible
+dc01 ansible_host=i-02c6bee9f5e1fa3f5 dict_key=dc01 dns_domain=dc01 ansible_user=ansible
 ; ------------------------------------------------
 ; north.sevenkingdoms.local
 ; ------------------------------------------------
-dc02 ansible_host=i-06b45899404d378d0 dict_key=dc02 dns_domain=dc01 ansible_user=ansible
-srv02 ansible_host=i-0e9793bb18a79336e dict_key=srv02 dns_domain=dc02 ansible_user=ansible
+dc02 ansible_host=i-0b7f9a544a6595da0 dict_key=dc02 dns_domain=dc01 ansible_user=ansible
+srv02 ansible_host=i-0b195261eb590d3e8 dict_key=srv02 dns_domain=dc02 ansible_user=ansible
 ; ------------------------------------------------
 ; essos.local
 ; ------------------------------------------------
-dc03 ansible_host=i-0b57044267cd98d62 dict_key=dc03 dns_domain=dc03 ansible_user=ansible
-srv03 ansible_host=i-0ae847e1d3af5e447 dict_key=srv03 dns_domain=dc03 ansible_user=ansible
+dc03 ansible_host=i-06f2d4c881b6cad2c dict_key=dc03 dns_domain=dc03 ansible_user=ansible
+srv03 ansible_host=i-0264e714b8241a14e dict_key=srv03 dns_domain=dc03 ansible_user=ansible
 
-; These are the critical group definitions that the playbooks need
+; LAB SCENARIO CONFIGURATION -----------------------------
+
+; computers inside domain (mandatory)
+; usage : build.yml, ad-relations.yml, ad-servers.yml, vulnerabilities.yml
 [domain]
 dc01
 dc02
@@ -65,13 +67,103 @@ dc03
 srv02
 srv03
 
+; domain controller (mandatory)
+; usage : ad-acl.yml, ad-data.yml, ad-relations.yml, laps.yml
+[dc]
+dc01
+dc02
+dc03
+
+; domain server to enroll (mandatory if you want servers)
+; usage : ad-data.yml, ad-servers.yml, laps.yml
+[server]
+srv02
+srv03
+
+; workstation to enroll (mandatory if you want workstation)
+; usage : ad-servers.yml, laps.yml
+[workstation]
+
+; parent domain controller (mandatory)
+; usage : ad-servers.yml
+[parent_dc]
+dc01
+dc03
+
+; child domain controller (need a fqdn child_name.parent_name)
+; usage : ad-servers.yml
+[child_dc]
+dc02
+
+; external trust, need domain trust entry in config (bidirectionnal)
+; usage : ad-trusts.yml
+[trust]
+dc01
+dc03
+
+; install adcs
+; usage : adcs.yml
+[adcs]
+dc01
+srv03
+
+; install custom template (dc)
+; usage : adcs.yml
+[adcs_customtemplates]
+dc03
+
+; install iis with default website asp upload on 80
+; usage : servers.yml
+[iis]
+srv02
+
+; install mssql
+; usage : servers.yml
+[mssql]
+srv02
+srv03
+
+; install mssql gui
+; usage : servers.yml
+[mssql_ssms]
+srv02
+
+; install webdav 
+[webdav]
+srv02
+srv03
+
+[laps_dc]
+dc03
+[laps_server]
+srv03
+[laps_workstation]
+
+; allow computer update
+; usage : update.yml
+[update]
+srv02
+
+; disable update
+; usage : update.yml
 [no_update]
 dc01
 dc02
 dc03
 srv03
 
-[update]
+; allow defender
+; usage : security.yml
+[defender_on]
+dc01
+dc02
+dc03
+srv03
+
+; disable defender
+; usage : security.yml
+[defender_off]
 srv02
 
+;stay empty until override
 [extensions]
