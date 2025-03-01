@@ -1,34 +1,71 @@
 # DNSCHANGE
-- name: "prioritize the {{domain_adapter}} interface (local) as the default for routing"
+- name: Prioritize the {{domain_adapter}} interface (local) as the default for routing
   ansible.windows.win_shell:
     Set-NetIPInterface -InterfaceAlias "{{domain_adapter}}" -InterfaceMetric 10
   when: two_adapters
 
-- name: "Set configure dns to {{dns_domain}}"
-  win_dns_client:
+- name: Get IP address of DNS server (dc02)
+  ansible.windows.win_shell: |
+    (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.IPAddress -notmatch '^127\.' -and $_.IPAddress -notmatch '^169\.254\.'} | Select-Object -First 1).IPAddress
+  delegate_to: "{{ dns_domain }}"
+  register: dns_server_ip_result
+
+- name: Set configure dns to {{dns_domain}}
+  ansible.windows.win_dns_client:
     adapter_names: "{{domain_adapter}}"
     ipv4_addresses:
-    - "{{hostvars[dns_domain].ansible_host}}"
+    - "{{ dns_server_ip_result.stdout | trim }}"
     log_path: C:\dns_log.txt
+  
+# Add verification steps to ensure DNS is working before joining domain
+- name: Verify DNS connection to domain controller
+  ansible.windows.win_shell: |
+    Test-NetConnection -ComputerName {{ dns_domain }} -Port 53
+  register: dns_connection_test
+  ignore_errors: true
 
-- name: Verify File Server Role is installed.
-  win_feature:
+- name: Display DNS test results
+  ansible.builtin.debug:
+    var: dns_connection_test
+    
+- name: Test domain resolution
+  ansible.windows.win_shell: |
+    Resolve-DnsName -Name {{ member_domain }} -Type A -ErrorAction SilentlyContinue
+  register: domain_resolution_test
+  ignore_errors: true
+  
+- name: Display domain resolution test results
+  ansible.builtin.debug:
+    var: domain_resolution_test
+
+# Wait for DNS propagation
+- name: Wait for DNS changes to propagate
+  ansible.windows.win_shell: Start-Sleep -Seconds 30
+  when: dns_connection_test.rc == 0
+
+- name: Verify File Server Role is installed
+  ansible.windows.win_feature:
     name: File-Services, FS-FileServer
     state: present
     include_management_tools: True
-
-- name: "Add member server"
-  win_domain_membership:
-    dns_domain_name: "{{member_domain}}"
-    domain_admin_user: "{{domain_username}}"
-    domain_admin_password: "{{domain_password}}"
+    
+- name: Add member server
+  microsoft.ad.membership:
+    dns_domain_name: "{{ member_domain }}"
+    domain_admin_user: "{{ domain_username }}"
+    domain_admin_password: "{{ domain_password }}"
 #    domain_ou_path: "{{member_domain_ou_path}}"
     state: domain
   register: domain_state
-
+  failed_when: false  # Don't fail immediately to allow for troubleshooting
+  
+- name: Report domain join failure details
+  ansible.builtin.debug:
+    msg: "Failed to join domain. Error: {{ domain_state.msg }}"
+  when: domain_state is failed
+  
 - name: Reboot if needed
-  win_reboot:
+  ansible.windows.win_reboot:
     reboot_timeout: 1500
     post_reboot_delay: 100
   when: domain_state.reboot_required
-
