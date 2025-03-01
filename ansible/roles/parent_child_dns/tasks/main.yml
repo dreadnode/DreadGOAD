@@ -16,31 +16,39 @@
 # Add-DnsServerZoneDelegation -Name "sevenkingdoms.local" -ChildZoneName "north" -NameServer "winterfell.north.sevenkingdoms.local" -IPAddress 192.168.10.11 -PassThru -Verbose
 # domain == parent domain
 # item == child domain
-- name: add dns delegation to child domain
+- name: Get IPv4 address for child domain controller
+  ansible.windows.win_shell: |
+    (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.IPAddress -notmatch '^127\.' -and $_.IPAddress -notmatch '^169\.254\.'} | Select-Object -First 1).IPAddress
+  delegate_to: "{{ child_dc }}"
+  vars:
+    child_dc: "{{ lab.domains[item].dc }}"
+  register: child_ipv4_result
+  loop: "{{ domains }}"
+  when: domain == '.'.join(item.split('.')[1:])
+
+- name: Add dns delegation to child domain
   ansible.windows.win_shell: |
     Add-DnsServerZoneDelegation -Name "{{parent_domain}}" -ChildZoneName "{{zone}}" -NameServer "{{name_server}}" -IPAddress "{{name_server_ip}}" -PassThru -Verbose
   vars:
     parent_domain: "{{domain}}"
     child_dc: "{{lab.domains[item].dc}}"
     name_server: "{{lab.hosts[child_dc].hostname}}.{{item}}"
-    name_server_ip: "{{hostvars[child_dc].ansible_host}}"
+    name_server_ip: "{{ item_ipv4_address }}"
     zone: "{{item.split('.')[0]}}"
+    item_ipv4_address: "{{ child_ipv4_result.results | selectattr('item', 'equalto', item) | map(attribute='stdout_lines') | first | first }}"
   loop: "{{ domains }}"
   when: domain == '.'.join(item.split('.')[1:])
 
-
-- name: create conditional forwarder to child domain
+- name: Create conditional forwarder to child domain
   community.windows.win_dns_zone:
     name: "{{item}}"
     type: forwarder
     replication: "none"
     dns_servers:
-      - "{{name_server_ip}}"
+      - "{{ item_ipv4_address }}"
   vars:
     child_dc: "{{lab.domains[item].dc}}"
-    name_server_ip: "{{hostvars[child_dc].ansible_host}}"
     zone: "{{item.split('.')[0]}}"
+    item_ipv4_address: "{{ child_ipv4_result.results | selectattr('item', 'equalto', item) | map(attribute='stdout_lines') | first | first }}"
   loop: "{{ domains }}"
   when: domain == '.'.join(item.split('.')[1:])
-
-

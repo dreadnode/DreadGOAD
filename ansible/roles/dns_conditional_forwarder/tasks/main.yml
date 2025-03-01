@@ -1,7 +1,14 @@
+---
+- name: Get IPv4 address for remote domain controller
+  ansible.windows.win_shell: |
+    (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.IPAddress -notmatch '^127\.' -and $_.IPAddress -notmatch '^169\.254\.'} | Select-Object -First 1).IPAddress
+  delegate_to: "{{ remote_dc }}"
+  register: remote_ipv4_result
+
 - name: Add dns server zone
   community.windows.win_dns_zone:
-    name: "{{zone_name}}"
+    name: "{{ zone_name }}"
     type: forwarder
-    replication: "{{replication}}"
+    replication: "{{ replication }}"
     dns_servers:
-      - "{{master_server}}"
+      - "{{ remote_ipv4_result.stdout | trim }}"

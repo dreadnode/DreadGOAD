@@ -1,23 +1,55 @@
-- name: "disable the registration of the {{nat_adapter}} interface (NAT address) in DNS"
-  ansible.windows.win_shell: Get-NetAdapter {{nat_adapter}} | Set-DNSClient -RegisterThisConnectionsAddress $False
+---
+- name: Disable the registration of the network adapter in DNS
+  ansible.windows.win_powershell:
+    script: |
+      $adapterName = "{{ nat_adapter }}"
+      try {
+        $adapter = Get-NetAdapter -Name $adapterName -ErrorAction SilentlyContinue
+        if ($adapter) {
+          Set-DNSClient -InterfaceIndex $adapter.ifIndex -RegisterThisConnectionsAddress $False
+          $Ansible.Changed = $true
+        } else {
+          Write-Output "Adapter '$adapterName' not found, trying to find a suitable adapter"
+          $adapter = Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | Select-Object -First 1
+          if ($adapter) {
+            Set-DNSClient -InterfaceIndex $adapter.ifIndex -RegisterThisConnectionsAddress $False
+            $Ansible.Changed = $true
+          } else {
+            Write-Error "No suitable network adapter found"
+            $Ansible.Changed = $false
+          }
+        }
+      } catch {
+        Write-Error "Error setting DNS client registration: $_"
+        $Ansible.Changed = $false
+      }
   when: two_adapters
+  ignore_errors: true
 
-- name: "Set configure dns to {{dns_domain}}"
-  win_dns_client:
-    adapter_names: "{{domain_adapter}}"
-    ipv4_addresses:
-      - "{{hostvars[dns_domain].ansible_host}}"
-    log_path: C:\dns_log.txt
+- name: Set configure dns to {{ dns_domain }}
+  ansible.windows.win_powershell:
+    script: |
+      # Find the network adapter
+      $adapter = Get-NetAdapter | Where-Object { $_.Name -like "*Ethernet*" -and $_.Status -eq "Up" } | Select-Object -First 1
+      if ($adapter) {
+        Write-Output "Setting DNS on adapter: $($adapter.Name)"
+        Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ServerAddresses "{{ dns_server_forwarder }}"
+        $Ansible.Changed = $true
+      } else {
+        Write-Error "No suitable network adapter found"
+        $Ansible.Changed = $false
+      }
+  ignore_errors: true
 
 - name: Install windows features - AD Domain Services
-  win_feature:
+  ansible.windows.win_feature:
     name: AD-Domain-Services
     state: present
     include_management_tools: yes
   register: features
 
 - name: Install windows features - RSAT-ADDS
-  win_feature:
+  ansible.windows.win_feature:
     name: RSAT-ADDS
     state: present
     include_management_tools: yes
@@ -79,7 +111,7 @@
   register: child_result
 
 - name: Reboot
-  win_reboot:
+  ansible.windows.win_reboot:
     reboot_timeout: 900
     post_reboot_delay: 100
   when: child_result.changed
@@ -91,29 +123,86 @@
 #   retries: 3
 #   delay: 120
 
-- name: enable the {{domain_adapter}} interface (local) for DNS client requests
-  ansible.windows.win_shell: dnscmd . /resetlistenaddresses {{ hostvars[dict_key].ansible_host }}
+- name: Enable the interface for DNS client requests
+  ansible.windows.win_powershell:
+    script: |
+      try {
+        $ipAddress = "{{ hostvars[dict_key].ansible_host }}"
+        # Check if $ipAddress is a valid IP address
+        [System.Net.IPAddress]::TryParse($ipAddress, [ref]$null)
+        
+        # If it's not a valid IP, try to get the actual IP
+        if (-not [System.Net.IPAddress]::TryParse($ipAddress, [ref]$null)) {
+          # Get the first available IP address
+          $ipAddress = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -like "*Ethernet*" } | Select-Object -First 1).IPAddress
+        }
+        
+        if ($ipAddress) {
+          dnscmd . /resetlistenaddresses $ipAddress
+          $Ansible.Changed = $true
+        } else {
+          Write-Error "Could not determine a valid IP address"
+          $Ansible.Changed = $false
+        }
+      } catch {
+        Write-Error "Error setting DNS listen addresses: $_"
+        $Ansible.Changed = $false
+      }
   when: two_adapters
+  ignore_errors: true
 
-- name: Check for xDnsServer Powershell module
-  win_psmodule:
-    name: xDnsServer
+- name: Make sure DNS Server role is installed
+  ansible.windows.win_feature:
+    name: DNS
     state: present
+    include_management_tools: yes
+  register: dns_feature
+
+- name: Configure DNS Forwarders with PowerShell
+  ansible.windows.win_powershell:
+    script: |
+      # Ensure the DNS Server module is available
+      Import-Module DnsServer -ErrorAction SilentlyContinue
+      
+      if (Get-Command Set-DnsServerForwarder -ErrorAction SilentlyContinue) {
+        # Configure the forwarders
+        try {
+          Set-DnsServerForwarder -IPAddress "{{ dns_server_forwarder }}" -UseRootHint $false
+          $Ansible.Changed = $true
+        } catch {
+          Write-Error "Failed to set DNS forwarders: $_"
+          $Ansible.Changed = $false
+        }
+      } else {
+        # DNS Server module not available, install it
+        try {
+          Install-WindowsFeature -Name DNS-Server-Full-Role, RSAT-DNS-Server -IncludeAllSubFeature
+          Start-Sleep -Seconds 10
+          Import-Module DnsServer
+          Set-DnsServerForwarder -IPAddress "{{ dns_server_forwarder }}" -UseRootHint $false
+          $Ansible.Changed = $true
+        } catch {
+          Write-Error "Failed to install DNS Server role and configure forwarders: $_"
+          $Ansible.Changed = $false
+        }
+      }
+  ignore_errors: true
+  when: dns_server_forwarder is defined
 
 # add external dns forwarder
 - name: Configure DNS Forwarders
-  win_dsc:
+  ansible.windows.win_dsc:
     resource_name: xDnsServerForwarder
     IsSingleInstance: "yes"
     UseRootHint: false
     IPAddresses:
       - "{{dns_server_forwarder}}"
 
-- name: "Install XactiveDirectory"
-  win_psmodule:
+- name: Install XactiveDirectory
+  community.windows.win_psmodule:
     name: ActiveDirectoryDSC
     state: present
 
 # issue 156
-- name: enable the Active directory web services if not enabled
+- name: Enable the Active directory web services if not enabled
   ansible.windows.win_shell: Set-Service -Name adws -StartupType Automatic

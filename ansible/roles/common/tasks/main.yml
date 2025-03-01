@@ -27,7 +27,7 @@
     Install-Module PowerShellGet -Force
 
 - name: Windows | Check for ComputerManagementDsc Powershell module
-  win_psmodule:
+  community.windows.win_psmodule:
     name: ComputerManagementDsc
     state: present
 
@@ -39,7 +39,7 @@
     UserAuthentication: Secure
 
 - name: Windows | Check for xNetworking Powershell module
-  win_psmodule:
+  community.windows.win_psmodule:
     name: xNetworking
     state: present
 
