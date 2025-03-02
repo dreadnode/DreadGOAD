@@ -117,27 +117,26 @@
   register: trust_result
   ignore_errors: true
 
-- name: Test DNS resolution of remote forest
-  ansible.windows.win_powershell:
-    script: |
-      Resolve-DnsName -Name {{ remote_forest }} -Type A
-      Resolve-DnsName -Name {{ remote_dc }} -Type A
-      Get-DnsClientServerAddress -AddressFamily IPv4 | Format-Table
-    error_action: continue
-  register: dns_test
+# - name: Test DNS resolution of remote forest
+#   ansible.windows.win_powershell:
+#     script: |
+#       Resolve-DnsName -Name {{ remote_forest }} -Type A
+#       Resolve-DnsName -Name {{ remote_dc }} -Type A
+#       Get-DnsClientServerAddress -AddressFamily IPv4 | Format-Table
+#     error_action: continue
+#   register: dns_test
   
-- name: Display DNS test results
-  debug:
-    var: dns_test
+# - name: Display DNS test results
+#   debug:
+#     var: dns_test
 
-- name: Display trust result information
-  debug:
-    var: trust_result
+# - name: Display trust result information
+#   debug:
+#     var: trust_result
 
 - name: Reboot and wait for the AD system to restart
   ansible.windows.win_reboot:
-    # test_command: "Get-ADUser -Identity {{ admin_user }} -Properties *"
-    test_command: "Get-ADUser -Identity goadmin -Properties *"
+    test_command: "Get-ADUser -Identity {{ admin_user }} -Properties *"
   when: trust_result.changed
 
 #      $localforest=[System.DirectoryServices.ActiveDirectory.Forest]::getCurrentForest()
@@ -148,40 +147,40 @@
 #      } catch [System.DirectoryServices.ActiveDirectory.ActiveDirectoryObjectExistsException] {
 #        $Ansible.Changed = $false
 
-- name: Test network connectivity to remote DC
-  ansible.windows.win_powershell:
-    script: |
-      Test-NetConnection -ComputerName {{ hostvars[remote_dc].ansible_host }} -Port 389
-      Test-NetConnection -ComputerName {{ hostvars[remote_dc].ansible_host }} -Port 445
-    error_action: continue
-  register: network_test
+# - name: Test network connectivity to remote DC
+#   ansible.windows.win_powershell:
+#     script: |
+#       Test-NetConnection -ComputerName {{ hostvars[remote_dc].ansible_host }} -Port 389
+#       Test-NetConnection -ComputerName {{ hostvars[remote_dc].ansible_host }} -Port 445
+#     error_action: continue
+#   register: network_test
   
-- name: Display network test results
-  debug:
-    var: network_test
+# - name: Display network test results
+#   debug:
+#     var: network_test
 
-- name: Check forest functional level
-  ansible.windows.win_powershell:
-    script: |
-      Get-ADForest | Select-Object ForestMode
-    error_action: continue
-  register: forest_level
+# - name: Check forest functional level
+#   ansible.windows.win_powershell:
+#     script: |
+#       Get-ADForest | Select-Object ForestMode
+#     error_action: continue
+#   register: forest_level
   
-- name: Display forest level
-  debug:
-    var: forest_level
+# - name: Display forest level
+#   debug:
+#     var: forest_level
 
-- name: Show trust result
-  ansible.windows.win_powershell:
-    script: |
-      # Suppress progress output
-      $ProgressPreference = 'SilentlyContinue'
+# - name: Show trust result
+#   ansible.windows.win_powershell:
+#     script: |
+#       # Suppress progress output
+#       $ProgressPreference = 'SilentlyContinue'
 
-      # Get trust status using CIM
-      $obj = Get-CimInstance -Class Microsoft_DomainTrustStatus -Namespace root\microsoftactivedirectory
+#       # Get trust status using CIM
+#       $obj = Get-CimInstance -Class Microsoft_DomainTrustStatus -Namespace root\microsoftactivedirectory
 
-      # Convert to JSON and return (handle CLIXML issue)
-      $result = $obj | Select-Object FlatName, SID, TrustAttributes, TrustDirection, TrustedDCName, TrustedDomain, TrustIsOk, TrustStatus, TrustStatusString, TrustType
-      ConvertTo-Json -InputObject $result -Depth 3
-  register: trust_status_details
-  ignore_errors: true
+#       # Convert to JSON and return (handle CLIXML issue)
+#       $result = $obj | Select-Object FlatName, SID, TrustAttributes, TrustDirection, TrustedDCName, TrustedDomain, TrustIsOk, TrustStatus, TrustStatusString, TrustType
+#       ConvertTo-Json -InputObject $result -Depth 3
+#   register: trust_status_details
+#   ignore_errors: true
