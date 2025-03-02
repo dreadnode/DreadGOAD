@@ -2,17 +2,44 @@
 - name: Disable the registration of the network adapter in DNS
   ansible.windows.win_powershell:
     script: |
-      $adapterName = "{{ nat_adapter }}"
       try {
+        $adapterName = "{{ nat_adapter | default('Ethernet') }}"
         $adapter = Get-NetAdapter -Name $adapterName -ErrorAction SilentlyContinue
+
+        if (!$adapter) {
+          $adapter = Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | Select-Object -First 1
+        }
+
         if ($adapter) {
           Set-DNSClient -InterfaceIndex $adapter.ifIndex -RegisterThisConnectionsAddress $False
+          Write-Output "Disabled DNS registration for adapter $($adapter.Name)"
           $Ansible.Changed = $true
         } else {
-          Write-Output "Adapter '$adapterName' not found, trying to find a suitable adapter"
+          Write-Error "No suitable network adapter found"
+          $Ansible.Changed = $false
+        }
+      } catch {
+        Write-Error "Error setting DNS client registration: $_"
+        $Ansible.Changed = $false
+      }
+  when: two_adapters
+
+- name: Set configure DNS to parent domain
+  ansible.windows.win_powershell:
+    script: |
+      try {
+        $adapter = Get-NetAdapter | Where-Object { $_.Name -like "*Ethernet*" -and $_.Status -eq "Up" } | Select-Object -First 1
+
+        if ($adapter) {
+          Write-Output "Setting DNS on adapter: $($adapter.Name)"
+          Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ServerAddresses "{{ dns_server_forwarder }}"
+          $Ansible.Changed = $true
+        } else {
           $adapter = Get-NetAdapter | Where-Object { $_.Status -eq "Up" } | Select-Object -First 1
+          
           if ($adapter) {
-            Set-DNSClient -InterfaceIndex $adapter.ifIndex -RegisterThisConnectionsAddress $False
+            Write-Output "Setting DNS on non-Ethernet adapter: $($adapter.Name)"
+            Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ServerAddresses "{{ dns_server_forwarder }}"
             $Ansible.Changed = $true
           } else {
             Write-Error "No suitable network adapter found"
@@ -20,126 +47,135 @@
           }
         }
       } catch {
-        Write-Error "Error setting DNS client registration: $_"
+        Write-Error "Error configuring DNS: $_"
         $Ansible.Changed = $false
       }
-  when: two_adapters
-  ignore_errors: true
-
-- name: Set configure dns to {{ dns_domain }}
-  ansible.windows.win_powershell:
-    script: |
-      # Find the network adapter
-      $adapter = Get-NetAdapter | Where-Object { $_.Name -like "*Ethernet*" -and $_.Status -eq "Up" } | Select-Object -First 1
-      if ($adapter) {
-        Write-Output "Setting DNS on adapter: $($adapter.Name)"
-        Set-DnsClientServerAddress -InterfaceIndex $adapter.ifIndex -ServerAddresses "{{ dns_server_forwarder }}"
-        $Ansible.Changed = $true
-      } else {
-        Write-Error "No suitable network adapter found"
-        $Ansible.Changed = $false
-      }
-  ignore_errors: true
+  when: dns_server_forwarder is defined
 
 - name: Install windows features - AD Domain Services
   ansible.windows.win_feature:
     name: AD-Domain-Services
     state: present
     include_management_tools: yes
-  register: features
+  register: ad_feature
 
 - name: Install windows features - RSAT-ADDS
   ansible.windows.win_feature:
     name: RSAT-ADDS
     state: present
     include_management_tools: yes
-  register: features
+  register: rsat_feature
 
-# DNSCHANGE
-# - name: "disable interface {{nat_adapter}} before join domain"
-#   win_shell: netsh interface set interface "{{nat_adapter}}" disable
-
-- name: add child domain to parent domain
+- name: Add child domain to parent domain
   ansible.windows.win_powershell:
     script: |
       [CmdletBinding()]
       param (
-          [String]
-          $Password,
-
-          [String]
-          $DomainAdmin,
-
-          [String]
-          $ParentDomainName,
-
-          [String]
-          $NewDomainNetbiosName,
-
-          [String]
-          $ReplicationSourceDC,
-
-          [String]
-          $NewDomainName,
-
-          [String]
-          $DomSafePassword
+          [String] $Password,
+          [String] $DomainAdmin,
+          [String] $ParentDomainName,
+          [String] $NewDomainNetbiosName,
+          [String] $ReplicationSourceDC,
+          [String] $NewDomainName,
+          [String] $DomSafePassword
       )
+      
       try {
-          $child_domain = Get-ADDomain -Identity $NewDomainName
-          $domainExist=$true
-      } catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
-          $domainExist=$false
-      }
-      if (-not $domainExist) {
-        $Ansible.Changed = $true
-        $pass = ConvertTo-SecureString $Password -AsPlainText -Force
-        $Cred = New-Object System.Management.Automation.PSCredential ($DomainAdmin, $pass)
-        $safePassword = ConvertTo-SecureString $DomSafePassword -AsPlainText -Force
-        Install-ADDSDomain -Credential $Cred -SkipPreChecks -NewDomainName $NewDomainName -NewDomainNetbiosName $NewDomainNetbiosName -ParentDomainName $ParentDomainName -ReplicationSourceDC $ReplicationSourceDC -DatabasePath "C:\Windows\NTDS" -SYSVOLPath "C:\Windows\SYSVOL" -LogPath "C:\Windows\Logs" -SafeModeAdministratorPassword $safePassword -Force -NoRebootOnCompletion
-      } else {
-        $Ansible.Changed = $false
+          # Check if domain already exists
+          try {
+              $childDomain = "$NewDomainName.$ParentDomainName"
+              $domainInfo = Get-ADDomain -Identity $childDomain -ErrorAction Stop
+              Write-Output "Domain $childDomain already exists"
+              $Ansible.Changed = $false
+              return
+          } catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
+              Write-Output "Domain $childDomain does not exist yet, proceeding with installation"
+          } catch {
+              # If any other error, this might be because we're not in a domain yet
+              Write-Output "Not able to check domain existence, proceeding with installation"
+          }
+          
+          # Create domain admin credential
+          $securePassword = ConvertTo-SecureString $Password -AsPlainText -Force
+          $credential = New-Object System.Management.Automation.PSCredential ($DomainAdmin, $securePassword)
+          
+          # Create safe mode admin password
+          $safeModePassword = ConvertTo-SecureString $DomSafePassword -AsPlainText -Force
+          
+          # Install AD DS Domain
+          $params = @{
+              Credential = $credential
+              NewDomainName = $NewDomainName
+              ParentDomainName = $ParentDomainName
+              NewDomainNetbiosName = $NewDomainNetbiosName
+              DatabasePath = "C:\Windows\NTDS"
+              SysvolPath = "C:\Windows\SYSVOL"
+              LogPath = "C:\Windows\Logs"
+              SafeModeAdministratorPassword = $safeModePassword
+              NoRebootOnCompletion = $true
+              Force = $true
+              SkipPreChecks = $true
+          }
+          
+          if ($ReplicationSourceDC) {
+              $params.Add('ReplicationSourceDC', $ReplicationSourceDC)
+          }
+          
+          # Execute the installation
+          $result = Install-ADDSDomain @params
+          
+          Write-Output "Domain installation initiated with status: $($result.Status)"
+          $Ansible.Changed = $true
+          
+      } catch {
+          Write-Error "Error installing child domain: $_"
+          $Ansible.Changed = $false
       }
     parameters:
-      Password: "{{parent_domain_password}}"
-      DomSafePassword: "{{domain_password}}"
-      DomainAdmin: "{{parent_domain_user}}"
-      ParentDomainName: "{{parent_domain}}"
-      ReplicationSourceDC: "{{source_dc}}"
-      NewDomainNetbiosName: "{{netbios_name}}"
-      NewDomainName: "{{domain.split('.')[0]}}"
+      Password: "{{ parent_domain_password }}"
+      DomSafePassword: "{{ domain_password }}"
+      DomainAdmin: "{{ parent_domain_user }}"
+      ParentDomainName: "{{ parent_domain }}"
+      ReplicationSourceDC: "{{ source_dc }}"
+      NewDomainNetbiosName: "{{ netbios_name }}"
+      NewDomainName: "{{ domain.split('.')[0] }}"
   register: child_result
 
-- name: Reboot
+- name: Reboot after domain promotion
   ansible.windows.win_reboot:
-    reboot_timeout: 900
-    post_reboot_delay: 100
+    reboot_timeout: 1200
+    post_reboot_delay: 120
   when: child_result.changed
-
-# - name: "enable interface {{nat_adapter}} after domain joined"
-#   win_shell: netsh interface set interface "{{nat_adapter}}" enable
-#   register: enable_interface
-#   until: "enable_interface is not failed"
-#   retries: 3
-#   delay: 120
 
 - name: Enable the interface for DNS client requests
   ansible.windows.win_powershell:
     script: |
       try {
         $ipAddress = "{{ hostvars[dict_key].ansible_host }}"
-        # Check if $ipAddress is a valid IP address
-        [System.Net.IPAddress]::TryParse($ipAddress, [ref]$null)
         
-        # If it's not a valid IP, try to get the actual IP
+        # If not a valid IP address, try to get one from an active adapter
         if (-not [System.Net.IPAddress]::TryParse($ipAddress, [ref]$null)) {
-          # Get the first available IP address
-          $ipAddress = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -like "*Ethernet*" } | Select-Object -First 1).IPAddress
+          $ipAddress = (Get-NetIPAddress -AddressFamily IPv4 | 
+            Where-Object { $_.IPAddress -notmatch '^127\.' -and $_.IPAddress -notmatch '^169\.254\.' } | 
+            Select-Object -First 1).IPAddress
         }
         
         if ($ipAddress) {
-          dnscmd . /resetlistenaddresses $ipAddress
-          $Ansible.Changed = $true
+          # Make sure the DNS Server service is running
+          Start-Service -Name DNS -ErrorAction SilentlyContinue
+          
+          # Configure DNS server to listen on this IP
+          try {
+            Import-Module DnsServer -ErrorAction SilentlyContinue
+            Set-DnsServerSetting -ComputerName . -ListeningIPAddress $ipAddress -ErrorAction Stop
+            Write-Output "Set DNS server to listen on $ipAddress"
+            $Ansible.Changed = $true
+          } catch {
+            # Fallback to dnscmd if PowerShell cmdlet fails
+            $result = & dnscmd . /resetlistenaddresses $ipAddress
+            Write-Output "Used dnscmd to set DNS server to listen on $ipAddress"
+            $Ansible.Changed = $true
+          }
         } else {
           Write-Error "Could not determine a valid IP address"
           $Ansible.Changed = $false
@@ -148,8 +184,6 @@
         Write-Error "Error setting DNS listen addresses: $_"
         $Ansible.Changed = $false
       }
-  when: two_adapters
-  ignore_errors: true
 
 - name: Make sure DNS Server role is installed
   ansible.windows.win_feature:
@@ -158,51 +192,60 @@
     include_management_tools: yes
   register: dns_feature
 
+- name: Install DnsServerDsc PowerShell module
+  community.windows.win_psmodule:
+    name: DnsServerDsc
+    state: present
+
 - name: Configure DNS Forwarders with PowerShell
   ansible.windows.win_powershell:
     script: |
-      # Ensure the DNS Server module is available
-      Import-Module DnsServer -ErrorAction SilentlyContinue
-      
-      if (Get-Command Set-DnsServerForwarder -ErrorAction SilentlyContinue) {
-        # Configure the forwarders
-        try {
-          Set-DnsServerForwarder -IPAddress "{{ dns_server_forwarder }}" -UseRootHint $false
+      try {
+        Import-Module DnsServer -ErrorAction SilentlyContinue
+
+        $forwarder = "{{ dns_server_forwarder }}"
+
+        $currentForwarders = Get-DnsServerForwarder | 
+          Select-Object -ExpandProperty IPAddress | 
+          ForEach-Object { $_.IPAddressToString }
+
+        if ($currentForwarders -notcontains $forwarder) {
+          Set-DnsServerForwarder -IPAddress $forwarder -UseRootHint $false
+          Write-Output "DNS forwarder set to $forwarder"
           $Ansible.Changed = $true
-        } catch {
-          Write-Error "Failed to set DNS forwarders: $_"
+        } else {
+          Write-Output "DNS forwarder $forwarder already configured"
           $Ansible.Changed = $false
         }
-      } else {
-        # DNS Server module not available, install it
-        try {
-          Install-WindowsFeature -Name DNS-Server-Full-Role, RSAT-DNS-Server -IncludeAllSubFeature
-          Start-Sleep -Seconds 10
-          Import-Module DnsServer
-          Set-DnsServerForwarder -IPAddress "{{ dns_server_forwarder }}" -UseRootHint $false
-          $Ansible.Changed = $true
-        } catch {
-          Write-Error "Failed to install DNS Server role and configure forwarders: $_"
-          $Ansible.Changed = $false
-        }
+      } catch {
+        Write-Error "Error configuring DNS forwarder: $_"
+        $Ansible.Changed = $false
       }
-  ignore_errors: true
   when: dns_server_forwarder is defined
 
-# add external dns forwarder
-- name: Configure DNS Forwarders
-  ansible.windows.win_dsc:
-    resource_name: xDnsServerForwarder
-    IsSingleInstance: "yes"
-    UseRootHint: false
-    IPAddresses:
-      - "{{dns_server_forwarder}}"
-
-- name: Install XactiveDirectory
-  community.windows.win_psmodule:
-    name: ActiveDirectoryDSC
-    state: present
-
-# issue 156
-- name: Enable the Active directory web services if not enabled
-  ansible.windows.win_shell: Set-Service -Name adws -StartupType Automatic
+- name: Enable the Active Directory Web Services
+  ansible.windows.win_powershell:
+    script: |
+      try {
+        $service = Get-Service -Name ADWS -ErrorAction SilentlyContinue
+        
+        if ($service) {
+          if ($service.StartType -ne "Automatic") {
+            Set-Service -Name ADWS -StartupType Automatic
+            $Ansible.Changed = $true
+          }
+          
+          if ($service.Status -ne "Running") {
+            Start-Service -Name ADWS
+            $Ansible.Changed = $true
+          }
+          
+          Write-Output "ADWS service is now set to Automatic and Running"
+        } else {
+          Write-Error "ADWS service not found"
+          $Ansible.Changed = $false
+        }
+      } catch {
+        Write-Error "Error configuring ADWS service: $_"
+        $Ansible.Changed = $false
+      }

@@ -14,6 +14,19 @@
         cacheable: true
       run_once: true
 
+    - name: Get network adapter information from Windows
+      ansible.windows.win_powershell:
+        script: |
+          Get-NetAdapter | Where-Object {$_.Status -eq "Up"} | Select-Object -First 1 | Select-Object -ExpandProperty Name
+      register: windows_adapter_result
+      run_once: true
+
+    - name: Set domain adapter from Windows API
+      ansible.builtin.set_fact:
+        domain_adapter: "{{ windows_adapter_result.stdout | trim }}"
+      when: windows_adapter_result.stdout is defined and windows_adapter_result.stdout != ""
+      run_once: true
+
     # Use the first interface's IP address for comparison
     - name: Get primary interface IP address
       ansible.builtin.set_fact:
@@ -26,12 +39,12 @@
       ansible.builtin.set_fact:
         domain_adapter: "{{ ansible_interfaces[0].connection_name }}"
       run_once: true
-      when: ansible_interfaces[0] is defined
+      when: ansible_interfaces[0] is defined and domain_adapter is not defined
 
     # Set fallback domain adapter if it wasn't defined
     - name: Set fallback domain adapter
       ansible.builtin.set_fact:
-        domain_adapter: "Ethernet 3"
+        domain_adapter: "Ethernet"  # Generic fallback value
       run_once: true
       when: domain_adapter is not defined
 

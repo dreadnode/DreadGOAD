@@ -1,7 +1,7 @@
 # DNSCHANGE
-- name: Prioritize the {{domain_adapter}} interface (local) as the default for routing
+- name: Prioritize the {{ domain_adapter }} interface (local) as the default for routing
   ansible.windows.win_shell:
-    Set-NetIPInterface -InterfaceAlias "{{domain_adapter}}" -InterfaceMetric 10
+    Set-NetIPInterface -InterfaceAlias "{{ domain_adapter }}" -InterfaceMetric 10
   when: two_adapters
 
 - name: Get IP address of DNS server (dc02)
@@ -10,14 +10,20 @@
   delegate_to: "{{ dns_domain }}"
   register: dns_server_ip_result
 
-- name: Set configure dns to {{dns_domain}}
+- name: Set configure dns to {{ dns_domain }}
   ansible.windows.win_dns_client:
-    adapter_names: "{{domain_adapter}}"
+    adapter_name: "{{ domain_adapter }}"
     ipv4_addresses:
     - "{{ dns_server_ip_result.stdout | trim }}"
     log_path: C:\dns_log.txt
-  
-# Add verification steps to ensure DNS is working before joining domain
+  register: dns_config_result
+  ignore_errors: true
+
+- name: Display DNS configuration result
+  ansible.builtin.debug:
+    var: dns_config_result
+  when: dns_config_result is failed
+
 - name: Verify DNS connection to domain controller
   ansible.windows.win_shell: |
     Test-NetConnection -ComputerName {{ dns_domain }} -Port 53
@@ -38,7 +44,6 @@
   ansible.builtin.debug:
     var: domain_resolution_test
 
-# Wait for DNS propagation
 - name: Wait for DNS changes to propagate
   ansible.windows.win_shell: Start-Sleep -Seconds 30
   when: dns_connection_test.rc == 0

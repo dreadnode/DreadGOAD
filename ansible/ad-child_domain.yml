@@ -1,13 +1,14 @@
 ---
-# Load datas
+# Load data
 - ansible.builtin.import_playbook: data.yml
   tags: 'data'
 
-# set AD datas ==================================================================================================
+# set AD data ==================================================================================================
 
 # child
 - name: Child DC AD configuration
   hosts: child_dc
+  gather_facts: no  
   roles:
     - { role: 'child_domain', tags: 'child_domain'}
     - { role: 'dns_conditional_forwarder', tags: 'dns_conditional_forwarder' }
@@ -23,10 +24,12 @@
     remote_dc: "{{ lab.domains[parent_domain].dc }}"
     master_server: "{{ hostvars[remote_dc].ansible_host }}"
     replication: "none"
+    dns_server_forwarder: "{{ hostvars[remote_dc].ansible_host }}"  
 
 # parent add DNS value of child DC
 - name: Parent DC ADD DNS configuration
   hosts: parent_dc
+  gather_facts: no  
   roles:
     - { role: 'parent_child_dns', tags: 'parent_child_dns'}
   vars:

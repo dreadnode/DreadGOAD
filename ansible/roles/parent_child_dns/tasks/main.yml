@@ -1,54 +1,122 @@
 ---
-#- name: Create A record for child domain in parent domain
-#  community.windows.win_dns_record:
-#    name: "{{lab.hosts[dc].hostname}}.{{item.split('.')[0]}}"
-#    type: "A"
-#    values:
-#      - "{{hostvars[dc].ansible_host}}"
-#    zone: "{{domain}}"
-#  vars:
-#    dc: "{{lab.domains[item].dc}}"
-#  loop: "{{ domains }}"
-#  when: domain == '.'.join(item.split('.')[1:])
-
-
-# set delegation to child domain
-# Add-DnsServerZoneDelegation -Name "sevenkingdoms.local" -ChildZoneName "north" -NameServer "winterfell.north.sevenkingdoms.local" -IPAddress 192.168.10.11 -PassThru -Verbose
-# domain == parent domain
-# item == child domain
 - name: Get IPv4 address for child domain controller
-  ansible.windows.win_shell: |
-    (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.IPAddress -notmatch '^127\.' -and $_.IPAddress -notmatch '^169\.254\.'} | Select-Object -First 1).IPAddress
+  ansible.windows.win_powershell:
+    script: |
+      try {
+        $ipAddress = (Get-NetIPAddress -AddressFamily IPv4 | 
+          Where-Object {$_.IPAddress -notmatch '^127\.' -and $_.IPAddress -notmatch '^169\.254\.'} | 
+          Select-Object -First 1).IPAddress
+        
+        if($ipAddress) {
+          Write-Output $ipAddress
+          $Ansible.Changed = $false
+        } else {
+          throw "No valid IPv4 address found"
+        }
+      } catch {
+        Write-Error "Error getting IPv4 address: $_"
+        $Ansible.Changed = $false
+      }
   delegate_to: "{{ child_dc }}"
   vars:
     child_dc: "{{ lab.domains[item].dc }}"
   register: child_ipv4_result
   loop: "{{ domains }}"
   when: domain == '.'.join(item.split('.')[1:])
-
+  
+- name: Extract IP address for north.sevenkingdoms.local
+  ansible.builtin.set_fact:
+    child_ip_addresses: "{{ child_ip_addresses | default({}) | combine({'north.sevenkingdoms.local': item.output[0]}) }}"
+  with_items: "{{ child_ipv4_result.results | default([]) }}"
+  when: >
+    child_ipv4_result.results is defined and 
+    item.item == 'north.sevenkingdoms.local' and
+    item.output is defined and 
+    item.output | length > 0
+  
+# - name: Debug extracted IP addresses
+#   ansible.builtin.debug:
+#     var: child_ip_addresses
+#     verbosity: 0
+  
 - name: Add dns delegation to child domain
-  ansible.windows.win_shell: |
-    Add-DnsServerZoneDelegation -Name "{{parent_domain}}" -ChildZoneName "{{zone}}" -NameServer "{{name_server}}" -IPAddress "{{name_server_ip}}" -PassThru -Verbose
+  ansible.windows.win_powershell:
+    script: |
+      try {
+        $parentDomain = "{{ parent_domain }}"
+        $childZone = "{{ zone }}"
+        $nameServer = "{{ name_server }}"
+        $nameServerIP = "{{ name_server_ip }}"
+        
+        Write-Output "Configuring delegation: Parent=$parentDomain, Child=$childZone, NS=$nameServer, IP=$nameServerIP"
+        
+        # Check if delegation already exists
+        $delegation = Get-DnsServerZoneDelegation -Name $parentDomain -ChildZone $childZone -ErrorAction SilentlyContinue
+        
+        if($delegation) {
+          # Update existing delegation
+          $delegate = $delegation | Where-Object { $_.NameServer -eq $nameServer }
+          if(!$delegate -or $delegate.IPAddress.IPAddressToString -ne $nameServerIP) {
+            Remove-DnsServerZoneDelegation -Name $parentDomain -ChildZone $childZone -NameServer $nameServer -Force -ErrorAction SilentlyContinue
+            Add-DnsServerZoneDelegation -Name $parentDomain -ChildZone $childZone -NameServer $nameServer -IPAddress $nameServerIP
+            Write-Output "Updated delegation for zone $childZone"
+            $Ansible.Changed = $true
+          } else {
+            Write-Output "Delegation already exists and is correct"
+            $Ansible.Changed = $false
+          }
+        } else {
+          # Create new delegation
+          Add-DnsServerZoneDelegation -Name $parentDomain -ChildZone $childZone -NameServer $nameServer -IPAddress $nameServerIP
+          Write-Output "Created new delegation for zone $childZone"
+          $Ansible.Changed = $true
+        }
+      } catch {
+        Write-Error "Failed to configure DNS delegation: $_"
+        $Ansible.Changed = $false
+      }
   vars:
-    parent_domain: "{{domain}}"
-    child_dc: "{{lab.domains[item].dc}}"
-    name_server: "{{lab.hosts[child_dc].hostname}}.{{item}}"
-    name_server_ip: "{{ item_ipv4_address }}"
-    zone: "{{item.split('.')[0]}}"
-    item_ipv4_address: "{{ child_ipv4_result.results | selectattr('item', 'equalto', item) | map(attribute='stdout_lines') | first | first }}"
-  loop: "{{ domains }}"
-  when: domain == '.'.join(item.split('.')[1:])
+    parent_domain: "{{ domain }}"
+    child_dc: "{{ lab.domains['north.sevenkingdoms.local'].dc }}"
+    name_server: "{{ lab.hosts[child_dc].hostname }}.north.sevenkingdoms.local"
+    name_server_ip: "{{ child_ip_addresses['north.sevenkingdoms.local'] }}"
+    zone: "north"
+  when: >
+    child_ip_addresses is defined and 
+    'north.sevenkingdoms.local' in child_ip_addresses and
+    domain == 'sevenkingdoms.local'
 
 - name: Create conditional forwarder to child domain
-  community.windows.win_dns_zone:
-    name: "{{item}}"
-    type: forwarder
-    replication: "none"
-    dns_servers:
-      - "{{ item_ipv4_address }}"
+  ansible.windows.win_powershell:
+    script: |
+      try {
+        $zoneName = "{{ child_zone }}"
+        $serverIP = "{{ server_ip }}"
+        
+        Write-Output "Configuring conditional forwarder: Zone=$zoneName, ForwarderIP=$serverIP"
+        
+        # Check if zone already exists
+        $existingZone = Get-DnsServerZone -Name $zoneName -ErrorAction SilentlyContinue
+        
+        if($existingZone) {
+          # Update the forwarders if zone exists
+          Set-DnsServerZoneForwarder -Name $zoneName -MasterServers $serverIP
+          Write-Output "Updated forwarder for existing zone $zoneName"
+          $Ansible.Changed = $true
+        } else {
+          # Create new forwarder zone
+          Add-DnsServerConditionalForwarderZone -Name $zoneName -MasterServers $serverIP -ReplicationScope "Forest"
+          Write-Output "Created new conditional forwarder zone $zoneName"
+          $Ansible.Changed = $true
+        }
+      } catch {
+        Write-Error "Failed to configure DNS zone: $_"
+        $Ansible.Changed = $false
+      }
   vars:
-    child_dc: "{{lab.domains[item].dc}}"
-    zone: "{{item.split('.')[0]}}"
-    item_ipv4_address: "{{ child_ipv4_result.results | selectattr('item', 'equalto', item) | map(attribute='stdout_lines') | first | first }}"
-  loop: "{{ domains }}"
-  when: domain == '.'.join(item.split('.')[1:])
+    child_zone: "north.sevenkingdoms.local"
+    server_ip: "{{ child_ip_addresses['north.sevenkingdoms.local'] }}"
+  when: >
+    child_ip_addresses is defined and 
+    'north.sevenkingdoms.local' in child_ip_addresses and
+    domain == 'sevenkingdoms.local'
