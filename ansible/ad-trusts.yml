@@ -4,128 +4,116 @@
   tags: 'data'
 # set AD trusts ==================================================================================================
 
-# - name: Trusts configuration prepare
-#   hosts: trust
-#   roles:
-#   - { role: 'settings/disable_nat_adapter' , tags: 'disable_nat_adapter'}
-#   - { role: 'dns_conditional_forwarder', tags: 'dns_conditional_forwarder' }
-#   vars:
-#     domain: "{{ lab.hosts[dict_key].domain }}"
-#     remote_forest: "{{ lab.domains[domain].trust }}"
-#     zone_name: "{{ remote_forest }}"
-#     remote_dc: "{{ lab.domains[remote_forest].dc }}"
-#     master_server: "{{ hostvars[remote_dc].ansible_host }}"
-#     replication: "forest"
+- name: Trusts configuration prepare
+  hosts: trust
+  roles:
+  - { role: 'settings/disable_nat_adapter' , tags: 'disable_nat_adapter'}
+  - { role: 'dns_conditional_forwarder', tags: 'dns_conditional_forwarder' }
+  vars:
+    domain: "{{ lab.hosts[dict_key].domain }}"
+    remote_forest: "{{ lab.domains[domain].trust }}"
+    zone_name: "{{ remote_forest }}"
+    remote_dc: "{{ lab.domains[remote_forest].dc }}"
+    master_server: "{{ hostvars[remote_dc].ansible_host }}"
+    replication: "forest"
 
-# - name: Add DNS records for remote domain controllers
-#   hosts: trust
-#   tasks:
-#     - name: Add A records for remote domain controllers
-#       ansible.windows.win_powershell:
-#         script: |
-#           try {
-#             # Get remote DC information
-#             $remoteDC = "{{ remote_dc }}"
-#             $remoteIPAddress = "{{ hostvars[remote_dc].ansible_host }}"
-#             $remoteDomainName = "{{ remote_forest }}"
-#             $hostDomain = "{{ domain }}"
+- name: Add DNS records for remote domain controllers
+  hosts: trust
+  tasks:
+    - name: Add A records for remote domain controllers
+      ansible.windows.win_powershell:
+        script: |
+          try {
+            # Get remote DC information
+            $remoteDC = "{{ remote_dc }}"
+            $remoteIPAddress = "{{ hostvars[remote_dc].ansible_host }}"
+            $remoteDomainName = "{{ remote_forest }}"
+            $hostDomain = "{{ domain }}"
             
-#             Write-Output "Creating DNS records for $remoteDC.$remoteDomainName with IP $remoteIPAddress"
+            Write-Output "Creating DNS records for $remoteDC.$remoteDomainName with IP $remoteIPAddress"
             
-#             # Add DNS A record for standalone DC
-#             try {
-#               $existingRecord = Get-DnsServerResourceRecord -Name $remoteDC -ZoneName "." -ErrorAction SilentlyContinue
-#               if(-not $existingRecord) {
-#                 Add-DnsServerResourceRecordA -Name $remoteDC -ZoneName "." -IPv4Address $remoteIPAddress -TimeToLive 01:00:00
-#                 Write-Output "Added A record for $remoteDC"
-#               } else {
-#                 Write-Output "A record for $remoteDC already exists"
-#               }
-#             } catch {
-#               Write-Output "Failed to add standalone record: $_"
-#             }
+            # Add DNS A record for standalone DC
+            try {
+              $existingRecord = Get-DnsServerResourceRecord -Name $remoteDC -ZoneName "." -ErrorAction SilentlyContinue
+              if(-not $existingRecord) {
+                Add-DnsServerResourceRecordA -Name $remoteDC -ZoneName "." -IPv4Address $remoteIPAddress -TimeToLive 01:00:00
+                Write-Output "Added A record for $remoteDC"
+              } else {
+                Write-Output "A record for $remoteDC already exists"
+              }
+            } catch {
+              Write-Output "Failed to add standalone record: $_"
+            }
             
-#             # Create the zone for remote domain if it doesn't exist
-#             $zoneExists = Get-DnsServerZone -Name $remoteDomainName -ErrorAction SilentlyContinue
-#             if(-not $zoneExists) {
-#               Add-DnsServerPrimaryZone -Name $remoteDomainName -ReplicationScope "Forest" -DynamicUpdate "Secure"
-#               Write-Output "Created primary zone for $remoteDomainName"
-#             }
+            # Create the zone for remote domain if it doesn't exist
+            $zoneExists = Get-DnsServerZone -Name $remoteDomainName -ErrorAction SilentlyContinue
+            if(-not $zoneExists) {
+              Add-DnsServerPrimaryZone -Name $remoteDomainName -ReplicationScope "Forest" -DynamicUpdate "Secure"
+              Write-Output "Created primary zone for $remoteDomainName"
+            }
             
-#             # Add DNS A record for DC in the domain zone
-#             try {
-#               $existingDomainRecord = Get-DnsServerResourceRecord -Name $remoteDC -ZoneName $remoteDomainName -ErrorAction SilentlyContinue
-#               if(-not $existingDomainRecord) {
-#                 Add-DnsServerResourceRecordA -Name $remoteDC -ZoneName $remoteDomainName -IPv4Address $remoteIPAddress -TimeToLive 01:00:00
-#                 Write-Output "Added A record for $remoteDC.$remoteDomainName"
-#               } else {
-#                 Write-Output "A record for $remoteDC.$remoteDomainName already exists"
-#               }
-#             } catch {
-#               Write-Output "Failed to add domain record: $_"
-#             }
+            # Add DNS A record for DC in the domain zone
+            try {
+              $existingDomainRecord = Get-DnsServerResourceRecord -Name $remoteDC -ZoneName $remoteDomainName -ErrorAction SilentlyContinue
+              if(-not $existingDomainRecord) {
+                Add-DnsServerResourceRecordA -Name $remoteDC -ZoneName $remoteDomainName -IPv4Address $remoteIPAddress -TimeToLive 01:00:00
+                Write-Output "Added A record for $remoteDC.$remoteDomainName"
+              } else {
+                Write-Output "A record for $remoteDC.$remoteDomainName already exists"
+              }
+            } catch {
+              Write-Output "Failed to add domain record: $_"
+            }
             
-#             # Add conditional forwarder if not already set up
-#             try {
-#               $forwarderExists = Get-DnsServerZone -Name $remoteDomainName -ErrorAction SilentlyContinue | 
-#                                   Where-Object {$_.ZoneType -eq "Forwarder"}
-#               if(-not $forwarderExists) {
-#                 Add-DnsServerConditionalForwarderZone -Name $remoteDomainName -MasterServers $remoteIPAddress -ReplicationScope "Forest"
-#                 Write-Output "Added conditional forwarder for $remoteDomainName"
-#               }
-#             } catch {
-#               Write-Output "Failed to add conditional forwarder: $_"
-#             }
+            # Add conditional forwarder if not already set up
+            try {
+              $forwarderExists = Get-DnsServerZone -Name $remoteDomainName -ErrorAction SilentlyContinue | 
+                                  Where-Object {$_.ZoneType -eq "Forwarder"}
+              if(-not $forwarderExists) {
+                Add-DnsServerConditionalForwarderZone -Name $remoteDomainName -MasterServers $remoteIPAddress -ReplicationScope "Forest"
+                Write-Output "Added conditional forwarder for $remoteDomainName"
+              }
+            } catch {
+              Write-Output "Failed to add conditional forwarder: $_"
+            }
             
-#             # Flush DNS cache to ensure changes take effect
-#             Clear-DnsClientCache
-#             Write-Output "Cleared DNS cache"
-#           } catch {
-#             Write-Error "Error creating DNS records: $_"
-#           }
-#       register: dns_records_result
-#       vars:
-#         remote_dc: "{{ lab.domains[lab.hosts[dict_key].domain].trust | default('') | ternary(lab.domains[lab.domains[lab.hosts[dict_key].domain].trust].dc, '') }}"
-#         remote_forest: "{{ lab.domains[lab.hosts[dict_key].domain].trust | default('') }}"
-#         domain: "{{ lab.hosts[dict_key].domain }}"
+            # Flush DNS cache to ensure changes take effect
+            Clear-DnsClientCache
+            Write-Output "Cleared DNS cache"
+          } catch {
+            Write-Error "Error creating DNS records: $_"
+          }
+      register: dns_records_result
+      vars:
+        remote_dc: "{{ lab.domains[lab.hosts[dict_key].domain].trust | default('') | ternary(lab.domains[lab.domains[lab.hosts[dict_key].domain].trust].dc, '') }}"
+        remote_forest: "{{ lab.domains[lab.hosts[dict_key].domain].trust | default('') }}"
+        domain: "{{ lab.hosts[dict_key].domain }}"
 
-# - name: Trusts configuration
-#   hosts: trust
-#   serial: 1 # add one trust at a time to avoid issues
-#   roles:
-#   - { role: 'trusts', tags: 'trust' }
-#   vars:
-#     domain: "{{ lab.hosts[dict_key].domain }}"
-#     domain_username: "{{ domain }}\\{{ admin_user }}"
-#     domain_password: "{{ lab.domains[domain].domain_password }}"
-#     remote_forest: "{{ lab.domains[domain].trust }}"
-#     remote_admin: "Administrator@{{ remote_forest }}"
-#     remote_admin_password: "{{ lab.domains[remote_forest].domain_password }}"
-#     zone_name: "{{ remote_forest }}"
-#     remote_dc: "{{ lab.domains[remote_forest].dc }}"
-#     master_server: "{{ hostvars[remote_dc].ansible_host }}"
+- name: Trusts configuration
+  hosts: trust
+  serial: 1 # add one trust at a time to avoid issues
+  roles:
+  - { role: 'trusts', tags: 'trust' }
+  vars:
+    domain: "{{ lab.hosts[dict_key].domain }}"
+    domain_username: "{{ domain }}\\{{ admin_user }}"
+    domain_password: "{{ lab.domains[domain].domain_password }}"
+    remote_forest: "{{ lab.domains[domain].trust }}"
+    remote_admin: "Administrator@{{ remote_forest }}"
+    remote_admin_password: "{{ lab.domains[remote_forest].domain_password }}"
+    zone_name: "{{ remote_forest }}"
+    remote_dc: "{{ lab.domains[remote_forest].dc }}"
+    master_server: "{{ hostvars[remote_dc].ansible_host }}"
 
-# - name: Trusts configuration end
-#   hosts: trust
-#   roles:
-#   - { role: 'settings/enable_nat_adapter', tags: 'enable_nat_adapter'}
-
-# - name: Adjust DNS conditional forwarded configuration
-#   hosts: trust
-#   roles:
-#   - { role: 'dc_dns_conditional_forwarder', tags: 'dns_conditional_forwarder' }
-#   vars:
-#     domain: "{{ lab.hosts[dict_key].domain }}"
-#     replication: "forest"
-#     domain_username: "{{ domain }}\\{{ admin_user }}"
-#     domain_password: "{{ lab.domains[domain].domain_password }}"
-#     parent_domain: "{{ '.'.join(domain.split('.')[1:]) | default('') }}"
-#     trust: "{{ lab.domains[domain].trust | default('') }}"
-#     lab: "{{ lab }}"
-#     domains: "{{ lab.domains.keys() }}"
+- name: Trusts configuration end
+  hosts: trust
+  roles:
+  - { role: 'settings/enable_nat_adapter', tags: 'enable_nat_adapter'}
 
 - name: Adjust DNS conditional forwarded configuration
   hosts: trust
+  roles:
+  - { role: 'dc_dns_conditional_forwarder', tags: 'dns_conditional_forwarder' }
   vars:
     dict_key: "{{ inventory_hostname }}"
     domain: "{{ lab.hosts[dict_key].domain }}"
@@ -134,71 +122,5 @@
     domain_password: "{{ lab.domains[domain].domain_password }}"
     parent_domain: "{{ '.'.join(domain.split('.')[1:]) | default('') }}"
     trust: "{{ lab.domains[domain].trust | default('') }}"
-  tasks:
-    - name: Add DNS conditional forwarders for all domains
-      ansible.windows.win_powershell:
-        script: |
-          try {
-            $domain = "{{ domain }}"
-            # Use a simple string array instead of complex JSON conversion
-            $domains = @("{{ lab.domains.keys() | list | join('","') }}")
-            $trust = "{{ trust }}"
-            $parentDomain = "{{ parent_domain }}"
-            
-            Write-Output "Setting up DNS conditional forwarders for $domain"
-            Write-Output "Available domains: $($domains -join ', ')"
-            
-            foreach ($targetZone in $domains) {
-              # Skip if it's the current domain, parent/child domain, or already a direct trusted domain
-              if ($targetZone -eq $domain -or 
-                  $targetZone -eq $trust -or 
-                  $targetZone -eq $parentDomain -or 
-                  ($parentDomain -and $targetZone.EndsWith($domain))) {
-                Write-Output "Skipping zone $targetZone (own domain, trust, or parent/child)"
-                continue
-              }
-              
-              # Hardcoded mappings instead of dynamic lookups
-              $remoteDcName = ""
-              $remoteIp = ""
-              
-              # Explicit mappings for each domain
-              if ($targetZone -eq "essos.local") {
-                $remoteDcName = "dc03"
-                $remoteIp = "{{ hostvars['dc03'].ansible_host }}"
-              }
-              elseif ($targetZone -eq "sevenkingdoms.local") {
-                $remoteDcName = "dc01"
-                $remoteIp = "{{ hostvars['dc01'].ansible_host }}"
-              }
-              elseif ($targetZone -eq "north.sevenkingdoms.local") {
-                $remoteDcName = "dc02"
-                $remoteIp = "{{ hostvars['dc02'].ansible_host }}"
-              }
-              
-              if ([string]::IsNullOrEmpty($remoteIp)) {
-                Write-Output "No IP address found for zone $targetZone, skipping"
-                continue
-              }
-              
-              Write-Output "Setting up conditional forwarder for $targetZone using DC $remoteDcName with IP $remoteIp"
-              
-              # Check if zone already exists
-              $existingZone = Get-DnsServerZone -Name $targetZone -ErrorAction SilentlyContinue
-              
-              if ($existingZone) {
-                # Update existing zone
-                Set-DnsServerZoneForwarder -Name $targetZone -MasterServers $remoteIp
-                Write-Output "Updated existing conditional forwarder for $targetZone"
-              } else {
-                # Create new zone
-                Add-DnsServerConditionalForwarderZone -Name $targetZone -MasterServers $remoteIp -ReplicationScope "Forest"
-                Write-Output "Created new conditional forwarder for $targetZone"
-              }
-            }
-            
-            $Ansible.Changed = $true
-          } catch {
-            Write-Error "Error setting up conditional forwarder: $_"
-            $Ansible.Changed = $false
-          }
+    lab: "{{ lab }}"
+    domains: "{{ lab.domains.keys() | list }}"
