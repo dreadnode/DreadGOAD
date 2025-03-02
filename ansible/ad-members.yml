@@ -9,15 +9,23 @@
   roles:
     - { role: 'member_server', tags: 'server'}
   vars:
+    dict_key: "{{ inventory_hostname }}"
     member_domain: "{{ lab.hosts[dict_key].domain }}"
+    dns_domain: "{{ lab.domains[member_domain].dc }}"  
     domain_username: "{{ admin_user }}@{{ member_domain }}"
     domain_password: "{{ lab.domains[member_domain].domain_password }}"
+    domain_adapter: "{{ hostvars[dns_domain]['domain_adapter'] | default('Ethernet') }}"
+    two_adapters: "{{ hostvars[dns_domain]['two_adapters'] | default(false) }}"
 
 - name: Play workstations AD configuration
   hosts: workstation
   roles:
     - { role: 'commonwkstn', tags: 'workstation'}
   vars:
+    dict_key: "{{ inventory_hostname }}"
     member_domain: "{{ lab.hosts[dict_key].domain }}"
+    dns_domain: "{{ lab.domains[member_domain].dc }}"  
     domain_username: "{{ admin_user }}@{{ member_domain }}"
     domain_password: "{{ lab.domains[member_domain].domain_password }}"
+    domain_adapter: "{{ hostvars[dns_domain]['domain_adapter'] | default('Ethernet') }}"
+    two_adapters: "{{ hostvars[dns_domain]['two_adapters'] | default(false) }}"

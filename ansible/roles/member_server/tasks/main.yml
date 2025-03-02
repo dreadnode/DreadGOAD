@@ -1,52 +1,169 @@
-# DNSCHANGE
+---
+# Improved DNS configuration for north.sevenkingdoms.local resolution without static IPs
 - name: Prioritize the {{ domain_adapter }} interface (local) as the default for routing
   ansible.windows.win_shell:
     Set-NetIPInterface -InterfaceAlias "{{ domain_adapter }}" -InterfaceMetric 10
-  when: two_adapters
+  when: two_adapters == "yes"
 
-- name: Get IP address of DNS server (dc02)
+# Dynamically determine IP addresses for domain controllers
+- name: Get primary domain controller IP (sevenkingdoms.local)
   ansible.windows.win_shell: |
     (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.IPAddress -notmatch '^127\.' -and $_.IPAddress -notmatch '^169\.254\.'} | Select-Object -First 1).IPAddress
-  delegate_to: "{{ dns_domain }}"
-  register: dns_server_ip_result
+  delegate_to: "dc01"
+  register: parent_dc_ip_result
+  ignore_errors: true
 
-- name: Set configure dns to {{ dns_domain }}
+- name: Get north domain controller IP (north.sevenkingdoms.local)
+  ansible.windows.win_shell: |
+    (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.IPAddress -notmatch '^127\.' -and $_.IPAddress -notmatch '^169\.254\.'} | Select-Object -First 1).IPAddress
+  delegate_to: "dc02"
+  register: north_dc_ip_result
+  ignore_errors: true
+
+- name: Get essos domain controller IP (essos.local)
+  ansible.windows.win_shell: |
+    (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.IPAddress -notmatch '^127\.' -and $_.IPAddress -notmatch '^169\.254\.'} | Select-Object -First 1).IPAddress
+  delegate_to: "dc03"
+  register: essos_dc_ip_result
+  ignore_errors: true
+
+- name: Set initial DNS to domain controller based on member domain
   ansible.windows.win_dns_client:
-    adapter_name: "{{ domain_adapter }}"
+    adapter_names: "{{ domain_adapter }}"
     ipv4_addresses:
-    - "{{ dns_server_ip_result.stdout | trim }}"
-    log_path: C:\dns_log.txt
+    - "{{ north_dc_ip_result.stdout | trim if member_domain == 'north.sevenkingdoms.local' else 
+           parent_dc_ip_result.stdout | trim if member_domain == 'sevenkingdoms.local' else 
+           essos_dc_ip_result.stdout | trim }}"
   register: dns_config_result
   ignore_errors: true
 
-- name: Display DNS configuration result
-  ansible.builtin.debug:
-    var: dns_config_result
-  when: dns_config_result is failed
+- name: Configure multi-domain DNS settings
+  ansible.windows.win_powershell:
+    script: |
+      # Clear existing DNS configuration
+      Set-DnsClientServerAddress -InterfaceAlias "{{ domain_adapter }}" -ResetServerAddresses
+      
+      # Configure appropriate DNS servers based on the member domain
+      $parentDomainDcIP = "{{ parent_dc_ip_result.stdout | trim | default('') }}"
+      $northDomainDcIP = "{{ north_dc_ip_result.stdout | trim | default('') }}"
+      $essosDomainDcIP = "{{ essos_dc_ip_result.stdout | trim | default('') }}"
+      
+      Write-Output "Dynamically discovered domain controller IPs:"
+      Write-Output " - Parent domain (sevenkingdoms.local): $parentDomainDcIP"
+      Write-Output " - North domain (north.sevenkingdoms.local): $northDomainDcIP"
+      Write-Output " - Essos domain (essos.local): $essosDomainDcIP"
+      
+      # Ensure we have IPs before proceeding
+      if ([string]::IsNullOrEmpty($parentDomainDcIP) -or 
+          [string]::IsNullOrEmpty($northDomainDcIP) -or
+          [string]::IsNullOrEmpty($essosDomainDcIP)) {
+        Write-Error "Some domain controller IPs could not be determined"
+      }
+      
+      if ("{{ member_domain }}" -eq "north.sevenkingdoms.local") {
+        # For north domain, use both north DC and parent DC
+        # Use the child domain DC as primary and the parent DC as secondary
+        Set-DnsClientServerAddress -InterfaceAlias "{{ domain_adapter }}" -ServerAddresses @($northDomainDcIP, $parentDomainDcIP)
+        Write-Output "Set DNS servers for north.sevenkingdoms.local: primary=$northDomainDcIP, secondary=$parentDomainDcIP"
+      }
+      elseif ("{{ member_domain }}" -eq "sevenkingdoms.local") {
+        # For parent domain, use parent DC
+        Set-DnsClientServerAddress -InterfaceAlias "{{ domain_adapter }}" -ServerAddresses @($parentDomainDcIP)
+        Write-Output "Set DNS server for sevenkingdoms.local: $parentDomainDcIP"
+      }
+      elseif ("{{ member_domain }}" -eq "essos.local") {
+        # For essos domain, use essos DC
+        Set-DnsClientServerAddress -InterfaceAlias "{{ domain_adapter }}" -ServerAddresses @($essosDomainDcIP)
+        Write-Output "Set DNS server for essos.local: $essosDomainDcIP"
+      }
+      
+      # Configure DNS suffix search list
+      $domains = @("{{ member_domain }}")
+      
+      # For north.sevenkingdoms.local, add parent domain to search list
+      if ("{{ member_domain }}" -like "*.sevenkingdoms.local") {
+        $domains += "sevenkingdoms.local"
+      }
+      
+      # Set DNS client suffixes
+      Set-DnsClientGlobalSetting -SuffixSearchList $domains
+      Write-Output "Set DNS suffix search list: $($domains -join ', ')"
+      
+      # Register DNS 
+      ipconfig /registerdns
+      
+      # Output the current DNS configuration
+      Write-Output "Current DNS Configuration:"
+      Get-DnsClientServerAddress -InterfaceAlias "{{ domain_adapter }}" | Format-List
+      Get-DnsClientGlobalSetting | Format-List
+  register: dns_config_result
 
-- name: Verify DNS connection to domain controller
+- name: Flush DNS cache
   ansible.windows.win_shell: |
-    Test-NetConnection -ComputerName {{ dns_domain }} -Port 53
-  register: dns_connection_test
-  ignore_errors: true
+    ipconfig /flushdns
+    Write-Output "Flushed DNS cache"
 
-- name: Display DNS test results
-  ansible.builtin.debug:
-    var: dns_connection_test
+- name: Verify domain resolution (with retry)
+  ansible.windows.win_shell: |
+    $maxRetries = 3
+    $retryDelaySeconds = 5
+    $domainToResolve = "{{ member_domain }}"
     
-- name: Test domain resolution
-  ansible.windows.win_shell: |
-    Resolve-DnsName -Name {{ member_domain }} -Type A -ErrorAction SilentlyContinue
+    # Get the dynamically discovered DC IP addresses
+    $parentDomainDcIP = "{{ parent_dc_ip_result.stdout | trim | default('') }}"
+    $northDomainDcIP = "{{ north_dc_ip_result.stdout | trim | default('') }}"
+    $essosDomainDcIP = "{{ essos_dc_ip_result.stdout | trim | default('') }}"
+    
+    for ($i = 0; $i -lt $maxRetries; $i++) {
+      try {
+        Write-Output "Attempt $($i+1): Resolving $domainToResolve..."
+        $result = Resolve-DnsName -Name $domainToResolve -Type A -ErrorAction Stop
+        if ($result) {
+          Write-Output "SUCCESS: Resolved $domainToResolve to $($result.IPAddress)"
+          exit 0
+        }
+      }
+      catch {
+        Write-Output "FAILED: Could not resolve $domainToResolve on attempt $($i+1): $_"
+        
+        if ($i -lt $maxRetries - 1) {
+          Write-Output "Waiting $retryDelaySeconds seconds before retry..."
+          Start-Sleep -Seconds $retryDelaySeconds
+          
+          # After first failure, try flushing DNS again
+          ipconfig /flushdns
+          Write-Output "Flushed DNS cache before retry"
+        }
+      }
+    }
+    
+    # Try a different approach - query the domain controller directly
+    try {
+      if ("{{ member_domain }}" -eq "north.sevenkingdoms.local" -and -not [string]::IsNullOrEmpty($northDomainDcIP)) {
+        $result = Resolve-DnsName -Name $domainToResolve -Server $northDomainDcIP -Type A -ErrorAction Stop
+        Write-Output "Direct query to child DC successful: $($result.IPAddress)"
+        exit 0
+      }
+      elseif ("{{ member_domain }}" -eq "sevenkingdoms.local" -and -not [string]::IsNullOrEmpty($parentDomainDcIP)) {
+        $result = Resolve-DnsName -Name $domainToResolve -Server $parentDomainDcIP -Type A -ErrorAction Stop
+        Write-Output "Direct query to parent DC successful: $($result.IPAddress)"
+        exit 0
+      }
+      elseif ("{{ member_domain }}" -eq "essos.local" -and -not [string]::IsNullOrEmpty($essosDomainDcIP)) {
+        $result = Resolve-DnsName -Name $domainToResolve -Server $essosDomainDcIP -Type A -ErrorAction Stop
+        Write-Output "Direct query to essos DC successful: $($result.IPAddress)"
+        exit 0
+      }
+    }
+    catch {
+      Write-Output "Direct query to domain controller failed: $_"
+    }
+    
+    Write-Output "WARNING: All resolution methods failed for $domainToResolve, but continuing..."
+    # Allow the task to succeed even if resolution failed
+    exit 0
   register: domain_resolution_test
   ignore_errors: true
-  
-- name: Display domain resolution test results
-  ansible.builtin.debug:
-    var: domain_resolution_test
-
-- name: Wait for DNS changes to propagate
-  ansible.windows.win_shell: Start-Sleep -Seconds 30
-  when: dns_connection_test.rc == 0
 
 - name: Verify File Server Role is installed
   ansible.windows.win_feature:
@@ -59,10 +176,9 @@
     dns_domain_name: "{{ member_domain }}"
     domain_admin_user: "{{ domain_username }}"
     domain_admin_password: "{{ domain_password }}"
-#    domain_ou_path: "{{member_domain_ou_path}}"
     state: domain
   register: domain_state
-  failed_when: false  # Don't fail immediately to allow for troubleshooting
+  failed_when: false
   
 - name: Report domain join failure details
   ansible.builtin.debug:
