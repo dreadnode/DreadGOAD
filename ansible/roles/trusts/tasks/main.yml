@@ -1,5 +1,6 @@
-- name: "Prepare to trust flush and renew dns"
-  win_shell: |
+---
+- name: Prepare to trust flush and renew dns
+  ansible.windows.win_shell: |
     ipconfig /flushdns
     ipconfig /renew
 
@@ -11,57 +12,176 @@
       param (
           [String]
           $RemoteForest,
-
           [String]
           $RemoteAdmin,
-
           [String]
-          $RemoteAdminPassword
+          $RemoteAdminPassword,
+          [String]
+          $LocalAdmin,
+          [String]
+          $LocalAdminPassword
       )
-      $localforest=[System.DirectoryServices.ActiveDirectory.Forest]::getCurrentForest()
+      
+      # First, try to verify if the trust already exists
       try {
-        $localForest.GetTrustRelationship($RemoteForest)
-        $Ansible.Changed = $false
-      } catch [System.DirectoryServices.ActiveDirectory.ActiveDirectoryObjectNotFoundException] {
-        $Ansible.Changed = $true
-        $remoteContext = New-Object -TypeName "System.DirectoryServices.ActiveDirectory.DirectoryContext" -ArgumentList @( "Forest", $RemoteForest, $RemoteAdmin, $RemoteAdminPassword)
-        $distantForest = [System.DirectoryServices.ActiveDirectory.Forest]::getForest($remoteContext)
-        $localForest.CreateTrustRelationship($distantForest,"Bidirectional")
+        $localforest = [System.DirectoryServices.ActiveDirectory.Forest]::getCurrentForest()
+        $existingTrust = $localForest.GetTrustRelationship($RemoteForest)
+        Write-Output "Trust already exists: $($existingTrust.TrustDirection)"
+        
+        # Use a JSON formatted output that can be properly parsed by Ansible
+        $result = @{
+          changed = $false
+          status = "already_exists"
+          direction = "$($existingTrust.TrustDirection)"
+        }
+        $result | ConvertTo-Json -Compress
+        exit 0
+      } 
+      catch [System.DirectoryServices.ActiveDirectory.ActiveDirectoryObjectNotFoundException] {
+        Write-Output "Trust doesn't exist, will create it"
       }
-    error_action: stop
+      catch {
+        Write-Output "Error checking for existing trust: $($_.Exception.Message)"
+      }
+      
+      try {
+        # Try the netdom approach first - often more reliable
+        $securePwd = ConvertTo-SecureString $RemoteAdminPassword -AsPlainText -Force
+        $remoteCred = New-Object System.Management.Automation.PSCredential ($RemoteAdmin, $securePwd)
+        
+        # Test DNS resolution first
+        Write-Output "Testing DNS resolution for $RemoteForest"
+        try {
+          $dnsResult = Resolve-DnsName -Name $RemoteForest -Type A -ErrorAction Stop
+          Write-Output "DNS resolution successful: $($dnsResult.IPAddress)"
+        } catch {
+          Write-Output "Warning: DNS resolution failed: $($_.Exception.Message)"
+        }
+        
+        # Create the trust using netdom
+        $netdomResult = netdom trust $env:USERDNSDOMAIN /Domain:$RemoteForest /TwoWay /UserD:$RemoteAdmin /PasswordD:$RemoteAdminPassword /add
+        Write-Output "netdom result: $netdomResult"
+        
+        $result = @{
+          changed = $true
+          status = "created"
+          method = "netdom"
+        }
+        $result | ConvertTo-Json -Compress
+      }
+      catch {
+        Write-Output "netdom approach failed: $($_.Exception.Message)"
+        
+        try {
+          # Fall back to .NET classes approach
+          Write-Output "Trying .NET classes approach..."
+          $remoteContext = New-Object -TypeName "System.DirectoryServices.ActiveDirectory.DirectoryContext" -ArgumentList @("Forest", $RemoteForest, $RemoteAdmin, $RemoteAdminPassword)
+          $distantForest = [System.DirectoryServices.ActiveDirectory.Forest]::getForest($remoteContext)
+          
+          # Log some information about the forests
+          Write-Output "Local Forest: $($localForest.Name)"
+          Write-Output "Remote Forest: $($distantForest.Name)"
+          
+          # Create the trust relationship
+          $localForest.CreateTrustRelationship($distantForest, "Bidirectional")
+          Write-Output "Trust created successfully using .NET classes"
+          
+          $result = @{
+            changed = $true
+            status = "created"
+            method = ".NET classes"
+          }
+          $result | ConvertTo-Json -Compress
+        }
+        catch {
+          Write-Output "Both approaches failed. Last error: $($_.Exception.Message)"
+          if ($_.Exception.InnerException) {
+            Write-Output "Inner exception: $($_.Exception.InnerException.Message)"
+          }
+          
+          $result = @{
+            changed = $false
+            status = "failed"
+            error = "$($_.Exception.Message)"
+          }
+          $result | ConvertTo-Json -Compress
+          exit 1
+        }
+      }
     parameters:
-      RemoteForest: "{{remote_forest}}"
-      RemoteAdmin: "{{remote_admin}}"
-      RemoteAdminPassword: "{{remote_admin_password}}"
-  vars:
-    ansible_become: yes
-    ansible_become_method: runas
-    ansible_become_user: "{{domain_username}}"
-    ansible_become_password: "{{domain_password}}"
-  register:
-    trust_result
+      RemoteForest: "{{ remote_forest }}"
+      RemoteAdmin: "{{ remote_admin }}"
+      RemoteAdminPassword: "{{ remote_admin_password }}"
+      LocalAdmin: "{{ domain_username }}"
+      LocalAdminPassword: "{{ domain_password }}"
+  register: trust_result
+  ignore_errors: true
 
-- name: "Reboot and wait for the AD system to restart"
-  win_reboot:
-    test_command: "Get-ADUser -Identity Administrator -Properties *"
+- name: Test DNS resolution of remote forest
+  ansible.windows.win_powershell:
+    script: |
+      Resolve-DnsName -Name {{ remote_forest }} -Type A
+      Resolve-DnsName -Name {{ remote_dc }} -Type A
+      Get-DnsClientServerAddress -AddressFamily IPv4 | Format-Table
+    error_action: continue
+  register: dns_test
+  
+- name: Display DNS test results
+  debug:
+    var: dns_test
+
+- name: Display trust result information
+  debug:
+    var: trust_result
+
+- name: Reboot and wait for the AD system to restart
+  ansible.windows.win_reboot:
+    # test_command: "Get-ADUser -Identity {{ admin_user }} -Properties *"
+    test_command: "Get-ADUser -Identity goadmin -Properties *"
   when: trust_result.changed
-
 
 #      $localforest=[System.DirectoryServices.ActiveDirectory.Forest]::getCurrentForest()
 #      try {
-#        $trustPassword = "TrustP@$$w0rd12"
+#        $trustPassword = "TrustP@$$w0rd12" 
 #        $localForest.CreateLocalSideOfTrustRelationship($RemoteForest,"Bidirectional",$trustPassword)
 #        $Ansible.Changed = $true
 #      } catch [System.DirectoryServices.ActiveDirectory.ActiveDirectoryObjectExistsException] {
 #        $Ansible.Changed = $false
 
+- name: Test network connectivity to remote DC
+  ansible.windows.win_powershell:
+    script: |
+      Test-NetConnection -ComputerName {{ hostvars[remote_dc].ansible_host }} -Port 389
+      Test-NetConnection -ComputerName {{ hostvars[remote_dc].ansible_host }} -Port 445
+    error_action: continue
+  register: network_test
+  
+- name: Display network test results
+  debug:
+    var: network_test
+
+- name: Check forest functional level
+  ansible.windows.win_powershell:
+    script: |
+      Get-ADForest | Select-Object ForestMode
+    error_action: continue
+  register: forest_level
+  
+- name: Display forest level
+  debug:
+    var: forest_level
+
 - name: Show trust result
-  win_shell: |
-    $obj = Get-CimInstance -Class Microsoft_DomainTrustStatus -Namespace root\microsoftactivedirectory
-    Write-Output -InputObject $obj
-  vars:
-    ansible_become: yes
-    ansible_become_method: runas
-    domain_name: "{{domain}}"
-    ansible_become_user: "{{domain_username}}"
-    ansible_become_password: "{{domain_password}}"
+  ansible.windows.win_powershell:
+    script: |
+      # Suppress progress output
+      $ProgressPreference = 'SilentlyContinue'
+
+      # Get trust status using CIM
+      $obj = Get-CimInstance -Class Microsoft_DomainTrustStatus -Namespace root\microsoftactivedirectory
+
+      # Convert to JSON and return (handle CLIXML issue)
+      $result = $obj | Select-Object FlatName, SID, TrustAttributes, TrustDirection, TrustedDCName, TrustedDomain, TrustIsOk, TrustStatus, TrustStatusString, TrustType
+      ConvertTo-Json -InputObject $result -Depth 3
+  register: trust_status_details
+  ignore_errors: true

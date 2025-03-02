@@ -35,7 +35,6 @@
            parent_dc_ip_result.stdout | trim if member_domain == 'sevenkingdoms.local' else 
            essos_dc_ip_result.stdout | trim }}"
   register: dns_config_result
-  ignore_errors: true
 
 - name: Configure multi-domain DNS settings
   ansible.windows.win_powershell:
@@ -163,7 +162,6 @@
     # Allow the task to succeed even if resolution failed
     exit 0
   register: domain_resolution_test
-  ignore_errors: true
 
 - name: Verify File Server Role is installed
   ansible.windows.win_feature:
