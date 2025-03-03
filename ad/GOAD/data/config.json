@@ -4,7 +4,7 @@
         "dc01" : {
             "hostname" : "kingslanding",
             "type" : "dc",
-            "local_admin_password": "8dCT-DJjgScp",
+            "local_admin_password": "qjQ!bcwXKU!3yBrDM2VU",
             "domain" : "sevenkingdoms.local",
             "path" : "DC=sevenkingdoms,DC=local",
             "local_groups" : {
@@ -28,7 +28,7 @@
         "dc02" : {
             "hostname" : "winterfell",
             "type" : "dc",
-            "local_admin_password": "NgtI75cKV+Pu",
+            "local_admin_password": "VExkHyfsKTW_HMNA7fQy",
             "domain" : "north.sevenkingdoms.local",
             "path" : "DC=north,DC=sevenkingdoms,DC=local",
             "local_groups" : {
@@ -88,7 +88,7 @@
         "srv02" : {
             "hostname" : "castelblack",
             "type" : "server",
-            "local_admin_password": "NgtI75cKV+Pu",
+            "local_admin_password": "VExkHyfsKTW_HMNA7fQy",
             "domain" : "north.sevenkingdoms.local",
             "path" : "DC=north,DC=sevenkingdoms,DC=local",
             "use_laps": false,
@@ -162,7 +162,7 @@
         "dc03" : {
             "hostname" : "meereen",
             "type" : "dc",
-            "local_admin_password": "Ufe-bVXSx9rk",
+            "local_admin_password": "M!BbXzL48D9mH9dQzp*e",
             "domain" : "essos.local",
             "path" : "DC=essos,DC=local",
             "local_groups" : {
@@ -179,7 +179,7 @@
         "srv03" : {
             "hostname" : "braavos",
             "type" : "server",
-            "local_admin_password": "978i2pF43UJ-",
+            "local_admin_password": "M!BbXzL48D9mH9dQzp*e",
             "domain" : "essos.local",
             "path" : "DC=essos,DC=local",
             "use_laps": true,
@@ -218,7 +218,7 @@
     "domains" : {
         "essos.local" : {
             "dc": "dc03",
-            "domain_password" : "Ufe-bVXSx9rk",
+            "domain_password" : "M!BbXzL48D9mH9dQzp*e",
             "netbios_name": "ESSOS",
             "ca_server": "Braavos",
             "trust" : "sevenkingdoms.local",
@@ -241,16 +241,16 @@
                         "path" : "CN=Users,DC=essos,DC=local"
                     },
                     "Dragons":{
-                        "managed_by" : "Administrator",
+                        "managed_by" : "goadmin",
                         "path" : "CN=Users,DC=essos,DC=local"
                     },
                     "QueenProtector":{
-                        "managed_by" : "Administrator",
+                        "managed_by" : "goadmin",
                         "path" : "CN=Users,DC=essos,DC=local",
                         "members" : ["ESSOS\\Dragons"]
                     },
                     "Domain Admins":{
-                        "managed_by" : "Administrator",
+                        "managed_by" : "goadmin",
                         "path" : "CN=Users,DC=essos,DC=local",
                         "members" : ["ESSOS\\QueenProtector"]
                     }
@@ -360,7 +360,7 @@
         },
         "north.sevenkingdoms.local" : {
             "dc": "dc02",
-            "domain_password" : "NgtI75cKV+Pu",
+            "domain_password" : "VExkHyfsKTW_HMNA7fQy",
             "netbios_name": "NORTH",
             "trust" : "",
             "laps_path": "OU=Laps,DC=north,DC=sevenkingdoms,DC=local",
@@ -509,7 +509,7 @@
         },
         "sevenkingdoms.local" : {
             "dc": "dc01",
-            "domain_password" : "8dCT-DJjgScp",
+            "domain_password" : "qjQ!bcwXKU!3yBrDM2VU",
             "netbios_name": "SEVENKINGDOMS",
             "trust" : "essos.local",
             "laps_path": "OU=Laps,DC=sevenkingdoms,DC=local",

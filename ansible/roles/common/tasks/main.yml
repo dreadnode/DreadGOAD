@@ -1,3 +1,4 @@
+---
 - name: Force a DNS on the adapter {{ nat_adapter }}
   ansible.windows.win_dns_client:
     adapter_names: "{{ nat_adapter }}"

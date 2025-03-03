@@ -1,3 +1,4 @@
+---
 - name: Disable windows update
   win_shell: |
     # set the Windows Update service to "disabled"

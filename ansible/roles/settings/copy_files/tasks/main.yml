@@ -1,9 +1,10 @@
+---
 - name: Create directory
-  win_file:
+  ansible.windows.win_file:
     path: C:\tmp
     state: directory
 
 - name: Download GOAD img in C:\tmp
-  win_copy:
+  ansible.windows.win_copy:
     src: GOAD.png
     dest: C:\tmp\GOAD.png

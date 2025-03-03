@@ -3,7 +3,11 @@
 #   win_shell: netsh interface set interface "{{nat_adapter}}" disable
 - name: Disable the registration of the {{ nat_adapter }} interface (NAT address) in DNS
   ansible.windows.win_shell:
-    Get-NetAdapter {{ nat_adapter }} | Set-DNSClient -RegisterThisConnectionsAddress $False
+    Get-NetAdapter -Name "{{ nat_adapter }}" | Set-DNSClient -RegisterThisConnectionsAddress $False
+  register: disable_dns_reg
+  failed_when: 
+    - disable_dns_reg.rc != 0
+    - "'Cannot find network adapter' not in disable_dns_reg.stderr"
   when: two_adapters
 
 - name: Ensure that domain exists
@@ -11,26 +15,49 @@
     dns_domain_name: "{{ domain }}"
     safe_mode_password: "{{ domain_password }}"
   register: check_domain
+  failed_when: false
 
-- name: Reboot to complete domain creation
+- name: Reboot if domain creation requires it
   ansible.windows.win_reboot:
     reboot_timeout: 900
     post_reboot_delay: 300
-  when: check_domain.changed or (check_domain is failed and "needs to be restarted" in check_domain.msg|default(''))
+  when: check_domain.reboot_required | default(false) or 
+        (check_domain is failed and "needs to be restarted" in check_domain.msg | default(''))
 
-- name: Wait for connection after reboot
-  ansible.builtin.wait_for_connection:
-    delay: 30
-    timeout: 300
-  when: check_domain.changed or (check_domain is failed and "needs to be restarted" in check_domain.msg|default(''))
-
-- name: Re-attempt domain creation if it failed due to reboot requirement
+- name: Re-attempt domain creation
   microsoft.ad.domain:
-    domain_netbios_name: "{{ netbios_name }}"
     dns_domain_name: "{{ domain }}"
     safe_mode_password: "{{ domain_password }}"
-  register: check_domain_retry
-  when: check_domain is failed and "needs to be restarted" in check_domain.msg|default('')
+    domain_netbios_name: "{{ netbios_name }}"
+  register: retry_domain
+  failed_when: 
+    - retry_domain is failed
+    - '"needs to be restarted" not in retry_domain.msg | default("")'
+    - '"already exists" not in retry_domain.msg | default("")'
+
+- name: Reboot after retry if needed
+  ansible.windows.win_reboot:
+    reboot_timeout: 900
+    post_reboot_delay: 300
+  when: retry_domain.reboot_required | default(false) or 
+        (retry_domain is failed and "needs to be restarted" in retry_domain.msg | default(''))
+
+- name: Wait for domain to fully initialize
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = "Stop"
+    try {
+      $domain = Get-ADDomain -ErrorAction Stop
+      Write-Output "Domain $($domain.Name) is accessible"
+      return 0
+    } catch {
+      Write-Error "Domain not yet accessible: $_"
+      return 1
+    }
+  register: domain_check
+  until: domain_check.rc == 0
+  retries: 10
+  delay: 30
+  changed_when: false
 
 - name: Ensure the server is a domain controller
   microsoft.ad.domain_controller:
@@ -40,72 +67,181 @@
     safe_mode_password: "{{ domain_password }}"
     state: domain_controller
   register: check_domain_controller
+  failed_when: 
+    - check_domain_controller is failed
+    - '"needs to be restarted" not in check_domain_controller.msg | default("")'
+    - '"already a domain controller" not in check_domain_controller.msg | default("")'
+
+- name: Reboot if domain controller promotion requires it
+  ansible.windows.win_reboot:
+    reboot_timeout: 900
+    post_reboot_delay: 300
+  when: check_domain_controller.reboot_required | default(false) or 
+        (check_domain_controller is failed and "needs to be restarted" in check_domain_controller.msg | default(''))
+
+- name: Re-attempt domain controller promotion if needed
+  microsoft.ad.domain_controller:
+    dns_domain_name: "{{ domain }}"
+    domain_admin_user: "{{ domain_username }}"
+    domain_admin_password: "{{ domain_password }}"
+    safe_mode_password: "{{ domain_password }}"
+    state: domain_controller
+  register: retry_dc_promotion
+  when: check_domain_controller is failed and "needs to be restarted" in check_domain_controller.msg | default('')
+  failed_when: 
+    - retry_dc_promotion is defined
+    - retry_dc_promotion is failed
+    - '"needs to be restarted" not in retry_dc_promotion.msg | default("")'
+    - '"already a domain controller" not in retry_dc_promotion.msg | default("")'
+
+- name: Reboot after retry if needed
+  ansible.windows.win_reboot:
+    reboot_timeout: 900
+    post_reboot_delay: 300
+  when: retry_dc_promotion.reboot_required | default(false) or 
+        (retry_dc_promotion is defined and retry_dc_promotion is failed and "needs to be restarted" in retry_dc_promotion.msg | default(''))
 
 - name: Check domain controller status
   ansible.windows.win_shell: |
-    (Get-ADDomainController).HostName
-  register: dc_check
+    $ErrorActionPreference = "Stop"
+    try {
+      $dc = Get-ADDomainController
+      Write-Output "Domain Controller $($dc.HostName) is functioning properly"
+      return 0
+    } catch {
+      Write-Error "Domain Controller verification failed: $_"
+      return 1
+    }
+  register: dc_verification
+  until: dc_verification.rc == 0
+  retries: 10
+  delay: 30
   changed_when: false
 
-- name: Reboot to complete domain controller setup
-  ansible.windows.win_reboot:
-    reboot_timeout: 900
-    post_reboot_delay: 100
-  when: check_domain_controller.changed
-
-# DNSCHANGE
-# - name: "enable interface {{nat_adapter}} after domain joined"
-#   win_shell: netsh interface set interface "{{nat_adapter}}" enable
-#   register: enable_interface_dc
-#   until: "enable_interface_dc is not failed"
-#   retries: 3
-#   delay: 120
-
-- name: Be sure DNS feature is installed
+- name: Ensure DNS feature is installed
   ansible.windows.win_feature:
     name: DNS
     state: present
+  register: dns_feature
+
+- name: Reboot if DNS feature installation requires it
+  ansible.windows.win_reboot:
+    reboot_timeout: 900
+    post_reboot_delay: 300
+  when: dns_feature.reboot_required | default(false)
 
 - name: Install xDnsServer PowerShell module
   ansible.windows.win_shell: |
+    $ErrorActionPreference = "Stop"
     if (-not (Get-Module -ListAvailable -Name xDnsServer)) {
+      [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
       Install-Module -Name xDnsServer -Force -AllowClobber -SkipPublisherCheck
+      Write-Output "xDnsServer module installed successfully"
+    } else {
+      Write-Output "xDnsServer module already installed"
     }
+  register: xdns_install
 
-- name: Enable the {{ domain_adapter }} interface (local) for DNS client requests
-  ansible.windows.win_shell: dnscmd . /resetlistenaddresses {{ hostvars[dict_key].ansible_host }}
+- name: Configure DNS listener addresses
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = "Stop"
+    try {
+      dnscmd . /resetlistenaddresses {{ hostvars[dict_key].ansible_host }}
+      Write-Output "DNS listener addresses configured successfully"
+    } catch {
+      Write-Error "Failed to configure DNS listener addresses: $_"
+      exit 1
+    }
+  register: dns_listener
   when: two_adapters
 
 - name: Configure DNS Forwarders
   ansible.windows.win_shell: |
-    Add-DnsServerForwarder -IPAddress "{{ dns_server_forwarder }}" -PassThru
-    Set-DnsServerForwarder -UseRootHint $false
+    $ErrorActionPreference = "Stop"
+    try {
+      Add-DnsServerForwarder -IPAddress "{{ dns_server_forwarder }}" -PassThru
+      Set-DnsServerForwarder -UseRootHint $false
+      Write-Output "DNS forwarders configured successfully"
+    } catch {
+      Write-Error "Failed to configure DNS forwarders: $_"
+      exit 1
+    }
+  register: dns_forwarders
   when: dns_server_forwarder is defined
-
-#- name: install nuget
-#  win_shell: install-packageprovider -name nuget -force
 
 - name: Install ActiveDirectoryDSC
   community.windows.win_psmodule:
     name: ActiveDirectoryDSC
     state: present
+  register: ad_dsc_module
 
-- name: Ensure admin user is part of Enterprise Admins
-  microsoft.ad.group:
-    name: "Enterprise Admins"
-    members:
-      add:
-        - "{{ admin_user }}"
-    state: present
-    domain_username: "{{ domain_username }}"
-    domain_password: "{{ domain_password }}"
+- name: Ensure admin groups are properly configured
+  block:
+    - name: Ensure admin user is part of Enterprise Admins
+      microsoft.ad.group:
+        name: "Enterprise Admins"
+        members:
+          add:
+            - "{{ admin_user }}"
+        state: present
+        domain_username: "{{ domain_username }}"
+        domain_password: "{{ domain_password }}"
 
-- name: Ensure admin user is part of Domain Admins
-  microsoft.ad.group:
-    name: "Domain Admins"
-    members:
-      add:
-        - "{{ admin_user }}"
-    state: present
-    domain_username: "{{ domain_username }}"
-    domain_password: "{{ domain_password }}"
+    - name: Ensure admin user is part of Domain Admins
+      microsoft.ad.group:
+        name: "Domain Admins"
+        members:
+          add:
+            - "{{ admin_user }}"
+        state: present
+        domain_username: "{{ domain_username }}"
+        domain_password: "{{ domain_password }}"
+  rescue:
+    - name: Wait for AD services to become fully operational
+      ansible.windows.win_shell: |
+        $ErrorActionPreference = "Stop"
+        $ready = $false
+        $retries = 10
+        $delay = 30
+        
+        for ($i = 0; $i -lt $retries; $i++) {
+          try {
+            $dc = Get-ADDomainController
+            $forest = Get-ADForest
+            $domain = Get-ADDomain
+            Write-Output "Domain services appear to be ready"
+            $ready = $true
+            break
+          } catch {
+            Write-Output "Waiting for AD services to be ready: $_"
+            Start-Sleep -Seconds $delay
+          }
+        }
+        
+        if (-not $ready) {
+          Write-Error "AD services did not become fully operational within expected time"
+          exit 1
+        }
+      register: ad_services_wait
+      
+    - name: Retry admin group configuration
+      block:
+        - name: Ensure admin user is part of Enterprise Admins (retry)
+          microsoft.ad.group:
+            name: "Enterprise Admins"
+            members:
+              add:
+                - "{{ admin_user }}"
+            state: present
+            domain_username: "{{ domain_username }}"
+            domain_password: "{{ domain_password }}"
+    
+        - name: Ensure admin user is part of Domain Admins (retry)
+          microsoft.ad.group:
+            name: "Domain Admins"
+            members:
+              add:
+                - "{{ admin_user }}"
+            state: present
+            domain_username: "{{ domain_username }}"
+            domain_password: "{{ domain_password }}"

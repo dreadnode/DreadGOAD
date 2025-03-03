@@ -25,7 +25,7 @@
         $Ansible.Changed = $false
       }
     parameters:
-      hostname: "{{item.value.hostname}}"
-      ou_path:  "{{item.value.path|default('')}}"
+      hostname: "{{ item.value.hostname }}"
+      ou_path:  "{{ item.value.path|default('') }}"
   when: item.value.type != 'dc' and member_domain == item.value.domain and (item.value.use_laps is not defined or item.value.use_laps != true)
-  with_dict: "{{hosts_dict}}"
+  with_dict: "{{ hosts_dict }}"
