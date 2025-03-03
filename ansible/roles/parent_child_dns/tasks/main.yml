@@ -22,24 +22,23 @@
     child_dc: "{{ lab.domains[item].dc }}"
   register: child_ipv4_result
   loop: "{{ domains }}"
-  when: domain == '.'.join(item.split('.')[1:])
+  when: item.endswith('.' + domain)
   
-- name: Extract IP address for north.sevenkingdoms.local
+- name: Extract IP addresses for child domains
   ansible.builtin.set_fact:
-    child_ip_addresses: "{{ child_ip_addresses | default({}) | combine({'north.sevenkingdoms.local': item.output[0]}) }}"
+    child_ip_addresses: "{{ child_ip_addresses | default({}) | combine({item.item: item.output[0]}) }}"
   with_items: "{{ child_ipv4_result.results | default([]) }}"
   when: >
-    child_ipv4_result.results is defined and 
-    item.item == 'north.sevenkingdoms.local' and
+    item.skipped is not defined and
     item.output is defined and 
     item.output | length > 0
   
-# - name: Debug extracted IP addresses
-#   ansible.builtin.debug:
-#     var: child_ip_addresses
-#     verbosity: 0
+- name: Debug extracted IP addresses
+  ansible.builtin.debug:
+    var: child_ip_addresses
+    verbosity: 1
   
-- name: Add dns delegation to child domain
+- name: Add dns delegation to child domains
   ansible.windows.win_powershell:
     script: |
       try {
@@ -77,16 +76,19 @@
       }
   vars:
     parent_domain: "{{ domain }}"
-    child_dc: "{{ lab.domains['north.sevenkingdoms.local'].dc }}"
-    name_server: "{{ lab.hosts[child_dc].hostname }}.north.sevenkingdoms.local"
-    name_server_ip: "{{ child_ip_addresses['north.sevenkingdoms.local'] }}"
-    zone: "north"
-  when: >
-    child_ip_addresses is defined and 
-    'north.sevenkingdoms.local' in child_ip_addresses and
-    domain == 'sevenkingdoms.local'
-
-- name: Create conditional forwarder to child domain
+    child_domain: "{{ item_key }}"
+    child_dc: "{{ lab.domains[item_key].dc }}"
+    name_server: "{{ lab.hosts[child_dc].hostname }}.{{ item_key }}"
+    name_server_ip: "{{ item_value }}"
+    zone: "{{ item_key.split('.')[0] }}"
+    item_key: "{{ item.key }}"
+    item_value: "{{ item.value }}"
+  loop: "{{ child_ip_addresses | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: child_ip_addresses is defined
+  
+- name: Create conditional forwarder to child domains
   ansible.windows.win_powershell:
     script: |
       try {
@@ -114,9 +116,11 @@
         $Ansible.Changed = $false
       }
   vars:
-    child_zone: "north.sevenkingdoms.local"
-    server_ip: "{{ child_ip_addresses['north.sevenkingdoms.local'] }}"
-  when: >
-    child_ip_addresses is defined and 
-    'north.sevenkingdoms.local' in child_ip_addresses and
-    domain == 'sevenkingdoms.local'
+    child_zone: "{{ item_key }}"
+    server_ip: "{{ item_value }}"
+    item_key: "{{ item.key }}"
+    item_value: "{{ item.value }}"
+  loop: "{{ child_ip_addresses | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: child_ip_addresses is defined
