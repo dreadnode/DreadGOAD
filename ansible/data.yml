@@ -23,8 +23,8 @@
 
     - name: Set domain adapter from Windows API
       ansible.builtin.set_fact:
-        domain_adapter: "{{ windows_adapter_result.stdout | trim }}"
-      when: windows_adapter_result.stdout is defined and windows_adapter_result.stdout != ""
+        domain_adapter: "{{ windows_adapter_result.host_out | default(windows_adapter_result.stdout) | trim }}"
+      when: windows_adapter_result is defined and (windows_adapter_result.host_out is defined or windows_adapter_result.stdout is defined)
       run_once: true
 
     # Use the first interface's IP address for comparison
