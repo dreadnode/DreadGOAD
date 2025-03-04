@@ -1,3 +1,4 @@
+---
 # $gMSA_Name = 'gmsaWWW'
 # $gMSA_FQDN = 'gmsaWWW.contoso.com'
 # $gMSA_SPNs = 'http/www', 'http/www.contoso.com'
@@ -20,19 +21,31 @@
           [String[]]
           $gMSA_HostNames
       )
-      Import-Module ActiveDirectory
-      Set-Location AD:
-      Add-KDSRootKey -EffectiveTime (Get-Date).AddHours(-10)
-      $gMSA_HostsGroup = $gMSA_HostNames | ForEach-Object { Get-ADComputer -Identity $_ }
-      New-ADServiceAccount -Name $gMSA_Name -DNSHostName $gMSA_FQDN -PrincipalsAllowedToRetrieveManagedPassword $gMSA_HostsGroup -ServicePrincipalNames $gMSA_SPNs
+      try {
+          Import-Module ActiveDirectory
+          Set-Location AD:
+          Add-KDSRootKey -EffectiveTime (Get-Date).AddHours(-10) -ErrorAction SilentlyContinue
+          $gMSA_HostsGroup = $gMSA_HostNames | ForEach-Object { Get-ADComputer -Identity $_ }
+          New-ADServiceAccount -Name $gMSA_Name -DNSHostName $gMSA_FQDN -PrincipalsAllowedToRetrieveManagedPassword $gMSA_HostsGroup -ServicePrincipalNames $gMSA_SPNs
+          $Ansible.Changed = $true
+          Write-Output "Created GMSA account $gMSA_Name successfully"
+      }
+      catch {
+          Write-Error "Failed to create GMSA account: $_"
+          $Ansible.Changed = $false
+          exit 1
+      }
     parameters:
-      gMSA_Name: "{{item.value.gMSA_Name}}"
-      gMSA_FQDN: "{{item.value.gMSA_FQDN}}"
-      gMSA_SPNs: "{{item.value.gMSA_SPNs}}"
-      gMSA_HostNames: "{{item.value.gMSA_HostNames}}"
+      gMSA_Name: "{{ item.value.gMSA_Name }}"
+      gMSA_FQDN: "{{ item.value.gMSA_FQDN }}"
+      gMSA_SPNs: "{{ item.value.gMSA_SPNs }}"
+      gMSA_HostNames: "{{ item.value.gMSA_HostNames }}"
+    error_action: stop
   vars:
-    ansible_become: yes
+    ansible_become: true
     ansible_become_method: runas
-    ansible_become_user: "{{domain_username}}"
-    ansible_become_password: "{{domain_password}}"
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
   with_dict: "{{ ad_gmsa }}"
+  register: gmsa_result
+  failed_when: gmsa_result.host_err is defined and gmsa_result.host_err != '' or gmsa_result.stderr is defined and gmsa_result.stderr != ''

@@ -10,7 +10,7 @@
   roles:
   - { role: 'acl', tags: 'acl'}
   vars:
-    ad_acls: "{{lab.domains[lab.hosts[dict_key].domain].acls | default({})}}"
-    domain: "{{lab.hosts[dict_key].domain}}"
-    domain_username: "{{domain}}\\{{admin_user}}"
-    domain_password: "{{lab.domains[domain].domain_password}}"
+    ad_acls: "{{ lab.domains[lab.hosts[dict_key].domain].acls | default({}) }}"
+    domain: "{{ lab.hosts[dict_key].domain }}"
+    domain_username: "{{ domain }}\\{{ admin_user }}"
+    domain_password: "{{ lab.domains[domain].domain_password }}"

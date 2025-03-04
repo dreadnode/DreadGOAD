@@ -9,6 +9,6 @@
       $false
     }
   vars:
-    hostname: "{{item.value.hostname}}"
+    hostname: "{{ item.value.hostname }}"
   when: item.value.use_laps is defined and item.value.use_laps == true and item.value.domain == domain
-  with_dict: "{{hosts_dict}}"
+  with_dict: "{{ hosts_dict }}"

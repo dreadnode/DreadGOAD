@@ -1,7 +1,8 @@
-- name: laps dc install
+---
+- name: Laps dc install
   import_tasks: install.yml
   when: laps_path != false
 
-- name: move to laps ou
+- name: Move to laps ou
   import_tasks: move_server_to_ou.yml
   when: laps_path != false
