@@ -33,11 +33,6 @@
     item.output is defined and 
     item.output | length > 0
   
-- name: Debug extracted IP addresses
-  ansible.builtin.debug:
-    var: child_ip_addresses
-    verbosity: 1
-  
 - name: Add dns delegation to child domains
   ansible.windows.win_powershell:
     script: |

@@ -11,43 +11,48 @@
   delegate_to: "{{ dns_domain }}"
   register: dns_server_ip_result
 
-- name: Set configure dns to {{ dns_domain }}
-  ansible.windows.win_dns_client:
-    adapter_names: "{{ domain_adapter }}"
-    ipv4_addresses:
-    - "{{ dns_server_ip_result.stdout | trim }}"
+# Configure DNS for workstation
+- name: Configure DNS for workstation
+  ansible.windows.win_powershell:
+    script: |
+      # Get domain-specific information
+      $memberDomain = "{{ member_domain }}"
+      $dnsServerIP = "{{ dns_server_ip_result.stdout | trim }}"
+      
+      Write-Output "Configuring DNS for $memberDomain workstation"
+      Write-Output "Using primary DNS server: $dnsServerIP"
+      
+      # For child domains, we need special handling
+      if ($memberDomain -like "*.sevenkingdoms.local") {
+        # Get parent domain DC IP
+        $parentDcIp = "{{ hostvars['dc01'].ansible_host }}"
+        
+        # Set DNS servers - child DC first, then parent
+        Set-DnsClientServerAddress -InterfaceAlias "{{ domain_adapter }}" -ServerAddresses @($dnsServerIP, $parentDcIp)
+        Write-Output "Set DNS servers to: $dnsServerIP, $parentDcIp for child domain workstation"
+        
+        # Set DNS suffix search list to include both domains
+        $searchList = @($memberDomain, "sevenkingdoms.local")
+        Set-DnsClientGlobalSetting -SuffixSearchList $searchList
+        Write-Output "Set DNS suffix search list: $($searchList -join ', ')"
+      } else {
+        # For parent domains, just use their DC
+        Set-DnsClientServerAddress -InterfaceAlias "{{ domain_adapter }}" -ServerAddresses $dnsServerIP
+        Write-Output "Set DNS server to: $dnsServerIP for parent domain workstation"
+        
+        # Set DNS suffix search list
+        Set-DnsClientGlobalSetting -SuffixSearchList @($memberDomain)
+        Write-Output "Set DNS suffix search list: $memberDomain"
+      }
+      
+      # Flush DNS cache and register DNS
+      ipconfig /flushdns
+      ipconfig /registerdns
+      
+      Write-Output "DNS configuration completed"
   register: dns_config_result
 
-- name: Verify DNS connection to domain controller
-  ansible.windows.win_shell: |
-    Test-NetConnection -ComputerName {{ dns_domain }} -Port 53
-  register: dns_connection_test
-
-- name: Handle potential subdomain DNS issues
-  ansible.windows.win_shell: |
-    # Add parent domain suffix to search list
-    if ("{{ member_domain }}" -like "*.*.*") {
-      $parentParts = "{{ member_domain }}".Split('.')
-      $parentDomain = $parentParts[1..($parentParts.Length-1)] -join '.'
-      
-      # Add parent domain to DNS suffix search list
-      $currentSuffixes = (Get-DnsClientGlobalSetting).SuffixSearchList
-      if ($currentSuffixes -notcontains $parentDomain) {
-        $newSuffixes = @($currentSuffixes) + @($parentDomain)
-        Set-DnsClientGlobalSetting -SuffixSearchList $newSuffixes
-      }
-    }
-    
-    # Flush DNS cache and register
-    ipconfig /flushdns
-    ipconfig /registerdns
-    Start-Sleep -Seconds 10
-
-- name: Test domain resolution
-  ansible.windows.win_shell: |
-    Resolve-DnsName -Name {{ member_domain }} -Type A -ErrorAction SilentlyContinue
-  register: domain_resolution_test
-
+# Domain Join
 - name: Add workstation to {{ member_domain }}
   microsoft.ad.membership:
     dns_domain_name: "{{ member_domain }}"
