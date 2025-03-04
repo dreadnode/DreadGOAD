@@ -1,13 +1,34 @@
 ---
 - name: Ensure Administrator is part of Domain Admins
-  microsoft.ad.group:
-    name: "Domain Admins"
-    state: present
-    domain_server: "{{ lab.hosts[dict_key].hostname }}.{{ lab.hosts[dict_key].domain }}"
-    domain_username: "{{ lab.hosts[dict_key].domain }}\\{{ admin_user }}"
-    domain_password: "{{ lab.domains[lab.hosts[dict_key].domain].domain_password }}"
-    members:
-      add: ["{{ admin_user }}"]
+  ansible.windows.win_powershell:
+    script: |
+      $domainAdmin = "{{ admin_user }}"
+      $domainName = "{{ lab.hosts[dict_key].domain }}"
+      $domainNetbios = "{{ lab.hosts[dict_key].domain.split('.')[0] }}"
+      
+      try {
+          # Try the built-in AD cmdlet first
+          Add-ADGroupMember -Identity "Domain Admins" -Members $domainAdmin -ErrorAction Stop
+          Write-Output "Successfully added $domainAdmin to Domain Admins using Add-ADGroupMember"
+          $Ansible.Changed = $true
+      } catch {
+          Write-Output "Standard AD cmdlet failed: $_"
+          
+          # If the cmdlet fails, try the traditional NET GROUP command
+          try {
+              $result = & net group "Domain Admins" "$domainNetbios\$domainAdmin" /add 2>&1
+              if ($LASTEXITCODE -eq 0) {
+                  Write-Output "Successfully added $domainAdmin to Domain Admins using net group command"
+                  $Ansible.Changed = $true
+              } else {
+                  throw "net group command failed with exit code $LASTEXITCODE"
+              }
+          } catch {
+              Write-Error "Failed to add $domainAdmin to Domain Admins: $_"
+              $Ansible.Changed = $false
+          }
+      }
+  register: admin_group_result
   
 - name: organisation units
   import_tasks: ou.yml

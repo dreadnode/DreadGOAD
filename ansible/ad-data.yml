@@ -8,7 +8,7 @@
   hosts: dc
   roles:
     - { role: 'password_policy', tags: 'policy', try_before_lock: "5", pass_length: "5", lock_duration: "00:05:00", lock_observation: "00:05:00", complexity: false}
-    - { role: 'ad', tags: 'ad_domain_data' }
+    # - { role: 'ad', tags: 'ad_domain_data' }
   vars:
     hostname: "{{ lab.hosts[dict_key].hostname }}"
     domain: "{{ lab.hosts[dict_key].domain }}"
