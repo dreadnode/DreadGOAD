@@ -4,7 +4,7 @@
     script: |
       try {
         $domain = "{{ domain }}"
-        # Convert domains list to a PowerShell array using to_json filter for proper handling
+        # Convert domains list to a PowerShell array
         $domains = @("{{ domains | join('","') }}")
         $trust = "{{ trust }}"
         $parentDomain = "{{ parent_domain }}"
