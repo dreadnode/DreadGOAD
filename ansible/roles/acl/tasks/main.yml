@@ -53,22 +53,32 @@
           [String]
           $inheritance
       )
+      # Suppress progress output which can interfere with JSON parsing
+      $ProgressPreference = 'SilentlyContinue'
+      
       Import-Module ActiveDirectory
       Set-Location AD:
-      $aclValues = 'AccessSystemSecurity', 'CreateChild', 'Delete', 'DeleteChild', 'DeleteTree', 'ExtendedRight', 'GenericAll', 'GenericExecute', 'GenericRead', 'GenericWrite', 'ListChildren', 'ListObject', 'ReadControl', 'ReadProperty', 'Self', 'Synchronize', 'WriteDacl', 'WriteOwner', 'WriteProperty'
-      $aclExtendValues = 'Ext-User-Force-Change-Password', 'Ext-Self-Self-Membership', 'Ext-Write-Self-Membership'
+      $aclValues = @('AccessSystemSecurity', 'CreateChild', 'Delete', 'DeleteChild', 'DeleteTree', 'ExtendedRight', 'GenericAll', 'GenericExecute', 'GenericRead', 'GenericWrite', 'ListChildren', 'ListObject', 'ReadControl', 'ReadProperty', 'Self', 'Synchronize', 'WriteDacl', 'WriteOwner', 'WriteProperty')
+      $aclExtendValues = @('Ext-User-Force-Change-Password', 'Ext-Self-Self-Membership', 'Ext-Write-Self-Membership')
+      
       if ($for.StartsWith("NT AUTHORITY")) {
         $forSID = New-Object System.Security.Principal.NTAccount "$for"
       } else {
-        $forSID = New-Object System.Security.Principal.SecurityIdentifier (Get-ADObject -Filter "SamAccountName -eq '$for'" -Properties objectSID).objectSID
+        # Check if object exists before trying to get the SID
+        $adObject = Get-ADObject -Filter "SamAccountName -eq '$for'" -Properties objectSID -ErrorAction SilentlyContinue
+        if (-not $adObject) {
+          Write-Error "The object with SamAccountName '$for' was not found"
+          return
+        }
+        $forSID = New-Object System.Security.Principal.SecurityIdentifier $adObject.objectSID
       }
 
       try {
         $objAcl = get-acl -Path "$to" -ErrorAction Stop
         $objOU = $to
-        $objFound=$true
-      } catch [System.Management.Automation.ItemNotFoundException]{
-        $objFound=$false
+        $objFound = $true
+      } catch [System.Management.Automation.ItemNotFoundException] {
+        $objFound = $false
       }
 
       if (-not $objFound) {
@@ -77,44 +87,60 @@
           $extra_args.Server = $to.Split("\")[0]
           $to = $to.Split("\")[1]
         }
-        $toObj = Get-ADObject -Filter "SamAccountName -eq '$to'" @extra_args
+        $toObj = Get-ADObject -Filter "SamAccountName -eq '$to'" @extra_args -ErrorAction SilentlyContinue
+        if (-not $toObj) {
+          Write-Error "The target object with SamAccountName '$to' was not found"
+          return
+        }
         $objOU = ($toObj).DistinguishedName
         $objAcl = get-acl -Path "$objOU"
       }
 
-      $type =  [System.Security.AccessControl.AccessControlType] "Allow"
+      $type = [System.Security.AccessControl.AccessControlType] "Allow"
       $inheritanceType = [System.DirectoryServices.ActiveDirectorySecurityInheritance] $inheritance
 
       $aclExtendedValueRightGUID = @{
-        "Ext-User-Force-Change-Password" = @("ExtendedRight","00299570-246d-11d0-a768-00aa006e0529")
-        "Ext-Write-Self-Membership" = @("WriteProperty","bf9679c0-0de6-11d0-a285-00aa003049e2")
-        "Ext-Self-Self-Membership" = @("Self","bf9679c0-0de6-11d0-a285-00aa003049e2")
+        "Ext-User-Force-Change-Password" = @("ExtendedRight", "00299570-246d-11d0-a768-00aa006e0529")
+        "Ext-Write-Self-Membership" = @("WriteProperty", "bf9679c0-0de6-11d0-a285-00aa003049e2")
+        "Ext-Self-Self-Membership" = @("Self", "bf9679c0-0de6-11d0-a285-00aa003049e2")
       }
 
       $Ansible.Changed = $false
-      if ($aclValues.contains($right)) {
-        $adRight =  [System.DirectoryServices.ActiveDirectoryRights] $right
-        $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule $forSID,$adRight,$type,$inheritanceType
+      
+      if ($aclValues -contains $right) {
+        $adRight = [System.DirectoryServices.ActiveDirectoryRights] $right
+        $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule $forSID, $adRight, $type, $inheritanceType
       }
-      if ($aclExtendValues.contains($right)) {
+      
+      if ($aclExtendValues -contains $right) {
         $extendedRightGUID = $aclExtendedValueRightGUID[$right][1]
         $extright = $aclExtendedValueRightGUID[$right][0]
-        $adRight =  [System.DirectoryServices.ActiveDirectoryRights] $extright
-        $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule $forSID,$extright,$type,$extendedRightGUID,$inheritanceType
+        $adRight = [System.DirectoryServices.ActiveDirectoryRights] $extright
+        $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule $forSID, $extright, $type, $extendedRightGUID, $inheritanceType
       }
+      
       if ($ace) {
-        $objAcl.AddAccessRule($ace)
-        Set-Acl -AclObject $objAcl -path "$objOU"
-        $Ansible.Changed = $true
+        try {
+          $objAcl.AddAccessRule($ace)
+          Set-Acl -AclObject $objAcl -path "$objOU" -ErrorAction Stop
+          $Ansible.Changed = $true
+        } catch {
+          Write-Error "Failed to set ACL: $_"
+          return
+        }
       }
     parameters:
       for: "{{ item.value.for }}"
       to: "{{ item.value.to }}"
       right: "{{ item.value.right }}"
       inheritance: "{{ item.value.inheritance }}"
+    error_action: stop  
   vars:
-    ansible_become: yes
+    ansible_become: true
     ansible_become_method: runas
     ansible_become_user: "{{ domain_username }}"
     ansible_become_password: "{{ domain_password }}"
+  register: acl_result
+  failed_when: acl_result.error is defined
   with_dict: "{{ ad_acls }}"
+  ignore_errors: "{{ continue_on_acl_errors | default(false) }}"
