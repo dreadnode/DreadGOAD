@@ -1,16 +1,31 @@
 ---
+- name: Create temporary directory for downloads
+  ansible.windows.win_file:
+    path: C:\Temp\ansible
+    state: directory
+
+- name: Download LAPS Package
+  ansible.windows.win_get_url:
+    url: https://download.microsoft.com/download/C/7/A/C7AAD914-A8A6-4904-88A1-29E657445D03/LAPS.x64.msi
+    dest: C:\Temp\ansible\LAPS.x64.msi
+    force: no
+  register: download_result
+  retries: 3
+  delay: 5
+  until: download_result is success
+
 - name: Install to Servers
   ansible.windows.win_package:
     arguments: "ADDLOCAL=CSE"
-    path: https://download.microsoft.com/download/C/7/A/C7AAD914-A8A6-4904-88A1-29E657445D03/LAPS.x64.msi
+    path: C:\Temp\ansible\LAPS.x64.msi
     state: present
     creates_path: "%ProgramFiles%\\LAPS"
   register: pri_laps_install
+  retries: 2
+  delay: 10
   until: pri_laps_install is success
-  retries: 3  # Try 3 times just in case it failed to download the URL
-  delay: 1
 
-- name: reboot after installing LAPS if required
+- name: Reboot after installing LAPS (if required)
   ansible.windows.win_reboot:
   when: pri_laps_install.reboot_required
 

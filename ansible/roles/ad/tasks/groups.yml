@@ -10,15 +10,12 @@
           [String]$GroupScope = "Universal",
           [String]$Path
       )
-
       try {
-          # Check if group exists
           try {
               $groupExists = Get-ADGroup -Filter {Name -eq $GroupName} -ErrorAction SilentlyContinue
           } catch {
               $groupExists = $null
           }
-
           if ($groupExists) {
               Write-Output "Group $GroupName already exists, skipping creation"
               $Ansible.Changed = $false
@@ -31,7 +28,6 @@
               if (-not [String]::IsNullOrEmpty($Path)) {
                   $params["Path"] = $Path
               }
-
               New-ADGroup @params
               Write-Output "Group $GroupName created successfully"
               $Ansible.Changed = $true
@@ -47,71 +43,6 @@
       Path: "{{ item.value.path | default('') }}"
   with_dict: "{{ ad_groups['universal'] | default({}) }}"
   when: ad_groups['universal'] is defined
-
-- name: Create Global Groups
-  ansible.windows.win_powershell:
-    script: |
-      [CmdletBinding()]
-      param (
-          [String]$GroupName,
-          [String]$GroupScope = "Global",
-          [String]$Path
-      )
-
-      try {
-          # First check if AD Web Services are running
-          try {
-              # Try to get domain info to check connectivity
-              $domainInfo = Get-ADDomain -ErrorAction SilentlyContinue
-              Write-Output "AD Web Services are available, domain is $($domainInfo.DNSRoot)"
-          } catch {
-              # Check if the service is running
-              $adws = Get-Service -Name ADWS -ErrorAction SilentlyContinue
-              if (-not $adws -or $adws.Status -ne 'Running') {
-                  Start-Service -Name ADWS -ErrorAction SilentlyContinue
-                  Start-Sleep -Seconds 5
-              }
-          }
-
-          # Check if group exists
-          try {
-              $groupExists = Get-ADGroup -Filter {Name -eq $GroupName} -ErrorAction SilentlyContinue
-          } catch {
-              $groupExists = $null
-          }
-
-          if ($groupExists) {
-              Write-Output "Group $GroupName already exists, skipping creation"
-              $Ansible.Changed = $false
-          } else {
-              $params = @{
-                  Name = $GroupName
-                  GroupScope = $GroupScope
-                  GroupCategory = "Security"
-              }
-              if (-not [String]::IsNullOrEmpty($Path)) {
-                  $params["Path"] = $Path
-              }
-
-              New-ADGroup @params
-              Write-Output "Group $GroupName created successfully"
-              $Ansible.Changed = $true
-          }
-      } catch {
-          Write-Error "Failed to create group $GroupName - $_"
-          $Ansible.Changed = $false
-          exit 1
-      }
-    parameters:
-      GroupName: "{{ item.key }}"
-      GroupScope: "Global"
-      Path: "{{ item.value.path | default('') }}"
-  with_dict: "{{ ad_groups['global'] | default({}) }}"
-  when: ad_groups['global'] is defined
-  register: global_group_result
-  retries: 3
-  delay: 10
-  until: global_group_result is not failed
 
 - name: Create DomainLocal Groups
   ansible.windows.win_powershell:

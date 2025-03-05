@@ -1,6 +1,7 @@
-- name: "Create OU"
+---
+- name: Create OU
   win_dsc:
     resource_name: ADOrganizationalUnit
     name: "{{ item.key }}"
     path:  "{{ item.value.path }}"
-  with_dict: "{{ad_ou}}"
+  with_dict: "{{ ad_ou }}"

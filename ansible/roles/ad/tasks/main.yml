@@ -32,56 +32,98 @@
   
 - name: organisation units
   import_tasks: ou.yml
-
 - name: groups
   import_tasks: groups.yml
-
 - name: users
   import_tasks: users.yml
 
 # Managed BY
 - name: Assign managed_by domainlocal groups
-  microsoft.ad.group:
-    name: "{{ item.key }}"
-    managed_by: "{{ item.value.managed_by }}"
-  with_dict: "{{ ad_groups['domainlocal'] }}"
+  ansible.windows.win_powershell:
+    script: |
+      $groupName = "{{ item.key }}"
+      $managedBy = "{{ item.value.managed_by }}"
+      
+      try {
+          $group = Get-ADGroup -Identity $groupName -ErrorAction Stop
+          Set-ADGroup -Identity $groupName -ManagedBy $managedBy -ErrorAction Stop
+          Write-Output "Successfully set $managedBy as manager for $groupName"
+          $Ansible.Changed = $true
+      } catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
+          Write-Output "Group $groupName not found. Skipping."
+      } catch {
+          # Avoid the colon after $groupName by using a different format
+          Write-Error "Failed to set manager for group $groupName. Error: $($_.Exception.Message)"
+      }
+  loop: "{{ ad_groups['domainlocal'] | dict2items }}"
   when: ad_groups['domainlocal'] is defined and item.value.managed_by is defined
 
 - name: Assign managed_by universal groups
-  microsoft.ad.group:
-    name: "{{ item.key }}"
-    managed_by: "{{ item.value.managed_by }}"
-  with_dict: "{{ ad_groups['universal'] }}"
+  ansible.windows.win_powershell:
+    script: |
+      $groupName = "{{ item.key }}"
+      $managedBy = "{{ item.value.managed_by }}"
+      
+      try {
+          $group = Get-ADGroup -Identity $groupName -ErrorAction Stop
+          Set-ADGroup -Identity $groupName -ManagedBy $managedBy -ErrorAction Stop
+          Write-Output "Successfully set $managedBy as manager for $groupName"
+          $Ansible.Changed = $true
+      } catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
+          Write-Output "Group $groupName not found. Skipping."
+      } catch {
+          # Avoid the colon after $groupName by using a different format
+          Write-Error "Failed to set manager for group $groupName. Error: $($_.Exception.Message)"
+      }
+  loop: "{{ ad_groups['universal'] | dict2items }}"
   when: ad_groups['universal'] is defined and item.value.managed_by is defined
 
 - name: Assign managed_by global groups
-  microsoft.ad.group:
-    name: "{{ item.key }}"
-    managed_by: "{{ item.value.managed_by }}"
-  with_dict: "{{ ad_groups['global'] }}"
+  ansible.windows.win_powershell:
+    script: |
+      $groupName = "{{ item.key }}"
+      $managedBy = "{{ item.value.managed_by }}"
+      
+      try {
+          $group = Get-ADGroup -Identity $groupName -ErrorAction Stop
+          Set-ADGroup -Identity $groupName -ManagedBy $managedBy -ErrorAction Stop
+          Write-Output "Successfully set $managedBy as manager for $groupName"
+          $Ansible.Changed = $true
+      } catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
+          Write-Output "Group $groupName not found. Skipping."
+      } catch {
+          # Avoid the colon after $groupName by using a different format
+          Write-Error "Failed to set manager for group $groupName. Error: $($_.Exception.Message)"
+      }
+  loop: "{{ ad_groups['global'] | dict2items }}"
   when: ad_groups['global'] is defined and item.value.managed_by is defined
 
-# Add members
+- name: Add members to the Domainlocal group, preserving existing membership
+  microsoft.ad.group:
+    name: "{{ item.key }}"
+    scope: "{{ item.value.scope | default('DomainLocal') }}"
+    members:
+      add: "{{ item.value.members | default([]) }}"
+    state: present
+  loop: "{{ ad_groups['domainlocal'] | dict2items }}"
+  when: ad_groups['domainlocal'] is defined and item.value.members is defined
+
 - name: Add members to the Universal group, preserving existing membership
   microsoft.ad.group:
     name: "{{ item.key }}"
-    members: "{{ item.value.members }}"
+    scope: "{{ item.value.scope | default('Universal') }}"
+    members:
+      add: "{{ item.value.members | default([]) }}"
     state: present
-  with_dict: "{{ ad_groups['universal'] }}"
+  loop: "{{ ad_groups['universal'] | dict2items }}"
   when: ad_groups['universal'] is defined and item.value.members is defined
 
 - name: Add members to the Global group, preserving existing membership
   microsoft.ad.group:
     name: "{{ item.key }}"
-    members: "{{ item.value.members }}"
+    scope: "{{ item.value.scope | default('Global') }}"  
+    members:
+      add: "{{ item.value.members | default([]) }}"
     state: present
-  with_dict: "{{ ad_groups['global'] }}"
+  loop: "{{ ad_groups['global'] | dict2items }}"
   when: ad_groups['global'] is defined and item.value.members is defined
-
-- name: Add members to the Domainlocal group, preserving existing membership
-  microsoft.ad.group:
-    name: "{{ item.key }}"
-    members: "{{ item.value.members }}"
-    state: present
-  with_dict: "{{ ad_groups['domainlocal'] }}"
-  when: ad_groups['domainlocal'] is defined and item.value.members is defined
