@@ -1,3 +1,4 @@
+---
 - name: Ensure WebDAV client feature is installed
   ansible.windows.win_feature:
     name: WebDAV-Redirector

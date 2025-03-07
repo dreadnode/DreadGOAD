@@ -14,8 +14,8 @@
 
 - name: Copy templates json
   ansible.windows.win_copy:
-    src: "files/{{item}}.json"
-    dest: "C:\\setup\\{{item}}.json"
+    src: "files/{{ item }}.json"
+    dest: "C:\\setup\\{{ item }}.json"
   with_items:
     - ESC1
     - ESC2

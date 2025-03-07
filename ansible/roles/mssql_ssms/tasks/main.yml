@@ -1,21 +1,22 @@
-- name: check SQL Server Manager Studio installer exists
+---
+- name: Check SQL Server Manager Studio installer exists
   win_stat:
     path: c:\setup\mssql\SSMS_installer.exe
   register: ssms_installer_file
 
-- name: get the installer
+- name: Get the installer
   win_get_url:
-      url: 'https://aka.ms/ssmsfullsetup'
-      dest: 'c:\setup\mssql\SSMS_installer.exe'
+      url: https://aka.ms/ssmsfullsetup
+      dest: c:\setup\mssql\SSMS_installer.exe
   when: not ssms_installer_file.stat.exists
 
-- name: check SSMS installation already done
+- name: Check SSMS installation already done
   win_stat:
-    path: "C:\\Program Files (x86)\\Microsoft SQL Server Management Studio 18"
+    path: C:\Program Files (x86)\Microsoft SQL Server Management Studio 18
   register: ssms_installation
 
 - name: Install SSMS
-  win_command: c:\setup\mssql\SSMS_installer.exe /install /quiet /norestart
+  ansible.windows.win_command: c:\setup\mssql\SSMS_installer.exe /install /quiet /norestart
   register: install_ssmss
   when: not ssms_installation.stat.exists
 

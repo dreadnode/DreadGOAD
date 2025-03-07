@@ -11,45 +11,44 @@
     mssql_service_name: "{{ 'MSSQL$' + sql_instance_name if sql_instance_name != 'MSSQLSERVER' else 'MSSQLSERVER' }}"
     sql_reg_path: "HKLM:\\Software\\Microsoft\\Microsoft SQL Server\\{{ 'MSSQL16.' if sql_version == 'MSSQL_2022' else 'MSSQL15.' }}{{ sql_instance_name }}\\MSSQLServer\\SuperSocketNetLib\\Tcp\\IPAll"
 
-- name: Create required directories
-  ansible.windows.win_file: 
+- name: Display mssql variables in use
+  ansible.builtin.debug:
+    msg: 
+    - "MSSQL version        : {{ sql_version }}"
+    - "MSSQL service name   : {{ mssql_service_name }}"
+    - "MSSQL download url   : {{ download_url }}"
+    - "MSSQL instance       : {{ sql_instance_name }}"
+    - "MSSQL connection use : {{ connection_type }}"
+
+- name: Create SQL Server installation directories 
+  ansible.windows.win_file:
     path: "{{ item }}"
     state: directory
   loop:
-    - c:\setup
-    - c:\setup\mssql
     - c:\setup\mssql\media
-    - c:\setup\mssql\logs
+    - c:\setup\mssql\extraction
 
 - name: Create SQL Server configuration file
   win_template: 
     src: files/sql_conf.ini.{{ sql_version }}.j2
     dest: c:\setup\mssql\sql_conf.ini
 
-- name: Check downloaded file exists
+- name: Check if installation media already exists
   win_stat:
     path: c:\setup\mssql\sql_installer.exe
   register: installer_file
 
-- name: Get the installer
-  win_get_url:
-      url: "{{ download_url }}"
-      dest: 'c:\setup\mssql\sql_installer.exe'
-      timeout: 600
-      force: true
+- name: Download SQL Server installation media
+  ansible.windows.win_get_url:
+    url: "{{ download_url }}"
+    dest: c:\setup\mssql\sql_installer.exe
   when: not installer_file.stat.exists
-
-- name: Verify installer was downloaded successfully
-  win_stat:
-    path: c:\setup\mssql\sql_installer.exe
-  register: installer_check
-  failed_when: not installer_check.stat.exists or installer_check.stat.size < 100000
 
 - name: Add service account to Log on as a service
   win_user_right:
     name: SeServiceLogonRight
     users:
-    - '{{ SQLSVCACCOUNT }}'
+      - "{{ SQLSVCACCOUNT }}"
     action: add
   when: not SQLSVCACCOUNT == "NT AUTHORITY\\NETWORK SERVICE"
 
@@ -63,38 +62,96 @@
 #     path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.{{ sql_instance_name }}"
 #   register: mssql_install_already_done
 
+- name: Check if SQL Express Advanced media file exists
+  win_stat:
+    path: C:\setup\mssql\media\SQLEXPRADV_x64_ENU.exe
+  register: sqlexpr_file
+
+- name: Run the installer to download SQL Express installation files
+  win_command: C:\setup\mssql\sql_installer.exe /ACTION=Download /MEDIAPATH=C:\setup\mssql\media /MEDIATYPE=Advanced /Q
+  when: not sqlexpr_file.stat.exists
+
 - name: Check if MSSQL service exists
   win_service:
     name: "{{ mssql_service_name }}"
-  register: mssql_install_already_done
+  register: mssql_service_check
   failed_when: false
 
-- debug: msg="{{ mssql_install_already_done }}"
-
-# Install the database with a domain admin user
-# Fixed installation tasks for MSSQL
-
-- name: Execute direct installation script
-  ansible.windows.win_shell: powershell.exe -ExecutionPolicy Bypass -File c:\setup\mssql\direct_install.ps1
+- name: Extract SQL Server installation files
+  win_command: C:\setup\mssql\media\SQLEXPRADV_x64_ENU.exe /x:C:\setup\mssql\extraction /q
   args:
-    chdir: c:\setup
+    creates: C:\setup\mssql\extraction\SETUP.EXE
+  when: mssql_service_check.state is not defined or mssql_service_check.state != "running"
+
+- name: Temporarily modify SQL configuration file to use NT AUTHORITY\SYSTEM
+  win_template:
+    src: files/sql_conf.ini.{{ sql_version }}.j2
+    dest: c:\setup\mssql\sql_conf_temp.ini
   vars:
-    ansible_become: true
-    ansible_become_method: runas
-    ansible_become_user: "{{ domain_admin }}"
-    ansible_become_password: "{{ domain_admin_password }}"
-    ansible_become_flags: logon_type=new_credentials logon_flags=netcredentials_only
-  register: direct_install
-  ignore_errors: true
+    SQLSVCACCOUNT: "NT AUTHORITY\\SYSTEM"
+    SQLSVCPASSWORD: ""
+    SQLSYSADMIN: "BUILTIN\\Administrators"
 
-- name: Check direct installation logs if available
-  ansible.windows.win_shell: Get-Content "c:\setup\mssql\logs\direct_install.log" -ErrorAction SilentlyContinue
-  register: direct_install_log
-  ignore_errors: true
+- name: Install SQL Server with simplified configuration
+  win_command: > 
+    C:\setup\mssql\extraction\SETUP.EXE /Q 
+    /IACCEPTSQLSERVERLICENSETERMS 
+    /ACTION=Install 
+    /FEATURES=SQLEngine 
+    /INSTANCENAME={{ sql_instance_name }}
+    /SQLSYSADMINACCOUNTS="BUILTIN\Administrators" 
+    /TCPENABLED=1 
+    /SKIPRULES=UserProfile 
+    /configurationfile=c:\setup\mssql\sql_conf_temp.ini
+  args:
+    chdir: C:\setup\mssql
+  register: mssql_install
+  until: mssql_install is not failed
+  retries: 3
+  delay: 120
+  when: mssql_service_check.state is not defined or mssql_service_check.state != "running"
 
-- name: Display direct installation log content
+- name: Change SQL service account after installation
+  win_shell: |
+    $serviceName = 'MSSQL$SQLEXPRESS'
+    $svc = Get-WmiObject -Class Win32_Service -Filter "Name='$serviceName'"
+    if ($svc -eq $null) {
+      Write-Host "Service '$serviceName' not found. Available SQL services:"
+      Get-Service MSSQL* | Select-Object Name, DisplayName, Status | Format-Table -AutoSize
+      exit 1
+    }
+    
+    # Use the sc.exe command which is more reliable for this purpose
+    $result = sc.exe config "$serviceName" obj= "{{ SQLSVCACCOUNT }}" password= "{{ SQLSVCPASSWORD }}"
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host "Failed to change service account: $result"
+      exit 1
+    }
+    Write-Host "Service account changed successfully"
+  register: change_svc_result
+  failed_when: change_svc_result.rc != 0
+  when: mssql_install is succeeded and SQLSVCACCOUNT != "NT AUTHORITY\\SYSTEM"
+
+- name: Verify SQL Server installation
+  ansible.windows.win_shell: Get-Service MSSQL* | Select-Object Name, DisplayName, Status
+  register: mssql_service_status
+  changed_when: false
+
+- name: Display found SQL Server services
   debug:
-    var: direct_install_log.stdout_lines
+    var: sql_service_names.host_out
+  when: mssql_install is succeeded
+  
+- name: Change SQL service account with sc command
+  win_shell: |
+    sc.exe config 'MSSQL$SQLEXPRESS' obj= "{{ SQLSVCACCOUNT }}" password= "{{ SQLSVCPASSWORD }}"
+  when: mssql_install is succeeded and SQLSVCACCOUNT != "NT AUTHORITY\\SYSTEM"
+  
+- name: Restart SQL service to apply account changes
+  win_service:
+    name: "{{ mssql_service_name }}"
+    state: restarted
+  when: mssql_install is succeeded and SQLSVCACCOUNT != "NT AUTHORITY\\SYSTEM"
 
 # sql server 2022
 - name: Add or update registry for ip port
