@@ -6,6 +6,9 @@ domain_name=GOAD
 ; administrator user
 admin_user=goadmin
 
+; environment
+env=staging
+
 ; SSM connection (windows)
 ansible_connection=aws_ssm
 ansible_aws_ssm_bucket_name=dread-infra-alpha-operator-range-dev-us-west-2

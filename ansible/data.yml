@@ -5,7 +5,7 @@
   tasks:
     - name: Load JSON config as a variable
       ansible.builtin.include_vars:
-        file: "{{ data_path }}/config.json"
+        file: "{{ data_path }}/{{ env }}-config.json"
       run_once: true
 
     - name: Save the JSON data to a variable as a fact
