@@ -1,23 +1,24 @@
-- name: "Force a DNS on the adapter {{nat_adapter}}"
+---
+- name: Force a DNS on the adapter {{ nat_adapter }}
   ansible.windows.win_dns_client:
-    adapter_names: "{{nat_adapter}}"
+    adapter_names: "{{ nat_adapter }}"
     dns_servers: 
-      - "{{hostvars[dns_domain].ansible_host}}"
-      - "{{dns_server}}"
+      - "{{ hostvars[dns_domain].ansible_host }}"
+      - "{{ dns_server }}"
   when: force_dns_server == "yes"
 
 - name: Set a proxy for specific protocols
   community.windows.win_http_proxy:
     proxy:
-      http: "{{ad_http_proxy}}"
-      https: "{{ad_https_proxy}}"
+      http: "{{ ad_http_proxy }}"
+      https: "{{ ad_https_proxy }}"
   when: http_proxy == "yes"
 
 - name: Configure IE to use a specific proxy per protocol
   community.windows.win_inet_proxy:
     proxy:
-      http: "{{ad_http_proxy}}"
-      https: "{{ad_https_proxy}}"
+      http: "{{ ad_http_proxy }}"
+      https: "{{ ad_https_proxy }}"
   when: http_proxy == "yes"
 
 - name: Upgrade module PowerShellGet to fix accept license issue on last windows ansible version
@@ -27,7 +28,7 @@
     Install-Module PowerShellGet -Force
 
 - name: Windows | Check for ComputerManagementDsc Powershell module
-  win_psmodule:
+  community.windows.win_psmodule:
     name: ComputerManagementDsc
     state: present
 
@@ -39,7 +40,7 @@
     UserAuthentication: Secure
 
 - name: Windows | Check for xNetworking Powershell module
-  win_psmodule:
+  community.windows.win_psmodule:
     name: xNetworking
     state: present
 
@@ -57,8 +58,8 @@
 
 - name: Add a network static route
   community.windows.win_route:
-    destination: "{{route_network}}"
-    gateway: "{{route_gateway}}"
+    destination: "{{ route_network }}"
+    gateway: "{{ route_gateway }}"
     metric: 1
     state: present
   when: add_route == "yes"

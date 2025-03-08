@@ -8,6 +8,7 @@
 :bookmark: Documentation : [https://orange-cyberdefense.github.io/GOAD/](https://orange-cyberdefense.github.io/GOAD/)
 
 ## Description
+
 GOAD is a pentest active directory LAB project.
 The purpose of this lab is to give pentesters a vulnerable Active directory environment ready to use to practice usual attack techniques.
 
@@ -18,6 +19,7 @@ The purpose of this lab is to give pentesters a vulnerable Active directory envi
 ![goad_screenshot](./docs/img/goad_screenshot.png)
 
 ## Licenses
+
 This lab use free Windows VM only (180 days). After that delay enter a license on each server or rebuild all the lab (may be it's time for an update ;))
 
 ## Available labs
@@ -45,3 +47,19 @@ This lab use free Windows VM only (180 days). After that delay enter a license o
 </div>
 
 - [NHA](https://orange-cyberdefense.github.io/GOAD/labs/NHA/) : A challenge with 5 vms and 2 domains. no schema provided, you will have to find out how break it.
+
+## Fetch upstream changes
+
+```bash
+# Fetch all the branches of the upstream repository
+git fetch upstream
+
+# Make sure you're on your main branch
+git checkout main
+
+# Rebase your main branch with the upstream main branch
+git rebase upstream/main
+
+# Push the changes to your private repository
+git push origin main --force
+```

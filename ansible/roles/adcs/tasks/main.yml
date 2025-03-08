@@ -1,5 +1,5 @@
 - name: Install ADCS
-  win_feature:
+  ansible.windows.win_feature:
     name: AD-Certificate
     state: present
     include_sub_features: yes

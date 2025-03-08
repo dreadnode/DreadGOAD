@@ -11,3 +11,6 @@ opt_laps_gpo_name: ansible-laps
 opt_laps_password_policy_complexity: uppercase,lowercase,digits,symbols
 opt_laps_password_policy_length: 14
 opt_laps_password_policy_age: 30
+
+# LAPS variables
+computer_class_guid: "bf967a86-0de6-11d0-a285-00aa003049e2"

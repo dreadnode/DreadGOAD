@@ -1,28 +1,74 @@
+---
 # DNSCHANGE
-- name: "prioritize the {{domain_adapter}} interface (local) as the default for routing"
+- name: Prioritize the {{ domain_adapter }} interface (local) as the default for routing
   ansible.windows.win_shell:
-    Set-NetIPInterface -InterfaceAlias "{{domain_adapter}}" -InterfaceMetric 10
-  when: two_adapters
+    Set-NetIPInterface -InterfaceAlias "{{ domain_adapter }}" -InterfaceMetric 10
+  when: two_adapters == "yes"
 
-- name: "Set configure dns to {{dns_domain}}"
-  win_dns_client:
-    adapter_names: "{{domain_adapter}}"
-    ipv4_addresses:
-    - "{{hostvars[dns_domain].ansible_host}}"
-    log_path: C:\dns_log.txt
+- name: Get DNS server IP address from {{ dns_domain }}
+  ansible.windows.win_shell: |
+    (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.IPAddress -notmatch '^127\.' -and $_.IPAddress -notmatch '^169\.254\.'} | Select-Object -First 1).IPAddress
+  delegate_to: "{{ dns_domain }}"
+  register: dns_server_ip_result
 
-- name: "Add workstation to {{member_domain}}"
-  win_domain_membership:
-    dns_domain_name: "{{member_domain}}"
-    domain_admin_user: "{{domain_username}}"
-    domain_admin_password: "{{domain_password}}"
-#    domain_ou_path: "{{member_domain_ou_path}}"
+# Configure DNS for workstation
+- name: Configure DNS for workstation
+  ansible.windows.win_powershell:
+    script: |
+      # Get domain-specific information
+      $memberDomain = "{{ member_domain }}"
+      $dnsServerIP = "{{ dns_server_ip_result.stdout | trim }}"
+      
+      Write-Output "Configuring DNS for $memberDomain workstation"
+      Write-Output "Using primary DNS server: $dnsServerIP"
+      
+      # For child domains, we need special handling
+      if ($memberDomain -like "*.sevenkingdoms.local") {
+        # Get parent domain DC IP
+        $parentDcIp = "{{ hostvars['dc01'].ansible_host }}"
+        
+        # Set DNS servers - child DC first, then parent
+        Set-DnsClientServerAddress -InterfaceAlias "{{ domain_adapter }}" -ServerAddresses @($dnsServerIP, $parentDcIp)
+        Write-Output "Set DNS servers to: $dnsServerIP, $parentDcIp for child domain workstation"
+        
+        # Set DNS suffix search list to include both domains
+        $searchList = @($memberDomain, "sevenkingdoms.local")
+        Set-DnsClientGlobalSetting -SuffixSearchList $searchList
+        Write-Output "Set DNS suffix search list: $($searchList -join ', ')"
+      } else {
+        # For parent domains, just use their DC
+        Set-DnsClientServerAddress -InterfaceAlias "{{ domain_adapter }}" -ServerAddresses $dnsServerIP
+        Write-Output "Set DNS server to: $dnsServerIP for parent domain workstation"
+        
+        # Set DNS suffix search list
+        Set-DnsClientGlobalSetting -SuffixSearchList @($memberDomain)
+        Write-Output "Set DNS suffix search list: $memberDomain"
+      }
+      
+      # Flush DNS cache and register DNS
+      ipconfig /flushdns
+      ipconfig /registerdns
+      
+      Write-Output "DNS configuration completed"
+  register: dns_config_result
+
+# Domain Join
+- name: Add workstation to {{ member_domain }}
+  microsoft.ad.membership:
+    dns_domain_name: "{{ member_domain }}"
+    domain_admin_user: "{{ domain_username }}"
+    domain_admin_password: "{{ domain_password }}"
     state: domain
   register: domain_state
+  failed_when: false
+
+- name: Report domain join failure details
+  ansible.builtin.debug:
+    msg: "Failed to join domain. Error: {{ domain_state.msg }}"
+  when: domain_state is failed
 
 - name: Reboot if needed
-  win_reboot:    
+  ansible.windows.win_reboot:
     reboot_timeout: 1500
     post_reboot_delay: 100
   when: domain_state.reboot_required
-

@@ -1,22 +1,15 @@
+---
 - name: Reboot before install (long timeout in case of update)
   win_reboot:
     reboot_timeout: 1200
 
-- name: Set download_url
-  set_fact:
-    download_url: "{{ download_url_2022 if sql_version == 'MSSQL_2022' else download_url_2019}}"
-
-- name: Set connection method
-  set_fact:
-    connection_type: "{{ connection_type_2022 if sql_version == 'MSSQL_2022' else connection_type_2019}}"
-
-- name: Set mssql_service_instance
-  set_fact:
+- name: Set variables
+  ansible.builtin.set_fact:
+    download_url: "{{ download_url_2022 if sql_version == 'MSSQL_2022' else download_url_2019 }}"
+    connection_type: "{{ connection_type_2022 if sql_version == 'MSSQL_2022' else connection_type_2019 }}"
     mssql_service_instance: "MSSQL${{ sql_instance_name }}"
-
-- name: Set mssql_service_name
-  set_fact:
-    mssql_service_name: "{{ mssql_service_instance if sql_instance_name != 'MSSQLSERVER' else 'MSSQLSERVER' }}"
+    mssql_service_name: "{{ 'MSSQL$' + sql_instance_name if sql_instance_name != 'MSSQLSERVER' else 'MSSQLSERVER' }}"
+    sql_reg_path: "HKLM:\\Software\\Microsoft\\Microsoft SQL Server\\{{ 'MSSQL16.' if sql_version == 'MSSQL_2022' else 'MSSQL15.' }}{{ sql_instance_name }}\\MSSQLServer\\SuperSocketNetLib\\Tcp\\IPAll"
 
 - name: Display mssql variables in use
   ansible.builtin.debug:
@@ -27,83 +20,140 @@
     - "MSSQL instance       : {{ sql_instance_name }}"
     - "MSSQL connection use : {{ connection_type }}"
 
-- name: create a directory for installer download
-  win_file: 
-    path: c:\setup
+- name: Create SQL Server installation directories 
+  ansible.windows.win_file:
+    path: "{{ item }}"
     state: directory
+  loop:
+    - c:\setup\mssql\media
+    - c:\setup\mssql\extraction
 
-- name: create a directory for installer extraction
-  win_file: 
-    path: c:\setup\mssql
-    state: directory
-
-- name: create a directory for media extraction
-  win_file: 
-    path: c:\setup\mssql\media
-    state: directory
-
-- name: create the configuration file
+- name: Create SQL Server configuration file
   win_template: 
-    src: files/sql_conf.ini.{{sql_version}}.j2
+    src: files/sql_conf.ini.{{ sql_version }}.j2
     dest: c:\setup\mssql\sql_conf.ini
 
-- name: check downloaded file exists
+- name: Check if installation media already exists
   win_stat:
     path: c:\setup\mssql\sql_installer.exe
   register: installer_file
 
-- name: get the installer
-  win_get_url:
-      url: "{{download_url}}"
-      dest: 'c:\setup\mssql\sql_installer.exe'
+- name: Download SQL Server installation media
+  ansible.windows.win_get_url:
+    url: "{{ download_url }}"
+    dest: c:\setup\mssql\sql_installer.exe
   when: not installer_file.stat.exists
 
 - name: Add service account to Log on as a service
   win_user_right:
     name: SeServiceLogonRight
     users:
-    - '{{ SQLSVCACCOUNT }}'
+      - "{{ SQLSVCACCOUNT }}"
     action: add
   when: not SQLSVCACCOUNT == "NT AUTHORITY\\NETWORK SERVICE"
 
 # - name: Setup service account
-# Set-ADUser -Identity "{{SQLSVCACCOUNT}}" -ServicePrincipalNames @{Add='MSSQLSvc/castelblack.north.sevenkingdoms.local'}
-# Get-ADUser -Identity "{{SQLSVCACCOUNT}}" | Set-ADAccountControl -TrustedToAuthForDelegation $true
-# Set-ADUser -Identity "{{SQLSVCACCOUNT}}" -Add @{'msDS-AllowedToDelegateTo'=@('CIFS/winterfell.north.sevenkingdoms.local','CIFS/winterfell')}
+# Set-ADUser -Identity "{{ SQLSVCACCOUNT }}" -ServicePrincipalNames @{Add='MSSQLSvc/castelblack.north.sevenkingdoms.local'}
+# Get-ADUser -Identity "{{ SQLSVCACCOUNT }}" | Set-ADAccountControl -TrustedToAuthForDelegation $true
+# Set-ADUser -Identity "{{ SQLSVCACCOUNT }}" -Add @{'msDS-AllowedToDelegateTo'=@('CIFS/winterfell.north.sevenkingdoms.local','CIFS/winterfell')}
 
 # - name: check install already done
 #   win_stat:
-#     path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.{{sql_instance_name}}"
+#     path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.{{ sql_instance_name }}"
 #   register: mssql_install_already_done
 
-- name: check MSSQL service already exist (if failed service do not exist, launch install)
+- name: Check if SQL Express Advanced media file exists
+  win_stat:
+    path: C:\setup\mssql\media\SQLEXPRADV_x64_ENU.exe
+  register: sqlexpr_file
+
+- name: Run the installer to download SQL Express installation files
+  win_command: C:\setup\mssql\sql_installer.exe /ACTION=Download /MEDIAPATH=C:\setup\mssql\media /MEDIATYPE=Advanced /Q
+  when: not sqlexpr_file.stat.exists
+
+- name: Check if MSSQL service exists
   win_service:
-    name: '{{mssql_service_name}}'
-  register: mssql_install_already_done
-  failed_when: mssql_install_already_done is not defined
-  ignore_errors: yes
+    name: "{{ mssql_service_name }}"
+  register: mssql_service_check
+  failed_when: false
 
-- debug: msg="{{mssql_install_already_done}}"
-
-# Install the database with a domain admin user
-- name: Install the database
-  win_command: c:\setup\mssql\sql_installer.exe /configurationfile=c:\setup\mssql\sql_conf.ini /IACCEPTSQLSERVERLICENSETERMS /MEDIAPATH=c:\setup\mssql\media /QUIET /HIDEPROGRESSBAR
+- name: Extract SQL Server installation files
+  win_command: C:\setup\mssql\media\SQLEXPRADV_x64_ENU.exe /x:C:\setup\mssql\extraction /q
   args:
-    chdir: c:\setup
+    creates: C:\setup\mssql\extraction\SETUP.EXE
+  when: mssql_service_check.state is not defined or mssql_service_check.state != "running"
+
+- name: Temporarily modify SQL configuration file to use NT AUTHORITY\SYSTEM
+  win_template:
+    src: files/sql_conf.ini.{{ sql_version }}.j2
+    dest: c:\setup\mssql\sql_conf_temp.ini
   vars:
-    ansible_become: yes
-    ansible_become_method: runas
-    ansible_become_user: "{{domain_admin}}"
-    ansible_become_password: "{{domain_admin_password}}"
-    ansible_become_flags: logon_type=new_credentials logon_flags=netcredentials_only
-  register: mssqlinstall
-  until: "mssqlinstall is not failed"
+    SQLSVCACCOUNT: "NT AUTHORITY\\SYSTEM"
+    SQLSVCPASSWORD: ""
+    SQLSYSADMIN: "BUILTIN\\Administrators"
+
+- name: Install SQL Server with simplified configuration
+  win_command: > 
+    C:\setup\mssql\extraction\SETUP.EXE /Q 
+    /IACCEPTSQLSERVERLICENSETERMS 
+    /ACTION=Install 
+    /FEATURES=SQLEngine 
+    /INSTANCENAME={{ sql_instance_name }}
+    /SQLSYSADMINACCOUNTS="BUILTIN\Administrators" 
+    /TCPENABLED=1 
+    /SKIPRULES=UserProfile 
+    /configurationfile=c:\setup\mssql\sql_conf_temp.ini
+  args:
+    chdir: C:\setup\mssql
+  register: mssql_install
+  until: mssql_install is not failed
   retries: 3
   delay: 120
-  when: mssql_install_already_done.state is not defined or mssql_install_already_done.name is not defined
-#  when: not mssql_install_already_done.stat.exists
+  when: mssql_service_check.state is not defined or mssql_service_check.state != "running"
 
-# sql server 2022
+- name: Change SQL service account after installation
+  win_shell: |
+    $serviceName = 'MSSQL$SQLEXPRESS'
+    $svc = Get-WmiObject -Class Win32_Service -Filter "Name='$serviceName'"
+    if ($svc -eq $null) {
+      Write-Host "Service '$serviceName' not found. Available SQL services:"
+      Get-Service MSSQL* | Select-Object Name, DisplayName, Status | Format-Table -AutoSize
+      exit 1
+    }
+    
+    # Use the sc.exe command which is more reliable for this purpose
+    $result = sc.exe config "$serviceName" obj= "{{ SQLSVCACCOUNT }}" password= "{{ SQLSVCPASSWORD }}"
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host "Failed to change service account: $result"
+      exit 1
+    }
+    Write-Host "Service account changed successfully"
+  register: change_svc_result
+  failed_when: change_svc_result.rc != 0
+  when: mssql_install is succeeded and SQLSVCACCOUNT != "NT AUTHORITY\\SYSTEM"
+
+- name: Verify SQL Server installation
+  ansible.windows.win_shell: Get-Service MSSQL* | Select-Object Name, DisplayName, Status
+  register: mssql_service_status
+  changed_when: false
+
+- name: Display found SQL Server services
+  debug:
+    var: sql_service_names.host_out
+  when: mssql_install is succeeded
+  
+- name: Change SQL service account with sc command
+  win_shell: |
+    sc.exe config 'MSSQL$SQLEXPRESS' obj= "{{ SQLSVCACCOUNT }}" password= "{{ SQLSVCPASSWORD }}"
+  when: mssql_install is succeeded and SQLSVCACCOUNT != "NT AUTHORITY\\SYSTEM"
+  
+- name: Restart SQL service to apply account changes
+  win_service:
+    name: "{{ mssql_service_name }}"
+    state: restarted
+  when: mssql_install is succeeded and SQLSVCACCOUNT != "NT AUTHORITY\\SYSTEM"
+
+# sql server 2022
 - name: Add or update registry for ip port
   win_regedit:
     path: 'HKLM:\Software\Microsoft\Microsoft SQL Server\MSSQL16.{{ sql_instance_name }}\MSSQLServer\SuperSocketNetLib\Tcp\IPAll'
@@ -112,7 +162,7 @@
   register: win_reg
   when: sql_version == "MSSQL_2022"
 
-# sql server 2019
+# sql server 2019
 - name: Add or update registry for ip port
   win_regedit:
     path: 'HKLM:\Software\Microsoft\Microsoft SQL Server\MSSQL15.{{ sql_instance_name }}\MSSQLServer\SuperSocketNetLib\Tcp\IPAll'
@@ -151,8 +201,8 @@
 
 - name: Be sure service is started
   win_service:
-    name: '{{mssql_service_name}}'
-    force_dependent_services: yes
+    name: "{{ mssql_service_name }}"
+    force_dependent_services: true
     state: started
 
 - name: Wait for port 1433 to become open on the host, start checking every 5 seconds
@@ -162,59 +212,59 @@
 
 - name: Add MSSQL admin
   win_shell: |
-    SqlCmd {{connection_type}} -Q "CREATE LOGIN [{{item}}] FROM WINDOWS"
-    SqlCmd {{connection_type}} -Q "SP_ADDSRVROLEMEMBER '{{item}}','SYSADMIN'"
-  become: yes
+    SqlCmd {{ connection_type }} -Q "CREATE LOGIN [{{ item }}] FROM WINDOWS"
+    SqlCmd {{ connection_type }} -Q "SP_ADDSRVROLEMEMBER '{{ item }}','SYSADMIN'"
+  become: true
   become_method: runas
-  become_user: "{{SQLSVCACCOUNT}}"
+  become_user: "{{ SQLSVCACCOUNT }}"
   vars:
-    ansible_become_pass: "{{SQLSVCPASSWORD}}"
-  loop: "{{sql_sysadmins}}"
+    ansible_become_pass: "{{ SQLSVCPASSWORD }}"
+  loop: "{{ sql_sysadmins }}"
 
 - name: Add IMPERSONATE on login
-  win_shell: |
-    SqlCmd {{connection_type}} -Q "CREATE LOGIN [{{item.key}}] FROM WINDOWS"
-    SqlCmd {{connection_type}} -Q "GRANT IMPERSONATE ON LOGIN::[{{item.value}}] TO [{{item.key}}]"
-  become: yes
+  ansible.windows.win_shell: |
+    SqlCmd {{ connection_type }} -Q "CREATE LOGIN [{{ item.key }}] FROM WINDOWS"
+    SqlCmd {{ connection_type }} -Q "GRANT IMPERSONATE ON LOGIN::[{{ item.value }}] TO [{{ item.key }}]"
+  become: true
   become_method: runas
-  become_user: "{{SQLSVCACCOUNT}}"
+  become_user: "{{ SQLSVCACCOUNT }}"
   vars:
-    ansible_become_pass: "{{SQLSVCPASSWORD}}"
-  with_dict: "{{executeaslogin}}"
+    ansible_become_pass: "{{ SQLSVCPASSWORD }}"
+  with_dict: "{{ executeaslogin }}"
 
 - name: Add IMPERSONATE on user
-  win_shell: |
-    SqlCmd {{connection_type}} -Q "CREATE LOGIN [{{item.key}}] FROM WINDOWS"
-    SqlCmd {{connection_type}} -Q "USE {{item.value.db}};CREATE USER [{{item.value.user}}] FOR LOGIN [{{item.value.user}}]"
-    SqlCmd {{connection_type}} -Q "USE {{item.value.db}};GRANT IMPERSONATE ON USER::[{{item.value.impersonate}}] TO [{{item.value.user}}]"
-  become: yes
+  ansible.windows.win_shell: |
+    SqlCmd {{ connection_type }} -Q "CREATE LOGIN [{{ item.key }}] FROM WINDOWS"
+    SqlCmd {{ connection_type }} -Q "USE {{ item.value.db }};CREATE USER [{{ item.value.user }}] FOR LOGIN [{{ item.value.user }}]"
+    SqlCmd {{ connection_type }} -Q "USE {{ item.value.db }};GRANT IMPERSONATE ON USER::[{{ item.value.impersonate }}] TO [{{ item.value.user }}]"
+  become: true
   become_method: runas
-  become_user: "{{SQLSVCACCOUNT}}"
+  become_user: "{{ SQLSVCACCOUNT }}"
   vars:
-    ansible_become_pass: "{{SQLSVCPASSWORD}}"
-  with_dict: "{{executeasuser}}"
+    ansible_become_pass: "{{ SQLSVCPASSWORD }}"
+  with_dict: "{{ executeasuser }}"
 
 - name: Enable sa account
-  win_shell: |
-    SqlCmd {{connection_type}} -Q "ALTER LOGIN sa ENABLE"
-    SqlCmd {{connection_type}} -Q "ALTER LOGIN sa WITH PASSWORD = '{{sa_password}}' , CHECK_POLICY=OFF"
-  become: yes
+  ansible.windows.win_shell: |
+    SqlCmd {{ connection_type }} -Q "ALTER LOGIN sa ENABLE"
+    SqlCmd {{ connection_type }} -Q "ALTER LOGIN sa WITH PASSWORD = '{{ sa_password }}' , CHECK_POLICY=OFF"
+  become: true
   become_method: runas
-  become_user: "{{SQLSVCACCOUNT}}"
+  become_user: "{{ SQLSVCACCOUNT }}"
   vars:
-    ansible_become_pass: "{{SQLSVCPASSWORD}}"
+    ansible_become_pass: "{{ SQLSVCPASSWORD }}"
 
-- name: enable MSSQL authentication and windows authent
-  win_shell: |
-    SqlCmd {{connection_type}} -Q "EXEC xp_instance_regwrite N'HKEY_LOCAL_MACHINE', N'Software\Microsoft\MSSQLServer\MSSQLServer', N'LoginMode', REG_DWORD, 2"
-  become: yes
+- name: Enable MSSQL authentication and windows authent
+  ansible.windows.win_shell: |
+    SqlCmd {{ connection_type }} -Q "EXEC xp_instance_regwrite N'HKEY_LOCAL_MACHINE', N'Software\Microsoft\MSSQLServer\MSSQLServer', N'LoginMode', REG_DWORD, 2"
+  become: true
   become_method: runas
-  become_user: "{{SQLSVCACCOUNT}}"
+  become_user: "{{ SQLSVCACCOUNT }}"
   vars:
-    ansible_become_pass: "{{SQLSVCPASSWORD}}"
+    ansible_become_pass: "{{ SQLSVCPASSWORD }}"
 
 - name: Restart service MSSQL
   win_service:
-    name: '{{mssql_service_name}}'
-    force_dependent_services: yes
+    name: "{{ mssql_service_name }}"
+    force_dependent_services: true
     state: restarted

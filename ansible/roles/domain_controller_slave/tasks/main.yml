@@ -6,7 +6,7 @@
     log_path: C:\dns_log.txt
 
 - name: Promote the server to aditionnal DC
-  win_domain_controller:
+  microsoft.ad.domain_controller:
     dns_domain_name: "{{domain_name}}"
     domain_admin_user: "{{domain_username}}"
     domain_admin_password: "{{domain_password}}"

@@ -1,7 +1,8 @@
+---
 - name: Ensure that Admin is present with a valid password
   win_user:
     name: Administrator
-    password: "{{local_admin_password}}"
+    password: "{{ local_admin_password }}"
     password_never_expires: yes
     account_disabled: false
     state: present

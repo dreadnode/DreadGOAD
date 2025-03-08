@@ -1,5 +1,182 @@
+---
+- name: Ensure AdmPwd.PS module is imported
+  ansible.windows.win_shell: |
+    # Check if module is available and import it
+    if (Get-Module -ListAvailable -Name AdmPwd.PS) {
+      try {
+        Import-Module AdmPwd.PS -ErrorAction Stop
+        Write-Output "AdmPwd.PS module imported successfully"
+        exit 0
+      } catch {
+        Write-Error "Failed to import AdmPwd.PS module: $($_.Exception.Message)"
+        exit 1
+      }
+    } else {
+      Write-Error "AdmPwd.PS module not found on the system"
+      exit 2
+    }
+  register: module_check
+  failed_when: module_check.rc != 0
+
+- name: Verify LAPS schema attributes exist
+  ansible.windows.win_shell: |
+    try {
+      $schemaPath = (Get-ADRootDSE).SchemaNamingContext
+      $pwdAttr = Get-ADObject -SearchBase $schemaPath -Filter {lDAPDisplayName -eq "ms-Mcs-AdmPwd"} -Properties * -ErrorAction Stop
+      
+      if ($pwdAttr) {
+        Write-Output "LAPS schema attribute found: ms-Mcs-AdmPwd"
+        # Get the attribute GUID
+        $pwdGuid = [GUID]$pwdAttr.SchemaIDGUID
+        Write-Output "Password attribute GUID: $pwdGuid"
+        exit 0
+      } else {
+        Write-Error "LAPS schema attribute 'ms-Mcs-AdmPwd' not found"
+        exit 1
+      }
+    } catch {
+      Write-Error "Error checking LAPS schema: $($_.Exception.Message)"
+      exit 1
+    }
+  register: schema_check
+  failed_when: schema_check.rc != 0
+
+- name: Update LAPS schema if attributes not found
+  ansible.windows.win_shell: |
+    try {
+      Import-Module AdmPwd.PS
+      Update-AdmPwdADSchema -Verbose
+      Write-Output "Schema update completed"
+      exit 0
+    } catch {
+      Write-Error "Failed to update schema: $($_.Exception.Message)"
+      exit 1
+    }
+  when: schema_check.rc != 0
+  register: schema_update
+  failed_when: schema_update.rc != 0 and not "already" in schema_update.stderr
+  
+- name: Verify LAPS OU exists
+  ansible.windows.win_shell: |
+    try {
+      $lapsOU = Get-ADOrganizationalUnit -Identity "{{ laps_path }}" -ErrorAction Stop
+      Write-Output "LAPS OU exists: $($lapsOU.DistinguishedName)"
+      exit 0
+    } catch {
+      Write-Error "LAPS OU does not exist: {{ laps_path }} - Error: $($_.Exception.Message)"
+      exit 1
+    }
+  register: ou_check
+  failed_when: ou_check.rc != 0
+
 - name: Add user or group permission to read Laps
-  win_shell: |
-    Set-AdmPwdReadPasswordPermission -OrgUnit "{{laps_path}}" -AllowedPrincipals "{{item}}"
-  with_items: "{{laps_readers}}"
+  ansible.windows.win_powershell:
+    script: |
+      $principal = '{{ item }}'
+      $lapsPath = '{{ laps_path }}'
+      $computerClassGuid = [GUID]"bf967a86-0de6-11d0-a285-00aa003049e2" # Computer objects class GUID
+      
+      Write-Output "Starting permissions setup for principal: $principal"
+      
+      # First verify the LAPS OU exists
+      try {
+        $lapsOU = Get-ADOrganizationalUnit -Identity $lapsPath -ErrorAction Stop
+        Write-Output "LAPS OU exists: $($lapsOU.DistinguishedName)"
+      } catch {
+        Write-Error "LAPS OU does not exist: $lapsPath - Error: $($_.Exception.Message)"
+        return $false
+      }
+      
+      # Find the principal using different methods
+      $adObject = $null
+      try {
+        # Try as user
+        $adObject = Get-ADUser -Identity $principal -ErrorAction SilentlyContinue
+        if ($adObject) {
+          Write-Output "Found as user: $($adObject.DistinguishedName)"
+        } else {
+          # Try as group
+          $adObject = Get-ADGroup -Identity $principal -ErrorAction SilentlyContinue
+          if ($adObject) {
+            Write-Output "Found as group: $($adObject.DistinguishedName)"
+          } else {
+            # Try as generic object
+            $adObject = Get-ADObject -Filter {(samAccountName -eq $principal) -or (name -eq $principal)} -Properties ObjectSID -ErrorAction SilentlyContinue
+            if ($adObject) {
+              Write-Output "Found as generic object: $($adObject.DistinguishedName)"
+            } else {
+              Write-Error "Could not find principal $principal in Active Directory"
+              return $false
+            }
+          }
+        }
+      } catch {
+        Write-Error "Error searching for principal $principal. Error: $($_.Exception.Message)"
+        return $false
+      }
+      
+      # Get the schema attribute GUIDs
+      try {
+        $schemaPath = (Get-ADRootDSE).SchemaNamingContext
+        $pwdAttr = Get-ADObject -SearchBase $schemaPath -Filter {lDAPDisplayName -eq "ms-Mcs-AdmPwd"} -Properties * -ErrorAction Stop
+        if (-not $pwdAttr) {
+          Write-Error "LAPS schema attribute 'ms-Mcs-AdmPwd' not found. LAPS schema may not be installed correctly."
+          return $false
+        }
+        
+        # Get the attribute GUIDs
+        $pwdGuid = [GUID]$pwdAttr.SchemaIDGUID
+        
+        Write-Output "Found password attribute GUID: $pwdGuid"
+        
+        # Try using the built-in LAPS cmdlet first
+        try {
+          # Try to use the Set-AdmPwdReadPasswordPermission cmdlet
+          Set-AdmPwdReadPasswordPermission -OrgUnit $lapsOU.DistinguishedName -Identity $adObject.SID
+          Write-Output "Successfully granted LAPS read permission to $principal on $($lapsOU.DistinguishedName) using Set-AdmPwdReadPasswordPermission"
+          return $true
+        } catch {
+          Write-Output "Could not use Set-AdmPwdReadPasswordPermission, falling back to manual ACL manipulation. Error: $($_.Exception.Message)"
+        }
+        
+        # Fallback to manual ACL manipulation if the cmdlet failed
+        try {
+          # Get the OU object and ACL
+          $ouObj = [ADSI]"LDAP://$($lapsOU.DistinguishedName)"
+          $acl = $ouObj.psbase.ObjectSecurity
+          
+          # Set up the ACE for read permission on ms-Mcs-AdmPwd attribute
+          $identity = New-Object System.Security.Principal.SecurityIdentifier($adObject.ObjectSID)
+          Write-Output "Using SID: $($identity.Value)"
+          
+          $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
+              $identity, 
+              [System.DirectoryServices.ActiveDirectoryRights]"ReadProperty",
+              [System.Security.AccessControl.AccessControlType]"Allow",
+              $pwdGuid,
+              [System.DirectoryServices.ActiveDirectorySecurityInheritance]"Descendents",
+              $computerClassGuid
+          )
+          
+          # Add the ACE to the ACL
+          $acl.AddAccessRule($ace)
+          
+          # Set the modified ACL
+          $ouObj.psbase.ObjectSecurity = $acl
+          $ouObj.psbase.CommitChanges()
+          
+          Write-Output "Successfully granted LAPS read permission to $principal on $($lapsOU.DistinguishedName) using manual ACL"
+          return $true
+        } catch {
+          Write-Error "Failed to set permission using manual ACL. Error: $($_.Exception.Message)"
+          return $false
+        }
+      } catch {
+        Write-Error "Failed to set permission. Error: $($_.Exception.Message)"
+        return $false
+      }
+    error_action: continue
+  register: permission_result
+  failed_when: permission_result.output[0] == false
+  with_items: "{{ laps_readers }}"
   when: laps_readers is defined
