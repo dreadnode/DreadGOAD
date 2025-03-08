@@ -1,3 +1,4 @@
+---
 - name: Refresh
   ansible.windows.win_command: gpupdate /force
 
@@ -15,7 +16,7 @@
   win_shell: |
     if (-not(Get-ADCSTemplate -DisplayName "{{item.value.template_name}}")) { New-ADCSTemplate -DisplayName "{{item.value.template_name}}" -JSON (Get-Content {{item.value.template_file}} -Raw) -Identity "{{domain_name}}\Domain Users" -Publish }
   vars:
-    ansible_become: yes
+    ansible_become: true
     ansible_become_method: runas
     domain_name: "{{domain}}"
     ansible_become_user: "{{domain_username}}"

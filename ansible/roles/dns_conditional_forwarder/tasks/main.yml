@@ -20,12 +20,16 @@
   delegate_to: "{{ remote_dc }}"
   register: remote_ipv4_result
 
+- name: Debug remote IP address
+  ansible.builtin.debug:
+    var: remote_ipv4_result
+
 - name: Add dns server zone using PowerShell (fallback)
   ansible.windows.win_powershell:
     script: |
       try {
         $zoneName = "{{ zone_name }}"
-        $serverIP = "{{ remote_ipv4_result.host_out | default(remote_ipv4_result.stdout) | trim }}"
+        $serverIP = "{{ remote_ipv4_result.output[0] | default(remote_ipv4_result.stdout) | trim }}"
         
         # Check if zone already exists
         $existingZone = Get-DnsServerZone -Name $zoneName -ErrorAction SilentlyContinue
@@ -45,7 +49,7 @@
         Write-Error "Failed to configure DNS zone: $_"
         $Ansible.Changed = $false
       }
-  when: remote_ipv4_result is defined and (remote_ipv4_result.host_out is defined or remote_ipv4_result.stdout is defined)
+  when: remote_ipv4_result is defined and (remote_ipv4_result.output is defined or remote_ipv4_result.stdout is defined)
 
 - name: Verify DNS zone is set up correctly
   ansible.windows.win_powershell:

@@ -45,21 +45,31 @@
       }
       
       try {
-        # Try the netdom approach first - often more reliable
-        $securePwd = ConvertTo-SecureString $RemoteAdminPassword -AsPlainText -Force
-        $remoteCred = New-Object System.Management.Automation.PSCredential ($RemoteAdmin, $securePwd)
-        
         # Test DNS resolution first
         Write-Output "Testing DNS resolution for $RemoteForest"
         try {
           $dnsResult = Resolve-DnsName -Name $RemoteForest -Type A -ErrorAction Stop
           Write-Output "DNS resolution successful: $($dnsResult.IPAddress)"
         } catch {
-          Write-Output "Warning: DNS resolution failed: $($_.Exception.Message)"
+          Write-Output "Warning: DNS resolution failed: $RemoteForest : $($_.Exception.Message)"
+          # Try to get the IP directly from inventory
+          $remoteIp = "{{ hostvars[remote_dc]['remote_ipv4_result']['output'][0] | default('') | trim }}"
+          Write-Output "Using IP from inventory: $remoteIp"
         }
         
-        # Create the trust using netdom
-        $netdomResult = netdom trust $env:USERDNSDOMAIN /Domain:$RemoteForest /TwoWay /UserD:$RemoteAdmin /PasswordD:$RemoteAdminPassword /add
+        $currentDomain = [System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain().Name
+        Write-Output "Current domain: $currentDomain"
+        Write-Output "Remote forest: $RemoteForest"
+        
+        # FIXED: The correct netdom syntax for creating a trust
+        # The correct format is: netdom trust [TrustingDomain] /Domain:[TrustedDomain] /Twoway /UserO:[TrustingUser] /PasswordO:[TrustingPassword] /UserD:[TrustedUser] /PasswordD:[TrustedPassword] /add
+        
+        # Using explicit passwords for clarity in command
+        $netdomCmd = "netdom trust $currentDomain /Domain:$RemoteForest /Twoway /UserO:$LocalAdmin /PasswordO:$LocalAdminPassword /UserD:$RemoteAdmin /PasswordD:$RemoteAdminPassword /add"
+        Write-Output "Executing netdom command (sensitive parts redacted)"
+        
+        # Execute the command
+        $netdomResult = cmd /c $netdomCmd
         Write-Output "netdom result: $netdomResult"
         
         $result = @{
@@ -115,72 +125,193 @@
       LocalAdmin: "{{ domain_username }}"
       LocalAdminPassword: "{{ domain_password }}"
   register: trust_result
-  ignore_errors: true
-
-# - name: Test DNS resolution of remote forest
-#   ansible.windows.win_powershell:
-#     script: |
-#       Resolve-DnsName -Name {{ remote_forest }} -Type A
-#       Resolve-DnsName -Name {{ remote_dc }} -Type A
-#       Get-DnsClientServerAddress -AddressFamily IPv4 | Format-Table
-#     error_action: continue
-#   register: dns_test
-  
-# - name: Display DNS test results
-#   debug:
-#     var: dns_test
-
-# - name: Display trust result information
-#   debug:
-#     var: trust_result
 
 - name: Reboot and wait for the AD system to restart
   ansible.windows.win_reboot:
     test_command: "Get-ADUser -Identity {{ admin_user }} -Properties *"
   when: trust_result.changed
 
-#      $localforest=[System.DirectoryServices.ActiveDirectory.Forest]::getCurrentForest()
-#      try {
-#        $trustPassword = "TrustP@$$w0rd12" 
-#        $localForest.CreateLocalSideOfTrustRelationship($RemoteForest,"Bidirectional",$trustPassword)
-#        $Ansible.Changed = $true
-#      } catch [System.DirectoryServices.ActiveDirectory.ActiveDirectoryObjectExistsException] {
-#        $Ansible.Changed = $false
+- name: Enable SID history for the trust
+  ansible.windows.win_powershell:
+    script: |
+      try {
+        $remoteDomain = "{{ remote_forest }}"
+        $localDomain = $env:USERDNSDOMAIN
+        
+        Write-Output "Checking trust relationships using multiple methods..."
+        
+        # Method 1: Get-ADTrust
+        $adTrusts = Get-ADTrust -Filter * | Where-Object { $_.Target -eq $remoteDomain }
+        Write-Output "AD Trusts found: $($adTrusts.Count)"
+        
+        # Method 2: netdom query to check status
+        $nltestResult = nltest /domain_trusts
+        Write-Output "nltest result: $nltestResult"
+        
+        # If we find the trust in any method, try to enable SID history
+        if ($adTrusts -or ($nltestResult -match $remoteDomain)) {
+          Write-Output "Trust found, enabling SID history"
+          
+          # Use correct parameter format for netdom
+          try {
+            # Correct syntax with /Domain: parameter
+            Write-Output "Running: netdom trust $localDomain /Domain:$remoteDomain /EnableSIDHistory:Yes"
+            $netdomResult = netdom trust $localDomain $remoteDomain /EnableSIDHistory:Yes
+            Write-Output "netdom SID history result: $netdomResult"
+          } catch {
+            Write-Output "Error with netdom command: $_"
+          }
+          
+          # Also try disabling SID filtering (quarantine)
+          try {
+            Write-Output "Disabling SID filtering"
+            $filterResult = netdom trust $localDomain $remoteDomain /Quarantine:No
+            Write-Output "SID filtering result: $filterResult"
+          } catch {
+            Write-Output "Error disabling SID filtering: $_"
+          }
+          
+          # Force AD replication
+          Write-Output "Forcing AD replication"
+          repadmin /syncall /Ade
+          
+          $result = @{
+            changed = $true
+            status = "sid_history_commands_executed"
+          }
+        } else {
+          Write-Output "Trust not found using any method"
+          $result = @{
+            changed = $false
+            status = "trust_not_found_after_reboot"
+          }
+        }
+        
+        $result | ConvertTo-Json -Compress
+      } catch {
+        Write-Output "Error in trust verification/SID history: $($_.Exception.Message)"
+        $result = @{
+          changed = $false
+          status = "failed"
+          error = "$($_.Exception.Message)"
+        }
+        $result | ConvertTo-Json -Compress
+        exit 1
+      }
+  register: sid_history_post_reboot
+  when: trust_result.changed
 
-# - name: Test network connectivity to remote DC
-#   ansible.windows.win_powershell:
-#     script: |
-#       Test-NetConnection -ComputerName {{ hostvars[remote_dc].ansible_host }} -Port 389
-#       Test-NetConnection -ComputerName {{ hostvars[remote_dc].ansible_host }} -Port 445
-#     error_action: continue
-#   register: network_test
+- name: Test DNS resolution of remote forest
+  ansible.windows.win_powershell:
+    script: |
+      $remoteDC = "{{ lab.hosts[remote_dc].hostname }}"
+      $remoteDomain = "{{ remote_forest }}"
+      
+      Write-Output "Testing resolution for domain and DC..."
+      
+      # Test domain resolution
+      try {
+        $domainResult = Resolve-DnsName -Name $remoteDomain -Type A -ErrorAction SilentlyContinue
+        Write-Output "Domain resolution successful: $remoteDomain"
+      } catch {
+        Write-Output "Domain resolution failed: $remoteDomain - $_"
+      }
+      
+      # Test DC name resolution
+      try {
+        $dcResult = Resolve-DnsName -Name $remoteDC -Type A -ErrorAction SilentlyContinue
+        Write-Output "DC resolution successful: $remoteDC"
+      } catch {
+        Write-Output "DC resolution failed: $remoteDC - $_"
+      }
+      
+      # Test FQDN resolution
+      try {
+        $fqdnResult = Resolve-DnsName -Name "$remoteDC.$remoteDomain" -Type A -ErrorAction SilentlyContinue
+        Write-Output "FQDN resolution successful: $remoteDC.$remoteDomain"
+      } catch {
+        Write-Output "FQDN resolution failed: $remoteDC.$remoteDomain - $_"
+      }
+      
+      # Get DNS server information
+      Get-DnsClientServerAddress -AddressFamily IPv4 | Format-Table
+    error_action: continue
+  register: dns_test
   
-# - name: Display network test results
-#   debug:
-#     var: network_test
+- name: Display DNS test results
+  debug:
+    var: dns_test
 
-# - name: Check forest functional level
-#   ansible.windows.win_powershell:
-#     script: |
-#       Get-ADForest | Select-Object ForestMode
-#     error_action: continue
-#   register: forest_level
+- name: Display trust result information
+  debug:
+    var: trust_result
+
+- name: Set remote IP variable
+  ansible.builtin.set_fact:
+    remote_ip: "{{ trust_result.output[2] | regex_replace('DNS resolution successful: ', '') | trim }}"
+  when: trust_result is defined and trust_result.output[2] is defined
+
+- name: Test network connectivity to remote DC
+  ansible.windows.win_powershell:
+    script: |
+      $remoteDC = "{{ lab.hosts[remote_dc].hostname }}"
+      $remoteDomain = "{{ remote_forest }}"
+      $remoteIP = "{{ remote_ip }}"
+      
+      Write-Output "Testing connectivity to $remoteDC.$remoteDomain ($remoteIP)"
+      
+      # Test TCP connectivity directly to the IP address
+      try {
+          $tcpClient = New-Object System.Net.Sockets.TcpClient
+          $result = $tcpClient.BeginConnect($remoteIP, 389, $null, $null)
+          $success = $result.AsyncWaitHandle.WaitOne(1000, $false)
+          if ($success) {
+              $tcpClient.EndConnect($result)
+              Write-Output "TCP connection to $remoteIP port 389 successful"
+          } else {
+              Write-Output "TCP connection to $remoteIP port 389 failed"
+          }
+          $tcpClient.Close()
+      } catch {
+          Write-Output "TCP connection error: $_"
+      }
+      
+      Test-NetConnection -ComputerName $remoteIP -Port 389 -ErrorAction SilentlyContinue
+      Test-NetConnection -ComputerName $remoteIP -Port 445 -ErrorAction SilentlyContinue
+    error_action: continue
+  register: network_test
   
-# - name: Display forest level
-#   debug:
-#     var: forest_level
+- name: Display network test results
+  debug:
+    var: network_test
 
-# - name: Show trust result
-#   ansible.windows.win_powershell:
-#     script: |
-#       # Suppress progress output
-#       $ProgressPreference = 'SilentlyContinue'
+- name: Check forest functional level
+  ansible.windows.win_powershell:
+    script: |
+      Get-ADForest | Select-Object ForestMode
+    error_action: continue
+  register: forest_level
+  
+- name: Display forest level
+  debug:
+    var: forest_level
 
-#       # Get trust status using CIM
-#       $obj = Get-CimInstance -Class Microsoft_DomainTrustStatus -Namespace root\microsoftactivedirectory
+- name: Display SID history enablement result
+  debug:
+    var: sid_history_result
+  when: sid_history_result is defined
 
-#       # Convert to JSON and return (handle CLIXML issue)
-#       $result = $obj | Select-Object FlatName, SID, TrustAttributes, TrustDirection, TrustedDCName, TrustedDomain, TrustIsOk, TrustStatus, TrustStatusString, TrustType
-#       ConvertTo-Json -InputObject $result -Depth 3
-#   register: trust_status_details
-#   ignore_errors: true
+- name: Show trust result
+  ansible.windows.win_powershell:
+    script: |
+      # Suppress progress output
+      $ProgressPreference = 'SilentlyContinue'
+
+      # Get trust status using CIM
+      $obj = Get-CimInstance -Class Microsoft_DomainTrustStatus -Namespace root\microsoftactivedirectory
+
+      # Convert to JSON and return (handle CLIXML issue)
+      $result = $obj | Select-Object FlatName, SID, TrustAttributes, TrustDirection, TrustedDCName, TrustedDomain, TrustIsOk, TrustStatus, TrustStatusString, TrustType
+      ConvertTo-Json -InputObject $result -Depth 3
+  register: trust_status_details
+

@@ -20,74 +20,67 @@
 - name: Add DNS records for remote domain controllers
   hosts: trust
   tasks:
-    - name: Add A records for remote domain controllers
-      ansible.windows.win_powershell:
-        script: |
-          try {
-            # Get remote DC information
-            $remoteDC = "{{ remote_dc }}"
-            $remoteIPAddress = "{{ hostvars[remote_dc].ansible_host }}"
-            $remoteDomainName = "{{ remote_forest }}"
-            $hostDomain = "{{ domain }}"
-            
-            Write-Output "Creating DNS records for $remoteDC.$remoteDomainName with IP $remoteIPAddress"
-            
-            # Add DNS A record for standalone DC
-            try {
-              $existingRecord = Get-DnsServerResourceRecord -Name $remoteDC -ZoneName "." -ErrorAction SilentlyContinue
-              if(-not $existingRecord) {
-                Add-DnsServerResourceRecordA -Name $remoteDC -ZoneName "." -IPv4Address $remoteIPAddress -TimeToLive 01:00:00
-                Write-Output "Added A record for $remoteDC"
-              } else {
-                Write-Output "A record for $remoteDC already exists"
-              }
-            } catch {
-              Write-Output "Failed to add standalone record: $_"
-            }
-            
-            # Create the zone for remote domain if it doesn't exist
-            $zoneExists = Get-DnsServerZone -Name $remoteDomainName -ErrorAction SilentlyContinue
-            if(-not $zoneExists) {
-              Add-DnsServerPrimaryZone -Name $remoteDomainName -ReplicationScope "Forest" -DynamicUpdate "Secure"
-              Write-Output "Created primary zone for $remoteDomainName"
-            }
-            
-            # Add DNS A record for DC in the domain zone
-            try {
-              $existingDomainRecord = Get-DnsServerResourceRecord -Name $remoteDC -ZoneName $remoteDomainName -ErrorAction SilentlyContinue
-              if(-not $existingDomainRecord) {
-                Add-DnsServerResourceRecordA -Name $remoteDC -ZoneName $remoteDomainName -IPv4Address $remoteIPAddress -TimeToLive 01:00:00
-                Write-Output "Added A record for $remoteDC.$remoteDomainName"
-              } else {
-                Write-Output "A record for $remoteDC.$remoteDomainName already exists"
-              }
-            } catch {
-              Write-Output "Failed to add domain record: $_"
-            }
-            
-            # Add conditional forwarder if not already set up
-            try {
-              $forwarderExists = Get-DnsServerZone -Name $remoteDomainName -ErrorAction SilentlyContinue | 
-                                  Where-Object {$_.ZoneType -eq "Forwarder"}
-              if(-not $forwarderExists) {
-                Add-DnsServerConditionalForwarderZone -Name $remoteDomainName -MasterServers $remoteIPAddress -ReplicationScope "Forest"
-                Write-Output "Added conditional forwarder for $remoteDomainName"
-              }
-            } catch {
-              Write-Output "Failed to add conditional forwarder: $_"
-            }
-            
-            # Flush DNS cache to ensure changes take effect
-            Clear-DnsClientCache
-            Write-Output "Cleared DNS cache"
-          } catch {
-            Write-Error "Error creating DNS records: $_"
-          }
-      register: dns_records_result
-      vars:
+    - name: Get remote DC information
+      ansible.builtin.set_fact:
         remote_dc: "{{ lab.domains[lab.hosts[dict_key].domain].trust | default('') | ternary(lab.domains[lab.domains[lab.hosts[dict_key].domain].trust].dc, '') }}"
         remote_forest: "{{ lab.domains[lab.hosts[dict_key].domain].trust | default('') }}"
-        domain: "{{ lab.hosts[dict_key].domain }}"
+        local_domain: "{{ lab.hosts[dict_key].domain }}"
+
+    - name: Get remote IP address from previous task
+      ansible.builtin.set_fact:
+        remote_ip_address: "{{ hostvars[inventory_hostname]['remote_ipv4_result']['output'][0] | trim }}"
+      when: remote_dc != ''
+
+    - name: Debug remote DC information with IP
+      ansible.builtin.debug:
+        msg: 
+          - "Remote DC: {{ remote_dc }}"
+          - "Remote Forest: {{ remote_forest }}"
+          - "Remote DC IP: {{ remote_ip_address }}"
+          - "Local Domain: {{ local_domain }}"
+      when: remote_dc != ''
+
+    - name: Add direct A records for remote domain
+      ansible.windows.win_powershell:
+        script: |
+          # Get remote DC information
+          $remoteDC = "{{ lab.hosts[remote_dc].hostname }}"
+          # Use the actual IP address instead of the instance ID
+          $remoteIPAddress = "{{ remote_ipv4_result.output[0] | trim }}"
+          $remoteDomainName = "{{ remote_forest }}"
+          
+          Write-Output "Creating direct DNS A records in the root zone"
+          
+          # Add an A record directly in DNS root hints for the remote domain
+          try {
+              Add-DnsServerResourceRecordA -Name $remoteDomainName -ZoneName "." -IPv4Address $remoteIPAddress -TimeToLive 01:00:00 -ErrorAction SilentlyContinue
+              Write-Output "Added A record for $remoteDomainName in root zone"
+          } catch {
+              Write-Output "Failed to add domain record: $_"
+          }
+          
+          # Add FQDN A record
+          try {
+              Add-DnsServerResourceRecordA -Name "$remoteDC.$remoteDomainName" -ZoneName "." -IPv4Address $remoteIPAddress -TimeToLive 01:00:00 -ErrorAction SilentlyContinue
+              Write-Output "Added A record for $remoteDC.$remoteDomainName in root zone"
+          } catch {
+              Write-Output "Failed to add FQDN record: $_"
+          }
+          
+          # Force DNS cache flush
+          ipconfig /flushdns
+          Write-Output "Flushed DNS cache"
+          
+          # Test DNS resolution
+          Write-Output "Testing DNS resolution after adding records:"
+          try {
+              $domainTest = Resolve-DnsName -Name $remoteDomainName -ErrorAction SilentlyContinue
+              Write-Output "Domain resolution: $($domainTest.IPAddress)"
+          } catch {
+              Write-Output "Domain resolution failed"
+          }
+      register: dns_direct_records
+      when: remote_dc != '' and remote_forest != '' and remote_ip_address is defined
 
 - name: Trusts configuration
   hosts: trust
@@ -99,11 +92,11 @@
     domain_username: "{{ domain }}\\{{ admin_user }}"
     domain_password: "{{ lab.domains[domain].domain_password }}"
     remote_forest: "{{ lab.domains[domain].trust }}"
-    remote_admin: "Administrator@{{ remote_forest }}"
+    remote_admin: "{{ admin_user }}@{{ remote_forest }}"
     remote_admin_password: "{{ lab.domains[remote_forest].domain_password }}"
     zone_name: "{{ remote_forest }}"
     remote_dc: "{{ lab.domains[remote_forest].dc }}"
-    master_server: "{{ hostvars[remote_dc].ansible_host }}"
+    remote_ip: "{{ remote_ipv4_result.output[0] | trim }}"
 
 - name: Trusts configuration end
   hosts: trust

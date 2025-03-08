@@ -13,7 +13,6 @@
   vars:
     local_groups: "{{ lab.hosts[dict_key].local_groups  | default({}) }}"
 
-
 # doesen't work see : https://github.com/ansible-collections/community.windows/blob/main/plugins/modules/win_domain_group_membership.ps1
 # ligne 62 : use the given credentials to distant domain -> wrong
 - name: Cross domain groups

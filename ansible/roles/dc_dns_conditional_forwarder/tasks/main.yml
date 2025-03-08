@@ -31,7 +31,13 @@
           if ($targetZone -eq "{{ domain_key }}") {
             {% if lab.domains[domain_key].dc is defined %}
             $remoteDcName = "{{ lab.domains[domain_key].dc }}"
+            # Get IP from DNS or other reliable source
+            {% if hostvars[lab.domains[domain_key].dc]['remote_ipv4_result'] is defined and hostvars[lab.domains[domain_key].dc]['remote_ipv4_result']['output'] is defined %}
+            $remoteIp = "{{ hostvars[lab.domains[domain_key].dc]['remote_ipv4_result']['output'][0] | default('') | trim }}"
+            {% else %}
+            # Fallback to ansible_host if remote_ipv4_result is not available
             $remoteIp = "{{ hostvars[lab.domains[domain_key].dc].ansible_host | default('') }}"
+            {% endif %}
             {% else %}
             # No DC defined for domain, try to find one in hosts
             {% set found_dc = false %}
@@ -39,7 +45,12 @@
               {% if not found_dc and host_info.domain == domain_key and host_info.role == 'dc' %}
                 {% set found_dc = true %}
                 $remoteDcName = "{{ host_key }}"
+                {% if hostvars[host_key]['remote_ipv4_result'] is defined and hostvars[host_key]['remote_ipv4_result']['output'] is defined %}
+                $remoteIp = "{{ hostvars[host_key]['remote_ipv4_result']['output'][0] | default('') | trim }}"
+                {% else %}
+                # Fallback only if needed
                 $remoteIp = "{{ hostvars[host_key].ansible_host | default('') }}"
+                {% endif %}
               {% endif %}
             {% endfor %}
             {% endif %}
