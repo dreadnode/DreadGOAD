@@ -24,7 +24,10 @@
     - name: Set domain adapter from Windows API
       ansible.builtin.set_fact:
         domain_adapter: "{{ windows_adapter_result.host_out | default(windows_adapter_result.stdout) | trim }}"
-      when: windows_adapter_result is defined and (windows_adapter_result.host_out is defined or windows_adapter_result.stdout is defined)
+      when: 
+        - windows_adapter_result is defined 
+        - (windows_adapter_result.host_out is defined or windows_adapter_result.stdout is defined)
+        - (windows_adapter_result.host_out | default(windows_adapter_result.stdout) | trim != '')
       run_once: true
 
     # Use the first interface's IP address for comparison
@@ -64,7 +67,7 @@
     # Determine if there are two adapters
     - name: Determine if there are two adapters
       ansible.builtin.set_fact:
-        two_adapters: "{{ 'yes' if number_of_interfaces|int > 1 else 'no' }}"
+        two_adapters: "{{ 'true' if number_of_interfaces|int > 1 else 'false' }}"
       run_once: true
 
     # Set NAT adapter to domain adapter if only one interface
@@ -72,7 +75,7 @@
       ansible.builtin.set_fact:
         nat_adapter: "{{ domain_adapter }}"
       run_once: true
-      when: two_adapters == "no" or nat_adapter is not defined
+      when: two_adapters == "false" or nat_adapter is not defined
 
     # # Debug the final values
     # - name: Debug final values

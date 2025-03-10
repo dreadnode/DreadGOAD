@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -e 
 
+ENV=dev
+
 build_play() {
     for file in ansible/build.yml \
                 ansible/roles/common/tasks/main.yml \
@@ -28,7 +30,7 @@ ad_servers_play() {
 ad_parent_domain_play() {
     for file in ansible/ad-parent_domain.yml \
                 ansible/roles/domain_controller/tasks/main.yml \
-                inventory \
+                $ENV-inventory \
                 ad/GOAD/data/config.json \
                 ansible/data.yml; do
     echo -e "\n==== $file ===="
@@ -41,7 +43,7 @@ ad_child_domain_play() {
                 ansible/roles/child_domain/tasks/main.yml \
                 ansible/roles/dns_conditional_forwarder/tasks/main.yml \
                 ansible/roles/parent_child_dns/tasks/main.yml \
-                inventory \
+                $ENV-inventory \
                 ad/GOAD/data/config.json \
                 ansible/data.yml; do
     echo -e "\n==== $file ===="
@@ -53,7 +55,7 @@ ad_members_play() {
     for file in ansible/ad-members.yml \
                 ansible/roles/member_server/tasks/main.yml \
                 ansible/roles/commonwkstn/tasks/main.yml \
-                inventory \
+                $ENV-inventory \
                 ad/GOAD/data/config.json \
                 ansible/data.yml; do
     echo -e "\n==== $file ===="
@@ -68,7 +70,7 @@ ad_trusts_play() {
                 ansible/roles/trusts/tasks/main.yml \
                 ansible/roles/settings/enable_nat_adapter/tasks/main.yml \
                 ansible/roles/dc_dns_conditional_forwarder/tasks/main.yml \
-                inventory \
+                $ENV-inventory \
                 ad/GOAD/data/config.json \
                 ansible/data.yml; do
     echo -e "\n==== $file ===="
@@ -85,7 +87,7 @@ ad_data_play() {
                 ansible/roles/ad/tasks/ou.yml \
                 ansible/roles/settings/copy_files/tasks/main.yml \
                 ansible/roles/move_to_ou/tasks/main.yml \
-                inventory \
+                $ENV-inventory \
                 ad/GOAD/data/config.json \
                 ansible/data.yml; do
     echo -e "\n==== $file ===="
@@ -97,7 +99,7 @@ ad_gmsa_play() {
     for file in ansible/ad-gmsa.yml \
                 ansible/roles/gmsa/tasks/main.yml \
                 ansible/roles/gmsa_hosts/tasks/main.yml \
-                inventory \
+                $ENV-inventory \
                 ad/GOAD/data/config.json \
                 ansible/data.yml; do
     echo -e "\n==== $file ===="
@@ -112,7 +114,7 @@ laps_play() {
                 ansible/roles/laps/dc/tasks/move_server_to_ou.yml \
                 ansible/roles/laps/dc/tasks/install.yml \
                 ansible/roles/laps/dc/defaults/main.yml \
-                inventory \
+                $ENV-inventory \
                 ad/GOAD/data/config.json \
                 ansible/data.yml; do
     echo -e "\n==== $file ===="
@@ -125,7 +127,7 @@ ad_relations_play() {
                 ansible/roles/settings/adjust_rights/tasks/main.yml \
                 ansible/roles/settings/user_rights/tasks/main.yml \
                 ansible/roles/groups_domains/tasks/main.yml \
-                inventory \
+                $ENV-inventory \
                 ad/GOAD/data/config.json \
                 ansible/data.yml; do
     echo -e "\n==== $file ===="
@@ -146,7 +148,7 @@ adcs_play() {
                 ansible/roles/adcs_templates/files/ADCSTemplate/DSCResources/COMMUNITY_ADCSTemplate/COMMUNITY_ADCSTemplate.psm1 \
                 ansible/roles/adcs_templates/files/ADCSTemplate/DSCResources/COMMUNITY_ADCSTemplate/COMMUNITY_ADCSTemplate.schema.mof \
                 ansible/roles/adcs_templates/files/ADCSTemplate/ADCSTemplate.psm1 \
-                inventory \
+                $ENV-inventory \
                 ad/GOAD/data/config.json \
                 ansible/data.yml; do
     echo -e "\n==== $file ===="
@@ -157,7 +159,7 @@ adcs_play() {
 ad_acl_play () {
     for file in ansible/ad-acl.yml \
                 ansible/roles/acl/tasks/main.yml \
-                inventory \
+                $ENV-inventory \
                 ad/GOAD/data/config.json \
                 ansible/data.yml; do
     echo -e "\n==== $file ===="
@@ -177,7 +179,7 @@ servers_play() {
                 ansible/roles/mssql_link/tasks/logins.yml \
                 ansible/roles/mssql_ssms/tasks/main.yml \
                 ansible/roles/webdav/tasks/main.yml \
-                inventory \
+                $ENV-inventory \
                 ad/GOAD/data/config.json \
                 ansible/data.yml; do
     echo -e "\n==== $file ===="
@@ -214,7 +216,7 @@ vulnerabilities_play() {
                 ansible/roles/vulns/shares/tasks/main.yml \
                 ansible/roles/vulns/mssql/tasks/main.yml \
                 ansible/roles/vulns/credentials/tasks/main.yml \
-                inventory \
+                $ENV-inventory \
                 ad/GOAD/data/config.json \
                 ansible/data.yml; do
     echo -e "\n==== $file ===="
@@ -227,8 +229,8 @@ vulnerabilities_play() {
 # ad_servers_play
 # ad_parent_domain_play
 # ad_child_domain_play
-# ad_members_play
-ad_trusts_play
+ad_members_play
+# ad_trusts_play
 # ad_data_play
 # ad_gmsa_play
 # laps_play
