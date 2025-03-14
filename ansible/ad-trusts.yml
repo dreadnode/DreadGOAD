@@ -59,7 +59,7 @@
     domain_username: "{{ domain }}\\{{ admin_user }}"
     domain_password: "{{ lab.domains[domain].domain_password }}"
     remote_forest: "{{ lab.domains[domain].trust }}"
-    remote_admin: "Administrator@{{ remote_forest }}"
+    remote_admin: "{{ admin_user }} @{{ remote_forest }}"
     remote_admin_password: "{{ lab.domains[remote_forest].domain_password }}"
     zone_name: "{{ remote_forest }}"
     remote_dc: "{{ lab.domains[remote_forest].dc }}"
