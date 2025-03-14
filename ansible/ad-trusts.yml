@@ -1,86 +1,53 @@
 ---
 # Load datas
 - import_playbook: data.yml
-  tags: 'data'
-# set AD trusts ==================================================================================================
+  tags: data
 
+# Get DNS IP addresses for each domain controller
+- name: Get DC IPv4 addresses
+  hosts: dc
+  gather_facts: false
+  tasks:
+    - name: Get IPv4 address for DC
+      ansible.windows.win_powershell:
+        script: |
+          try {
+            $ipAddress = (Get-NetIPAddress -AddressFamily IPv4 | 
+              Where-Object {$_.IPAddress -notmatch '^127\.' -and $_.IPAddress -notmatch '^169\.254\.'} | 
+              Select-Object -First 1).IPAddress
+            
+            if($ipAddress) {
+              # Explicitly set the output property that Ansible will capture
+              $host.UI.WriteLine($ipAddress)
+              $Ansible.Changed = $false
+            } else {
+              throw "No valid IPv4 address found"
+            }
+          } catch {
+            Write-Error "Error getting IPv4 address: $_"
+            $Ansible.Changed = $false
+          }
+      register: dc_ipv4_raw
+
+    - name: Set DC IP address as fact
+      ansible.builtin.set_fact:
+        dc_ipv4: "{{ dc_ipv4_raw.host_out | default('') | trim }}"
+        cacheable: true
+      when: dc_ipv4_raw is defined and dc_ipv4_raw.host_out is defined
+      
+# set AD trusts ==================================================================================================
 - name: Trusts configuration prepare
   hosts: trust
   roles:
-  - { role: 'settings/disable_nat_adapter' , tags: 'disable_nat_adapter'}
-  - { role: 'dns_conditional_forwarder', tags: 'dns_conditional_forwarder' }
+    - { role: 'settings/disable_nat_adapter', tags: 'disable_nat_adapter'}
+    - { role: 'dns_conditional_forwarder', tags: 'dns_conditional_forwarder' }
   vars:
     domain: "{{ lab.hosts[dict_key].domain }}"
     remote_forest: "{{ lab.domains[domain].trust }}"
     zone_name: "{{ remote_forest }}"
     remote_dc: "{{ lab.domains[remote_forest].dc }}"
-    master_server: "{{ hostvars[remote_dc].ansible_host }}"
-    replication: "forest"
-
-- name: Add DNS records for remote domain controllers
-  hosts: trust
-  tasks:
-    - name: Get remote DC information
-      ansible.builtin.set_fact:
-        remote_dc: "{{ lab.domains[lab.hosts[dict_key].domain].trust | default('') | ternary(lab.domains[lab.domains[lab.hosts[dict_key].domain].trust].dc, '') }}"
-        remote_forest: "{{ lab.domains[lab.hosts[dict_key].domain].trust | default('') }}"
-        local_domain: "{{ lab.hosts[dict_key].domain }}"
-
-    - name: Get remote IP address from previous task
-      ansible.builtin.set_fact:
-        remote_ip_address: "{{ hostvars[inventory_hostname]['remote_ipv4_result']['output'][0] | trim }}"
-      when: remote_dc != ''
-
-    - name: Debug remote DC information with IP
-      ansible.builtin.debug:
-        msg: 
-          - "Remote DC: {{ remote_dc }}"
-          - "Remote Forest: {{ remote_forest }}"
-          - "Remote DC IP: {{ remote_ip_address }}"
-          - "Local Domain: {{ local_domain }}"
-      when: remote_dc != ''
-
-    - name: Add direct A records for remote domain
-      ansible.windows.win_powershell:
-        script: |
-          # Get remote DC information
-          $remoteDC = "{{ lab.hosts[remote_dc].hostname }}"
-          # Use the actual IP address instead of the instance ID
-          $remoteIPAddress = "{{ remote_ipv4_result.output[0] | trim }}"
-          $remoteDomainName = "{{ remote_forest }}"
-          
-          Write-Output "Creating direct DNS A records in the root zone"
-          
-          # Add an A record directly in DNS root hints for the remote domain
-          try {
-              Add-DnsServerResourceRecordA -Name $remoteDomainName -ZoneName "." -IPv4Address $remoteIPAddress -TimeToLive 01:00:00 -ErrorAction SilentlyContinue
-              Write-Output "Added A record for $remoteDomainName in root zone"
-          } catch {
-              Write-Output "Failed to add domain record: $_"
-          }
-          
-          # Add FQDN A record
-          try {
-              Add-DnsServerResourceRecordA -Name "$remoteDC.$remoteDomainName" -ZoneName "." -IPv4Address $remoteIPAddress -TimeToLive 01:00:00 -ErrorAction SilentlyContinue
-              Write-Output "Added A record for $remoteDC.$remoteDomainName in root zone"
-          } catch {
-              Write-Output "Failed to add FQDN record: $_"
-          }
-          
-          # Force DNS cache flush
-          ipconfig /flushdns
-          Write-Output "Flushed DNS cache"
-          
-          # Test DNS resolution
-          Write-Output "Testing DNS resolution after adding records:"
-          try {
-              $domainTest = Resolve-DnsName -Name $remoteDomainName -ErrorAction SilentlyContinue
-              Write-Output "Domain resolution: $($domainTest.IPAddress)"
-          } catch {
-              Write-Output "Domain resolution failed"
-          }
-      register: dns_direct_records
-      when: remote_dc != '' and remote_forest != '' and remote_ip_address is defined
+    master_server: "{{ hostvars[remote_dc]['dc_ipv4'] | default(hostvars[remote_dc].ansible_host) }}"
+    replication: forest
 
 - name: Trusts configuration
   hosts: trust
@@ -92,11 +59,11 @@
     domain_username: "{{ domain }}\\{{ admin_user }}"
     domain_password: "{{ lab.domains[domain].domain_password }}"
     remote_forest: "{{ lab.domains[domain].trust }}"
-    remote_admin: "{{ admin_user }}@{{ remote_forest }}"
+    remote_admin: "Administrator@{{ remote_forest }}"
     remote_admin_password: "{{ lab.domains[remote_forest].domain_password }}"
     zone_name: "{{ remote_forest }}"
     remote_dc: "{{ lab.domains[remote_forest].dc }}"
-    remote_ip: "{{ remote_ipv4_result.output[0] | trim }}"
+    master_server: "{{ hostvars[remote_dc].ansible_host }}"
 
 - name: Trusts configuration end
   hosts: trust
@@ -108,7 +75,6 @@
   roles:
   - { role: 'dc_dns_conditional_forwarder', tags: 'dns_conditional_forwarder' }
   vars:
-    dict_key: "{{ inventory_hostname }}"
     domain: "{{ lab.hosts[dict_key].domain }}"
     replication: "forest"
     domain_username: "{{ domain }}\\{{ admin_user }}"
@@ -116,4 +82,4 @@
     parent_domain: "{{ '.'.join(domain.split('.')[1:]) | default('') }}"
     trust: "{{ lab.domains[domain].trust | default('') }}"
     lab: "{{ lab }}"
-    domains: "{{ lab.domains.keys() | list }}"
+    domains: "{{ lab.domains.keys() }}"

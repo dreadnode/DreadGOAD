@@ -3,6 +3,37 @@
 - ansible.builtin.import_playbook: data.yml
   tags: 'data'
 
+# Get DNS IP addresses for each domain controller
+- name: Get DC IPv4 addresses
+  hosts: dc
+  gather_facts: false
+  tasks:
+    - name: Get IPv4 address for DC
+      ansible.windows.win_powershell:
+        script: |
+          try {
+            $ipAddress = (Get-NetIPAddress -AddressFamily IPv4 | 
+              Where-Object {$_.IPAddress -notmatch '^127\.' -and $_.IPAddress -notmatch '^169\.254\.'} | 
+              Select-Object -First 1).IPAddress
+            
+            if($ipAddress) {
+              Write-Output $ipAddress
+              $Ansible.Changed = $false
+            } else {
+              throw "No valid IPv4 address found"
+            }
+          } catch {
+            Write-Error "Error getting IPv4 address: $_"
+            $Ansible.Changed = $false
+          }
+      register: dc_ipv4_raw
+
+    - name: Set DC IP address as fact
+      ansible.builtin.set_fact:
+        dc_ipv4: "{{ dc_ipv4_raw.host_out | default('') | trim }}"
+        cacheable: true
+      when: dc_ipv4_raw is defined and dc_ipv4_raw.host_out is defined
+
 # set AD datas ==================================================================================================
 - name: Play servers AD configuration
   hosts: server
@@ -16,6 +47,7 @@
     domain_password: "{{ lab.domains[member_domain].domain_password }}"
     domain_adapter: "{{ hostvars[dns_domain]['domain_adapter'] | default('Ethernet') }}"
     two_adapters: "{{ hostvars[dns_domain]['two_adapters'] | default(false) }}"
+    dns_server_ip: "{{ hostvars[dns_domain]['dc_ipv4'] | default(hostvars[dns_domain].ansible_host) }}"
 
 - name: Play workstations AD configuration
   hosts: workstation
@@ -29,3 +61,4 @@
     domain_password: "{{ lab.domains[member_domain].domain_password }}"
     domain_adapter: "{{ hostvars[dns_domain]['domain_adapter'] | default('Ethernet') }}"
     two_adapters: "{{ hostvars[dns_domain]['two_adapters'] | default(false) }}"
+    dns_server_ip: "{{ hostvars[dns_domain]['dc_ipv4'] | default(hostvars[dns_domain].ansible_host) }}"

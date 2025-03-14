@@ -2,6 +2,15 @@
 set -e
 
 ENV=staging
+# Set to "true" to enable verbose output for ansible-playbook, otherwise "false"
+VERBOSE=false
+
+# Determine the ansible verbose flag
+if [ "$VERBOSE" = "true" ]; then
+  VERBOSE_FLAG="-vvv"
+else
+  VERBOSE_FLAG=""
+fi
 
 # Set up logging
 LOG_FILE="ad_deployment_$(date +%Y%m%d_%H%M%S).log"
@@ -13,25 +22,24 @@ echo "==============================================="
 
 # Define playbooks for the default profile from playbooks.yml
 PLAYBOOKS=(
-  # "build.yml"
-  # "ad-servers.yml"
-  # "ad-parent_domain.yml" 
-  # "ad-child_domain.yml" 
-  # # "wait5m.yml"
-  # "ad-members.yml" 
+  "build.yml" # ALL CHANGES VETTED
+  "ad-servers.yml" # ALL CHANGES VETTED
+  "ad-parent_domain.yml" 
+  "ad-child_domain.yml" 
+  "ad-members.yml" 
   # "ad-trusts.yml" 
   # "ad-data.yml" 
   # "ad-gmsa.yml" 
   # "laps.yml" 
   # "ad-relations.yml" 
-  "adcs.yml" 
-  "ad-acl.yml" 
+  # "adcs.yml" 
+  # "ad-acl.yml" 
   # <------ known to be all good and working up until this point
-  "servers.yml" 
+  # "servers.yml" 
   # <------ not super well tested, but appears to work
-  "security.yml" 
+  # "security.yml" 
   # <------ worked first try - super fucking sus
-  "vulnerabilities.yml"
+  # "vulnerabilities.yml"
 )
 
 echo "Playbooks to be executed:"
@@ -44,8 +52,8 @@ echo "-----------------------------------------------"
 for playbook in "${PLAYBOOKS[@]}"; do
   echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Starting ansible/$playbook..."
   
-  # For all other playbooks, use the inventory file
-  ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook -i $ENV-inventory ansible/$playbook
+  # For all playbooks, use the inventory file and include the optional verbose flag
+  ANSIBLE_HOST_KEY_CHECKING=False ansible-playbook $VERBOSE_FLAG -i $ENV-inventory ansible/$playbook
   
   # Check if the playbook ran successfully
   result=$?
