@@ -33,8 +33,8 @@
   register: ip_gateway_command
 
 - name: Set ip_gateway
-  set_fact:
-    ip_gateway: "{{ ip_gateway_command.stdout | trim }}"
+  ansible.builtin.set_fact:
+    ip_gateway: "{{ ip_gateway_command.stdout | default(ip_gateway_command.host_out) | default('') | trim }}"
 
 - name: Add DNS Server and Default Gateway Options in DHCP
   win_shell: |

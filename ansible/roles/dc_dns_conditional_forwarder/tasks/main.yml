@@ -1,85 +1,16 @@
 ---
-- name: Add DNS conditional forwarders for all domains
-  ansible.windows.win_powershell:
-    script: |
-      try {
-        $domain = "{{ domain }}"
-        # Convert domains list to a PowerShell array
-        $domains = @("{{ domains | join('","') }}")
-        $trust = "{{ trust }}"
-        $parentDomain = "{{ parent_domain }}"
-        
-        Write-Output "Setting up DNS conditional forwarders for $domain"
-        Write-Output "Available domains: $($domains -join ', ')"
-        
-        foreach ($targetZone in $domains) {
-          # Skip if it's the current domain, parent/child domain, or already a direct trusted domain
-          if ($targetZone -eq $domain -or 
-              $targetZone -eq $trust -or 
-              $targetZone -eq $parentDomain -or 
-              $(if ($parentDomain) { $targetZone.EndsWith($domain) } else { $false })) {
-            Write-Output "Skipping zone $targetZone (own domain, trust, or parent/child)"
-            continue
-          }
-          
-          # Get DC information for the target domain
-          $remoteDcName = ""
-          $remoteIp = ""
-          
-          # Find the domain controller for each target domain
-          {% for domain_key in lab.domains.keys() %}
-          if ($targetZone -eq "{{ domain_key }}") {
-            {% if lab.domains[domain_key].dc is defined %}
-            $remoteDcName = "{{ lab.domains[domain_key].dc }}"
-            # Get IP from DNS or other reliable source
-            {% if hostvars[lab.domains[domain_key].dc]['remote_ipv4_result'] is defined and hostvars[lab.domains[domain_key].dc]['remote_ipv4_result']['output'] is defined %}
-            $remoteIp = "{{ hostvars[lab.domains[domain_key].dc]['remote_ipv4_result']['output'][0] | default('') | trim }}"
-            {% else %}
-            # Fallback to ansible_host if remote_ipv4_result is not available
-            $remoteIp = "{{ hostvars[lab.domains[domain_key].dc].ansible_host | default('') }}"
-            {% endif %}
-            {% else %}
-            # No DC defined for domain, try to find one in hosts
-            {% set found_dc = false %}
-            {% for host_key, host_info in lab.hosts.items() %}
-              {% if not found_dc and host_info.domain == domain_key and host_info.role == 'dc' %}
-                {% set found_dc = true %}
-                $remoteDcName = "{{ host_key }}"
-                {% if hostvars[host_key]['remote_ipv4_result'] is defined and hostvars[host_key]['remote_ipv4_result']['output'] is defined %}
-                $remoteIp = "{{ hostvars[host_key]['remote_ipv4_result']['output'][0] | default('') | trim }}"
-                {% else %}
-                # Fallback only if needed
-                $remoteIp = "{{ hostvars[host_key].ansible_host | default('') }}"
-                {% endif %}
-              {% endif %}
-            {% endfor %}
-            {% endif %}
-          }
-          {% endfor %}
-          
-          if ([string]::IsNullOrEmpty($remoteIp)) {
-            Write-Output "No IP address found for zone $targetZone, skipping"
-            continue
-          }
-          
-          Write-Output "Setting up conditional forwarder for $targetZone using DC $remoteDcName with IP $remoteIp"
-          
-          # Check if zone already exists
-          $existingZone = Get-DnsServerZone -Name $targetZone -ErrorAction SilentlyContinue
-          
-          if ($existingZone) {
-            # Update existing zone
-            Set-DnsServerZoneForwarder -Name $targetZone -MasterServers $remoteIp
-            Write-Output "Updated existing conditional forwarder for $targetZone"
-          } else {
-            # Create new zone
-            Add-DnsServerConditionalForwarderZone -Name $targetZone -MasterServers $remoteIp -ReplicationScope "{{ replication }}"
-            Write-Output "Created new conditional forwarder for $targetZone"
-          }
-        }
-        
-        $Ansible.Changed = $true
-      } catch {
-        Write-Error "Error setting up conditional forwarder: $_"
-        $Ansible.Changed = $false
-      }
+- name: Add DNS server zone
+  community.windows.win_dns_zone:
+    name: "{{ item }}"
+    type: forwarder
+    replication: "{{ replication }}"
+    dns_servers:
+      - "{{ hostvars[dc]['dc_ipv4'] | default(hostvars[dc].ansible_host) }}"
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+    dc: "{{ lab.domains[item].dc }}"
+  loop: "{{ domains }}"
+  when: item != domain and item != trust and item != parent_domain and '.'.join(item.split('.')[1:]) != domain

@@ -328,7 +328,9 @@
       NewDomainName: "{{ domain.split('.')[0] }}"
       ParentDC_IP: "{{ parent_dc_ip | default('') }}"
   register: child_result
-  failed_when: (child_result.failed | default(false)) and "already exists" not in (child_result.stdout | default(''))
+  failed_when: >
+    (child_result.failed | default(false)) and 
+    "already exists" not in (child_result.stdout | default(child_result.host_out) | default(''))
 
 - name: Reboot after domain promotion
   ansible.windows.win_reboot:
@@ -362,7 +364,7 @@
           # Check if the ADWS service is running
           $adws = Get-Service ADWS
           if ($adws.Status -ne "Running") {
-            Write-Output "Attempt $attempt: ADWS service not running yet, starting it..."
+            Write-Output "Attempt ${attempt}: ADWS service not running yet, starting it..."
             Start-Service ADWS -ErrorAction SilentlyContinue
             continue
           }
@@ -370,7 +372,7 @@
           # Check DNS
           $dns = Get-Service DNS
           if ($dns.Status -ne "Running") {
-            Write-Output "Attempt $attempt: DNS service not running yet, starting it..."
+            Write-Output "Attempt ${attempt}: DNS service not running yet, starting it..."
             Start-Service DNS -ErrorAction SilentlyContinue
             continue
           }
@@ -379,7 +381,7 @@
           $success = $true
           $Ansible.Failed = $false
         } catch {
-          Write-Output "Attempt $attempt: Active Directory not fully operational yet: $_"
+          Write-Output "Attempt ${attempt}: Active Directory not fully operational yet: $_"
           Start-Sleep -Seconds 15
         }
       }

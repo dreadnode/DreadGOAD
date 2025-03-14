@@ -2,89 +2,22 @@
 - name: Prioritize the {{ domain_adapter }} interface (local) as the default for routing
   ansible.windows.win_shell:
     Set-NetIPInterface -InterfaceAlias "{{ domain_adapter }}" -InterfaceMetric 10
-  when: two_adapters == "yes"
+  when: two_adapters
 
-# Dynamically determine IP addresses for domain controllers
-- name: Get primary domain controller IP (sevenkingdoms.local)
-  ansible.windows.win_shell: |
-    (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.IPAddress -notmatch '^127\.' -and $_.IPAddress -notmatch '^169\.254\.'} | Select-Object -First 1).IPAddress
-  delegate_to: "dc01"
-  register: parent_dc_ip_result
-  ignore_errors: true
+- name: Set configure dns to {{ dns_domain }}
+  win_dns_client:
+    adapter_names: "{{ domain_adapter }}"
+    ipv4_addresses:
+    - "{{ dns_server_ip }}"
+    log_path: C:\dns_log.txt
 
-- name: Get north domain controller IP (north.sevenkingdoms.local)
-  ansible.windows.win_shell: |
-    (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.IPAddress -notmatch '^127\.' -and $_.IPAddress -notmatch '^169\.254\.'} | Select-Object -First 1).IPAddress
-  delegate_to: "dc02"
-  register: north_dc_ip_result
-  ignore_errors: true
-
-- name: Get essos domain controller IP (essos.local)
-  ansible.windows.win_shell: |
-    (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {$_.IPAddress -notmatch '^127\.' -and $_.IPAddress -notmatch '^169\.254\.'} | Select-Object -First 1).IPAddress
-  delegate_to: "dc03"
-  register: essos_dc_ip_result
-  ignore_errors: true
-
-# Configure DNS for the member server based on domain
-- name: Configure multi-domain DNS settings
-  ansible.windows.win_powershell:
-    script: |
-      # Configure appropriate DNS servers based on the member domain
-      $parentDomainDcIP = "{{ parent_dc_ip_result.stdout | trim | default('') }}"
-      $northDomainDcIP = "{{ north_dc_ip_result.stdout | trim | default('') }}"
-      $essosDomainDcIP = "{{ essos_dc_ip_result.stdout | trim | default('') }}"
-      
-      Write-Output "Dynamically discovered domain controller IPs:"
-      Write-Output " - Parent domain (sevenkingdoms.local): $parentDomainDcIP"
-      Write-Output " - North domain (north.sevenkingdoms.local): $northDomainDcIP"
-      Write-Output " - Essos domain (essos.local): $essosDomainDcIP"
-      
-      # Set DNS servers based on member domain
-      if ("{{ member_domain }}" -eq "north.sevenkingdoms.local") {
-        # For north domain, use both north DC and parent DC
-        Set-DnsClientServerAddress -InterfaceAlias "{{ domain_adapter }}" -ServerAddresses @($northDomainDcIP, $parentDomainDcIP)
-        Write-Output "Set DNS servers for north.sevenkingdoms.local: primary=$northDomainDcIP, secondary=$parentDomainDcIP"
-      }
-      elseif ("{{ member_domain }}" -eq "sevenkingdoms.local") {
-        # For parent domain, use parent DC
-        Set-DnsClientServerAddress -InterfaceAlias "{{ domain_adapter }}" -ServerAddresses @($parentDomainDcIP)
-        Write-Output "Set DNS server for sevenkingdoms.local: $parentDomainDcIP"
-      }
-      elseif ("{{ member_domain }}" -eq "essos.local") {
-        # For essos domain, use essos DC
-        Set-DnsClientServerAddress -InterfaceAlias "{{ domain_adapter }}" -ServerAddresses @($essosDomainDcIP)
-        Write-Output "Set DNS server for essos.local: $essosDomainDcIP"
-      }
-      
-      # Configure DNS suffix search list
-      $domains = @("{{ member_domain }}")
-      
-      # For north.sevenkingdoms.local, add parent domain to search list
-      if ("{{ member_domain }}" -like "*.sevenkingdoms.local") {
-        $domains += "sevenkingdoms.local"
-      }
-      
-      # Set DNS client suffixes
-      Set-DnsClientGlobalSetting -SuffixSearchList $domains
-      Write-Output "Set DNS suffix search list: $($domains -join ', ')"
-      
-      # Register DNS and flush DNS cache
-      ipconfig /registerdns
-      ipconfig /flushdns
-      
-      Write-Output "DNS configuration completed"
-  register: dns_config_result
-
-# Verify File Server Role is installed
 - name: Verify File Server Role is installed
   ansible.windows.win_feature:
     name: File-Services, FS-FileServer
     state: present
     include_management_tools: True
-    
-# Join the server to the domain
-- name: Add member server to {{ member_domain }}
+
+- name: Add member server
   microsoft.ad.membership:
     dns_domain_name: "{{ member_domain }}"
     domain_admin_user: "{{ domain_username }}"
@@ -92,14 +25,9 @@
     state: domain
   register: domain_state
   failed_when: false
-  
-- name: Report domain join failure details
-  ansible.builtin.debug:
-    msg: "Failed to join domain. Error: {{ domain_state.msg }}"
-  when: domain_state is failed
-  
+
 - name: Reboot if needed
   ansible.windows.win_reboot:
     reboot_timeout: 1500
     post_reboot_delay: 100
-  when: domain_state.reboot_required
+  when: domain_state is changed and (domain_state.reboot_required | default(false))

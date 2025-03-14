@@ -1,6 +1,6 @@
 ---
 - name: Disable windows update
-  win_shell: |
+  ansible.windows.win_shell: |
     # set the Windows Update service to "disabled"
     sc.exe config wuauserv start=disabled
     

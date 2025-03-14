@@ -3,23 +3,25 @@
   ansible.windows.win_dns_client:
     adapter_names: "{{ nat_adapter }}"
     dns_servers: 
-      - "{{ hostvars[dns_domain].ansible_host }}"
       - "{{ dns_server }}"
-  when: force_dns_server == "yes"
+      - "{{ dns_server_forwarder }}"
+  when: force_dns_server | bool
 
 - name: Set a proxy for specific protocols
   community.windows.win_http_proxy:
     proxy:
       http: "{{ ad_http_proxy }}"
       https: "{{ ad_https_proxy }}"
-  when: http_proxy == "yes"
+    bypass: ["<local>", "*.local", "169.254.169.254"]
+  when: enable_http_proxy | bool
 
 - name: Configure IE to use a specific proxy per protocol
   community.windows.win_inet_proxy:
     proxy:
       http: "{{ ad_http_proxy }}"
       https: "{{ ad_https_proxy }}"
-  when: http_proxy == "yes"
+    bypass: ["<local>", "*.local", "169.254.169.254"]
+  when: enable_http_proxy | bool
 
 - name: Upgrade module PowerShellGet to fix accept license issue on last windows ansible version
   win_shell: |
@@ -62,4 +64,4 @@
     gateway: "{{ route_gateway }}"
     metric: 1
     state: present
-  when: add_route == "yes"
+  when: add_route | bool
