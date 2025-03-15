@@ -12,33 +12,22 @@
       param (
           [String]
           $RemoteForest,
+
           [String]
           $RemoteAdmin,
+
           [String]
           $RemoteAdminPassword
       )
       $localforest=[System.DirectoryServices.ActiveDirectory.Forest]::getCurrentForest()
-
       try {
-        # Try to get the existing trust relationship
-        $existingTrust = $localForest.GetTrustRelationship($RemoteForest)
-        Write-Output "Trust relationship already exists between $($localForest.Name) and $RemoteForest"
+        $localForest.GetTrustRelationship($RemoteForest)
         $Ansible.Changed = $false
-      } 
-      catch [System.DirectoryServices.ActiveDirectory.ActiveDirectoryObjectNotFoundException] {
-        try {
-          # Trust doesn't exist, create it
-          Write-Output "Creating new trust relationship between $($localForest.Name) and $RemoteForest"
-          $remoteContext = New-Object -TypeName "System.DirectoryServices.ActiveDirectory.DirectoryContext" -ArgumentList @( "Forest", $RemoteForest, $RemoteAdmin, $RemoteAdminPassword)
-          $distantForest = [System.DirectoryServices.ActiveDirectory.Forest]::getForest($remoteContext)
-          $localForest.CreateTrustRelationship($distantForest,"Bidirectional")
-          $Ansible.Changed = $true
-        }
-        catch [System.DirectoryServices.ActiveDirectory.ActiveDirectoryObjectExistsException] {
-          # This is fine - trust already exists
-          Write-Output "Trust relationship already exists (caught during creation)"
-          $Ansible.Changed = $false
-        }
+      } catch [System.DirectoryServices.ActiveDirectory.ActiveDirectoryObjectNotFoundException] {
+        $Ansible.Changed = $true
+        $remoteContext = New-Object -TypeName "System.DirectoryServices.ActiveDirectory.DirectoryContext" -ArgumentList @( "Forest", $RemoteForest, $RemoteAdmin, $RemoteAdminPassword)
+        $distantForest = [System.DirectoryServices.ActiveDirectory.Forest]::getForest($remoteContext)
+        $localForest.CreateTrustRelationship($distantForest,"Bidirectional")
       }
     error_action: stop
     parameters:
@@ -50,24 +39,21 @@
     ansible_become_method: runas
     ansible_become_user: "{{ domain_username }}"
     ansible_become_password: "{{ domain_password }}"
-  register: 
+  register:
     trust_result
 
 - name: Reboot and wait for the AD system to restart
   ansible.windows.win_reboot:
-    test_command: "Get-ADUser -Identity Administrator -Properties *"
+    test_command: "Get-ADUser -Identity {{ admin_user }} -Properties *"
   when: trust_result.changed
 
 - name: Show trust result
-  ansible.windows.win_powershell:
-    script: |
-      # Suppress progress output
-      $ProgressPreference = 'SilentlyContinue'
-
-      # Get trust status using CIM
-      $obj = Get-CimInstance -Class Microsoft_DomainTrustStatus -Namespace root\microsoftactivedirectory
-
-      # Convert to JSON and return (handle CLIXML issue)
-      $result = $obj | Select-Object FlatName, SID, TrustAttributes, TrustDirection, TrustedDCName, TrustedDomain, TrustIsOk, TrustStatus, TrustStatusString, TrustType
-      ConvertTo-Json -InputObject $result -Depth 3
-  register: trust_status_details
+  win_shell: |
+    $obj = Get-CimInstance -Class Microsoft_DomainTrustStatus -Namespace root\microsoftactivedirectory
+    Write-Output -InputObject $obj
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    domain_name: "{{ domain }}"
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"

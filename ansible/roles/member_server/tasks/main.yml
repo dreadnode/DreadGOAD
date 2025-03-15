@@ -8,7 +8,7 @@
   win_dns_client:
     adapter_names: "{{ domain_adapter }}"
     ipv4_addresses:
-    - "{{ dns_server_ip }}"
+      - "{{ hostvars[dns_domain]['dc_ipv4'] | default(hostvars[dns_domain].ansible_host) }}"
     log_path: C:\dns_log.txt
 
 - name: Verify File Server Role is installed

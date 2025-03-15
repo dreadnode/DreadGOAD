@@ -59,11 +59,11 @@
     domain_username: "{{ domain }}\\{{ admin_user }}"
     domain_password: "{{ lab.domains[domain].domain_password }}"
     remote_forest: "{{ lab.domains[domain].trust }}"
-    remote_admin: "{{ admin_user }} @{{ remote_forest }}"
+    remote_admin: "{{ admin_user }}@{{ remote_forest }}"
     remote_admin_password: "{{ lab.domains[remote_forest].domain_password }}"
     zone_name: "{{ remote_forest }}"
     remote_dc: "{{ lab.domains[remote_forest].dc }}"
-    master_server: "{{ hostvars[remote_dc].ansible_host }}"
+    master_server: "{{ hostvars[remote_dc]['dc_ipv4'] | default(hostvars[remote_dc].ansible_host) }}"
 
 - name: Trusts configuration end
   hosts: trust
@@ -76,10 +76,10 @@
   - { role: 'dc_dns_conditional_forwarder', tags: 'dns_conditional_forwarder' }
   vars:
     domain: "{{ lab.hosts[dict_key].domain }}"
-    replication: "forest"
     domain_username: "{{ domain }}\\{{ admin_user }}"
     domain_password: "{{ lab.domains[domain].domain_password }}"
     parent_domain: "{{ '.'.join(domain.split('.')[1:]) | default('') }}"
     trust: "{{ lab.domains[domain].trust | default('') }}"
     lab: "{{ lab }}"
     domains: "{{ lab.domains.keys() }}"
+    replication: forest
