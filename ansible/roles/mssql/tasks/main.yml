@@ -1,6 +1,6 @@
 ---
 - name: Reboot before install (long timeout in case of update)
-  win_reboot:
+  ansible.windows.win_reboot:
     reboot_timeout: 1200
 
 - name: Set variables
@@ -8,8 +8,10 @@
     download_url: "{{ download_url_2022 if sql_version == 'MSSQL_2022' else download_url_2019 }}"
     connection_type: "{{ connection_type_2022 if sql_version == 'MSSQL_2022' else connection_type_2019 }}"
     mssql_service_instance: "MSSQL${{ sql_instance_name }}"
-    mssql_service_name: "{{ 'MSSQL$' + sql_instance_name if sql_instance_name != 'MSSQLSERVER' else 'MSSQLSERVER' }}"
-    sql_reg_path: "HKLM:\\Software\\Microsoft\\Microsoft SQL Server\\{{ 'MSSQL16.' if sql_version == 'MSSQL_2022' else 'MSSQL15.' }}{{ sql_instance_name }}\\MSSQLServer\\SuperSocketNetLib\\Tcp\\IPAll"
+
+- name: Set service name
+  ansible.builtin.set_fact:
+    mssql_service_name: "{{ mssql_service_instance if sql_instance_name != 'MSSQLSERVER' else 'MSSQLSERVER' }}"
 
 - name: Display mssql variables in use
   ansible.builtin.debug:
@@ -27,6 +29,20 @@
   loop:
     - c:\setup\mssql\media
     - c:\setup\mssql\extraction
+
+- name: Create and load user profile
+  win_shell: |
+    $env:USERPROFILE
+    $env:HOMEPATH
+    if (!(Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer')) {
+      New-Item -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer' -Force | Out-Null
+    }
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_admin }}"
+    ansible_become_password: "{{ domain_admin_password }}"
+    ansible_become_flags: logon_type=interactive
 
 - name: Create SQL Server configuration file
   win_template: 
@@ -52,23 +68,13 @@
     action: add
   when: not SQLSVCACCOUNT == "NT AUTHORITY\\NETWORK SERVICE"
 
-# - name: Setup service account
-# Set-ADUser -Identity "{{ SQLSVCACCOUNT }}" -ServicePrincipalNames @{Add='MSSQLSvc/castelblack.north.sevenkingdoms.local'}
-# Get-ADUser -Identity "{{ SQLSVCACCOUNT }}" | Set-ADAccountControl -TrustedToAuthForDelegation $true
-# Set-ADUser -Identity "{{ SQLSVCACCOUNT }}" -Add @{'msDS-AllowedToDelegateTo'=@('CIFS/winterfell.north.sevenkingdoms.local','CIFS/winterfell')}
-
-# - name: check install already done
-#   win_stat:
-#     path: "C:\\Program Files\\Microsoft SQL Server\\MSSQL15.{{ sql_instance_name }}"
-#   register: mssql_install_already_done
-
-- name: Check if SQL Express Advanced media file exists
+- name: Check if SQL Express media file exists
   win_stat:
-    path: C:\setup\mssql\media\SQLEXPRADV_x64_ENU.exe
+    path: C:\setup\mssql\media\SQLEXPR_x64_ENU.exe
   register: sqlexpr_file
 
 - name: Run the installer to download SQL Express installation files
-  win_command: C:\setup\mssql\sql_installer.exe /ACTION=Download /MEDIAPATH=C:\setup\mssql\media /MEDIATYPE=Advanced /Q
+  win_command: C:\setup\mssql\sql_installer.exe /ACTION=Download /MEDIAPATH=C:\setup\mssql\media /Q
   when: not sqlexpr_file.stat.exists
 
 - name: Check if MSSQL service exists
@@ -78,83 +84,31 @@
   failed_when: false
 
 - name: Extract SQL Server installation files
-  win_command: C:\setup\mssql\media\SQLEXPRADV_x64_ENU.exe /x:C:\setup\mssql\extraction /q
+  win_command: C:\setup\mssql\media\SQLEXPR_x64_ENU.exe /x:C:\setup\mssql\extraction /q
   args:
     creates: C:\setup\mssql\extraction\SETUP.EXE
   when: mssql_service_check.state is not defined or mssql_service_check.state != "running"
 
-- name: Temporarily modify SQL configuration file to use NT AUTHORITY\SYSTEM
-  win_template:
-    src: files/sql_conf.ini.{{ sql_version }}.j2
-    dest: c:\setup\mssql\sql_conf_temp.ini
-  vars:
-    SQLSVCACCOUNT: "NT AUTHORITY\\SYSTEM"
-    SQLSVCPASSWORD: ""
-    SQLSYSADMIN: "BUILTIN\\Administrators"
-
-- name: Install SQL Server with simplified configuration
-  win_command: > 
-    C:\setup\mssql\extraction\SETUP.EXE /Q 
-    /IACCEPTSQLSERVERLICENSETERMS 
-    /ACTION=Install 
-    /FEATURES=SQLEngine 
-    /INSTANCENAME={{ sql_instance_name }}
-    /SQLSYSADMINACCOUNTS="BUILTIN\Administrators" 
-    /TCPENABLED=1 
-    /SKIPRULES=UserProfile 
-    /configurationfile=c:\setup\mssql\sql_conf_temp.ini
+- name: Install SQL Server
+  win_command: c:\setup\mssql\extraction\SETUP.EXE /configurationfile=c:\setup\mssql\sql_conf.ini
   args:
     chdir: C:\setup\mssql
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_admin }}"
+    ansible_become_password: "{{ domain_admin_password }}"
+    ansible_become_flags: logon_type=interactive
   register: mssql_install
-  until: mssql_install is not failed
-  retries: 3
-  delay: 120
+  failed_when: 
+    - mssql_install.rc != 0 
+    - >
+      (('No features were installed during the setup execution' not in (mssql_install.stdout | default(''))) and
+       ('No features were installed during the setup execution' not in (mssql_install.host_out | default(''))))
   when: mssql_service_check.state is not defined or mssql_service_check.state != "running"
 
-- name: Change SQL service account after installation
-  win_shell: |
-    $serviceName = 'MSSQL$SQLEXPRESS'
-    $svc = Get-WmiObject -Class Win32_Service -Filter "Name='$serviceName'"
-    if ($svc -eq $null) {
-      Write-Host "Service '$serviceName' not found. Available SQL services:"
-      Get-Service MSSQL* | Select-Object Name, DisplayName, Status | Format-Table -AutoSize
-      exit 1
-    }
-    
-    # Use the sc.exe command which is more reliable for this purpose
-    $result = sc.exe config "$serviceName" obj= "{{ SQLSVCACCOUNT }}" password= "{{ SQLSVCPASSWORD }}"
-    if ($LASTEXITCODE -ne 0) {
-      Write-Host "Failed to change service account: $result"
-      exit 1
-    }
-    Write-Host "Service account changed successfully"
-  register: change_svc_result
-  failed_when: change_svc_result.rc != 0
-  when: mssql_install is succeeded and SQLSVCACCOUNT != "NT AUTHORITY\\SYSTEM"
-
-- name: Verify SQL Server installation
-  ansible.windows.win_shell: Get-Service MSSQL* | Select-Object Name, DisplayName, Status
-  register: mssql_service_status
-  changed_when: false
-
-- name: Display found SQL Server services
-  debug:
-    var: sql_service_names.host_out
-  when: mssql_install is succeeded
-  
-- name: Change SQL service account with sc command
-  win_shell: |
-    sc.exe config 'MSSQL$SQLEXPRESS' obj= "{{ SQLSVCACCOUNT }}" password= "{{ SQLSVCPASSWORD }}"
-  when: mssql_install is succeeded and SQLSVCACCOUNT != "NT AUTHORITY\\SYSTEM"
-  
-- name: Restart SQL service to apply account changes
-  win_service:
-    name: "{{ mssql_service_name }}"
-    state: restarted
-  when: mssql_install is succeeded and SQLSVCACCOUNT != "NT AUTHORITY\\SYSTEM"
-
 # sql server 2022
-- name: Add or update registry for ip port
+- name: Add or update registry for ip port (2022)
   win_regedit:
     path: 'HKLM:\Software\Microsoft\Microsoft SQL Server\MSSQL16.{{ sql_instance_name }}\MSSQLServer\SuperSocketNetLib\Tcp\IPAll'
     name: TcpPort
@@ -163,7 +117,7 @@
   when: sql_version == "MSSQL_2022"
 
 # sql server 2019
-- name: Add or update registry for ip port
+- name: Add or update registry for ip port (2019)
   win_regedit:
     path: 'HKLM:\Software\Microsoft\Microsoft SQL Server\MSSQL15.{{ sql_instance_name }}\MSSQLServer\SuperSocketNetLib\Tcp\IPAll'
     name: TcpPort
@@ -171,8 +125,8 @@
   register: win_reg
   when: sql_version == "MSSQL_2019"
 
-- name: Reboot
-  win_reboot:
+- name: Reboot if registry was changed
+  ansible.windows.win_reboot:
   when: win_reg.changed
 
 - name: Firewall | Allow MSSQL through Firewall

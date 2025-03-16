@@ -60,9 +60,14 @@
   until: "passwordprop is not failed"
   retries: 3
   delay: 120
-  become: true
-  become_method: runas
-  become_user: SYSTEM
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: SYSTEM
+    ansible_become_flags: logon_type=batch logon_flags=with_profile
+  failed_when: 
+    - passwordprop is failed
+    - "'already exists' not in passwordprop.msg | default('')"
 
 - name: Configure Password Expiry Time
   win_ad_object:
@@ -86,9 +91,10 @@
   until: "password_expire_time is not failed"
   retries: 3
   delay: 120
-  become: true
-  become_method: runas
-  become_user: SYSTEM
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: SYSTEM
 
 - name: Add LAPS attributes to the Computer Attribute
   win_ad_object:
@@ -102,9 +108,10 @@
   until: "add_laps_attribute is not failed"
   retries: 3
   delay: 120
-  become: true
-  become_method: runas
-  become_user: SYSTEM
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: SYSTEM
 
 - name: Apply DACL to OU Containers
   win_ad_dacl:
