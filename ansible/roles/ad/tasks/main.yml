@@ -37,67 +37,6 @@
 - name: users
   import_tasks: users.yml
 
-# Managed BY
-- name: Assign managed_by domainlocal groups
-  ansible.windows.win_powershell:
-    script: |
-      $groupName = "{{ item.key }}"
-      $managedBy = "{{ item.value.managed_by }}"
-      
-      try {
-          $group = Get-ADGroup -Identity $groupName -ErrorAction Stop
-          Set-ADGroup -Identity $groupName -ManagedBy $managedBy -ErrorAction Stop
-          Write-Output "Successfully set $managedBy as manager for $groupName"
-          $Ansible.Changed = $true
-      } catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
-          Write-Output "Group $groupName not found. Skipping."
-      } catch {
-          # Avoid the colon after $groupName by using a different format
-          Write-Error "Failed to set manager for group $groupName. Error: $($_.Exception.Message)"
-      }
-  loop: "{{ ad_groups['domainlocal'] | dict2items }}"
-  when: ad_groups['domainlocal'] is defined and item.value.managed_by is defined
-
-- name: Assign managed_by universal groups
-  ansible.windows.win_powershell:
-    script: |
-      $groupName = "{{ item.key }}"
-      $managedBy = "{{ item.value.managed_by }}"
-      
-      try {
-          $group = Get-ADGroup -Identity $groupName -ErrorAction Stop
-          Set-ADGroup -Identity $groupName -ManagedBy $managedBy -ErrorAction Stop
-          Write-Output "Successfully set $managedBy as manager for $groupName"
-          $Ansible.Changed = $true
-      } catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
-          Write-Output "Group $groupName not found. Skipping."
-      } catch {
-          # Avoid the colon after $groupName by using a different format
-          Write-Error "Failed to set manager for group $groupName. Error: $($_.Exception.Message)"
-      }
-  loop: "{{ ad_groups['universal'] | dict2items }}"
-  when: ad_groups['universal'] is defined and item.value.managed_by is defined
-
-- name: Assign managed_by global groups
-  ansible.windows.win_powershell:
-    script: |
-      $groupName = "{{ item.key }}"
-      $managedBy = "{{ item.value.managed_by }}"
-      
-      try {
-          $group = Get-ADGroup -Identity $groupName -ErrorAction Stop
-          Set-ADGroup -Identity $groupName -ManagedBy $managedBy -ErrorAction Stop
-          Write-Output "Successfully set $managedBy as manager for $groupName"
-          $Ansible.Changed = $true
-      } catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
-          Write-Output "Group $groupName not found. Skipping."
-      } catch {
-          # Avoid the colon after $groupName by using a different format
-          Write-Error "Failed to set manager for group $groupName. Error: $($_.Exception.Message)"
-      }
-  loop: "{{ ad_groups['global'] | dict2items }}"
-  when: ad_groups['global'] is defined and item.value.managed_by is defined
-
 - name: Add members to the Domainlocal group, preserving existing membership
   microsoft.ad.group:
     name: "{{ item.key }}"
@@ -127,3 +66,99 @@
     state: present
   loop: "{{ ad_groups['global'] | dict2items }}"
   when: ad_groups['global'] is defined and item.value.members is defined
+
+# Managed BY
+- name: Assign managed_by domainlocal groups
+  ansible.windows.win_powershell:
+    script: |
+      $groupName = "{{ item.key }}"
+      $managedBy = "{{ item.value.managed_by | default('') }}"
+      
+      try {
+          if ([string]::IsNullOrEmpty($managedBy)) {
+              Write-Output "No managed_by value provided for $groupName. Skipping."
+              $Ansible.Changed = $false
+              exit 0
+          }
+          
+          $group = Get-ADGroup -Identity $groupName -ErrorAction Stop
+          Set-ADGroup -Identity $groupName -ManagedBy $managedBy -ErrorAction Stop
+          Write-Output "Successfully set $managedBy as manager for $groupName"
+          $Ansible.Changed = $true
+      } catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
+          Write-Output "Group $groupName not found. Skipping."
+          $Ansible.Changed = $false
+      } catch {
+          Write-Output "Failed to set manager for group ${groupName}. Error: $($_.Exception.Message)"
+          $Ansible.Changed = $false
+          # Don't fail the task, just report the error
+      }
+  loop: "{{ ad_groups['domainlocal'] | dict2items }}"
+  when: ad_groups['domainlocal'] is defined
+  register: domainlocal_managed_by_result
+
+- name: Assign managed_by universal groups
+  ansible.windows.win_powershell:
+    script: |
+      $groupName = "{{ item.key }}"
+      $managedBy = "{{ item.value.managed_by | default('') }}"
+      
+      try {
+          if ([string]::IsNullOrEmpty($managedBy)) {
+              Write-Output "No managed_by value provided for $groupName. Skipping."
+              $Ansible.Changed = $false
+              exit 0
+          }
+          
+          $group = Get-ADGroup -Identity $groupName -ErrorAction Stop
+          Set-ADGroup -Identity $groupName -ManagedBy $managedBy -ErrorAction Stop
+          Write-Output "Successfully set $managedBy as manager for $groupName"
+          $Ansible.Changed = $true
+      } catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
+          Write-Output "Group $groupName not found. Skipping."
+          $Ansible.Changed = $false
+      } catch {
+          Write-Output "Failed to set manager for group ${groupName}. Error: $($_.Exception.Message)"
+          $Ansible.Changed = $false
+          # Don't fail the task, just report the error
+      }
+  loop: "{{ ad_groups['universal'] | dict2items }}"
+  when: ad_groups['universal'] is defined
+  register: universal_managed_by_result
+
+- name: Assign managed_by global groups
+  ansible.windows.win_powershell:
+    script: |
+      $groupName = "{{ item.key }}"
+      $managedBy = "{{ item.value.managed_by | default('') }}"
+      
+      try {
+          if ([string]::IsNullOrEmpty($managedBy)) {
+              Write-Output "No managed_by value provided for $groupName. Skipping."
+              $Ansible.Changed = $false
+              exit 0
+          }
+          
+          $group = Get-ADGroup -Identity $groupName -ErrorAction Stop
+          Set-ADGroup -Identity $groupName -ManagedBy $managedBy -ErrorAction Stop
+          Write-Output "Successfully set $managedBy as manager for $groupName"
+          $Ansible.Changed = $true
+      } catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
+          Write-Output "Group $groupName not found. Skipping."
+          $Ansible.Changed = $false
+      } catch {
+          Write-Output "Failed to set manager for group ${groupName}. Error: $($_.Exception.Message)"
+          $Ansible.Changed = $false
+          # Don't fail the task, just report the error
+      }
+  loop: "{{ ad_groups['global'] | dict2items }}"
+  when: ad_groups['global'] is defined
+  register: global_managed_by_result
+
+- name: Debug managed_by results
+  ansible.builtin.debug:
+    msg: 
+      - "Domainlocal groups managed_by failures: {{ domainlocal_managed_by_result.results | selectattr('failed', 'defined') | selectattr('failed') | list | length }}"
+      - "Universal groups managed_by failures: {{ universal_managed_by_result.results | selectattr('failed', 'defined') | selectattr('failed') | list | length }}"
+      - "Global groups managed_by failures: {{ global_managed_by_result.results | selectattr('failed', 'defined') | selectattr('failed') | list | length }}"
+  when: domainlocal_managed_by_result is defined or universal_managed_by_result is defined or global_managed_by_result is defined

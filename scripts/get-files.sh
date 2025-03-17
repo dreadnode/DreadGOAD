@@ -229,8 +229,8 @@ vulnerabilities_play() {
 # ad_servers_play
 # ad_parent_domain_play
 # ad_child_domain_play
-ad_members_play
-# ad_trusts_play
+# ad_members_play
+ad_trusts_play
 # ad_data_play
 # ad_gmsa_play
 # laps_play

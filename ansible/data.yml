@@ -19,7 +19,6 @@
         script: |
           Get-NetAdapter | Where-Object {$_.Status -eq "Up"} | Select-Object -First 1 | Select-Object -ExpandProperty Name
       register: windows_adapter_result
-      run_once: true
 
     - name: Set domain adapter from Windows API
       ansible.builtin.set_fact:
@@ -28,61 +27,51 @@
         - windows_adapter_result is defined 
         - (windows_adapter_result.host_out is defined or windows_adapter_result.stdout is defined)
         - (windows_adapter_result.host_out | default(windows_adapter_result.stdout) | trim != '')
-      run_once: true
 
     # Use the first interface's IP address for comparison
     - name: Get primary interface IP address
       ansible.builtin.set_fact:
         primary_ip: "{{ ansible_interfaces[0].ipv4.address }}"
-      run_once: true
       when: ansible_interfaces[0].ipv4 is defined
 
     # Set domain adapter based on the first interface
     - name: Set domain adapter from first interface
       ansible.builtin.set_fact:
         domain_adapter: "{{ ansible_interfaces[0].connection_name }}"
-      run_once: true
       when: ansible_interfaces[0] is defined and domain_adapter is not defined
 
     # Set fallback domain adapter if it wasn't defined
     - name: Set fallback domain adapter
       ansible.builtin.set_fact:
         domain_adapter: "Ethernet"  # Generic fallback value
-      run_once: true
       when: domain_adapter is not defined
 
     # Set NAT adapter based on secondary interface if it exists
     - name: Set NAT adapter from secondary interface
       ansible.builtin.set_fact:
         nat_adapter: "{{ ansible_interfaces[1].connection_name }}"
-      run_once: true
       when: ansible_interfaces[1] is defined
 
     # Determine the number of interfaces
     - name: Determine the number of interfaces
       ansible.builtin.set_fact:
         number_of_interfaces: "{{ ansible_interfaces|length }}"
-      run_once: true
 
     # Determine if there are two adapters
     - name: Determine if there are two adapters
       ansible.builtin.set_fact:
         two_adapters: "{{ 'true' if number_of_interfaces|int > 1 else 'false' }}"
-      run_once: true
 
     # Set NAT adapter to domain adapter if only one interface
     - name: Set NAT adapter to domain adapter
       ansible.builtin.set_fact:
         nat_adapter: "{{ domain_adapter }}"
-      run_once: true
       when: two_adapters == "false" or nat_adapter is not defined
 
-    # # Debug the final values
-    # - name: Debug final values
-    #   ansible.builtin.debug:
-    #     msg: 
-    #       - "domain interface: {{ domain_adapter }}"
-    #       - "number_of_interfaces: {{ number_of_interfaces }}"
-    #       - "two_adapters: {{ two_adapters }}"
-    #       - "nat interface: {{ nat_adapter }}"
-    #   run_once: true
+    - name: Show network adapter values
+      ansible.builtin.debug:
+        msg: 
+          - "domain interface: {{ domain_adapter }}"
+          - "number_of_interfaces: {{ number_of_interfaces }}"
+          - "two_adapters: {{ two_adapters }}"
+          - "nat interface: {{ nat_adapter }}"

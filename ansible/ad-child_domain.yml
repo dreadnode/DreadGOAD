@@ -54,7 +54,7 @@
     zone_name: "{{ parent_domain }}"
     remote_dc: "{{ lab.domains[parent_domain].dc }}"
     master_server: "{{ hostvars[remote_dc]['dc_ipv4'] | default(hostvars[remote_dc].ansible_host) }}"
-    replication: "none"
+    replication: none
 
 # parent add DNS value of child DC
 - name: Parent DC ADD DNS configuration

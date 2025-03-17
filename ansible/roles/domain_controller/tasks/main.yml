@@ -1,3 +1,4 @@
+---
 # DNSCHANGE
 # - name: "disable interface {{nat_adapter}} before join domain"
 #   win_shell: netsh interface set interface "{{nat_adapter}}" disable
@@ -200,27 +201,46 @@
     - name: Wait for AD services to become fully operational
       ansible.windows.win_shell: |
         $ErrorActionPreference = "Stop"
+        $maxAttempts = 30
+        $retryInterval = 30
         $ready = $false
-        $retries = 10
-        $delay = 30
         
-        for ($i = 0; $i -lt $retries; $i++) {
+        for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+          Write-Output "Attempt ${attempt}/${maxAttempts}: Checking AD DS services..."
+          
+          # Check if ADWS service is running
+          $adwsService = Get-Service ADWS -ErrorAction SilentlyContinue
+          if ($adwsService.Status -ne 'Running') {
+              Write-Output "Attempt ${attempt}: ADWS service not running yet, status: $($adwsService.Status)"
+              Start-Sleep -Seconds $retryInterval
+              continue
+          }
+          
+          # Check if DNS service is running
+          $dnsService = Get-Service DNS -ErrorAction SilentlyContinue
+          if ($dnsService.Status -ne 'Running') {
+              Write-Output "Attempt ${attempt}: DNS service not running yet, status: $($dnsService.Status)"
+              Start-Sleep -Seconds $retryInterval
+              continue
+          }
+          
+          # Verify AD is operational using cmdlets
           try {
-            $dc = Get-ADDomainController
-            $forest = Get-ADForest
-            $domain = Get-ADDomain
-            Write-Output "Domain services appear to be ready"
-            $ready = $true
-            break
+              # Test AD connectivity with lightweight operation
+              $domain = Get-ADDomain -ErrorAction Stop
+              $dc = Get-ADDomainController -ErrorAction Stop
+              Write-Output "Active Directory is fully operational!"
+              $ready = $true
+              break
           } catch {
-            Write-Output "Waiting for AD services to be ready: $_"
-            Start-Sleep -Seconds $delay
+              Write-Output "Attempt ${attempt}: Active Directory not fully operational yet. Error: $_"
+              Start-Sleep -Seconds $retryInterval
           }
         }
-        
+
         if (-not $ready) {
-          Write-Error "AD services did not become fully operational within expected time"
-          exit 1
+            throw "Active Directory DS services did not become fully operational after $maxAttempts attempts"
+            exit 1
         }
       register: ad_services_wait
       

@@ -44,6 +44,7 @@
     member_domain: "{{ lab.hosts[dict_key].domain }}"
     domain_username: "{{ admin_user }}@{{ member_domain }}"
     domain_password: "{{ lab.domains[member_domain].domain_password }}"
+    dns_server_ip: "{{ hostvars[groups['dc'][0]].dc_ipv4 }}"
 
 - name: Workstations AD configuration
   hosts: workstation
