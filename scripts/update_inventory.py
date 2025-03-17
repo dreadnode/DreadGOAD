@@ -13,7 +13,7 @@ def update_inventory(instances_data, inventory_path, output_path=None):
     inventory_path (str): Path to the inventory file to update
     output_path (str, optional): Path to write the updated inventory. If None, overwrites input file.
     """
-    # Read staging inventory
+    # Read input inventory
     try:
         with open(inventory_path, 'r') as file:
             inventory_content = file.read()

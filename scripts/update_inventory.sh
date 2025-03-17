@@ -1,21 +1,23 @@
 #!/bin/bash
 
+ENV=${ENV:-dev}
+
 # Function to show usage information
 function show_usage {
   echo "Usage: update_inventory.sh [options]"
-  echo "Update AWS instance IDs in staging inventory file"
+  echo "Update AWS instance IDs in ${ENV} inventory file"
   echo ""
   echo "Options:"
-  echo "  -i, --inventory FILE    Path to inventory file (default: ./staging-inventory)"
+  echo "  -i, --inventory FILE    Path to inventory file (default: ./${ENV}-inventory)"
   echo "  -o, --output FILE       Output file path (default: overwrite inventory file)"
   echo "  -b, --backup            Create a backup of inventory file before modifying"
   echo "  -h, --help              Show this help message and exit"
   echo ""
-  echo "Example: list_running_instances | update_inventory.sh -i ./staging-inventory -b"
+  echo "Example: list_running_instances | update_inventory.sh -i ./${ENV}-inventory -b"
 }
 
 # Default values
-INVENTORY_FILE="./staging-inventory"
+INVENTORY_FILE="./${ENV}-inventory"
 OUTPUT_FILE=""
 CREATE_BACKUP=false
 
