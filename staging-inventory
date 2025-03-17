@@ -4,7 +4,7 @@
 domain_name=GOAD
 
 ; administrator user
-admin_user=goadmin
+admin_user=administrator
 
 ; environment
 env=staging
@@ -158,15 +158,15 @@ srv03
 ; allow defender
 ; usage : security.yml
 [defender_on]
-dc01
-dc02
-dc03
-srv03
 
 ; disable defender
 ; usage : security.yml
 [defender_off]
+dc01
+dc02
+dc03
 srv02
+srv03
 
 ;stay empty until override
 [extensions]

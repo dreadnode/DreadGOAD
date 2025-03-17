@@ -1,3 +1,4 @@
+---
 # https://answers.microsoft.com/en-us/protect/forum/protect_defender-protect_start-windows_10/how-do-i-stop-sending-antivirus-samples-to/a2e7b280-a8ba-43f5-b391-0a12c109f990
 - name: Install windows defender
   win_feature:

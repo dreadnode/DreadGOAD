@@ -241,16 +241,16 @@
                         "path" : "CN=Users,DC=essos,DC=local"
                     },
                     "Dragons":{
-                        "managed_by" : "goadmin",
+                        "managed_by" : "Administrator",
                         "path" : "CN=Users,DC=essos,DC=local"
                     },
                     "QueenProtector":{
-                        "managed_by" : "goadmin",
+                        "managed_by" : "Administrator",
                         "path" : "CN=Users,DC=essos,DC=local",
                         "members" : ["ESSOS\\Dragons"]
                     },
                     "Domain Admins":{
-                        "managed_by" : "goadmin",
+                        "managed_by" : "Administrator",
                         "path" : "CN=Users,DC=essos,DC=local",
                         "members" : ["ESSOS\\QueenProtector"]
                     }

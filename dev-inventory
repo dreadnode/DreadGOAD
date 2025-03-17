@@ -4,7 +4,7 @@
 domain_name=GOAD
 
 ; administrator user
-admin_user=goadmin
+admin_user=administrator
 
 ; environment
 env=staging
@@ -47,17 +47,17 @@ dns_server_forwarder=1.1.1.1
 ; ------------------------------------------------
 ; sevenkingdoms.local
 ; ------------------------------------------------
-dc01 ansible_host=i-01045776425522803 dict_key=dc01 dns_domain=dc01 ansible_user=ansible
+dc01 ansible_host=i-095060e572f300d4a dict_key=dc01 dns_domain=dc01 ansible_user=ansible
 ; ------------------------------------------------
 ; north.sevenkingdoms.local
 ; ------------------------------------------------
-dc02 ansible_host=i-0c2c33d5b90ea8886 dict_key=dc02 dns_domain=dc01 ansible_user=ansible
-srv02 ansible_host=i-087b5681d3764a84b dict_key=srv02 dns_domain=dc02 ansible_user=ansible
+dc02 ansible_host=i-0d09f224239260b4e dict_key=dc02 dns_domain=dc01 ansible_user=ansible
+srv02 ansible_host=i-0c4184b4017ddc375 dict_key=srv02 dns_domain=dc02 ansible_user=ansible
 ; ------------------------------------------------
 ; essos.local
 ; ------------------------------------------------
-dc03 ansible_host=i-054ef89769340afdc dict_key=dc03 dns_domain=dc03 ansible_user=ansible
-srv03 ansible_host=i-0c96ba33a0fd14e19 dict_key=srv03 dns_domain=dc03 ansible_user=ansible
+dc03 ansible_host=i-02353d8ed70e52947 dict_key=dc03 dns_domain=dc03 ansible_user=ansible
+srv03 ansible_host=i-09ca2f5bb5eb1607a dict_key=srv03 dns_domain=dc03 ansible_user=ansible
 
 ; LAB SCENARIO CONFIGURATION -----------------------------
 
@@ -158,15 +158,15 @@ srv03
 ; allow defender
 ; usage : security.yml
 [defender_on]
-dc01
-dc02
-dc03
-srv03
 
 ; disable defender
 ; usage : security.yml
 [defender_off]
+dc01
+dc02
+dc03
 srv02
+srv03
 
 ;stay empty until override
 [extensions]

@@ -5,7 +5,7 @@
 # Disable the script from exiting on error
 set +e
 
-ENV=${ENV:-staging}
+ENV=${ENV:-dev}
 # Set to "true" to enable verbose output for ansible-playbook, otherwise "false"
 VERBOSE=${VERBOSE:-false}
 # Maximum number of retry attempts for each playbook
