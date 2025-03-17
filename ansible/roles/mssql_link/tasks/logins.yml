@@ -1,12 +1,19 @@
 ---
 - name: Create logins mapping to specific users
-  win_shell: |
-    SqlCmd -E -Q "EXEC master.dbo.sp_addlinkedsrvlogin @rmtsrvname = N'{{ linked_server }}', @locallogin = N'{{ user_mapping.local_login }}', @useself = N'False', @rmtuser = N'{{ user_mapping.remote_login }}', @rmtpassword = N'{{ user_mapping.remote_password }}'"
+  ansible.windows.win_shell: |
+    $sqlcmd = "C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn\SQLCMD.EXE"
+    
+    if (-not (Test-Path $sqlcmd)) {
+      Write-Error "SQLCMD.EXE not found at $sqlcmd"
+      exit 1
+    }
+    
+    & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q "EXEC master.dbo.sp_addlinkedsrvlogin @rmtsrvname = N'{{ linked_server }}', @locallogin = N'{{ mapping_item.local_login }}', @useself = N'False', @rmtuser = N'{{ mapping_item.remote_login }}', @rmtpassword = N'{{ mapping_item.remote_password }}'"
   become: true
   become_method: runas
   become_user: "{{ SQLSVCACCOUNT }}"
   vars:
     ansible_become_pass: "{{ SQLSVCPASSWORD }}"
-  loop: "{{ users_mapping }}"
+  with_items: "{{ item.value.users_mapping }}"
   loop_control:
-    loop_var: user_mapping
+    loop_var: mapping_item

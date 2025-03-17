@@ -10,17 +10,44 @@
 
 - name: Install MSSQL Express
   hosts: mssql
-  serial: 1 # add one MSSQL install at a time to avoid issues
+  serial: 1
+  pre_tasks:
+    - name: Debug all MSSQL installation variables
+      debug:
+        msg: |
+          MSSQL Express Installation Variables:
+          ===================================
+          dict_key: {{ dict_key }}
+          domain: {{ domain }}
+          SQLSVCACCOUNT: {{ SQLSVCACCOUNT }}
+          SQLSVCPASSWORD: {{ SQLSVCPASSWORD }}
+          SQLSYSADMIN: {{ SQLSYSADMIN }}
+          domain_admin: {{ domain_admin }}
+          domain_admin_password: {{ domain_admin_password }}
+          sql_sysadmins: {{ sql_sysadmins }}
+          executeaslogin: {{ executeaslogin }}
+          executeasuser: {{ executeasuser }}
+          sa_password: {{ sa_password }}
+          linked_servers: {{ linked_servers }}
+      tags: always
+      
+    # Check if SQL Server is actually running
+    - name: Check if SQL Server service is running
+      ansible.windows.win_service:
+        name: MSSQL$SQLEXPRESS
+      register: sql_service
+      ignore_errors: true
+      
   roles:
-    - { role: 'mssql', tags: 'mssql'}
+    # Only run the mssql role if the service isn't found or isn't running
+    - { role: 'mssql', tags: 'mssql', 
+        when: sql_service.exists is not defined or not sql_service.exists or sql_service.state != 'running' }
     - { role: 'mssql_link', tags: 'mssql, mssql_link'}
   vars:
     domain: "{{ lab.hosts[dict_key].domain }}"
-    SQLSVCACCOUNT_NAME: "{{ lab.hosts[dict_key].mssql.svcaccount| default('NT AUTHORITY\\NETWORK SERVICE') }}"
-    SQLSVCACCOUNT_NAMEDOMAIN: "{{ domain }}\\{{ SQLSVCACCOUNT_NAME }}"
-    SQLSVCACCOUNT: "{{ SQLSVCACCOUNT_NAME if SQLSVCACCOUNT_NAME == 'NT AUTHORITY\\NETWORK SERVICE' else SQLSVCACCOUNT_NAMEDOMAIN }}"
-    SQLSVCPASSWORD: "{{ lab.domains[domain].users[SQLSVCACCOUNT_NAME].password| default('') }}"
-    SQLSYSADMIN: "{{ SQLSVCACCOUNT }}"
+    SQLSVCACCOUNT: "NT AUTHORITY\\NETWORK SERVICE"       
+    SQLSVCPASSWORD: ""                                  
+    SQLSYSADMIN: "{{ lab.hosts[dict_key].mssql.sysadmin | default('NT AUTHORITY\\NETWORK SERVICE') }}"
     domain_admin: "{{ domain }}\\{{ admin_user }}"
     domain_admin_password: "{{ lab.domains[domain].domain_password }}"
     sql_sysadmins: "{{ lab.hosts[dict_key].mssql.sysadmins | default([]) }}"

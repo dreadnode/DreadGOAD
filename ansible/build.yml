@@ -1,7 +1,7 @@
 ---
 # Load datas
 - import_playbook: data.yml
-  tags: 'data'
+  tags: data
 
 - name: build all
   hosts: domain

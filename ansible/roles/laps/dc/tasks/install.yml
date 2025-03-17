@@ -5,31 +5,31 @@
     name: "{{ laps_path.split(',')[0].split('=')[1] }}"
     path:  "{{ ','.join(laps_path.split(',')[1:]) }}"
 
-- name: Create temporary directory for downloads
+- name: Create temp directory for downloads
   ansible.windows.win_file:
-    path: C:\Temp\ansible
+    path: C:\Temp\LAPS
     state: directory
 
-- name: Download LAPS Package
+- name: Download LAPS installer to domain controller
   ansible.windows.win_get_url:
     url: https://download.microsoft.com/download/C/7/A/C7AAD914-A8A6-4904-88A1-29E657445D03/LAPS.x64.msi
-    dest: C:\Temp\ansible\LAPS.x64.msi
-    force: no
-  register: download_result
+    dest: C:\Temp\LAPS\LAPS.x64.msi
+  register: laps_download
   retries: 3
-  delay: 5
-  until: download_result is success
+  delay: 10
+  until: laps_download is success
 
 - name: Install LAPS Package on Servers
   ansible.windows.win_package:
     arguments: "ADDLOCAL=Management.PS,Management.ADMX ALLUSERS=1 /qn"
-    path: C:\Temp\ansible\LAPS.x64.msi
+    path: C:\Temp\LAPS\LAPS.x64.msi
     state: present
     creates_path: "%ProgramFiles%\\LAPS"
   register: pri_laps_install
-  retries: 2
-  delay: 10
   until: pri_laps_install is success
+  retries: 3
+  delay: 5
+  when: laps_download is success or laps_download_alt is success
 
 - name: Reboot After Installing LAPS on Servers
   ansible.windows.win_reboot:
@@ -37,110 +37,101 @@
     post_reboot_delay: 100
   when: pri_laps_install.reboot_required
 
-- name: Update AD Schema using AdmPwd.PS module with elevated privileges
-  ansible.windows.win_powershell:
-    script: |
-      # First verify module is installed
-      if (-not (Get-Module -ListAvailable -Name AdmPwd.PS)) {
-        Write-Output "AdmPwd.PS module not found, cannot proceed with schema update."
-        return $false
-      }
-
-      # Import module and update schema with elevated privileges
-      try {
-        # Create a credential for a user with schema admin rights
-        $adminUser = "{{ domain_admin_user }}"
-        $adminPassword = ConvertTo-SecureString "{{ domain_admin_password }}" -AsPlainText -Force
-        $adminCred = New-Object System.Management.Automation.PSCredential($adminUser, $adminPassword)
-        
-        # Run schema update in elevated context
-        $scriptBlock = {
-          Import-Module AdmPwd.PS -ErrorAction Stop
-          Update-AdmPwdADSchema
-          
-          # Verify the schema update succeeded
-          $schemaPath = (Get-ADRootDSE).SchemaNamingContext
-          $pwdAttr = Get-ADObject -SearchBase $schemaPath -Filter {lDAPDisplayName -eq "ms-Mcs-AdmPwd"} -Properties * -ErrorAction SilentlyContinue
-          
-          if ($pwdAttr) {
-            Write-Output "Schema attribute ms-Mcs-AdmPwd found, schema update confirmed."
-            return $true
-          } else {
-            Write-Error "Schema attribute ms-Mcs-AdmPwd not found, schema update failed."
-            return $false
-          }
-        }
-        
-        # Execute with credentials
-        $result = Invoke-Command -ScriptBlock $scriptBlock -Credential $adminCred -ComputerName localhost
-        
-        if ($result -eq $true) {
-          Write-Output "Schema update completed successfully."
-          return $true
-        } else {
-          Write-Error "Schema update failed."
-          return $false
-        }
-      } catch {
-        Write-Error "Error updating schema: $_"
-        return $false
-      }
-    error_action: continue
-  register: schema_update
+- name: Configure Password Properties
+  win_ad_object:
+    name: ms-Mcs-AdmPwd
+    attributes:
+      adminDescription: LAPS Password Attribute
+      lDAPDisplayName: ms-Mcs-AdmPwd
+      adminDisplayName: ms-Mcs-AdmPwd
+      attributeId: 1.2.840.113556.1.8000.2554.50051.45980.28112.18903.35903.6685103.1224907.2.1
+      attributeSyntax: '2.5.5.5'  # String(IAS)
+      omSyntax: 19  # String(Printable)
+      isSingleValued: True
+      systemOnly: False
+      isMemberOfPartialAttributeSet: False
+      searchFlags: 904  # RO,NV,CF,PR - http://www.frickelsoft.net/blog/?p=151
+      showInAdvancedViewOnly: False
+    context: schema
+    type: attribute
+    update_schema: True
+  # privileges required to update the schema attributes
+  register: passwordprop
+  until: "passwordprop is not failed"
+  retries: 3
+  delay: 120
   vars:
-    domain_admin_user: "{{ domain }}\\{{ admin_user }}"
-    domain_admin_password: "{{ lab.domains[domain].domain_password }}"
-  failed_when: schema_update.output[0] == false
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: SYSTEM
+    ansible_become_flags: logon_type=batch logon_flags=with_profile
+  failed_when: 
+    - passwordprop is failed
+    - "'already exists' not in passwordprop.msg | default('')"
+
+- name: Configure Password Expiry Time
+  win_ad_object:
+    name: ms-Mcs-AdmPwdExpirationTime
+    attributes:
+      adminDescription: LAPS Password Expiration Time Attribute
+      lDAPDisplayName: ms-Mcs-AdmPwdExpirationTime
+      adminDisplayName: ms-Mcs-AdmPwdExpirationTime
+      attributeId: 1.2.840.113556.1.8000.2554.50051.45980.28112.18903.35903.6685103.1224907.2.2
+      attributeSyntax: '2.5.5.16'  # LargeInteger
+      omSyntax: 65  # LargeInteger
+      isSingleValued: True
+      systemOnly: False
+      isMemberOfPartialAttributeSet: False
+      searchFlags: 0
+      showInAdvancedViewOnly: False
+    context: schema
+    type: attribute
+    update_schema: True
+  register: password_expire_time
+  until: "password_expire_time is not failed"
+  retries: 3
+  delay: 120
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: SYSTEM
+
+- name: Add LAPS attributes to the Computer Attribute
+  win_ad_object:
+    name: Computer
+    may_contain:
+    - ms-Mcs-AdmPwd
+    - ms-Mcs-AdmPwdExpirationTime
+    context: schema
+    update_schema: True
+  register: add_laps_attribute
+  until: "add_laps_attribute is not failed"
+  retries: 3
+  delay: 120
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: SYSTEM
 
 - name: Apply DACL to OU Containers
-  ansible.windows.win_shell: |
-    $LapsOU = "{{ laps_path }}"
-    $ComputerGUID = [GUID]"{{ computer_class_guid }}" 
-    
-    # Get the schema attribute GUIDs
-    $schemaPath = (Get-ADRootDSE).SchemaNamingContext
-    $pwdAttr = Get-ADObject -SearchBase $schemaPath -Filter {lDAPDisplayName -eq "ms-Mcs-AdmPwd"} -Properties *
-    $expAttr = Get-ADObject -SearchBase $schemaPath -Filter {lDAPDisplayName -eq "ms-Mcs-AdmPwdExpirationTime"} -Properties *
-    
-    # Get the attribute GUIDs
-    $pwdGuid = [GUID]$pwdAttr.SchemaIDGUID
-    $expGuid = [GUID]$expAttr.SchemaIDGUID
-    
-    # Get the OU object
-    $OU = Get-ADObject -Identity $LapsOU
-    $acl = Get-ACL -Path "AD:$($OU.DistinguishedName)"
-    
-    # Create the ACE for password expiration
-    $ace1 = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
-        [System.Security.Principal.SecurityIdentifier]"S-1-5-10", # SELF SID
-        [System.DirectoryServices.ActiveDirectoryRights]"ReadProperty, WriteProperty",
-        [System.Security.AccessControl.AccessControlType]"Allow",
-        $expGuid,
-        [DirectoryServices.ActiveDirectorySecurityInheritance]"Descendents",
-        $ComputerGUID
-    )
-    
-    # Create the ACE for password
-    $ace2 = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
-        [System.Security.Principal.SecurityIdentifier]"S-1-5-10", # SELF SID
-        [System.DirectoryServices.ActiveDirectoryRights]"WriteProperty",
-        [System.Security.AccessControl.AccessControlType]"Allow",
-        $pwdGuid,
-        [DirectoryServices.ActiveDirectorySecurityInheritance]"Descendents",
-        $ComputerGUID
-    )
-    
-    # Add the ACEs to the ACL
-    $acl.AddAccessRule($ace1)
-    $acl.AddAccessRule($ace2)
-    
-    # Set the modified ACL
-    Set-ACL -Path "AD:$($OU.DistinguishedName)" -AclObject $acl
-    
-    Write-Output "DACL applied successfully to $LapsOU"
-  become: true
-  become_method: runas
-  become_user: SYSTEM
+  win_ad_dacl:
+    path: "{{ laps_path }}"
+    state: present
+    aces:
+    - rights:
+      - ReadProperty
+      - WriteProperty
+      inheritance_type: Descendents
+      inherited_object_type: Computer
+      object_type: ms-Mcs-AdmPwdExpirationTime
+      access: allow
+      account: S-1-5-10  # NT AUTHORITY\SELF
+    - rights: WriteProperty
+      inheritance_type: Descendents
+      inherited_object_type: Computer
+      object_type: ms-Mcs-AdmPwd
+      access: allow
+      account: S-1-5-10
 
 - name: Create LAPS GPO
   win_gpo:
@@ -214,7 +205,7 @@
 - name: Ensure GPO is Linked
   win_gpo_link:
     name: "{{ opt_laps_gpo_name }}"
-    target: "{{laps_path}}"
+    target: "{{ laps_path }}"
     state: present
     enforced: True
     enabled: True

@@ -1,3 +1,4 @@
+---
 # only for not laps computer as they are automatically moved during the laps OU creation
 - name: Move computer to OU
   ansible.windows.win_powershell:
