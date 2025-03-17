@@ -1,17 +1,17 @@
 #!/bin/bash
-# Robust AD Deployment Script with comprehensive error handling
-# Handles various types of Ansible failures including fact gathering and network adapter issues
+# Robust Ansible Provisioning Script with comprehensive error handling
+# Handles various types of Ansible failures including fact gathering, network adapter and PowerShell issues
 
 # Disable the script from exiting on error
 set +e
 
-ENV=staging
+ENV=${ENV:-staging}
 # Set to "true" to enable verbose output for ansible-playbook, otherwise "false"
-VERBOSE=false
+VERBOSE=${VERBOSE:-false}
 # Maximum number of retry attempts for each playbook
-MAX_RETRIES=3
+MAX_RETRIES=${MAX_RETRIES:-3}
 # Delay between retry attempts in seconds
-RETRY_DELAY=30
+RETRY_DELAY=${RETRY_DELAY:-30}
 
 # Determine the ansible verbose flag
 if [ "$VERBOSE" = "true" ]; then
@@ -76,15 +76,20 @@ run_playbook_with_retry() {
     echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Starting ansible/$playbook..."
     
     # Clear temporary log for this run
-    > "$TEMP_LOG"
+    true > "$TEMP_LOG"
     
     # For all playbooks, use the inventory file and include the optional verbose flag
     # Run with standard configuration first
+    set -o pipefail
     ANSIBLE_HOST_KEY_CHECKING=False ANSIBLE_RETRY_FILES_ENABLED=True \
-    ansible-playbook $VERBOSE_FLAG -i $ENV-inventory ansible/$playbook 2>&1 | tee -a "$TEMP_LOG"
+    ANSIBLE_GATHER_TIMEOUT=60 \
+    ansible-playbook $VERBOSE_FLAG -i $ENV-inventory \
+    -e "ansible_facts_gathering_timeout=60" \
+    "ansible/$playbook" 2>&1 | tee -a "$TEMP_LOG"
+    result=$?
+    set +o pipefail
     
     # Check if the playbook ran successfully
-    result=$?
     if [ $result -eq 0 ]; then
       success=true
       echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Completed ansible/$playbook successfully."
@@ -99,12 +104,16 @@ run_playbook_with_retry() {
       elif grep -q "failed to transfer file" "$TEMP_LOG" || grep -q "403" "$TEMP_LOG"; then
         error_type="connection_error"
         echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected connection/transfer errors."
+      elif grep -q "Windows PowerShell is in NonInteractive mode" "$TEMP_LOG"; then
+        error_type="powershell_interactive"
+        echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected PowerShell interactive mode error."
       else
         error_type="unknown"
         echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Unknown error occurred."
       fi
       
       # Apply specific retry strategy based on error type
+      set -o pipefail
       case "$error_type" in
         fact_gathering)
           echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retrying with modified fact gathering settings..."
@@ -113,7 +122,7 @@ run_playbook_with_retry() {
           --forks=1 \
           -e "ansible_facts_gathering_timeout=60" \
           -e "gather_timeout=60" \
-          ansible/$playbook 2>&1 | tee -a "$TEMP_LOG"
+          "ansible/$playbook" 2>&1 | tee -a "$TEMP_LOG"
           ;;
         network_adapter)
           echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retrying with network adapter fix..."
@@ -121,15 +130,24 @@ run_playbook_with_retry() {
           ansible-playbook $VERBOSE_FLAG -i $ENV-inventory \
           -e "skip_network_adapter_config=true" \
           -e "bypass_ethernet3_check=true" \
-          ansible/$playbook 2>&1 | tee -a "$TEMP_LOG"
+          "ansible/$playbook" 2>&1 | tee -a "$TEMP_LOG"
           ;;
         connection_error)
           echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retrying with increased connection timeout..."
           ANSIBLE_HOST_KEY_CHECKING=False ANSIBLE_TIMEOUT=180 \
           ansible-playbook $VERBOSE_FLAG -i $ENV-inventory \
-          -e "ansible_winrm_connection_timeout=180" \
-          -e "ansible_winrm_read_timeout=180" \
-          ansible/$playbook 2>&1 | tee -a "$TEMP_LOG"
+          -e "ansible_connection_timeout=180" \
+          -e "ansible_timeout=180" \
+          "ansible/$playbook" 2>&1 | tee -a "$TEMP_LOG"
+          ;;
+        powershell_interactive)
+          echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retrying with PowerShell interactive mode fix..."
+          ANSIBLE_HOST_KEY_CHECKING=False \
+          ansible-playbook $VERBOSE_FLAG -i $ENV-inventory \
+          -e "ansible_shell_type=powershell" \
+          -e "force_ps_module=true" \
+          -e "ansible_ps_version=5.1" \
+          "ansible/$playbook" 2>&1 | tee -a "$TEMP_LOG"
           ;;
         *)
           echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retrying with general robust settings..."
@@ -137,12 +155,13 @@ run_playbook_with_retry() {
           ANSIBLE_SSH_RETRIES=5 ANSIBLE_TIMEOUT=120 \
           ansible-playbook $VERBOSE_FLAG -i $ENV-inventory \
           --forks=1 \
-          ansible/$playbook 2>&1 | tee -a "$TEMP_LOG"
+          "ansible/$playbook" 2>&1 | tee -a "$TEMP_LOG"
           ;;
       esac
+      retry_result=$?
+      set +o pipefail
       
       # Check if the specific retry was successful
-      retry_result=$?
       if [ $retry_result -eq 0 ]; then
         success=true
         echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Completed ansible/$playbook successfully after error-specific retry."
@@ -153,7 +172,7 @@ run_playbook_with_retry() {
         else
           echo "[$(date +%Y-%m-%d\ %H:%M:%S)] ERROR: ansible/$playbook failed with exit code $retry_result after $MAX_RETRIES attempts. Stopping execution."
           echo "==============================================="
-          echo "AD Deployment Script failed at $(date)"
+          echo "SSM Provisioning Script failed at $(date)"
           echo "==============================================="
           return 1
         fi
@@ -161,15 +180,16 @@ run_playbook_with_retry() {
     fi
   done
   
-  return 0
+  if [ "$success" = "true" ]; then
+    return 0
+  else
+    return 1
+  fi
 }
 
 # Run each playbook with retry logic
 for playbook in "${PLAYBOOKS[@]}"; do
-  run_playbook_with_retry "$playbook"
-  
-  # Check if the playbook execution was successful after retries
-  if [ $? -ne 0 ]; then
+  if ! run_playbook_with_retry "$playbook"; then
     echo "Playbook execution failed after all retry attempts. Exiting."
     exit 1
   fi
