@@ -27,8 +27,12 @@ forests, 3 domains
 <img alt="GOAD" width="800" src="./docs/img/GOAD_schema.png">
 </div>
 
-**Please note:** All of the other original GOAD labs are deprecated and
-unsupported.
+**Please note:**
+
+- All of the other original GOAD labs are deprecated and unsupported.
+- The IP addresses found in the above schema diagram are not accurate for the
+  DreadGOAD environment. Please refer to the
+  [AWS console](#-access-via-the-aws-console) for the correct IP addresses.
 
 ---
 
@@ -202,7 +206,7 @@ or:
 
 ## 🔗 Additional Resources
 
-- [Taskfile Reference](./docs/development.md)
+- [Taskfile Reference](./docs/taskfile.md)
 - [Troubleshooting Guide](./docs/troubleshooting.md)
 - [Synchronizing DreadGOAD with Upstream](./docs/sync-upstream.md)
 
