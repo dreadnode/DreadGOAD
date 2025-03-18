@@ -12,10 +12,10 @@ vars:
   # Define all available playbooks
   GOAD_PLAYBOOKS: 'build.yml ad-servers.yml ad-parent_domain.yml ad-child_domain.yml ad-members.yml ad-trusts.yml ad-data.yml ad-gmsa.yml laps.yml ad-relations.yml adcs.yml ad-acl.yml servers.yml security.yml vulnerabilities.yml'
   INVENTORY_FILE: './{{.ENV}}-inventory'
-  MAX_RETRIES: '{{.MAX_RETRIES | default "3"}}'
-  RETRY_DELAY: '{{.RETRY_DELAY | default "30"}}'
   LOG_DATE: '{{now | date "20060102_150405"}}'
   LOG_FILE: 'ad_deployment_{{.LOG_DATE}}.log'
+  MAX_RETRIES: '{{.MAX_RETRIES | default "3"}}'
+  RETRY_DELAY: '{{.RETRY_DELAY | default "30"}}'
   VERBOSE: '{{.VERBOSE | default "false"}}'
   VERBOSE_FLAG: '{{if eq .VERBOSE "true"}}-vvv{{else}}{{end}}'
 

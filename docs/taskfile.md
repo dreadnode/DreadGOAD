@@ -1,9 +1,8 @@
-# 🛠️ Taskfile for AD Deployment
+# 🛠️ Taskfile for DreadGOAD
 
-This repository contains a Taskfile for managing Active Directory (AD)
-provisioning using Ansible and AWS Systems Manager (SSM). It provides a set of
-automated tasks for deploying, configuring, and managing AD environments
-efficiently.
+This repository contains a Taskfile for managing DreadGOAD provisioning logic
+using Ansible and AWS Systems Manager (SSM). It provides a set of automated
+tasks for deploying, configuring, and managing AD environments efficiently.
 
 ## 📋 Prerequisites
 
