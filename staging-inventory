@@ -18,7 +18,7 @@ ansible_aws_ssm_s3_addressing_style=virtual
 
 ; miscellaneous
 ansible_become=false
-data_path="~/dreadnode/DreadGOAD/ad/GOAD/data"
+data_path="{{ playbook_dir }}/../ad/GOAD/data"
 
 ; global settings inventory default value
 keyboard_layouts=["en-US", "da-DK", "fr-FR"]

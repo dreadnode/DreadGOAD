@@ -9,14 +9,14 @@ includes:
 # Global variables used across multiple tasks
 vars:
   ENV: '{{.ENV | default "dev"}}'
-  VERBOSE: '{{.VERBOSE | default "false"}}'
+  # Define all available playbooks
+  GOAD_PLAYBOOKS: 'build.yml ad-servers.yml ad-parent_domain.yml ad-child_domain.yml ad-members.yml ad-trusts.yml ad-data.yml ad-gmsa.yml laps.yml ad-relations.yml adcs.yml ad-acl.yml servers.yml security.yml vulnerabilities.yml'
+  INVENTORY_FILE: './{{.ENV}}-inventory'
   MAX_RETRIES: '{{.MAX_RETRIES | default "3"}}'
   RETRY_DELAY: '{{.RETRY_DELAY | default "30"}}'
-  INVENTORY_FILE: './{{.ENV}}-inventory'
   LOG_DATE: '{{now | date "20060102_150405"}}'
   LOG_FILE: 'ad_deployment_{{.LOG_DATE}}.log'
-  TEMP_LOG: '/tmp/ansible_temp_{{.PID}}.log'
-  PID: '{{.TASK_PID | default 1234}}'
+  VERBOSE: '{{.VERBOSE | default "false"}}'
   VERBOSE_FLAG: '{{if eq .VERBOSE "true"}}-vvv{{else}}{{end}}'
 
 # Main tasks
@@ -27,8 +27,23 @@ tasks:
       - task --list
     silent: true
 
+  list-plays:
+    desc: Show all available playbooks that can be executed
+    cmds:
+      - |
+        echo "Available playbooks:"
+        for playbook in {{.GOAD_PLAYBOOKS}}; do
+          echo "  - $playbook"
+        done
+        echo ""
+        echo "Usage examples:"
+        echo "  Run all playbooks: task provision"
+        echo "  Run specific playbooks: task provision PLAYS=\"build.yml ad-servers.yml\""
+        echo "  Run a single playbook: task provision PLAYS=ad-data.yml"
+    silent: true
+
   provision:
-    desc: Run the AD provisioning process with error handling and retries
+    desc: Run the DreadGOAD provisioning process with error handling and retries
     summary: |
       Runs the complete AD provisioning process with DreadGOAD Ansible playbooks
       using AWS Systems Manager (SSM).
@@ -38,40 +53,34 @@ tasks:
         VERBOSE=true       Enable verbose Ansible output
         MAX_RETRIES=<n>    Maximum retry attempts (default: 3)
         RETRY_DELAY=<s>    Delay between retries in seconds (default: 30)
+        PLAYS="play1.yml play2.yml"  Specific playbooks to run (default: all playbooks)
       
-      Example: task provision ENV=prod VERBOSE=true
+      Examples: 
+        task provision ENV=prod VERBOSE=true
+        task provision PLAYS="build.yml ad-servers.yml"
+        task provision PLAYS=ad-data.yml ENV=test
+        
+      To see all available playbooks:
+        task list-plays
     vars:
-      PLAYBOOKS: 
-        - "build.yml"
-        - "ad-servers.yml"
-        - "ad-parent_domain.yml"
-        - "ad-child_domain.yml"
-        - "ad-members.yml"
-        - "ad-trusts.yml"
-        - "ad-data.yml"
-        - "ad-gmsa.yml"
-        - "laps.yml"
-        - "ad-relations.yml"
-        - "adcs.yml"
-        - "ad-acl.yml"
-        - "servers.yml"
-        - "security.yml"
-        - "vulnerabilities.yml"
+      PLAYS: '{{.PLAYS | default .ALL_PLAYBOOKS}}'
     cmds:
       - |
-        echo "==============================================="
-        echo "AD Deployment Script started at $(date)"
-        echo "Environment: {{.ENV}}"
-        echo "Max Retries: {{.MAX_RETRIES}}"
-        echo "==============================================="
-      - |
-        echo "Playbooks to be executed:"
-        for playbook in {{range $i, $playbook := .PLAYBOOKS}}{{if $i}} {{end}}"{{$playbook}}"{{end}}; do
-          echo "  - ansible/$playbook"
-        done
-        echo "-----------------------------------------------"
+        # Start the log file with basic information
+        {
+          echo "==============================================="
+          echo "DreadGOAD provisioning process started at $(date)"
+          echo "Environment: {{.ENV}}"
+          echo "Max Retries: {{.MAX_RETRIES}}"
+          echo "==============================================="
+          
+          echo "Playbooks to be executed:"
+          for playbook in {{.PLAYS}}; do
+            echo "  - ansible/$playbook"
+          done
+          echo "-----------------------------------------------"
+        } | tee "{{.LOG_FILE}}"
       - mkdir -p $(dirname "{{.LOG_FILE}}")
-      - touch "{{.LOG_FILE}}"
       - |
         # Function to run a playbook with retry
         run_playbook_with_retry() {
@@ -79,7 +88,7 @@ tasks:
           local retry_count=0
           local success=false
           local error_type=""
-          local temp_log="{{.TEMP_LOG}}"
+          local temp_log="/tmp/ansible_temp_$(date +%s)_$RANDOM.log"
           
           while [ $retry_count -lt {{.MAX_RETRIES}} ] && [ "$success" = "false" ]; do
             if [ $retry_count -gt 0 ]; then
@@ -195,8 +204,8 @@ tasks:
           fi
         }
         
-        # Execute all playbooks
-        for playbook in {{range $i, $playbook := .PLAYBOOKS}}{{if $i}} {{end}}"{{$playbook}}"{{end}}; do
+        # Execute selected playbooks
+        for playbook in {{.PLAYS}}; do
           if ! run_playbook_with_retry "$playbook"; then
             echo "Playbook execution failed after all retry attempts. Exiting." | tee -a "{{.LOG_FILE}}"
             exit 1
@@ -205,7 +214,7 @@ tasks:
         done
         
         echo "===============================================" | tee -a "{{.LOG_FILE}}"
-        echo "All playbooks completed successfully at $(date)" | tee -a "{{.LOG_FILE}}"
+        echo "All selected playbooks completed successfully at $(date)" | tee -a "{{.LOG_FILE}}"
         echo "Full log available at: {{.LOG_FILE}}" | tee -a "{{.LOG_FILE}}"
         echo "===============================================" | tee -a "{{.LOG_FILE}}"
 
@@ -600,10 +609,10 @@ tasks:
           echo "No piped input detected. Trying to get instance data..."
           
           if command -v task &> /dev/null; then
-            echo "Using task aws:list-instances to get instance data..."
-            instances_data=$(task aws:list-instances)
+            echo "Using task aws:list-running-instances to get instance data..."
+            instances_data=$(task aws:list-running-instances)
             if [ $? -ne 0 ]; then
-              echo "Failed to run task aws:list-instances"
+              echo "Failed to run task aws:list-running-instances"
               exit 1
             fi
           elif command -v list_running_instances &> /dev/null; then
@@ -611,7 +620,7 @@ tasks:
             instances_data=$(list_running_instances)
           else
             echo "Error: No piped input and no method to get instance data"
-            echo "Please pipe AWS instance data to this task or ensure aws:list-instances task is available"
+            echo "Please pipe AWS instance data to this task or ensure aws:list-running-instances task is available"
             exit 1
           fi
         else
