@@ -70,7 +70,7 @@ Required variable:
 Synchronizes the Ansible inventory with AWS instance IDs.
 
 ```bash
-task update-inventory ENV=prod BACKUP=true
+task update-inventory ENV=prod BACKUP=true --force
 ```
 
 Optional variables:
@@ -80,6 +80,7 @@ Optional variables:
 - `OUTPUT`: Output file path (if different from inventory file)
 - `BACKUP`: Create a backup before modifying the inventory (default: `false`)
 - `JSON`: Path to a JSON file with AWS instance data
+- `--force`: Force update inventory without confirmation
 
 ## 🔧 Extending Tasks
 

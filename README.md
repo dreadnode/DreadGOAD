@@ -61,7 +61,7 @@ Before provisioning, ensure the following are installed and configured:
 1. **Update the Ansible inventory with AWS instance IDs:**
 
    ```bash
-   task update-inventory ENV=dev
+   task update-inventory ENV=dev --force
    ```
 
 1. **Provision the AD environment:**

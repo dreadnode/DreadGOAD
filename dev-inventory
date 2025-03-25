@@ -7,7 +7,7 @@ domain_name=GOAD
 admin_user=administrator
 
 ; environment
-env=staging
+env=dev
 
 ; SSM connection (windows)
 ansible_connection=aws_ssm

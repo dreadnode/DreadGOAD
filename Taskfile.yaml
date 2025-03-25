@@ -468,10 +468,11 @@ tasks:
         done
 
   update-inventory:
-    desc: Synchronize Ansible inventory with AWS instance IDs of running EC2 instances
+    desc: Synchronize Ansible inventory with AWS instance IDs of running EC2 instances and update environment value
     summary: |
       Retrieves instance IDs from AWS and updates the environment-specific 
       Ansible inventory file (default: dev) with the latest instance mappings.
+      Also updates the "env=" field in the inventory to match the specified ENV parameter.
       
       Options:
         ENV=<env>            Environment to target (default: dev)
@@ -482,7 +483,7 @@ tasks:
       
       Examples:
         task update-inventory                     # Update dev inventory with current AWS instances
-        task update-inventory ENV=prod            # Update prod inventory
+        task update-inventory ENV=prod            # Update prod inventory and set env=prod in the file
         task update-inventory BACKUP=true         # Create backup before updating
         task update-inventory OUTPUT=new-inventory # Write to new file instead of updating original
     vars:
@@ -492,6 +493,7 @@ tasks:
       BACKUP: '{{.BACKUP | default "false"}}'
       JSON: '{{.JSON | default ""}}'
       BACKUP_FILE: '{{.INVENTORY}}.bak.{{now | date "20060102150405"}}'
+    run: always
     cmds:
       - |
         # Validate inventory file exists
@@ -508,6 +510,11 @@ tasks:
         
         # Set output file to inventory file if not specified
         OUTPUT_FILE="{{if .OUTPUT}}{{.OUTPUT}}{{else}}{{.INVENTORY}}{{end}}"
+        
+        # Update the env= field in the inventory file to match the ENV parameter
+        echo "Updating environment in inventory to: {{.ENV}}"
+        sed -i.tmp -E "s/^(\s*env=).*/\1{{.ENV}}/" "{{.INVENTORY}}"
+        rm -f "{{.INVENTORY}}.tmp"
         
         # Function to update inventory file
         function update_inventory {
@@ -582,17 +589,17 @@ tasks:
           updates_count=$(cat "$temp_file")
           
           if [ "$updates_count" -eq 0 ]; then
-            echo "No updates were made. All instance IDs are already up to date."
-            rm -f "$temp_file"
-            return 0  # Success, even with no updates
+            echo "No instance ID updates were made. All instance IDs are already up to date."
+          else  
+            echo "Successfully updated ${updates_count} instance IDs in ${inventory_file}"
           fi
           
           # If output file is different from inventory, copy the updated file
           if [ "$output_file" != "$inventory_file" ]; then
             cp "$inventory_file" "$output_file"
+            echo "Copied updated inventory to: ${output_file}"
           fi
           
-          echo "Successfully updated ${updates_count} instance IDs in ${output_file}"
           rm -f "$temp_file"
           return 0
         }

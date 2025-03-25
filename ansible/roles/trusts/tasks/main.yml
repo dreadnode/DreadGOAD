@@ -23,11 +23,15 @@
       try {
         $localForest.GetTrustRelationship($RemoteForest)
         $Ansible.Changed = $false
+        # Add proper output formatting
+        Write-Output '{"status": "exists", "message": "Trust relationship already exists"}'
       } catch [System.DirectoryServices.ActiveDirectory.ActiveDirectoryObjectNotFoundException] {
         $Ansible.Changed = $true
-        $remoteContext = New-Object -TypeName "System.DirectoryServices.ActiveDirectory.DirectoryContext" -ArgumentList @( "Forest", $RemoteForest, $RemoteAdmin, $RemoteAdminPassword)
+        $remoteContext = New-Object -TypeName"System.DirectoryServices.ActiveDirectory.DirectoryContext" -ArgumentList @( "Forest", $RemoteForest, $RemoteAdmin, $RemoteAdminPassword)
         $distantForest = [System.DirectoryServices.ActiveDirectory.Forest]::getForest($remoteContext)
         $localForest.CreateTrustRelationship($distantForest,"Bidirectional")
+        # Add proper output formatting
+        Write-Output '{"status": "created", "message": "Trust relationship created successfully"}'
       }
     error_action: stop
     parameters:
