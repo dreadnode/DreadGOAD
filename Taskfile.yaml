@@ -63,7 +63,7 @@ tasks:
       To see all available playbooks:
         task list-plays
     vars:
-      PLAYS: '{{.PLAYS | default .ALL_PLAYBOOKS}}'
+      PLAYS: '{{.PLAYS | default .GOAD_PLAYBOOKS}}'
     cmds:
       - |
         # Start the log file with basic information
