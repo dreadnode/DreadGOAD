@@ -12,17 +12,54 @@
   failed_when: "'SqlCmd not found' in sqlcmd_path.stdout"
 
 - name: Create SQL Linked server and enable RPC
-  ansible.windows.win_shell: |
-    $sqlcmd = "C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn\SQLCMD.EXE"
-    
-    if (-not (Test-Path $sqlcmd)) {
-      Write-Error "SQLCMD.EXE not found at $sqlcmd"
-      exit 1
-    }
-    
-    & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q "EXEC master.dbo.sp_addlinkedserver @server = N'{{ item.key }}', @srvproduct=N'', @provider=N'SQLOLEDB', @datasrc=N'{{ item.value.data_src }}'"
-    & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q "EXEC master.dbo.sp_serveroption @server=N'{{ item.key }}', @optname=N'rpc', @optvalue=N'true'"
-    & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q "EXEC master.dbo.sp_serveroption @server=N'{{ item.key }}', @optname=N'rpc out', @optvalue=N'true'"
+  ansible.windows.win_powershell:
+    script: |
+      try {
+        # First check if we need to fix SQL Server mode
+        $sqlcmd = "C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn\SQLCMD.EXE"
+        $testOutput = & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q "SELECT 1 AS ConnectionTest" 2>&1
+        
+        if ($LASTEXITCODE -ne 0) {
+          Write-Output "SQL Server appears to be in single-user mode. Trying to fix..."
+          # Restart SQL Server service to get it out of single-user mode
+          Stop-Service -Name 'MSSQL$SQLEXPRESS' -Force 
+          Start-Sleep -Seconds 5
+          Start-Service -Name 'MSSQL$SQLEXPRESS'
+          Start-Sleep -Seconds 10
+          
+          # Try dedicated admin connection to set multi-user mode
+          & $sqlcmd -E -S "localhost\SQLEXPRESS" -A -Q "ALTER DATABASE master SET MULTI_USER WITH ROLLBACK IMMEDIATE"
+          
+          # Test connection again
+          $testOutput = & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q "SELECT 1 AS ConnectionTest" 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Cannot connect to SQL Server after fix attempt: $testOutput"
+            exit 1
+          }
+        }
+        
+        # Check if linked server already exists
+        $linkedServerQuery = "IF EXISTS (SELECT * FROM sys.servers WHERE name = N'{{ item.key }}') SELECT 1 ELSE SELECT 0"
+        $exists = & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q $linkedServerQuery | Where-Object { $_ -match '^\s*[0-1]\s*$' }
+        
+        if ($exists -eq "1") {
+          Write-Output "Linked server {{ item.key }} already exists"
+        } else {
+          # Create the linked server
+          & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q "EXEC master.dbo.sp_addlinkedserver @server = N'{{ item.key }}', @srvproduct=N'', @provider=N'SQLOLEDB', @datasrc=N'{{ item.value.data_src }}'"
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Failed to create linked server"
+            exit 1
+          }
+        }
+        
+        # Enable RPC and RPC OUT options
+        & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q "EXEC master.dbo.sp_serveroption @server=N'{{ item.key }}', @optname=N'rpc', @optvalue=N'true'"
+        & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q "EXEC master.dbo.sp_serveroption @server=N'{{ item.key }}', @optname=N'rpc out', @optvalue=N'true'"
+      } catch {
+        Write-Error "Error creating linked server: $_" 
+        exit 1
+      }
   become: true
   become_method: runas
   become_user: "{{ SQLSVCACCOUNT }}"
@@ -38,15 +75,27 @@
   with_dict: "{{ linked_servers }}"
 
 - name: Default login impersonation
-  ansible.windows.win_shell: |
-    $sqlcmd = "C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn\SQLCMD.EXE"
-    
-    if (-not (Test-Path $sqlcmd)) {
-      Write-Error "SQLCMD.EXE not found at $sqlcmd"
-      exit 1
-    }
-    
-    & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q "EXEC master.dbo.sp_addlinkedsrvlogin @rmtsrvname = N'{{ item.key }}', @locallogin = NULL , @useself = N'True'"
+  ansible.windows.win_powershell:
+    script: |
+      try {
+        $sqlcmd = "C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn\SQLCMD.EXE"
+        if (-not (Test-Path $sqlcmd)) {
+          Write-Error "SQLCMD.EXE not found at $sqlcmd"
+          exit 1
+        }
+        
+        # Test connection first
+        $testOutput = & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q "SELECT 1 AS ConnectionTest" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "Cannot connect to SQL Server: $testOutput"
+          exit 1
+        }
+        
+        & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q "EXEC master.dbo.sp_addlinkedsrvlogin @rmtsrvname = N'{{ item.key }}', @locallogin = NULL , @useself = N'True'"
+      } catch {
+        Write-Error "Error setting default login impersonation: $_"
+        exit 1
+      }
   become: true
   become_method: runas
   become_user: "{{ SQLSVCACCOUNT }}"
