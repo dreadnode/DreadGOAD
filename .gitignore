@@ -39,3 +39,4 @@ docs/olddocs/
 docs/mkdocs/site/
 scripts/archives/
 .task
+*retry
