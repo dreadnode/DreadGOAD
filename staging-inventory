@@ -10,6 +10,7 @@ admin_user=administrator
 env=staging
 
 ; SSM connection (windows)
+ansible_become=false
 ansible_connection=aws_ssm
 ansible_aws_ssm_bucket_name=dread-infra-alpha-operator-range-staging-us-west-1
 ansible_aws_ssm_region=us-west-1
@@ -17,7 +18,6 @@ ansible_shell_type=powershell
 ansible_aws_ssm_s3_addressing_style=virtual
 
 ; miscellaneous
-ansible_become=false
 data_path="{{ playbook_dir }}/../ad/GOAD/data"
 
 ; global settings inventory default value
@@ -42,8 +42,6 @@ dns_server_forwarder=1.1.1.1
 
 ; Default system settings ----------------------------
 [default]
-; Note: ansible_host *MUST* be an IPv4 address or setting things like DNS
-; servers will break.
 ; ------------------------------------------------
 ; sevenkingdoms.local
 ; ------------------------------------------------
