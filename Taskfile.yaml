@@ -102,12 +102,18 @@ tasks:
             
             set -o pipefail
             ANSIBLE_HOST_KEY_CHECKING=False ANSIBLE_RETRY_FILES_ENABLED=True \
-            ANSIBLE_GATHER_TIMEOUT=60 \
+            ANSIBLE_GATHER_TIMEOUT=60 ANSIBLE_ANY_ERRORS_FATAL=True \
             ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
             -e "ansible_facts_gathering_timeout=60" \
             "ansible/$playbook" 2>&1 | tee -a "$temp_log" | tee -a "{{.LOG_FILE}}"
             result=$?
             set +o pipefail
+            
+            # Check for failures in PLAY RECAP even if exit code is 0
+            if [ $result -eq 0 ] && (grep -q "failed=[1-9]" "$temp_log" || grep -q "unreachable=[1-9]" "$temp_log"); then
+              echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected failures in PLAY RECAP despite zero exit code" | tee -a "{{.LOG_FILE}}"
+              result=1
+            fi
             
             if [ $result -eq 0 ]; then
               success=true
@@ -125,6 +131,9 @@ tasks:
               elif grep -q "Windows PowerShell is in NonInteractive mode" "$temp_log"; then
                 error_type="powershell_interactive"
                 echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected PowerShell interactive mode error." | tee -a "{{.LOG_FILE}}"
+              elif grep -q "Invalid IP address.*i-[0-9a-f]" "$temp_log"; then
+                error_type="ssm_ip_error"
+                echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected SSM IP address error." | tee -a "{{.LOG_FILE}}"
               else
                 error_type="unknown"
                 echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Unknown error occurred." | tee -a "{{.LOG_FILE}}"
@@ -135,6 +144,7 @@ tasks:
                 fact_gathering)
                   echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retrying with modified fact gathering settings..." | tee -a "{{.LOG_FILE}}"
                   ANSIBLE_GATHERING=explicit ANSIBLE_HOST_KEY_CHECKING=False \
+                  ANSIBLE_ANY_ERRORS_FATAL=True \
                   ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
                   --forks=1 \
                   -e "ansible_facts_gathering_timeout=60" \
@@ -144,6 +154,7 @@ tasks:
                 network_adapter)
                   echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retrying with network adapter fix..." | tee -a "{{.LOG_FILE}}"
                   ANSIBLE_HOST_KEY_CHECKING=False \
+                  ANSIBLE_ANY_ERRORS_FATAL=True \
                   ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
                   -e "skip_network_adapter_config=true" \
                   -e "bypass_ethernet3_check=true" \
@@ -152,6 +163,7 @@ tasks:
                 connection_error)
                   echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retrying with increased connection timeout..." | tee -a "{{.LOG_FILE}}"
                   ANSIBLE_HOST_KEY_CHECKING=False ANSIBLE_TIMEOUT=180 \
+                  ANSIBLE_ANY_ERRORS_FATAL=True \
                   ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
                   -e "ansible_connection_timeout=180" \
                   -e "ansible_timeout=180" \
@@ -160,16 +172,28 @@ tasks:
                 powershell_interactive)
                   echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retrying with PowerShell interactive mode fix..." | tee -a "{{.LOG_FILE}}"
                   ANSIBLE_HOST_KEY_CHECKING=False \
+                  ANSIBLE_ANY_ERRORS_FATAL=True \
                   ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
                   -e "ansible_shell_type=powershell" \
                   -e "force_ps_module=true" \
                   -e "ansible_ps_version=5.1" \
                   "ansible/$playbook" 2>&1 | tee -a "$temp_log" | tee -a "{{.LOG_FILE}}"
                   ;;
+                ssm_ip_error)
+                  echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retrying with SSM IP fix..." | tee -a "{{.LOG_FILE}}"
+                  sleep 60  # Give SSM more time to resolve IPs
+                  ANSIBLE_HOST_KEY_CHECKING=False \
+                  ANSIBLE_ANY_ERRORS_FATAL=True \
+                  ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
+                  -e "wait_for_ssm_ready=true" \
+                  -e "ansible_host_name_check=true" \
+                  "ansible/$playbook" 2>&1 | tee -a "$temp_log" | tee -a "{{.LOG_FILE}}"
+                  ;;
                 *)
                   echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retrying with general robust settings..." | tee -a "{{.LOG_FILE}}"
                   ANSIBLE_HOST_KEY_CHECKING=False ANSIBLE_RETRY_FILES_ENABLED=True \
                   ANSIBLE_SSH_RETRIES=5 ANSIBLE_TIMEOUT=120 \
+                  ANSIBLE_ANY_ERRORS_FATAL=True \
                   ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
                   --forks=1 \
                   "ansible/$playbook" 2>&1 | tee -a "$temp_log" | tee -a "{{.LOG_FILE}}"
@@ -178,6 +202,12 @@ tasks:
               
               retry_result=$?
               set +o pipefail
+              
+              # Check for failures in PLAY RECAP after retry
+              if [ $retry_result -eq 0 ] && (grep -q "failed=[1-9]" "$temp_log" || grep -q "unreachable=[1-9]" "$temp_log"); then
+                echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected failures in PLAY RECAP despite zero exit code after retry" | tee -a "{{.LOG_FILE}}"
+                retry_result=1
+              fi
               
               if [ $retry_result -eq 0 ]; then
                 success=true
