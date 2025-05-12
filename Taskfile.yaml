@@ -124,11 +124,14 @@ tasks:
               success=true
               echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Completed ansible/$playbook successfully." | tee -a "{{.LOG_FILE}}"
             else
-              if grep -E "FAILED! => .* setup|MODULE FAILURE.*Invalid control character|failed to execute setup|UNREACHABLE! => .*setup|Invalid control character at: line 1 column [0-9]+ \(char [0-9]+\)|ansibl\\re_|\\r|\\u001B" "$temp_log" >/dev/null 2>&1; then
+              echo "DEBUG: Error contents: $(grep -E 'Invalid control|MODULE FAILURE|FAILED!' "$temp_log" | head -3)" | tee -a "{{.LOG_FILE}}"
+              echo "DEBUG: Pattern match result: $(grep -E 'Invalid control character|MODULE FAILURE|setup.*failed|fact.*gather|char [0-9]+|UNREACHABLE!' "$temp_log" | wc -l)" | tee -a "{{.LOG_FILE}}"
+              
+              if grep -E "Invalid control character|MODULE FAILURE|setup.*failed|fact.*gather|char [0-9]+|UNREACHABLE!|\\r|\\u001B" "$temp_log" >/dev/null 2>&1; then
                 echo "[$(date +%Y-%m-%d %H:%M:%S)] Matched transient JSON parsing/fact gather error: WILL WAIT AND RETRY." | tee -a "{{.LOG_FILE}}"
-                grep -E "FAILED! => .* setup|MODULE FAILURE.*Invalid control character|failed to execute setup|UNREACHABLE! => .*setup|Invalid control character at: line 1 column [0-9]+ \(char [0-9]+\)|ansibl\\re_|\\r|\\u001B" "$temp_log" | head -1 | tee -a "{{.LOG_FILE}}"
-                
-                # Add additional environment variables to help with encoding issues
+                grep -E "Invalid control|MODULE FAILURE|failed|UNREACHABLE!|FAILED!" "$temp_log" | head -3 | tee -a "{{.LOG_FILE}}"
+
+                # Environment variables to help with encoding issues
                 echo "[$(date +%Y-%m-%d %H:%M:%S)] Setting additional environment variables to help with encoding..." | tee -a "{{.LOG_FILE}}"
                 export PYTHONIOENCODING=utf-8
                 export PYTHONLEGACYWINDOWSSTDIO=utf-8
