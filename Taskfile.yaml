@@ -188,6 +188,136 @@ tasks:
         echo "Full log available at: {{.LOG_FILE}}" | tee -a "{{.LOG_FILE}}"
         echo "===============================================" | tee -a "{{.LOG_FILE}}"
 
+  ad-users:
+    desc: Ensure Active Directory users exist using the ad-data.yml playbook
+    summary: |
+      Runs the ad-data.yml Ansible playbook to create users in Active Directory.
+      
+      Options:
+        ENV=<env>          Environment to target (default: dev)
+        VERBOSE=true       Enable verbose Ansible output
+        MAX_RETRIES=<n>    Maximum retry attempts (default: 3)
+        RETRY_DELAY=<s>    Delay between retries in seconds (default: 30)
+      
+      Examples:
+        task create-users
+        task create-users ENV=prod
+        task create-users VERBOSE=true
+    cmds:
+      - |
+        # Start the log file with basic information
+        {
+          echo "==============================================="
+          echo "Active Directory user creation started at $(date)"
+          echo "Environment: {{.ENV}}"
+          echo "Max Retries: {{.MAX_RETRIES}}"
+          echo "==============================================="
+          echo "Playbook to be executed: ansible/ad-data.yml"
+          echo "-----------------------------------------------"
+        } | tee "user_creation_{{.LOG_DATE}}.log"
+        
+        # Use the same run_playbook_with_retry function as in provision task
+        run_playbook_with_retry() {
+          local playbook=$1
+          local retry_count=0
+          local success=false
+          local temp_log="/tmp/ansible_temp_$(date +%s)_$RANDOM.log"
+
+          while [ $retry_count -lt {{.MAX_RETRIES}} ] && [ "$success" = "false" ]; do
+            if [ $retry_count -gt 0 ]; then
+              echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retry attempt $retry_count for ansible/$playbook..."
+              echo "Waiting {{.RETRY_DELAY}} seconds before retrying..."
+              sleep {{.RETRY_DELAY}}
+            fi
+
+            echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Starting ansible/$playbook..."
+            true > "$temp_log"
+
+            set -o pipefail
+            ANSIBLE_HOST_KEY_CHECKING=False ANSIBLE_RETRY_FILES_ENABLED=True \
+            ANSIBLE_GATHER_TIMEOUT=60 ANSIBLE_ANY_ERRORS_FATAL=True \
+            ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
+            -e "ansible_facts_gathering_timeout=60" \
+            "ansible/$playbook" 2>&1 | tee -a "$temp_log" | tee -a "user_creation_{{.LOG_DATE}}.log"
+            result=$?
+            set +o pipefail
+
+            # Detect failures in PLAY RECAP even if exit code is 0
+            if [ $result -eq 0 ] && (grep -q "failed=[1-9]" "$temp_log" || grep -q "unreachable=[1-9]" "$temp_log"); then
+              echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected failures in PLAY RECAP despite zero exit code" | tee -a "user_creation_{{.LOG_DATE}}.log"
+              result=1
+            fi
+
+            # Detect task-level fails even if recap was clean
+            if [ $result -eq 0 ] && (grep -q "fatal:" "$temp_log" || grep -q "FAILED!" "$temp_log"); then
+              echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected task failures despite zero exit code" | tee -a "user_creation_{{.LOG_DATE}}.log"
+              result=1
+            fi
+
+            if [ $result -eq 0 ]; then
+              success=true
+              echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Completed ansible/$playbook successfully." | tee -a "user_creation_{{.LOG_DATE}}.log"
+            else
+              if grep -E "FAILED! => .* setup|MODULE FAILURE.*Invalid control character|failed to execute setup|UNREACHABLE! => .*setup|Invalid control character at: line 1 column [0-9]+ \(char [0-9]+\)|ansibl\\re_|\\r|\\u001B" "$temp_log" >/dev/null 2>&1; then
+                echo "[$(date +%Y-%m-%d %H:%M:%S)] Matched transient JSON parsing/fact gather error: WILL WAIT AND RETRY." | tee -a "user_creation_{{.LOG_DATE}}.log"
+                grep -E "FAILED! => .* setup|MODULE FAILURE.*Invalid control character|failed to execute setup|UNREACHABLE! => .*setup|Invalid control character at: line 1 column [0-9]+ \(char [0-9]+\)|ansibl\\re_|\\r|\\u001B" "$temp_log" | head -1 | tee -a "user_creation_{{.LOG_DATE}}.log"
+                
+                # Add additional environment variables to help with encoding issues
+                echo "[$(date +%Y-%m-%d %H:%M:%S)] Setting additional environment variables to help with encoding..." | tee -a "user_creation_{{.LOG_DATE}}.log"
+                export PYTHONIOENCODING=utf-8
+                export PYTHONLEGACYWINDOWSSTDIO=utf-8
+                
+                retry_count=$((retry_count + 1))
+                if [ $retry_count -lt {{.MAX_RETRIES}} ]; then
+                  echo "[$(date +%Y-%m-%d %H:%M:%S)] Sleeping {{.RETRY_DELAY}}s before retry (transient Ansible+WinRM/SSM parse glitch)..." | tee -a "user_creation_{{.LOG_DATE}}.log"
+                  sleep {{.RETRY_DELAY}}
+                  continue
+                fi
+              elif grep -q -E "failed to transfer file|403|Connection refused|timeout|UNREACHABLE!" "$temp_log"; then
+                echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected connection/transfer errors." | tee -a "user_creation_{{.LOG_DATE}}.log"
+                retry_count=$((retry_count + 1))
+                if [ $retry_count -lt {{.MAX_RETRIES}} ]; then
+                  echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Sleeping {{.RETRY_DELAY}}s before retrying connection/transfer error..." | tee -a "user_creation_{{.LOG_DATE}}.log"
+                  sleep {{.RETRY_DELAY}}
+                  continue
+                fi
+              else
+                retry_count=$((retry_count + 1))
+                if [ $retry_count -lt {{.MAX_RETRIES}} ]; then
+                  echo "[$(date +%Y-%m-%d\ %H:%M:%S)] WARNING: ansible/$playbook failed. Retrying ($retry_count/{{.MAX_RETRIES}})..." | tee -a "user_creation_{{.LOG_DATE}}.log"
+                  sleep {{.RETRY_DELAY}}
+                  continue
+                fi
+              fi
+
+              # On final failure after max retries
+              if [ "$success" = "false" ]; then
+                echo "[$(date +%Y-%m-%d\ %H:%M:%S)] ERROR: ansible/$playbook failed after all attempts. Stopping execution." | tee -a "user_creation_{{.LOG_DATE}}.log"
+                echo "===============================================" | tee -a "user_creation_{{.LOG_DATE}}.log"
+                echo "User creation failed at $(date)" | tee -a "user_creation_{{.LOG_DATE}}.log"
+                echo "===============================================" | tee -a "user_creation_{{.LOG_DATE}}.log"
+                return 1
+              fi
+            fi
+          done
+
+          if [ "$success" = "true" ]; then
+            return 0
+          else
+            return 1
+          fi
+        }
+
+        # Execute the ad-data.yml playbook
+        if ! run_playbook_with_retry "ad-data.yml"; then
+          echo "User creation failed after all retry attempts. Exiting." | tee -a "user_creation_{{.LOG_DATE}}.log"
+          exit 1
+        fi
+
+        echo "===============================================" | tee -a "user_creation_{{.LOG_DATE}}.log"
+        echo "Active Directory user creation completed successfully at $(date)" | tee -a "user_creation_{{.LOG_DATE}}.log"
+        echo "Full log available at: user_creation_{{.LOG_DATE}}.log" | tee -a "user_creation_{{.LOG_DATE}}.log"
+        echo "===============================================" | tee -a "user_creation_{{.LOG_DATE}}.log"
 
   get-files:
     desc: Display content of files related to specific playbooks

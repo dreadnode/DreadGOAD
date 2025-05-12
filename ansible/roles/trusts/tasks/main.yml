@@ -50,20 +50,3 @@
   ansible.windows.win_reboot:
     test_command: "Get-ADUser -Identity {{ admin_user }} -Properties *"
   when: trust_result.changed
-
-- name: Show trust result
-  ansible.windows.win_powershell:
-    script: |
-      $obj = Get-CimInstance -Class Microsoft_DomainTrustStatus -Namespace root\microsoftactivedirectory
-      $obj | ConvertTo-Json
-  vars:
-    ansible_become: true
-    ansible_become_method: runas
-    ansible_become_user: "{{ domain_username }}"
-    ansible_become_password: "{{ domain_password }}"
-  register: trust_result_output
-
-- name: Display trust result
-  ansible.builtin.debug:
-    var: trust_result_output.host_out
-  when: trust_result_output is defined
