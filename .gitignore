@@ -40,3 +40,4 @@ docs/mkdocs/site/
 scripts/archives/
 .task
 *retry
+*.log
