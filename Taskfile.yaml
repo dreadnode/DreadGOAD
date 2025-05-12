@@ -87,20 +87,18 @@ tasks:
           local playbook=$1
           local retry_count=0
           local success=false
-          local error_type=""
           local temp_log="/tmp/ansible_temp_$(date +%s)_$RANDOM.log"
-          
+
           while [ $retry_count -lt {{.MAX_RETRIES}} ] && [ "$success" = "false" ]; do
             if [ $retry_count -gt 0 ]; then
               echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retry attempt $retry_count for ansible/$playbook..."
               echo "Waiting {{.RETRY_DELAY}} seconds before retrying..."
               sleep {{.RETRY_DELAY}}
             fi
-            
+
             echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Starting ansible/$playbook..."
             true > "$temp_log"
-            
-            # Run Ansible playbook with real-time output
+
             set -o pipefail
             ANSIBLE_HOST_KEY_CHECKING=False ANSIBLE_RETRY_FILES_ENABLED=True \
             ANSIBLE_GATHER_TIMEOUT=60 ANSIBLE_ANY_ERRORS_FATAL=True \
@@ -109,242 +107,68 @@ tasks:
             "ansible/$playbook" 2>&1 | tee -a "$temp_log" | tee -a "{{.LOG_FILE}}"
             result=$?
             set +o pipefail
-            
-            # Enhanced error detection in PLAY RECAP even if exit code is 0
+
+            # Detect failures in PLAY RECAP even if exit code is 0
             if [ $result -eq 0 ] && (grep -q "failed=[1-9]" "$temp_log" || grep -q "unreachable=[1-9]" "$temp_log"); then
               echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected failures in PLAY RECAP despite zero exit code" | tee -a "{{.LOG_FILE}}"
               result=1
             fi
-            
-            # Enhanced detection for task failure even if PLAY RECAP doesn't show it
+
+            # Detect task-level fails even if recap was clean
             if [ $result -eq 0 ] && (grep -q "fatal:" "$temp_log" || grep -q "FAILED!" "$temp_log"); then
               echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected task failures despite zero exit code" | tee -a "{{.LOG_FILE}}"
               result=1
             fi
-            
+
             if [ $result -eq 0 ]; then
               success=true
               echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Completed ansible/$playbook successfully." | tee -a "{{.LOG_FILE}}"
             else
-              # Enhanced error pattern detection with more specific patterns
-              if grep -E "FAILED! => .* setup|MODULE FAILURE:|Invalid control character|failed to execute setup|UNREACHABLE! => .*setup" "$temp_log" >/dev/null 2>&1; then
-                # Show the matched line for debugging
-                echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Matched fact gathering error:" | tee -a "{{.LOG_FILE}}"
-                grep -E "FAILED! => .* setup|MODULE FAILURE:|Invalid control character|failed to execute setup|UNREACHABLE! => .*setup" "$temp_log" | head -1 | tee -a "{{.LOG_FILE}}"
-              elif grep -E "Invalid control character at: line 1 column [0-9]+ \(char [0-9]+\)" "$temp_log" >/dev/null 2>&1; then
-                echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Matched JSON parsing error:" | tee -a "{{.LOG_FILE}}"
-                grep -E "Invalid control character at: line 1 column [0-9]+ \(char [0-9]+\)" "$temp_log" | head -1 | tee -a "{{.LOG_FILE}}"
-                error_type="json_parsing"
-              elif grep -q -E "failed to transfer file|403|Connection refused|timeout|UNREACHABLE!" "$temp_log"; then
-                error_type="connection_error"
-                echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected connection/transfer errors." | tee -a "{{.LOG_FILE}}"
-              elif grep -q -E "Windows PowerShell is in NonInteractive mode|cannot be loaded because running scripts is disabled" "$temp_log"; then
-                error_type="powershell_interactive"
-                echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected PowerShell interactive mode error." | tee -a "{{.LOG_FILE}}"
-              elif grep -q -E "Invalid IP address.*i-[0-9a-f]|Unable to resolve host|SSM|aws:runPowerShellScript" "$temp_log"; then
-                error_type="ssm_ip_error"
-                echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected SSM IP address error." | tee -a "{{.LOG_FILE}}"
-              elif grep -q -E "JSON|json|Invalid character|parsing error" "$temp_log"; then
-                error_type="json_parsing"
-                echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected JSON parsing error." | tee -a "{{.LOG_FILE}}"
-              else
-                # If no specific pattern matched, check for common error words
-                if grep -q -E "error|failed|fatal|unreachable" "$temp_log"; then
-                  error_type="general_error"
-                  echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected general error." | tee -a "{{.LOG_FILE}}"
-                else
-                  error_type="unknown"
-                  echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Unknown error occurred." | tee -a "{{.LOG_FILE}}"
+              # ONE IF/ELIF BLOCK ONLY, NO SPURIOUS fi!
+              if grep -E "FAILED! => .* setup|MODULE FAILURE:|Invalid control character|failed to execute setup|UNREACHABLE! => .*setup|Invalid control character at: line 1 column [0-9]+ \(char [0-9]+\)" "$temp_log" >/dev/null 2>&1; then
+                echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Matched transient JSON parsing/fact gather error: WILL WAIT AND RETRY." | tee -a "{{.LOG_FILE}}"
+                grep -E "FAILED! => .* setup|MODULE FAILURE:|Invalid control character|failed to execute setup|UNREACHABLE! => .*setup|Invalid control character at: line 1 column [0-9]+ \(char [0-9]+\)" "$temp_log" | head -1 | tee -a "{{.LOG_FILE}}"
+                retry_count=$((retry_count + 1))
+                if [ $retry_count -lt {{.MAX_RETRIES}} ]; then
+                  echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Sleeping {{.RETRY_DELAY}}s before retry (transient Ansible+WinRM/SSM parse glitch)..." | tee -a "{{.LOG_FILE}}"
+                  sleep {{.RETRY_DELAY}}
+                  continue
                 fi
-              fi
-              
-              echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Error type detected: $error_type. Applying specific fix..." | tee -a "{{.LOG_FILE}}"
-              
-              # Apply error-specific fixes
-              case "$error_type" in
-                fact_gathering)
-                  echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retrying with modified fact gathering settings..." | tee -a "{{.LOG_FILE}}"
-                  set -o pipefail
-                  ANSIBLE_GATHERING=explicit ANSIBLE_HOST_KEY_CHECKING=False \
-                  ANSIBLE_ANY_ERRORS_FATAL=True \
-                  ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
-                  --forks=1 \
-                  -e "ansible_facts_gathering_timeout=120" \
-                  -e "gather_timeout=120" \
-                  -e "ansible_python_interpreter=/usr/bin/python3" \
-                  "ansible/$playbook" 2>&1 | tee -a "$temp_log" | tee -a "{{.LOG_FILE}}"
-                  retry_result=$?
-                  set +o pipefail
-                  ;;
-                network_adapter)
-                  echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retrying with network adapter fix..." | tee -a "{{.LOG_FILE}}"
-                  set -o pipefail
-                  ANSIBLE_HOST_KEY_CHECKING=False \
-                  ANSIBLE_ANY_ERRORS_FATAL=True \
-                  ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
-                  -e "skip_network_adapter_config=true" \
-                  -e "bypass_ethernet3_check=true" \
-                  "ansible/$playbook" 2>&1 | tee -a "$temp_log" | tee -a "{{.LOG_FILE}}"
-                  retry_result=$?
-                  set +o pipefail
-                  ;;
-                connection_error)
-                  echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retrying with increased connection timeout..." | tee -a "{{.LOG_FILE}}"
-                  # Wait longer for SSM to establish connections
-                  sleep 90
-                  set -o pipefail
-                  ANSIBLE_HOST_KEY_CHECKING=False ANSIBLE_TIMEOUT=300 \
-                  ANSIBLE_CONNECTION_TIMEOUT=300 ANSIBLE_CONNECT_RETRY_TIMEOUT=60 \
-                  ANSIBLE_ANY_ERRORS_FATAL=True \
-                  ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
-                  -e "ansible_connection_timeout=300" \
-                  -e "ansible_timeout=300" \
-                  -e "ansible_ssh_retries=10" \
-                  "ansible/$playbook" 2>&1 | tee -a "$temp_log" | tee -a "{{.LOG_FILE}}"
-                  retry_result=$?
-                  set +o pipefail
-                  ;;
-                powershell_interactive)
-                  echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retrying with PowerShell interactive mode fix..." | tee -a "{{.LOG_FILE}}"
-                  set -o pipefail
-                  ANSIBLE_HOST_KEY_CHECKING=False \
-                  ANSIBLE_ANY_ERRORS_FATAL=True \
-                  ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
-                  -e "ansible_shell_type=powershell" \
-                  -e "force_ps_module=true" \
-                  -e "ansible_ps_version=5.1" \
-                  -e "ansible_shell_allow_executable=true" \
-                  "ansible/$playbook" 2>&1 | tee -a "$temp_log" | tee -a "{{.LOG_FILE}}"
-                  retry_result=$?
-                  set +o pipefail
-                  ;;
-                ssm_ip_error)
-                  echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retrying with SSM IP fix..." | tee -a "{{.LOG_FILE}}"
-                  # Give SSM more time to resolve IPs
-                  sleep 120
-                  set -o pipefail
-                  ANSIBLE_HOST_KEY_CHECKING=False \
-                  ANSIBLE_ANY_ERRORS_FATAL=True \
-                  ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
-                  -e "wait_for_ssm_ready=true" \
-                  -e "ansible_host_name_check=true" \
-                  -e "use_instance_ids=true" \
-                  "ansible/$playbook" 2>&1 | tee -a "$temp_log" | tee -a "{{.LOG_FILE}}"
-                  retry_result=$?
-                  set +o pipefail
-                  ;;
-                json_parsing)
-                  echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retrying with JSON parsing fixes..." | tee -a "{{.LOG_FILE}}"
-                  set -o pipefail
-                  ANSIBLE_INVALID_CHARACTERS_REPLACE_WITH="_" \
-                  ANSIBLE_GATHERING=smart \
-                  ANSIBLE_GATHER_SUBSET=min \
-                  ANSIBLE_HOST_KEY_CHECKING=False \
-                  ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
-                  -e "ansible_facts_gathering_timeout=120" \
-                  -e "gather_subset=min" \
-                  -e "handle_special_chars=true" \
-                  "ansible/$playbook" 2>&1 | tee -a "$temp_log" | tee -a "{{.LOG_FILE}}"
-                  retry_result=$?
-                  set +o pipefail
-                  ;;
-                general_error|unknown)
-                  echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retrying with general robust settings..." | tee -a "{{.LOG_FILE}}"
-                  # Wait a bit longer for potential transient issues
-                  sleep 60
-                  set -o pipefail
-                  ANSIBLE_HOST_KEY_CHECKING=False ANSIBLE_RETRY_FILES_ENABLED=True \
-                  ANSIBLE_SSH_RETRIES=10 ANSIBLE_TIMEOUT=180 \
-                  ANSIBLE_GATHERING=smart ANSIBLE_GATHER_SUBSET=min \
-                  ANSIBLE_ANY_ERRORS_FATAL=True \
-                  ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
-                  --forks=1 \
-                  -e "ansible_connection_timeout=180" \
-                  -e "retry_on_error=true" \
-                  "ansible/$playbook" 2>&1 | tee -a "$temp_log" | tee -a "{{.LOG_FILE}}"
-                  retry_result=$?
-                  set +o pipefail
-                  ;;
-              esac
-              
-              # Enhanced detection for post-retry failures
-              if [ $retry_result -eq 0 ] && (grep -q "failed=[1-9]" "$temp_log" || grep -q "unreachable=[1-9]" "$temp_log"); then
-                echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected failures in PLAY RECAP despite zero exit code after retry" | tee -a "{{.LOG_FILE}}"
-                retry_result=1
-              fi
-              
-              # Check for task failures even if PLAY RECAP is clean
-              if [ $retry_result -eq 0 ] && (grep -q "fatal:" "$temp_log" || grep -q "FAILED!" "$temp_log"); then
-                echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected task failures despite zero exit code after retry" | tee -a "{{.LOG_FILE}}"
-                retry_result=1
-              fi
-              
-              if [ $retry_result -eq 0 ]; then
-                success=true
-                echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Completed ansible/$playbook successfully after error-specific retry." | tee -a "{{.LOG_FILE}}"
+              elif grep -q -E "failed to transfer file|403|Connection refused|timeout|UNREACHABLE!" "$temp_log"; then
+                echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected connection/transfer errors." | tee -a "{{.LOG_FILE}}"
+                retry_count=$((retry_count + 1))
+                if [ $retry_count -lt {{.MAX_RETRIES}} ]; then
+                  echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Sleeping {{.RETRY_DELAY}}s before retrying connection/transfer error..." | tee -a "{{.LOG_FILE}}"
+                  sleep {{.RETRY_DELAY}}
+                  continue
+                fi
               else
                 retry_count=$((retry_count + 1))
                 if [ $retry_count -lt {{.MAX_RETRIES}} ]; then
-                  echo "[$(date +%Y-%m-%d\ %H:%M:%S)] WARNING: ansible/$playbook failed with exit code $retry_result. Retrying ($retry_count/{{.MAX_RETRIES}})..." | tee -a "{{.LOG_FILE}}"
-                else
-                  # Try one last approach with most aggressive settings if all other retries failed
-                  if [ $retry_count -eq {{.MAX_RETRIES}} ]; then
-                    echo "[$(date +%Y-%m-%d\ %H:%M:%S)] FINAL ATTEMPT: Using most aggressive retry settings..." | tee -a "{{.LOG_FILE}}"
-                    
-                    # Generate a list of working hosts from the temp log
-                    grep "ok:" "$temp_log" | grep -v "ok: \[localhost\]" | awk '{print $2}' | tr -d '[]' > /tmp/working_hosts.txt
-                    
-                    if [ -s /tmp/working_hosts.txt ]; then
-                      # Create a temporary hosts file with only working hosts
-                      echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Attempting to run with only working hosts..." | tee -a "{{.LOG_FILE}}"
-                      temp_inventory="/tmp/temp_inventory_$(date +%s)"
-                      cp {{.ENV}}-inventory "$temp_inventory"
-                      
-                      # Run only against hosts that were previously successful
-                      set -o pipefail
-                      ANSIBLE_HOST_KEY_CHECKING=False ANSIBLE_RETRY_FILES_ENABLED=True \
-                      ANSIBLE_GATHER_TIMEOUT=180 ANSIBLE_GATHERING=explicit \
-                      ansible-playbook {{.VERBOSE_FLAG}} -i "$temp_inventory" \
-                      --limit @/tmp/working_hosts.txt \
-                      -e "ansible_facts_gathering_timeout=180" \
-                      -e "skip_unreachable=true" \
-                      "ansible/$playbook" 2>&1 | tee -a "$temp_log" | tee -a "{{.LOG_FILE}}"
-                      final_result=$?
-                      set +o pipefail
-                      
-                      if [ $final_result -eq 0 ]; then
-                        echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Partial success: Playbook completed for working hosts only." | tee -a "{{.LOG_FILE}}"
-                        success=true
-                      else
-                        echo "[$(date +%Y-%m-%d\ %H:%M:%S)] ERROR: ansible/$playbook failed even with only working hosts." | tee -a "{{.LOG_FILE}}"
-                      fi
-                    else
-                      echo "[$(date +%Y-%m-%d\ %H:%M:%S)] ERROR: Could not identify any working hosts from previous run." | tee -a "{{.LOG_FILE}}"
-                    fi
-                    
-                    # Delete temporary files
-                    rm -f /tmp/working_hosts.txt "$temp_inventory" 2>/dev/null
-                    
-                    if [ "$success" = "false" ]; then
-                      echo "[$(date +%Y-%m-%d\ %H:%M:%S)] ERROR: ansible/$playbook failed with exit code $retry_result after all attempts. Stopping execution." | tee -a "{{.LOG_FILE}}"
-                      echo "===============================================" | tee -a "{{.LOG_FILE}}"
-                      echo "Playbook execution failed at $(date)" | tee -a "{{.LOG_FILE}}"
-                      echo "===============================================" | tee -a "{{.LOG_FILE}}"
-                      return 1
-                    fi
-                  fi
+                  echo "[$(date +%Y-%m-%d\ %H:%M:%S)] WARNING: ansible/$playbook failed. Retrying ($retry_count/{{.MAX_RETRIES}})..." | tee -a "{{.LOG_FILE}}"
+                  sleep {{.RETRY_DELAY}}
+                  continue
                 fi
+              fi
+
+              # On final failure after max retries
+              if [ "$success" = "false" ]; then
+                echo "[$(date +%Y-%m-%d\ %H:%M:%S)] ERROR: ansible/$playbook failed after all attempts. Stopping execution." | tee -a "{{.LOG_FILE}}"
+                echo "===============================================" | tee -a "{{.LOG_FILE}}"
+                echo "Playbook execution failed at $(date)" | tee -a "{{.LOG_FILE}}"
+                echo "===============================================" | tee -a "{{.LOG_FILE}}"
+                return 1
               fi
             fi
           done
-          
+
           if [ "$success" = "true" ]; then
             return 0
           else
             return 1
           fi
         }
-        
+
         # Execute selected playbooks
         for playbook in {{.PLAYS}}; do
           if ! run_playbook_with_retry "$playbook"; then
@@ -353,7 +177,7 @@ tasks:
           fi
           echo "-----------------------------------------------" | tee -a "{{.LOG_FILE}}"
         done
-        
+
         echo "===============================================" | tee -a "{{.LOG_FILE}}"
         echo "All selected playbooks completed successfully at $(date)" | tee -a "{{.LOG_FILE}}"
         echo "Full log available at: {{.LOG_FILE}}" | tee -a "{{.LOG_FILE}}"
