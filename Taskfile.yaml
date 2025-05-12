@@ -101,7 +101,7 @@ tasks:
 
             set -o pipefail
             ANSIBLE_HOST_KEY_CHECKING=False ANSIBLE_RETRY_FILES_ENABLED=True \
-            ANSIBLE_GATHER_TIMEOUT=60 ANSIBLE_ANY_ERRORS_FATAL=True \
+            ANSIBLE_GATHER_TIMEOUT=60 ANSIBLE_ANY_ERRORS_FATAL=False \
             ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
             -e "ansible_facts_gathering_timeout=60" \
             "ansible/$playbook" 2>&1 | tee -a "$temp_log" | tee -a "{{.LOG_FILE}}"
