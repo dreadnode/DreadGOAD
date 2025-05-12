@@ -124,13 +124,18 @@ tasks:
               success=true
               echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Completed ansible/$playbook successfully." | tee -a "{{.LOG_FILE}}"
             else
-              # ONE IF/ELIF BLOCK ONLY, NO SPURIOUS fi!
-              if grep -E "FAILED! => .* setup|MODULE FAILURE:|Invalid control character|failed to execute setup|UNREACHABLE! => .*setup|Invalid control character at: line 1 column [0-9]+ \(char [0-9]+\)" "$temp_log" >/dev/null 2>&1; then
-                echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Matched transient JSON parsing/fact gather error: WILL WAIT AND RETRY." | tee -a "{{.LOG_FILE}}"
-                grep -E "FAILED! => .* setup|MODULE FAILURE:|Invalid control character|failed to execute setup|UNREACHABLE! => .*setup|Invalid control character at: line 1 column [0-9]+ \(char [0-9]+\)" "$temp_log" | head -1 | tee -a "{{.LOG_FILE}}"
+              if grep -E "FAILED! => .* setup|MODULE FAILURE.*Invalid control character|failed to execute setup|UNREACHABLE! => .*setup|Invalid control character at: line 1 column [0-9]+ \(char [0-9]+\)|ansibl\\re_|\\r|\\u001B" "$temp_log" >/dev/null 2>&1; then
+                echo "[$(date +%Y-%m-%d %H:%M:%S)] Matched transient JSON parsing/fact gather error: WILL WAIT AND RETRY." | tee -a "{{.LOG_FILE}}"
+                grep -E "FAILED! => .* setup|MODULE FAILURE.*Invalid control character|failed to execute setup|UNREACHABLE! => .*setup|Invalid control character at: line 1 column [0-9]+ \(char [0-9]+\)|ansibl\\re_|\\r|\\u001B" "$temp_log" | head -1 | tee -a "{{.LOG_FILE}}"
+                
+                # Add additional environment variables to help with encoding issues
+                echo "[$(date +%Y-%m-%d %H:%M:%S)] Setting additional environment variables to help with encoding..." | tee -a "{{.LOG_FILE}}"
+                export PYTHONIOENCODING=utf-8
+                export PYTHONLEGACYWINDOWSSTDIO=utf-8
+                
                 retry_count=$((retry_count + 1))
                 if [ $retry_count -lt {{.MAX_RETRIES}} ]; then
-                  echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Sleeping {{.RETRY_DELAY}}s before retry (transient Ansible+WinRM/SSM parse glitch)..." | tee -a "{{.LOG_FILE}}"
+                  echo "[$(date +%Y-%m-%d %H:%M:%S)] Sleeping {{.RETRY_DELAY}}s before retry (transient Ansible+WinRM/SSM parse glitch)..." | tee -a "{{.LOG_FILE}}"
                   sleep {{.RETRY_DELAY}}
                   continue
                 fi
@@ -182,6 +187,7 @@ tasks:
         echo "All selected playbooks completed successfully at $(date)" | tee -a "{{.LOG_FILE}}"
         echo "Full log available at: {{.LOG_FILE}}" | tee -a "{{.LOG_FILE}}"
         echo "===============================================" | tee -a "{{.LOG_FILE}}"
+
 
   get-files:
     desc: Display content of files related to specific playbooks
