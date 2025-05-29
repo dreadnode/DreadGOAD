@@ -52,16 +52,22 @@ Before provisioning, ensure the following are installed and configured:
 
 ### 🚧 Provisioning the Environment
 
+1. **Set Task environment variable:**
+
+   ```bash
+   export TASK_X_REMOTE_TASKFILES=1
+   ```
+
 1. **List available Ansible playbooks:**
 
    ```bash
-   task list-plays
+   task -y list-plays
    ```
 
 1. **Update the Ansible inventory with AWS instance IDs:**
 
    ```bash
-   task update-inventory ENV=dev --force
+   task -y update-inventory ENV=dev --force
    ```
 
 1. **Provision the AD environment:**
