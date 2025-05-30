@@ -3,38 +3,6 @@
 - ansible.builtin.import_playbook: data.yml
   tags: data
 
-# Get DNS IP addresses for each domain controller
-- name: Get DC IPv4 addresses
-  hosts: dc
-  gather_facts: false
-  tasks:
-    - name: Get IPv4 address for DC
-      ansible.windows.win_powershell:
-        script: |
-          try {
-            $ipAddress = (Get-NetIPAddress -AddressFamily IPv4 | 
-              Where-Object {$_.IPAddress -notmatch '^127\.' -and $_.IPAddress -notmatch '^169\.254\.'} | 
-              Select-Object -First 1).IPAddress
-            
-            if($ipAddress) {
-              # Explicitly set the output property that Ansible will capture
-              $host.UI.WriteLine($ipAddress)
-              $Ansible.Changed = $false
-            } else {
-              throw "No valid IPv4 address found"
-            }
-          } catch {
-            Write-Error "Error getting IPv4 address: $_"
-            $Ansible.Changed = $false
-          }
-      register: dc_ipv4_raw
-
-    - name: Set DC IP address as fact
-      ansible.builtin.set_fact:
-        dc_ipv4: "{{ dc_ipv4_raw.host_out | default('') | trim }}"
-        cacheable: true
-      when: dc_ipv4_raw is defined and dc_ipv4_raw.host_out is defined
-
 # set AD data ==================================================================================================
 # child
 - name: Child DC AD configuration
@@ -56,7 +24,6 @@
     master_server: "{{ hostvars[remote_dc]['dc_ipv4'] | default(hostvars[remote_dc].ansible_host) }}"
     replication: none
 
-# parent add DNS value of child DC
 - name: Parent DC ADD DNS configuration
   hosts: parent_dc
   gather_facts: false  
@@ -66,3 +33,5 @@
     lab: "{{ lab }}"
     domains: "{{ lab.domains.keys() }}"
     domain: "{{ lab.hosts[dict_key].domain }}"
+    dc_hostname_to_ip: "{{ hostvars[groups['dc'][0]]['dc_hostname_to_ip'] | default({}) }}"
+    instance_to_ip: "{{ hostvars[groups['dc'][0]]['instance_to_ip'] | default({}) }}"

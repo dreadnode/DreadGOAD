@@ -119,7 +119,10 @@ tasks:
               elif grep -q "No MSFT_NetAdapter objects found with property 'Name' equal to 'Ethernet3'" "$temp_log"; then
                 error_type="network_adapter"
                 echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected network adapter configuration issues." | tee -a "{{.LOG_FILE}}"
-              elif grep -q "failed to transfer file" "$temp_log" || grep -q "403" "$temp_log"; then
+              elif grep -q "403.*Forbidden" "$temp_log" || grep -q "failed to transfer.*\.ps1" "$temp_log" || grep -q "Invoke-WebRequest.*403.*Forbidden" "$temp_log"; then
+                error_type="ssm_transfer_error"
+                echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected SSM/S3 transfer error (403 Forbidden)." | tee -a "{{.LOG_FILE}}"
+              elif grep -q "failed to transfer file" "$temp_log"; then
                 error_type="connection_error"
                 echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected connection/transfer errors." | tee -a "{{.LOG_FILE}}"
               elif grep -q "Windows PowerShell is in NonInteractive mode" "$temp_log"; then
@@ -147,6 +150,22 @@ tasks:
                   ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
                   -e "skip_network_adapter_config=true" \
                   -e "bypass_ethernet3_check=true" \
+                  "ansible/$playbook" 2>&1 | tee -a "$temp_log" | tee -a "{{.LOG_FILE}}"
+                  ;;
+                ssm_transfer_error)
+                  echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retrying with SSM/S3 transfer workarounds..." | tee -a "{{.LOG_FILE}}"
+                  echo "Waiting 30 seconds for S3 permissions to settle..." | tee -a "{{.LOG_FILE}}"
+                  sleep 30
+                  # Retry with serial execution and SSM-specific settings
+                  ANSIBLE_HOST_KEY_CHECKING=False \
+                  ANSIBLE_TIMEOUT=300 \
+                  ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
+                  --forks=1 \
+                  -e "ansible_aws_ssm_retries=5" \
+                  -e "ansible_aws_ssm_retry_delay=15" \
+                  -e "ansible_connection_timeout=300" \
+                  -e "ansible_command_timeout=300" \
+                  -e "ansible_aws_ssm_timeout=300" \
                   "ansible/$playbook" 2>&1 | tee -a "$temp_log" | tee -a "{{.LOG_FILE}}"
                   ;;
                 connection_error)
