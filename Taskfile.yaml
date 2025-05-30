@@ -82,6 +82,47 @@ tasks:
         } | tee "{{.LOG_FILE}}"
       - mkdir -p $(dirname "{{.LOG_FILE}}")
       - |
+        # Function to check if ansible playbook actually succeeded
+        check_ansible_success() {
+          local log_file=$1
+          
+          # Check for explicit ansible failures in PLAY RECAP
+          if grep -E "failed=[1-9][0-9]*|unreachable=[1-9][0-9]*" "$log_file" >/dev/null 2>&1; then
+            echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected failures in PLAY RECAP" | tee -a "{{.LOG_FILE}}"
+            return 1
+          fi
+          
+          # Check for fatal errors
+          if grep -E "fatal:|FAILED!" "$log_file" >/dev/null 2>&1; then
+            echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected fatal errors" | tee -a "{{.LOG_FILE}}"
+            return 1
+          fi
+          
+          # Check for the "to retry" message
+          if grep -q "to retry, use:" "$log_file" >/dev/null 2>&1; then
+            echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected retry suggestion from Ansible" | tee -a "{{.LOG_FILE}}"
+            return 1
+          fi
+          
+          return 0
+        }
+        
+        # Function to run ansible and capture exit code properly
+        run_ansible_command() {
+          local temp_log=$1
+          shift
+          
+          # Run the command and capture output
+          "$@" 2>&1 | tee "$temp_log" | tee -a "{{.LOG_FILE}}"
+          
+          # Capture the exit codes immediately
+          local pipe_status=("${PIPESTATUS[@]}")
+          local ansible_exit="${pipe_status[0]}"
+          
+          # Return the ansible exit code
+          return "${ansible_exit:-1}"
+        }
+        
         # Function to run a playbook with retry
         run_playbook_with_retry() {
           local playbook=$1
@@ -92,34 +133,43 @@ tasks:
           
           while [ $retry_count -lt {{.MAX_RETRIES}} ] && [ "$success" = "false" ]; do
             if [ $retry_count -gt 0 ]; then
-              echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retry attempt $retry_count for ansible/$playbook..."
-              echo "Waiting {{.RETRY_DELAY}} seconds before retrying..."
+              echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retry attempt $retry_count for ansible/$playbook..." | tee -a "{{.LOG_FILE}}"
+              echo "Waiting {{.RETRY_DELAY}} seconds before retrying..." | tee -a "{{.LOG_FILE}}"
               sleep {{.RETRY_DELAY}}
             fi
             
-            echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Starting ansible/$playbook..."
+            echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Starting ansible/$playbook..." | tee -a "{{.LOG_FILE}}"
+            
+            # Clear temp log
             true > "$temp_log"
             
-            set -o pipefail
-            ANSIBLE_HOST_KEY_CHECKING=False ANSIBLE_RETRY_FILES_ENABLED=True \
-            ANSIBLE_GATHER_TIMEOUT=60 \
-            ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
-            -e "ansible_facts_gathering_timeout=60" \
-            "ansible/$playbook" 2>&1 | tee -a "$temp_log" | tee -a "{{.LOG_FILE}}"
-            result=$?
-            set +o pipefail
+            # Run ansible-playbook and capture exit code
+            local ansible_exit_code=0
+            run_ansible_command "$temp_log" \
+              env ANSIBLE_HOST_KEY_CHECKING=False \
+              ANSIBLE_RETRY_FILES_ENABLED=True \
+              ANSIBLE_GATHER_TIMEOUT=60 \
+              ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
+              -e "ansible_facts_gathering_timeout=60" \
+              "ansible/$playbook" || ansible_exit_code=$?
             
-            if [ $result -eq 0 ]; then
+            echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Ansible exit code: $ansible_exit_code" | tee -a "{{.LOG_FILE}}"
+            
+            # Check for actual success (not just exit code)
+            if [ "$ansible_exit_code" -eq 0 ] && check_ansible_success "$temp_log"; then
               success=true
               echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Completed ansible/$playbook successfully." | tee -a "{{.LOG_FILE}}"
             else
+              echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Playbook failed" | tee -a "{{.LOG_FILE}}"
+              
+              # Analyze the error type from the temp log
               if grep -q "FAILED! => .* setup" "$temp_log" || grep -q "Invalid control character" "$temp_log"; then
                 error_type="fact_gathering"
                 echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected fact gathering issues." | tee -a "{{.LOG_FILE}}"
               elif grep -q "No MSFT_NetAdapter objects found with property 'Name' equal to 'Ethernet3'" "$temp_log"; then
                 error_type="network_adapter"
                 echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected network adapter configuration issues." | tee -a "{{.LOG_FILE}}"
-              elif grep -q "403.*Forbidden" "$temp_log" || grep -q "failed to transfer.*\.ps1" "$temp_log" || grep -q "Invoke-WebRequest.*403.*Forbidden" "$temp_log"; then
+              elif grep -E "(403.*Forbidden|failed to transfer.*\.ps1|Invoke-WebRequest.*403.*Forbidden)" "$temp_log" >/dev/null 2>&1; then
                 error_type="ssm_transfer_error"
                 echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Detected SSM/S3 transfer error (403 Forbidden)." | tee -a "{{.LOG_FILE}}"
               elif grep -q "failed to transfer file" "$temp_log"; then
@@ -133,88 +183,124 @@ tasks:
                 echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Unknown error occurred." | tee -a "{{.LOG_FILE}}"
               fi
               
-              set -o pipefail
+              # Extract failed hosts for targeted retry
+              local failed_hosts=$(grep -E "^[a-zA-Z0-9_-]+\s+:.*failed=[1-9]" "$temp_log" | awk '{print $1}' | tr '\n' ',' | sed 's/,$//')
+              if [ -n "$failed_hosts" ]; then
+                echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Failed hosts: $failed_hosts" | tee -a "{{.LOG_FILE}}"
+              fi
+              
+              # Try error-specific recovery
+              echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Attempting error-specific recovery for: $error_type" | tee -a "{{.LOG_FILE}}"
+              
+              local retry_exit_code=1
               case "$error_type" in
                 fact_gathering)
                   echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retrying with modified fact gathering settings..." | tee -a "{{.LOG_FILE}}"
-                  ANSIBLE_GATHERING=explicit ANSIBLE_HOST_KEY_CHECKING=False \
-                  ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
-                  --forks=1 \
-                  -e "ansible_facts_gathering_timeout=60" \
-                  -e "gather_timeout=60" \
-                  "ansible/$playbook" 2>&1 | tee -a "$temp_log" | tee -a "{{.LOG_FILE}}"
+                  run_ansible_command "$temp_log" \
+                    env ANSIBLE_GATHERING=explicit \
+                    ANSIBLE_HOST_KEY_CHECKING=False \
+                    ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
+                    ${failed_hosts:+--limit "$failed_hosts"} \
+                    --forks=1 \
+                    -e "ansible_facts_gathering_timeout=60" \
+                    -e "gather_timeout=60" \
+                    "ansible/$playbook" || retry_exit_code=$?
                   ;;
                 network_adapter)
                   echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retrying with network adapter fix..." | tee -a "{{.LOG_FILE}}"
-                  ANSIBLE_HOST_KEY_CHECKING=False \
-                  ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
-                  -e "skip_network_adapter_config=true" \
-                  -e "bypass_ethernet3_check=true" \
-                  "ansible/$playbook" 2>&1 | tee -a "$temp_log" | tee -a "{{.LOG_FILE}}"
+                  run_ansible_command "$temp_log" \
+                    env ANSIBLE_HOST_KEY_CHECKING=False \
+                    ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
+                    ${failed_hosts:+--limit "$failed_hosts"} \
+                    -e "skip_network_adapter_config=true" \
+                    -e "bypass_ethernet3_check=true" \
+                    "ansible/$playbook" || retry_exit_code=$?
                   ;;
                 ssm_transfer_error)
                   echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retrying with SSM/S3 transfer workarounds..." | tee -a "{{.LOG_FILE}}"
-                  echo "Waiting 30 seconds for S3 permissions to settle..." | tee -a "{{.LOG_FILE}}"
-                  sleep 30
-                  # Retry with serial execution and SSM-specific settings
-                  ANSIBLE_HOST_KEY_CHECKING=False \
-                  ANSIBLE_TIMEOUT=300 \
-                  ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
-                  --forks=1 \
-                  -e "ansible_aws_ssm_retries=5" \
-                  -e "ansible_aws_ssm_retry_delay=15" \
-                  -e "ansible_connection_timeout=300" \
-                  -e "ansible_command_timeout=300" \
-                  -e "ansible_aws_ssm_timeout=300" \
-                  "ansible/$playbook" 2>&1 | tee -a "$temp_log" | tee -a "{{.LOG_FILE}}"
+            
+                  # First, try to refresh SSM agent
+                  if [ -n "$failed_hosts" ]; then
+                    echo "Attempting to restart SSM agent on failed hosts..." | tee -a "{{.LOG_FILE}}"
+                    ansible $failed_hosts -i {{.ENV}}-inventory -m win_service -a "name=AmazonSSMAgent state=restarted" || true
+                    sleep 30
+                  fi
+                  
+                  # Longer wait for S3/IAM propagation
+                  echo "Waiting 90 seconds for S3/IAM permissions to fully propagate..." | tee -a "{{.LOG_FILE}}"
+                  sleep 90
+                  
+                  # Retry with SSM-specific settings and smaller batch size
+                  run_ansible_command "$temp_log" \
+                    env ANSIBLE_HOST_KEY_CHECKING=False \
+                    ANSIBLE_TIMEOUT=300 \
+                    ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
+                    ${failed_hosts:+--limit "$failed_hosts"} \
+                    --forks=1 \
+                    -e "ansible_aws_ssm_bucket_name=${SSM_BUCKET_NAME:-}" \
+                    -e "ansible_aws_ssm_retries=10" \
+                    -e "ansible_aws_ssm_retry_delay=30" \
+                    -e "ansible_connection_timeout=300" \
+                    -e "ansible_command_timeout=300" \
+                    -e "ansible_aws_ssm_timeout=300" \
+                    "ansible/$playbook" || retry_exit_code=$?
                   ;;
                 connection_error)
                   echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retrying with increased connection timeout..." | tee -a "{{.LOG_FILE}}"
-                  ANSIBLE_HOST_KEY_CHECKING=False ANSIBLE_TIMEOUT=180 \
-                  ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
-                  -e "ansible_connection_timeout=180" \
-                  -e "ansible_timeout=180" \
-                  "ansible/$playbook" 2>&1 | tee -a "$temp_log" | tee -a "{{.LOG_FILE}}"
+                  run_ansible_command "$temp_log" \
+                    env ANSIBLE_HOST_KEY_CHECKING=False \
+                    ANSIBLE_TIMEOUT=180 \
+                    ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
+                    ${failed_hosts:+--limit "$failed_hosts"} \
+                    -e "ansible_connection_timeout=180" \
+                    -e "ansible_timeout=180" \
+                    "ansible/$playbook" || retry_exit_code=$?
                   ;;
                 powershell_interactive)
                   echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retrying with PowerShell interactive mode fix..." | tee -a "{{.LOG_FILE}}"
-                  ANSIBLE_HOST_KEY_CHECKING=False \
-                  ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
-                  -e "ansible_shell_type=powershell" \
-                  -e "force_ps_module=true" \
-                  -e "ansible_ps_version=5.1" \
-                  "ansible/$playbook" 2>&1 | tee -a "$temp_log" | tee -a "{{.LOG_FILE}}"
+                  run_ansible_command "$temp_log" \
+                    env ANSIBLE_HOST_KEY_CHECKING=False \
+                    ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
+                    ${failed_hosts:+--limit "$failed_hosts"} \
+                    -e "ansible_shell_type=powershell" \
+                    -e "force_ps_module=true" \
+                    -e "ansible_ps_version=5.1" \
+                    "ansible/$playbook" || retry_exit_code=$?
                   ;;
                 *)
                   echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Retrying with general robust settings..." | tee -a "{{.LOG_FILE}}"
-                  ANSIBLE_HOST_KEY_CHECKING=False ANSIBLE_RETRY_FILES_ENABLED=True \
-                  ANSIBLE_SSH_RETRIES=5 ANSIBLE_TIMEOUT=120 \
-                  ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
-                  --forks=1 \
-                  "ansible/$playbook" 2>&1 | tee -a "$temp_log" | tee -a "{{.LOG_FILE}}"
+                  run_ansible_command "$temp_log" \
+                    env ANSIBLE_HOST_KEY_CHECKING=False \
+                    ANSIBLE_RETRY_FILES_ENABLED=True \
+                    ANSIBLE_SSH_RETRIES=5 \
+                    ANSIBLE_TIMEOUT=120 \
+                    ansible-playbook {{.VERBOSE_FLAG}} -i {{.ENV}}-inventory \
+                    ${failed_hosts:+--limit "$failed_hosts"} \
+                    --forks=1 \
+                    "ansible/$playbook" || retry_exit_code=$?
                   ;;
               esac
               
-              retry_result=$?
-              set +o pipefail
+              echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Error-specific retry exit code: $retry_exit_code" | tee -a "{{.LOG_FILE}}"
               
-              if [ $retry_result -eq 0 ]; then
+              if [ "$retry_exit_code" -eq 0 ] && check_ansible_success "$temp_log"; then
                 success=true
                 echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Completed ansible/$playbook successfully after error-specific retry." | tee -a "{{.LOG_FILE}}"
               else
                 retry_count=$((retry_count + 1))
-                if [ $retry_count -lt {{.MAX_RETRIES}} ]; then
-                  echo "[$(date +%Y-%m-%d\ %H:%M:%S)] WARNING: ansible/$playbook failed with exit code $retry_result. Retrying ($retry_count/{{.MAX_RETRIES}})..." | tee -a "{{.LOG_FILE}}"
-                else
-                  echo "[$(date +%Y-%m-%d\ %H:%M:%S)] ERROR: ansible/$playbook failed with exit code $retry_result after {{.MAX_RETRIES}} attempts. Stopping execution." | tee -a "{{.LOG_FILE}}"
+                if [ $retry_count -eq {{.MAX_RETRIES}} ]; then
+                  echo "[$(date +%Y-%m-%d\ %H:%M:%S)] ERROR: ansible/$playbook failed after {{.MAX_RETRIES}} attempts. Stopping execution." | tee -a "{{.LOG_FILE}}"
                   echo "===============================================" | tee -a "{{.LOG_FILE}}"
                   echo "SSM Provisioning Script failed at $(date)" | tee -a "{{.LOG_FILE}}"
                   echo "===============================================" | tee -a "{{.LOG_FILE}}"
+                  rm -f "$temp_log"
                   return 1
                 fi
               fi
             fi
           done
+          
+          rm -f "$temp_log"
           
           if [ "$success" = "true" ]; then
             return 0
