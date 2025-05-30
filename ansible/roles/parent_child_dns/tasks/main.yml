@@ -6,10 +6,22 @@
     parent_domain: "{{ domain }}"
     child_dc: "{{ lab.domains[item].dc }}"
     name_server: "{{ lab.hosts[child_dc].hostname }}.{{ item }}"
-    name_server_ip: "{{ hostvars[child_dc]['dc_ipv4'] | default(hostvars[child_dc].ansible_host) }}"
+    name_server_ip: >-
+      {{ 
+        hostvars[child_dc]['dc_ipv4'] | 
+        default(dc_hostname_to_ip[child_dc] | 
+        default(instance_to_ip[hostvars[child_dc]['ansible_host']] | 
+        default('')))
+      }}
     zone: "{{ item.split('.')[0] }}"
   loop: "{{ domains }}"
-  when: domain == '.'.join(item.split('.')[1:])
+  when: 
+    - domain == '.'.join(item.split('.')[1:])
+    - name_server_ip != ''
+  register: dns_delegation_result
+  failed_when: 
+    - dns_delegation_result.rc != 0
+    - "'already exists' not in dns_delegation_result.stderr"
 
 - name: Create conditional forwarder to child domain
   ansible.windows.win_dns_zone:
@@ -20,7 +32,28 @@
       - "{{ name_server_ip }}"
   vars:
     child_dc: "{{ lab.domains[item].dc }}"
-    name_server_ip: "{{ hostvars[child_dc]['dc_ipv4'] | default(hostvars[child_dc].ansible_host) }}"
+    name_server_ip: >-
+      {{ 
+        hostvars[child_dc]['dc_ipv4'] | 
+        default(dc_hostname_to_ip[child_dc] | 
+        default(instance_to_ip[hostvars[child_dc]['ansible_host']] | 
+        default('')))
+      }}
     zone: "{{ item.split('.')[0] }}"
   loop: "{{ domains }}"
-  when: domain == '.'.join(item.split('.')[1:])
+  when: 
+    - domain == '.'.join(item.split('.')[1:])
+    - name_server_ip != ''
+
+- name: Debug IP resolution for child domains
+  ansible.builtin.debug:
+    msg:
+      - "Child domain: {{ item }}"
+      - "Child DC: {{ lab.domains[item].dc }}"
+      - "DC IPv4: {{ hostvars[lab.domains[item].dc]['dc_ipv4'] | default('NOT SET') }}"
+      - "From hostname mapping: {{ dc_hostname_to_ip[lab.domains[item].dc] | default('NOT IN MAPPING') }}"
+      - "From instance mapping: {{ instance_to_ip[hostvars[lab.domains[item].dc]['ansible_host']] | default('NOT IN MAPPING') }}"
+  loop: "{{ domains }}"
+  when: 
+    - domain == '.'.join(item.split('.')[1:])
+  tags: debug

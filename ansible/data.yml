@@ -2,6 +2,7 @@
 - name: Read data files
   hosts: domain:extensions
   gather_facts: true
+  # serial: 1  # Process hosts one at a time
   tasks:
     - name: Load JSON config as a variable
       ansible.builtin.include_vars:
@@ -75,3 +76,100 @@
           - "number_of_interfaces: {{ number_of_interfaces }}"
           - "two_adapters: {{ two_adapters }}"
           - "nat interface: {{ nat_adapter }}"
+
+    - name: Get host's primary IPv4 address
+      ansible.windows.win_powershell:
+        script: |
+          try {
+            # Get all IPv4 addresses that are not loopback or APIPA
+            $ipAddresses = Get-NetIPAddress -AddressFamily IPv4 | 
+              Where-Object {
+                $_.IPAddress -notmatch '^127\.' -and 
+                $_.IPAddress -notmatch '^169\.254\.' -and
+                $_.InterfaceAlias -ne 'Loopback Pseudo-Interface 1'
+              }
+            
+            # Prefer the IP on the domain adapter if specified
+            $domainAdapterIP = $ipAddresses | Where-Object { $_.InterfaceAlias -eq "{{ domain_adapter | default('Ethernet 3') }}" } | Select-Object -First 1
+            
+            if ($domainAdapterIP) {
+              $ipAddress = $domainAdapterIP.IPAddress
+            } else {
+              # Fallback to first available IP
+              $ipAddress = ($ipAddresses | Select-Object -First 1).IPAddress
+            }
+            
+            if($ipAddress) {
+              $host.UI.WriteLine($ipAddress)
+              $Ansible.Changed = $false
+            } else {
+              throw "No valid IPv4 address found"
+            }
+          } catch {
+            Write-Error "Error getting IPv4 address: $_"
+            $Ansible.Changed = $false
+          }
+      register: host_ipv4_raw
+
+    - name: Set host IP address as fact
+      ansible.builtin.set_fact:
+        host_ipv4: "{{ host_ipv4_raw.host_out | default(host_ipv4_raw.stdout) | trim }}"
+        cacheable: true
+      when: 
+        - host_ipv4_raw is defined 
+        - (host_ipv4_raw.host_out is defined or host_ipv4_raw.stdout is defined)
+
+    - name: Store IP as host fact
+      ansible.builtin.set_fact:
+        dc_ipv4: "{{ host_ipv4 }}"
+        cacheable: true
+      when: 
+        - host_ipv4 is defined
+        - inventory_hostname in groups['dc']
+
+    - name: Show host IP resolution
+      ansible.builtin.debug:
+        msg: 
+          - "hostname: {{ inventory_hostname }}"
+          - "instance_id: {{ ansible_host }}"
+          - "resolved_ip: {{ host_ipv4 | default('NOT RESOLVED') }}"
+          - "domain interface: {{ domain_adapter }}"
+          - "number_of_interfaces: {{ number_of_interfaces }}"
+          - "two_adapters: {{ two_adapters }}"
+          - "nat interface: {{ nat_adapter }}"
+
+# Create mappings on first available DC
+- name: Create global mappings
+  hosts: dc[0]
+  gather_facts: false
+  tasks:
+    - name: Build hostname to IP mapping for all DCs
+      ansible.builtin.set_fact:
+        dc_hostname_to_ip: >-
+          {%- set mapping = {} -%}
+          {%- for host in groups['dc'] -%}
+            {%- if hostvars[host]['dc_ipv4'] is defined and hostvars[host]['dc_ipv4'] != '' -%}
+              {%- set _ = mapping.update({host: hostvars[host]['dc_ipv4']}) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ mapping }}
+        cacheable: true
+      when: groups['dc'] is defined
+
+    - name: Build instance ID to IP mapping for all hosts
+      ansible.builtin.set_fact:
+        instance_to_ip: >-
+          {%- set mapping = {} -%}
+          {%- for host in groups['all'] -%}
+            {%- if hostvars[host]['host_ipv4'] is defined and hostvars[host]['ansible_host'] is defined and hostvars[host]['host_ipv4'] != '' -%}
+              {%- set _ = mapping.update({hostvars[host]['ansible_host']: hostvars[host]['host_ipv4']}) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ mapping }}
+        cacheable: true
+
+    - name: Debug the mappings
+      ansible.builtin.debug:
+        msg:
+          - "DC Hostname to IP mapping: {{ dc_hostname_to_ip | default({}) }}"
+          - "Instance to IP mapping: {{ instance_to_ip | default({}) }}"
