@@ -1,0 +1,25 @@
+---
+- name: Check if KB5008380 is installed
+  ansible.windows.win_shell: |
+    Get-HotFix -Id KB5008380 -ErrorAction SilentlyContinue
+  register: kb_check
+  failed_when: false
+  changed_when: false
+
+- name: Remove KB5008380 if installed
+  ansible.windows.win_shell: |
+    wusa.exe /uninstall /kb:5008380 /quiet /norestart
+  when: kb_check.stdout != ""
+  register: kb_removal
+  failed_when: false
+
+- name: Display removal status
+  ansible.builtin.debug:
+    msg: "KB5008380 was {{ 'found and removed' if kb_check.stdout != '' else 'not installed' }}"
+
+- name: Warn if removal failed
+  ansible.builtin.debug:
+    msg: "WARNING: KB5008380 removal may have failed. Manual intervention might be required."
+  when: 
+    - kb_check.stdout != ""
+    - kb_removal.rc != 0
