@@ -1,5 +1,5 @@
 - name: Set configure dns
-  win_dns_client:
+  ansible.windows.win_dns_client:
     adapter_names: "{{domain_adapter}}"
     ipv4_addresses:
     - "{{hostvars[dns_domain].ansible_host}}"
@@ -16,7 +16,7 @@
   register: check_domain_controller
 
 - name: Reboot to complete domain controller setup
-  win_reboot:
+  ansible.windows.win_reboot:
     reboot_timeout: 600
     post_reboot_delay: 30
   when: check_domain_controller.changed

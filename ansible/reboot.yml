@@ -2,6 +2,6 @@
   hosts: domain
   tasks:
     - name: "reboot"
-      win_reboot:
+      ansible.windows.win_reboot:
         reboot_timeout: 1000
         post_reboot_delay: 200

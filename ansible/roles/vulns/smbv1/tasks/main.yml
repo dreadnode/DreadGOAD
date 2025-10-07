@@ -1,5 +1,6 @@
+---
 - name: Enable SMBV1 feature
-  win_feature:
+  ansible.windows.win_feature:
     name: SMB1Protocol
     state: present
     include_sub_features: yes
