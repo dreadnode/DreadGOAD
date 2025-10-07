@@ -1,6 +1,6 @@
 ---
 # Load datas
-- import_playbook: data.yml
+- ansible.builtin.import_playbook: data.yml
   tags: data
 
 - name: Install IIS
@@ -13,7 +13,7 @@
   serial: 1
   pre_tasks:
     - name: Debug all MSSQL installation variables
-      debug:
+      ansible.builtin.debug:
         msg: |
           MSSQL Express Installation Variables:
           ===================================
@@ -30,23 +30,23 @@
           sa_password: {{ sa_password }}
           linked_servers: {{ linked_servers }}
       tags: always
-      
+
     # Check if SQL Server is actually running
     - name: Check if SQL Server service is running
       ansible.windows.win_service:
         name: MSSQL$SQLEXPRESS
       register: sql_service
       ignore_errors: true
-      
+
   roles:
     # Only run the mssql role if the service isn't found or isn't running
-    - { role: 'mssql', tags: 'mssql', 
+    - { role: 'mssql', tags: 'mssql',
         when: sql_service.exists is not defined or not sql_service.exists or sql_service.state != 'running' }
     - { role: 'mssql_link', tags: 'mssql, mssql_link'}
   vars:
     domain: "{{ lab.hosts[dict_key].domain }}"
-    SQLSVCACCOUNT: "NT AUTHORITY\\NETWORK SERVICE"       
-    SQLSVCPASSWORD: ""                                  
+    SQLSVCACCOUNT: "NT AUTHORITY\\NETWORK SERVICE"
+    SQLSVCPASSWORD: ""
     SQLSYSADMIN: "{{ lab.hosts[dict_key].mssql.sysadmin | default('NT AUTHORITY\\NETWORK SERVICE') }}"
     domain_admin: "{{ domain }}\\{{ admin_user }}"
     domain_admin_password: "{{ lab.domains[domain].domain_password }}"

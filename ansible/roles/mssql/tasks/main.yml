@@ -8,6 +8,7 @@
     download_url: "{{ download_url_2022 if sql_version == 'MSSQL_2022' else download_url_2019 }}"
     connection_type: "{{ connection_type_2022 if sql_version == 'MSSQL_2022' else connection_type_2019 }}"
     mssql_service_instance: "MSSQL${{ sql_instance_name }}"
+    mssql_version_key: "{{ 'MSSQL16' if sql_version == 'MSSQL_2022' else 'MSSQL15' }}"
 
 - name: Set service name
   ansible.builtin.set_fact:
@@ -31,7 +32,7 @@
     - c:\setup\mssql\extraction
 
 - name: Create and load user profile
-  win_shell: |
+  ansible.windows.win_shell: |
     $env:USERPROFILE
     $env:HOMEPATH
     if (!(Test-Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer')) {
@@ -45,12 +46,12 @@
     ansible_become_flags: logon_type=interactive
 
 - name: Create SQL Server configuration file
-  win_template: 
+  ansible.windows.win_template: 
     src: files/sql_conf.ini.{{ sql_version }}.j2
     dest: c:\setup\mssql\sql_conf.ini
 
 - name: Check if installation media already exists
-  win_stat:
+  ansible.windows.win_stat:
     path: c:\setup\mssql\sql_installer.exe
   register: installer_file
 
@@ -61,7 +62,7 @@
   when: not installer_file.stat.exists
 
 - name: Add service account to Log on as a service
-  win_user_right:
+  ansible.windows.win_user_right:
     name: SeServiceLogonRight
     users:
       - "{{ SQLSVCACCOUNT }}"
@@ -69,28 +70,28 @@
   when: not SQLSVCACCOUNT == "NT AUTHORITY\\NETWORK SERVICE"
 
 - name: Check if SQL Express media file exists
-  win_stat:
+  ansible.windows.win_stat:
     path: C:\setup\mssql\media\SQLEXPR_x64_ENU.exe
   register: sqlexpr_file
 
 - name: Run the installer to download SQL Express installation files
-  win_command: C:\setup\mssql\sql_installer.exe /ACTION=Download /MEDIAPATH=C:\setup\mssql\media /Q
+  ansible.windows.win_command: C:\setup\mssql\sql_installer.exe /ACTION=Download /MEDIAPATH=C:\setup\mssql\media /Q
   when: not sqlexpr_file.stat.exists
 
-- name: Check if MSSQL service exists
-  win_service:
-    name: "{{ mssql_service_name }}"
-  register: mssql_service_check
+- name: Check if MSSQL is installed via registry
+  ansible.windows.win_reg_stat:
+    path: "HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\{{ mssql_version_key }}.{{ sql_instance_name }}"
+  register: mssql_installed
   failed_when: false
 
 - name: Extract SQL Server installation files
-  win_command: C:\setup\mssql\media\SQLEXPR_x64_ENU.exe /x:C:\setup\mssql\extraction /q
+  ansible.windows.win_command: C:\setup\mssql\media\SQLEXPR_x64_ENU.exe /x:C:\setup\mssql\extraction /q
   args:
     creates: C:\setup\mssql\extraction\SETUP.EXE
-  when: mssql_service_check.state is not defined or mssql_service_check.state != "running"
+  when: not mssql_installed.exists
 
 - name: Install SQL Server
-  win_command: c:\setup\mssql\extraction\SETUP.EXE /configurationfile=c:\setup\mssql\sql_conf.ini
+  ansible.windows.win_command: c:\setup\mssql\extraction\SETUP.EXE /configurationfile=c:\setup\mssql\sql_conf.ini
   args:
     chdir: C:\setup\mssql
   vars:
@@ -105,11 +106,11 @@
     - >
       (('No features were installed during the setup execution' not in (mssql_install.stdout | default(''))) and
        ('No features were installed during the setup execution' not in (mssql_install.host_out | default(''))))
-  when: mssql_service_check.state is not defined or mssql_service_check.state != "running"
+  when: not mssql_installed.exists
 
 # sql server 2022
 - name: Add or update registry for ip port (2022)
-  win_regedit:
+  ansible.windows.win_regedit:
     path: 'HKLM:\Software\Microsoft\Microsoft SQL Server\MSSQL16.{{ sql_instance_name }}\MSSQLServer\SuperSocketNetLib\Tcp\IPAll'
     name: TcpPort
     data: 1433
@@ -118,7 +119,7 @@
 
 # sql server 2019
 - name: Add or update registry for ip port (2019)
-  win_regedit:
+  ansible.windows.win_regedit:
     path: 'HKLM:\Software\Microsoft\Microsoft SQL Server\MSSQL15.{{ sql_instance_name }}\MSSQLServer\SuperSocketNetLib\Tcp\IPAll'
     name: TcpPort
     data: 1433
@@ -130,7 +131,7 @@
   when: win_reg.changed
 
 - name: Firewall | Allow MSSQL through Firewall
-  win_dsc:
+  ansible.windows.win_dsc:
     resource_name: xFirewall
     Name: "Access for MSSQL (TCP-In)"
     Ensure: present
@@ -142,7 +143,7 @@
     Description: "Opens the listener port for MSSQL"
 
 - name: Firewall | Allow MSSQL discover through Firewall
-  win_dsc:
+  ansible.windows.win_dsc:
     resource_name: xFirewall
     Name: "Access for MSSQL (UDP-In)"
     Ensure: present
@@ -154,7 +155,7 @@
     Description: "Opens the discover port for MSSQL"
 
 - name: Be sure service is started
-  win_service:
+  ansible.windows.win_service:
     name: "{{ mssql_service_name }}"
     force_dependent_services: true
     state: started
@@ -165,7 +166,7 @@
     delay: 5
 
 - name: Add MSSQL admin
-  win_shell: |
+  ansible.windows.win_shell: |
     SqlCmd {{ connection_type }} -Q "CREATE LOGIN [{{ item }}] FROM WINDOWS"
     SqlCmd {{ connection_type }} -Q "SP_ADDSRVROLEMEMBER '{{ item }}','SYSADMIN'"
   become: true
@@ -218,7 +219,7 @@
     ansible_become_pass: "{{ SQLSVCPASSWORD }}"
 
 - name: Restart service MSSQL
-  win_service:
+  ansible.windows.win_service:
     name: "{{ mssql_service_name }}"
     force_dependent_services: true
     state: restarted

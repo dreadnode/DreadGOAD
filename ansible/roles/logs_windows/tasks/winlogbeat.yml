@@ -41,7 +41,7 @@
   when: not winlogbeat_service.download and not winlogbeat_folder.stat.exists
 
 - name: Unzip winlogbeat
-  win_unzip:
+  community.windows.win_unzip:
     src: "{{ winlogbeat_service.install_path_64 }}\\winlogbeat.zip"
     dest: "{{ winlogbeat_service.install_path_64 }}\\"
     delete_archive: yes

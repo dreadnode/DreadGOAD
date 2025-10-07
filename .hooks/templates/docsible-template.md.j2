@@ -1,0 +1,72 @@
+# {{ role.name }}
+{%- if role.meta.galaxy_info.description %}
+
+## Description
+
+{{ role.meta.galaxy_info.description }}
+{%- endif %}
+
+## Requirements
+
+- Ansible >= {{ role.meta.galaxy_info.min_ansible_version }}
+{%- if role.meta.dependencies %}
+
+## Dependencies
+{% for dep in role.meta.dependencies %}
+- {{ dep.role }}
+{%- endfor %}
+{%- endif %}
+
+## Role Variables
+{%- for defaultfile in role.defaults %}
+
+### Default Variables ({{ defaultfile.file }})
+
+| Variable | Type | Default | Description |
+|----------|------|---------|-------------|
+{%- for key, details in defaultfile.data.items() %}
+{%- if not key.endswith('.0') and not key.endswith('.1') and not key.endswith('.2') and not key.endswith('.3') and not key.endswith('.4') and not key.endswith('.5') and not key.endswith('.6') and '.' not in key or key.count('.') == 1 %}
+| `{{ key }}` | {{ details.type }} | `{{ details.value }}` | {{ details.description or 'No description' }} |
+{%- endif %}
+{%- endfor %}
+{%- endfor %}
+{%- if role.vars %}
+{%- for varsfile in role.vars %}
+
+### Role Variables ({{ varsfile.file }})
+
+| Variable | Type | Value | Description |
+|----------|------|-------|-------------|
+{%- for key, details in varsfile.data.items() %}
+| `{{ key }}` | {{ details.type }} | `{{ details.value }}` | {{ details.description or 'No description' }} |
+{%- endfor %}
+{%- endfor %}
+{%- endif %}
+
+## Tasks
+{%- for taskfile in role.tasks | sort(attribute='file') %}
+
+### {{ taskfile.file }}
+{% for task in taskfile.tasks %}
+- **{{ task.name }}** ({{ task.module }}){% if task.when %} - Conditional{% endif %}
+{%- endfor %}
+{%- endfor %}
+
+## Example Playbook
+
+```yaml
+- hosts: servers
+  roles:
+    - {{ role.name }}
+```
+
+## Author Information
+
+- **Author**: {{ role.meta.galaxy_info.author }}
+- **Company**: {{ role.meta.galaxy_info.company }}
+- **License**: {{ role.meta.galaxy_info.license }}
+
+## Platforms
+{% for platform in role.meta.galaxy_info.platforms %}
+- {{ platform.name }}: {{ platform.versions | join(', ') }}
+{%- endfor %}

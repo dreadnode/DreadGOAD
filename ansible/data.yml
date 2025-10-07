@@ -15,73 +15,18 @@
         cacheable: true
       run_once: true
 
-    - name: Get network adapter information from Windows
+    - name: Get all network information 
       ansible.windows.win_powershell:
         script: |
-          Get-NetAdapter | Where-Object {$_.Status -eq "Up"} | Select-Object -First 1 | Select-Object -ExpandProperty Name
-      register: windows_adapter_result
-
-    - name: Set domain adapter from Windows API
-      ansible.builtin.set_fact:
-        domain_adapter: "{{ windows_adapter_result.host_out | default(windows_adapter_result.stdout) | trim }}"
-      when: 
-        - windows_adapter_result is defined 
-        - (windows_adapter_result.host_out is defined or windows_adapter_result.stdout is defined)
-        - (windows_adapter_result.host_out | default(windows_adapter_result.stdout) | trim != '')
-
-    # Use the first interface's IP address for comparison
-    - name: Get primary interface IP address
-      ansible.builtin.set_fact:
-        primary_ip: "{{ ansible_interfaces[0].ipv4.address }}"
-      when: ansible_interfaces[0].ipv4 is defined
-
-    # Set domain adapter based on the first interface
-    - name: Set domain adapter from first interface
-      ansible.builtin.set_fact:
-        domain_adapter: "{{ ansible_interfaces[0].connection_name }}"
-      when: ansible_interfaces[0] is defined and domain_adapter is not defined
-
-    # Set fallback domain adapter if it wasn't defined
-    - name: Set fallback domain adapter
-      ansible.builtin.set_fact:
-        domain_adapter: "Ethernet"  # Generic fallback value
-      when: domain_adapter is not defined
-
-    # Set NAT adapter based on secondary interface if it exists
-    - name: Set NAT adapter from secondary interface
-      ansible.builtin.set_fact:
-        nat_adapter: "{{ ansible_interfaces[1].connection_name }}"
-      when: ansible_interfaces[1] is defined
-
-    # Determine the number of interfaces
-    - name: Determine the number of interfaces
-      ansible.builtin.set_fact:
-        number_of_interfaces: "{{ ansible_interfaces|length }}"
-
-    # Determine if there are two adapters
-    - name: Determine if there are two adapters
-      ansible.builtin.set_fact:
-        two_adapters: "{{ 'true' if number_of_interfaces|int > 1 else 'false' }}"
-
-    # Set NAT adapter to domain adapter if only one interface
-    - name: Set NAT adapter to domain adapter
-      ansible.builtin.set_fact:
-        nat_adapter: "{{ domain_adapter }}"
-      when: two_adapters == "false" or nat_adapter is not defined
-
-    - name: Show network adapter values
-      ansible.builtin.debug:
-        msg: 
-          - "domain interface: {{ domain_adapter }}"
-          - "number_of_interfaces: {{ number_of_interfaces }}"
-          - "two_adapters: {{ two_adapters }}"
-          - "nat interface: {{ nat_adapter }}"
-
-    - name: Get host's primary IPv4 address
-      ansible.windows.win_powershell:
-        script: |
+          $ProgressPreference = 'SilentlyContinue'
+          $ErrorActionPreference = 'SilentlyContinue'
+          
           try {
-            # Get all IPv4 addresses that are not loopback or APIPA
+            # Get primary adapter
+            $primaryAdapter = Get-NetAdapter | Where-Object {$_.Status -eq "Up"} | Select-Object -First 1
+            $allAdapters = Get-NetAdapter | Where-Object {$_.Status -eq "Up"}
+            
+            # Get primary IP address
             $ipAddresses = Get-NetIPAddress -AddressFamily IPv4 | 
               Where-Object {
                 $_.IPAddress -notmatch '^127\.' -and 
@@ -89,45 +34,73 @@
                 $_.InterfaceAlias -ne 'Loopback Pseudo-Interface 1'
               }
             
-            # Prefer the IP on the domain adapter if specified
-            $domainAdapterIP = $ipAddresses | Where-Object { $_.InterfaceAlias -eq "{{ domain_adapter | default('Ethernet 3') }}" } | Select-Object -First 1
-            
-            if ($domainAdapterIP) {
-              $ipAddress = $domainAdapterIP.IPAddress
-            } else {
-              # Fallback to first available IP
-              $ipAddress = ($ipAddresses | Select-Object -First 1).IPAddress
+            # Prefer the IP on the primary adapter
+            $primaryIP = $ipAddresses | Where-Object { $_.InterfaceAlias -eq $primaryAdapter.Name } | Select-Object -First 1
+            if (-not $primaryIP) {
+              $primaryIP = $ipAddresses | Select-Object -First 1
             }
             
-            if($ipAddress) {
-              $host.UI.WriteLine($ipAddress)
-              $Ansible.Changed = $false
-            } else {
-              throw "No valid IPv4 address found"
+            # Build result object
+            $result = @{
+              domain_adapter = if ($primaryAdapter) { $primaryAdapter.Name } else { "Ethernet" }
+              adapter_count = $allAdapters.Count
+              nat_adapter = if ($allAdapters.Count -gt 1) { 
+                ($allAdapters | Select-Object -Skip 1 -First 1).Name 
+              } else { 
+                if ($primaryAdapter) { $primaryAdapter.Name } else { "Ethernet" }
+              }
+              primary_ip = if ($primaryIP) { $primaryIP.IPAddress } else { "" }
             }
+            
+            # Output as simple format for easy parsing
+            Write-Output "DOMAIN_ADAPTER:$($result.domain_adapter)"
+            Write-Output "NAT_ADAPTER:$($result.nat_adapter)"
+            Write-Output "ADAPTER_COUNT:$($result.adapter_count)"
+            Write-Output "PRIMARY_IP:$($result.primary_ip)"
+            $Ansible.Changed = $false
           } catch {
-            Write-Error "Error getting IPv4 address: $_"
+            # Fallback values
+            Write-Output "DOMAIN_ADAPTER:Ethernet"
+            Write-Output "NAT_ADAPTER:Ethernet"
+            Write-Output "ADAPTER_COUNT:1"
+            Write-Output "PRIMARY_IP:"
             $Ansible.Changed = $false
           }
-      register: host_ipv4_raw
+      register: network_info
+      ignore_errors: true
 
-    - name: Set host IP address as fact
+    - name: Set all network facts
       ansible.builtin.set_fact:
-        host_ipv4: "{{ host_ipv4_raw.host_out | default(host_ipv4_raw.stdout) | trim }}"
+        domain_adapter: "{{ network_info.output | select('match', '^DOMAIN_ADAPTER:') | first | regex_replace('^DOMAIN_ADAPTER:', '') | default('Ethernet') }}"
+        nat_adapter: "{{ network_info.output | select('match', '^NAT_ADAPTER:') | first | regex_replace('^NAT_ADAPTER:', '') | default('Ethernet') }}"
+        number_of_interfaces: "{{ network_info.output | select('match', '^ADAPTER_COUNT:') | first | regex_replace('^ADAPTER_COUNT:', '') | default('1') }}"
+        two_adapters: "{{ (network_info.output | select('match', '^ADAPTER_COUNT:') | first | regex_replace('^ADAPTER_COUNT:', '') | default('1') | int) > 1 }}"
+        host_ipv4: "{{ network_info.output | select('match', '^PRIMARY_IP:') | first | regex_replace('^PRIMARY_IP:', '') | default(ansible_default_ipv4.address | default('')) }}"
         cacheable: true
       when: 
-        - host_ipv4_raw is defined 
-        - (host_ipv4_raw.host_out is defined or host_ipv4_raw.stdout is defined)
+        - network_info is defined
+        - network_info.output is defined
 
-    - name: Store IP as host fact
+    - name: Set fallback network facts
+      ansible.builtin.set_fact:
+        domain_adapter: "{{ domain_adapter | default('Ethernet') }}"
+        nat_adapter: "{{ nat_adapter | default(domain_adapter | default('Ethernet')) }}"
+        number_of_interfaces: "{{ number_of_interfaces | default('1') }}"
+        two_adapters: "{{ two_adapters | default(false) }}"
+        host_ipv4: "{{ host_ipv4 | default(ansible_default_ipv4.address | default('')) }}"
+        cacheable: true
+      when: domain_adapter is not defined
+
+    - name: Store IP as host fact for DCs
       ansible.builtin.set_fact:
         dc_ipv4: "{{ host_ipv4 }}"
         cacheable: true
       when: 
         - host_ipv4 is defined
+        - host_ipv4 != ''
         - inventory_hostname in groups['dc']
 
-    - name: Show host IP resolution
+    - name: Show host network configuration
       ansible.builtin.debug:
         msg: 
           - "hostname: {{ inventory_hostname }}"
@@ -137,13 +110,14 @@
           - "number_of_interfaces: {{ number_of_interfaces }}"
           - "two_adapters: {{ two_adapters }}"
           - "nat interface: {{ nat_adapter }}"
+        verbosity: 1  # Only shows with -v flag
 
-# Create mappings on first available DC
+# Create mappings on all hosts
 - name: Create global mappings
-  hosts: dc[0]
+  hosts: all  
   gather_facts: false
   tasks:
-    - name: Build hostname to IP mapping for all DCs
+    - name: Build all mappings and distribute to all hosts
       ansible.builtin.set_fact:
         dc_hostname_to_ip: >-
           {%- set mapping = {} -%}
@@ -153,11 +127,6 @@
             {%- endif -%}
           {%- endfor -%}
           {{ mapping }}
-        cacheable: true
-      when: groups['dc'] is defined
-
-    - name: Build instance ID to IP mapping for all hosts
-      ansible.builtin.set_fact:
         instance_to_ip: >-
           {%- set mapping = {} -%}
           {%- for host in groups['all'] -%}
@@ -167,9 +136,15 @@
           {%- endfor -%}
           {{ mapping }}
         cacheable: true
+      run_once: true  
+      delegate_facts: true
+      delegate_to: "{{ item }}"
+      loop: "{{ groups['all'] }}"
 
     - name: Debug the mappings
       ansible.builtin.debug:
         msg:
           - "DC Hostname to IP mapping: {{ dc_hostname_to_ip | default({}) }}"
           - "Instance to IP mapping: {{ instance_to_ip | default({}) }}"
+        verbosity: 2
+      run_once: true 

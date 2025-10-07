@@ -8,7 +8,7 @@
 - name: Create share
   win_share:
     name: "{{item.key}}"
-    description: "Share {{item.key}}" 
+    description: "Share {{item.key}}"
     path: "{{item.value.path}}"
     list: "{{item.value.list| default('yes')}}"
     full: "{{item.value.full_access| default('Administrators')}}"

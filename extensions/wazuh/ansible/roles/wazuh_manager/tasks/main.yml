@@ -43,18 +43,18 @@
   register: ossec_folder
 
 - name: Download SOCFORTRESS Wazuh rules script
-  copy:
+  ansible.builtin.copy:
     src: wazuh_socfortress_rules.sh
     dest: /opt/wazuh/wazuh_socfortress_rules.sh
     mode: "0755"  # Ensure the script is executable
   when: not ossec_folder.stat.exists
 
 - name: Run SOCFORTRESS Wazuh rules script
-  shell: sudo bash /opt/wazuh/wazuh_socfortress_rules.sh
+  ansible.builtin.shell: sudo bash /opt/wazuh/wazuh_socfortress_rules.sh
   when: not ossec_folder.stat.exists
 
 - name: Extract username and password
-  shell: "grep -E 'User:|Password:' /opt/wazuh/wazuh-install-output.txt | awk '{print $NF}'"
+  ansible.builtin.shell: "grep -E 'User:|Password:' /opt/wazuh/wazuh-install-output.txt | awk '{print $NF}'"
   register: access_info
 
 - name: Display username and password

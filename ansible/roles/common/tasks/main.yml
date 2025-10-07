@@ -23,16 +23,41 @@
     bypass: ["<local>", "*.local", "169.254.169.254"]
   when: enable_http_proxy | bool
 
-- name: Upgrade module PowerShellGet to fix accept license issue on last windows ansible version
+- name: Upgrade module PowerShellGet to fix accept license issue
   win_shell: |
+    $ProgressPreference = 'SilentlyContinue'
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     Install-PackageProvider -Name NuGet -Force
     Install-Module PowerShellGet -Force
 
-- name: Windows | Check for ComputerManagementDsc Powershell module
+- name: Check if ComputerManagementDsc exists
+  win_shell: |
+    if (Get-Module -ListAvailable -Name ComputerManagementDsc) {
+      exit 0
+    } else {
+      exit 1
+    }
+  register: module_check
+  failed_when: false
+  changed_when: false
+
+- name: Check if ActiveDirectoryDSC exists
+  win_shell: |
+    if (Get-Module -ListAvailable -Name ActiveDirectoryDSC) {
+      exit 0
+    } else {
+      exit 1
+    }
+  register: ad_dsc_check
+  failed_when: false
+  changed_when: false
+
+- name: Install ActiveDirectoryDSC only if needed
   community.windows.win_psmodule:
-    name: ComputerManagementDsc
+    name: ActiveDirectoryDSC
     state: present
+  register: ad_dsc_module
+  when: ad_dsc_check.rc != 0
 
 - name: Windows | Enable Remote Desktop
   win_dsc:
@@ -41,10 +66,22 @@
     Ensure: present
     UserAuthentication: Secure
 
-- name: Windows | Check for xNetworking Powershell module
+- name: Check if xNetworking exists
+  win_shell: |
+    if (Get-Module -ListAvailable -Name xNetworking) {
+      exit 0
+    } else {
+      exit 1
+    }
+  register: xnetworking_check
+  failed_when: false
+  changed_when: false
+
+- name: Install xNetworking only if needed
   community.windows.win_psmodule:
     name: xNetworking
     state: present
+  when: xnetworking_check.rc != 0
 
 - name: Firewall | Allow RDP through Firewall
   win_dsc:

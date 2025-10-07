@@ -1,12 +1,11 @@
 ---
 # read global configuration file and set up adapters
-- import_playbook: "../../../ansible/data.yml"
+- ansible.builtin.import_playbook: "../../../ansible/data.yml"
   vars:
     data_path: "../ad/{{domain_name}}/data/"
   tags: 'data'
 
-# read local configuration file
-- name: "Read local config file"
+- name: Read local config file
   hosts: domain:extensions
   connection: local
   vars_files:
@@ -16,14 +15,14 @@
       set_fact:
         lab: "{{ lab|combine(lab_extension, recursive=True) }}"
 
-- name: "Set execution policy unrestricted (in cas of re-run)"
+- name: Set execution policy unrestricted (in cas of re-run)
   hosts: ws01
   tasks:
-    - name: "Change execution policy before running"
+    - name: Change execution policy before running
       win_shell: |
         Set-ExecutionPolicy -ExecutionPolicy Unrestricted -Force
 
-- name: prepare workstation
+- name: Prepare workstation
   hosts: ws01
   roles:
     # build.yml
@@ -45,7 +44,7 @@
     domain_password: "{{lab.domains[member_domain].domain_password}}"
     local_groups: "{{lab.hosts[dict_key].local_groups  | default({}) }}"
 
-- name: "Setup security with tasks"
+- name: Setup security with tasks
   hosts: ws01
   tasks:
     - include_role:

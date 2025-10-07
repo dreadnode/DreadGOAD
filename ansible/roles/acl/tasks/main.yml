@@ -36,7 +36,7 @@
 # https://adsecurity.org/?p=3658
 # https://docs.microsoft.com/en-us/previous-versions/tn-archive/ff405676(v=msdn.10)
 
-- name: Set acl 
+- name: Set ACL for AD objects
   ansible.windows.win_powershell:
     script: |
       [CmdletBinding()]
@@ -50,39 +50,38 @@
           [String]
           $inheritance
       )
-      try {
-        Import-Module ActiveDirectory
-        Set-Location AD:
-        $aclValues = 'AccessSystemSecurity', 'CreateChild', 'Delete', 'DeleteChild', 'DeleteTree', 'ExtendedRight', 'GenericAll', 'GenericExecute', 'GenericRead', 'GenericWrite', 'ListChildren', 'ListObject', 'ReadControl', 'ReadProperty', 'Self', 'Synchronize', 'WriteDacl', 'WriteOwner', 'WriteProperty'
-        $aclExtendValues = 'Ext-User-Force-Change-Password', 'Ext-Self-Self-Membership', 'Ext-Write-Self-Membership', 'Ext-ManageCA'
-        
-        if ($for.StartsWith("NT AUTHORITY")) {
-          $forSID = New-Object System.Security.Principal.NTAccount "$for"
-        } else {
-          $forSID = New-Object System.Security.Principal.SecurityIdentifier (Get-ADObject -Filter "SamAccountName -eq '$for'" -Properties objectSID).objectSID
-        }
-        
-        try {
-          $objAcl = get-acl -Path "$to" -ErrorAction Stop
-          $objOU = $to
-          $objFound=$true
-        } catch [System.Management.Automation.ItemNotFoundException]{
-          $objFound=$false
-        }
-        
-        if (-not $objFound) {
-          $extra_args = @{}
-          if ($to -match "\\\\") {
-            $extra_args.Server = $to.Split("\\\\")[0]
-            $to = $to.Split("\\\\")[1]
-          }
-          $toObj = Get-ADObject -Filter "SamAccountName -eq '$to'" @extra_args
-          $objOU = ($toObj).DistinguishedName
-          $objAcl = get-acl -Path "$objOU"
-        }
       
-        $type = [System.Security.AccessControl.AccessControlType] "Allow"
-        $inheritanceType = [System.DirectoryServices.ActiveDirectorySecurityInheritance] $inheritance
+      $ProgressPreference = 'SilentlyContinue'  
+      $ErrorActionPreference = 'Stop'
+      
+      try {
+        # Import module once at the beginning
+        if (-not (Get-Module -Name ActiveDirectory -ErrorAction SilentlyContinue)) {
+          Import-Module ActiveDirectory -ErrorAction Stop
+        }
+        
+        # Define valid ACL values as hash tables for faster lookup
+        $aclValues = @{
+          'AccessSystemSecurity' = $true
+          'CreateChild' = $true
+          'Delete' = $true
+          'DeleteChild' = $true
+          'DeleteTree' = $true
+          'ExtendedRight' = $true
+          'GenericAll' = $true
+          'GenericExecute' = $true
+          'GenericRead' = $true
+          'GenericWrite' = $true
+          'ListChildren' = $true
+          'ListObject' = $true
+          'ReadControl' = $true
+          'ReadProperty' = $true
+          'Self' = $true
+          'Synchronize' = $true
+          'WriteDacl' = $true
+          'WriteOwner' = $true
+          'WriteProperty' = $true
+        }
         
         $aclExtendedValueRightGUID = @{
           "Ext-User-Force-Change-Password" = @("ExtendedRight","00299570-246d-11d0-a768-00aa006e0529")
@@ -91,41 +90,99 @@
           "Ext-ManageCA" = @("ExtendedRight","18e470eb-9b98-47c5-896e-146c5c77100d")
         }
         
+        # Get the SID for the principal
+        if ($for.StartsWith("NT AUTHORITY")) {
+          $forSID = New-Object System.Security.Principal.NTAccount "$for"
+        } else {
+          # Get only the objectSID property we need
+          $forObj = Get-ADObject -Filter "SamAccountName -eq '$for'" -Properties objectSID -ErrorAction Stop
+          if (-not $forObj) {
+            throw "Cannot find object with SamAccountName: $for"
+          }
+          $forSID = New-Object System.Security.Principal.SecurityIdentifier $forObj.objectSID
+        }
+        
+        # Resolve target object and get ACL
+        $objOU = $null
+        
+        # Check if $to contains server specification
+        $extra_args = @{}
+        if ($to -match "\\\\") {
+          $parts = $to.Split("\\\\", 2)
+          $extra_args.Server = $parts[0]
+          $to = $parts[1]
+        }
+        
+        # Try to get object as DN first, then as SamAccountName
+        try {
+          # Test if it's already a DN
+          if ($to -match "^(CN|OU|DC)=") {
+            $objOU = $to
+            $objAcl = Get-Acl -Path "AD:\$objOU" -ErrorAction Stop
+          } else {
+            # Get object by SamAccountName
+            $toObj = Get-ADObject -Filter "SamAccountName -eq '$to'" -Properties DistinguishedName @extra_args -ErrorAction Stop
+            if (-not $toObj) {
+              throw "Cannot find object with SamAccountName: $to"
+            }
+            $objOU = $toObj.DistinguishedName
+            $objAcl = Get-Acl -Path "AD:\$objOU" -ErrorAction Stop
+          }
+        } catch {
+          throw "Failed to get ACL for object: $_"
+        }
+      
+        $type = [System.Security.AccessControl.AccessControlType]::Allow
+        # CORRECT - Using cast syntax for variable
+        $inheritanceType = [System.DirectoryServices.ActiveDirectorySecurityInheritance] $inheritance
+        
         $Ansible.Changed = $false
-
-        # Determine the access right and create the appropriate ACE
-        if ($aclValues.contains($right)) {
-          # Standard access right
+        
+        # Create the appropriate ACE based on right type
+        $ace = $null
+        if ($aclValues.ContainsKey($right)) {
+          # Standard access right - CORRECT cast syntax
           $adRight = [System.DirectoryServices.ActiveDirectoryRights] $right
           $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule $forSID,$adRight,$type,$inheritanceType
-        } elseif ($aclExtendValues.contains($right)) {
-          # Extended access right
+        } elseif ($aclExtendedValueRightGUID.ContainsKey($right)) {
+          # Extended access right - CORRECT cast syntax
           $extendedRightInfo = $aclExtendedValueRightGUID[$right]
           $adRight = [System.DirectoryServices.ActiveDirectoryRights] $extendedRightInfo[0]
-          $extendedRightGUID = $extendedRightInfo[1]
+          $extendedRightGUID = [guid]$extendedRightInfo[1]
           $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule $forSID,$adRight,$type,$extendedRightGUID,$inheritanceType
         } else {
           # Unknown right type
-          Write-Output '{"status": "skipped", "message": "Unknown right type"}'
-          exit 0
+          $Ansible.Result = @{
+            status = "skipped"
+            message = "Unknown right type: $right"
+          }
+          $Ansible.Changed = $false
+          return
         }
-
+        
         # Apply the ACE if created
         if ($ace) {
           $objAcl.AddAccessRule($ace)
-          Set-Acl -AclObject $objAcl -path "$objOU"
+          Set-Acl -AclObject $objAcl -Path "AD:\$objOU" -ErrorAction Stop
           $Ansible.Changed = $true
-          Write-Output '{"status": "success", "message": "ACL set successfully"}'
-        } else {
-          Write-Output '{"status": "skipped", "message": "No ACE created"}'
+          $Ansible.Result = @{
+            status = "success"
+            message = "ACL set successfully for $objOU"
+            for = $for
+            to = $objOU
+            right = $right
+          }
         }
       } catch {
-        $errorMessage = $_.Exception.Message -replace '"', '\"'
-        Write-Output "{\"status\": \"error\", \"message\": \"$errorMessage\"}"
-        $Ansible.Changed = $false
-        exit 1
+        $Ansible.Failed = $true
+        $Ansible.Result = @{
+          status = "error"
+          message = $_.Exception.Message
+          for = $for
+          to = $to
+          right = $right
+        }
       }
-    error_action: continue
     parameters:
       for: "{{ item.value.for }}"
       to: "{{ item.value.to }}"
@@ -136,4 +193,21 @@
     ansible_become_method: runas
     ansible_become_user: "{{ domain_username }}"
     ansible_become_password: "{{ domain_password }}"
-  with_dict: "{{ ad_acls }}"
+  loop: "{{ ad_acls | dict2items }}"
+  loop_control:
+    label: "{{ item.key }}: {{ item.value.for }} -> {{ item.value.to }}"
+  async: 300
+  poll: 0
+  register: acl_results 
+
+- name: Wait for ACL operations to complete
+  async_status:
+    jid: "{{ item.ansible_job_id }}"
+  register: acl_job_result
+  until: acl_job_result.finished
+  retries: 60
+  delay: 5
+  loop: "{{ acl_results.results }}"
+  loop_control:
+    label: "Job ID: {{ item.ansible_job_id }}"
+  when: item.ansible_job_id is defined

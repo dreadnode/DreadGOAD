@@ -14,4 +14,3 @@ New-GPLink -Name "Remove-StarkWallpaper" -Target "OU=North,OU=kingdoms,DC=sevenk
 Set-GPPrefRegistryValue -Name "Remove-StarkWallpaper" -Context User -Action Delete -Key "HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Policies\System"
 
 Set-GPPrefRegistryValue -Name "Remove-StarkWallpaper" -Context User -Action Delete -Key "HKEY_LOCAL_MACHINE\Software\Policies\Microsoft\Windows NT\CurrentVersion"
-
