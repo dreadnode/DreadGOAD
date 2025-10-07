@@ -44,18 +44,20 @@
         (retry_domain is failed and "needs to be restarted" in retry_domain.msg | default(''))
 
 - name: Wait for domain to fully initialize
-  ansible.windows.win_shell: |
-    $ErrorActionPreference = "Stop"
-    try {
-      $domain = Get-ADDomain -ErrorAction Stop
-      Write-Output "Domain $($domain.Name) is accessible"
-      return 0
-    } catch {
-      Write-Error "Domain not yet accessible: $_"
-      return 1
-    }
+  ansible.windows.win_powershell:
+    script: |
+      $ProgressPreference = 'SilentlyContinue'
+      $ErrorActionPreference = "Stop"
+      try {
+        $domain = Get-ADDomain -ErrorAction Stop
+        Write-Output "Domain $($domain.Name) is accessible"
+        $Ansible.Changed = $false
+      } catch {
+        $Ansible.Failed = $true
+        Write-Error "Domain not yet accessible: $_"
+      }
   register: domain_check
-  until: domain_check.rc == 0
+  until: domain_check is not failed
   retries: 10
   delay: 30
   changed_when: false
@@ -103,18 +105,20 @@
         (retry_dc_promotion is defined and retry_dc_promotion is failed and "needs to be restarted" in retry_dc_promotion.msg | default(''))
 
 - name: Check domain controller status
-  ansible.windows.win_shell: |
-    $ErrorActionPreference = "Stop"
-    try {
-      $dc = Get-ADDomainController
-      Write-Output "Domain Controller $($dc.HostName) is functioning properly"
-      return 0
-    } catch {
-      Write-Error "Domain Controller verification failed: $_"
-      return 1
-    }
+  ansible.windows.win_powershell:
+    script: |
+      $ProgressPreference = 'SilentlyContinue'
+      $ErrorActionPreference = "Stop"
+      try {
+        $dc = Get-ADDomainController
+        Write-Output "Domain Controller $($dc.HostName) is functioning properly"
+        $Ansible.Changed = $false
+      } catch {
+        $Ansible.Failed = $true
+        Write-Error "Domain Controller verification failed: $_"
+      }
   register: dc_verification
-  until: dc_verification.rc == 0
+  until: dc_verification is not failed
   retries: 10
   delay: 30
   changed_when: false
@@ -131,50 +135,71 @@
     post_reboot_delay: 300
   when: dns_feature.reboot_required | default(false)
 
-- name: Install xDnsServer PowerShell module
-  ansible.windows.win_shell: |
-    $ErrorActionPreference = "Stop"
-    if (-not (Get-Module -ListAvailable -Name xDnsServer)) {
-      [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-      Install-Module -Name xDnsServer -Force -AllowClobber -SkipPublisherCheck
-      Write-Output "xDnsServer module installed successfully"
+- name: Check if xDnsServer exists
+  win_shell: |
+    if (Get-Module -ListAvailable -Name xDnsServer) {
+      exit 0
     } else {
-      Write-Output "xDnsServer module already installed"
-    }
-  register: xdns_install
-
-- name: Configure DNS listener addresses
-  ansible.windows.win_shell: |
-    $ErrorActionPreference = "Stop"
-    try {
-      dnscmd . /resetlistenaddresses {{ hostvars[dict_key].ansible_host }}
-      Write-Output "DNS listener addresses configured successfully"
-    } catch {
-      Write-Error "Failed to configure DNS listener addresses: $_"
       exit 1
     }
+  register: xdnsserver_check
+  failed_when: false
+  changed_when: false
+
+- name: Install xDnsServer PowerShell module
+  community.windows.win_psmodule:
+    name: xDnsServer
+    state: present
+  when: xdnsserver_check.rc != 0
+
+- name: Configure DNS listener addresses
+  ansible.windows.win_powershell:
+    script: |
+      $ProgressPreference = 'SilentlyContinue'
+      $ErrorActionPreference = "Stop"
+      try {
+        dnscmd . /resetlistenaddresses {{ hostvars[dict_key].ansible_host }}
+        Write-Output "DNS listener addresses configured successfully"
+      } catch {
+        $Ansible.Failed = $true
+        Write-Error "Failed to configure DNS listener addresses: $_"
+      }
   register: dns_listener
   when: two_adapters
 
 - name: Configure DNS Forwarders
-  ansible.windows.win_shell: |
-    $ErrorActionPreference = "Stop"
-    try {
-      Add-DnsServerForwarder -IPAddress "{{ dns_server_forwarder }}" -PassThru
-      Set-DnsServerForwarder -UseRootHint $false
-      Write-Output "DNS forwarders configured successfully"
-    } catch {
-      Write-Error "Failed to configure DNS forwarders: $_"
-      exit 1
-    }
+  ansible.windows.win_powershell:
+    script: |
+      $ProgressPreference = 'SilentlyContinue'
+      $ErrorActionPreference = "Stop"
+      try {
+        Add-DnsServerForwarder -IPAddress "{{ dns_server_forwarder }}" -PassThru
+        Set-DnsServerForwarder -UseRootHint $false
+        Write-Output "DNS forwarders configured successfully"
+      } catch {
+        $Ansible.Failed = $true
+        Write-Error "Failed to configure DNS forwarders: $_"
+      }
   register: dns_forwarders
   when: dns_server_forwarder is defined
 
-- name: Install ActiveDirectoryDSC
+- name: Check if ActiveDirectoryDSC exists
+  win_shell: |
+    if (Get-Module -ListAvailable -Name ActiveDirectoryDSC) {
+      exit 0
+    } else {
+      exit 1
+    }
+  register: ad_dsc_check
+  failed_when: false
+  changed_when: false
+
+- name: Install ActiveDirectoryDSC only if needed
   community.windows.win_psmodule:
     name: ActiveDirectoryDSC
     state: present
   register: ad_dsc_module
+  when: ad_dsc_check.rc != 0
 
 - name: Ensure admin groups are properly configured
   block:
@@ -199,49 +224,52 @@
         domain_password: "{{ domain_password }}"
   rescue:
     - name: Wait for AD services to become fully operational
-      ansible.windows.win_shell: |
-        $ErrorActionPreference = "Stop"
-        $maxAttempts = 30
-        $retryInterval = 30
-        $ready = $false
-        
-        for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
-          Write-Output "Attempt ${attempt}/${maxAttempts}: Checking AD DS services..."
+      ansible.windows.win_powershell:
+        script: |
+          $ProgressPreference = 'SilentlyContinue'
+          $ErrorActionPreference = "Stop"
+          $maxAttempts = 30
+          $retryInterval = 30
+          $ready = $false
           
-          # Check if ADWS service is running
-          $adwsService = Get-Service ADWS -ErrorAction SilentlyContinue
-          if ($adwsService.Status -ne 'Running') {
-              Write-Output "Attempt ${attempt}: ADWS service not running yet, status: $($adwsService.Status)"
-              Start-Sleep -Seconds $retryInterval
-              continue
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            Write-Output "Attempt ${attempt}/${maxAttempts}: Checking AD DS services..."
+            
+            # Check if ADWS service is running
+            $adwsService = Get-Service ADWS -ErrorAction SilentlyContinue
+            if ($adwsService.Status -ne 'Running') {
+                Write-Output "Attempt ${attempt}: ADWS service not running yet, status: $($adwsService.Status)"
+                Start-Sleep -Seconds $retryInterval
+                continue
+            }
+            
+            # Check if DNS service is running
+            $dnsService = Get-Service DNS -ErrorAction SilentlyContinue
+            if ($dnsService.Status -ne 'Running') {
+                Write-Output "Attempt ${attempt}: DNS service not running yet, status: $($dnsService.Status)"
+                Start-Sleep -Seconds $retryInterval
+                continue
+            }
+            
+            # Verify AD is operational using cmdlets
+            try {
+                # Test AD connectivity with lightweight operation
+                $domain = Get-ADDomain -ErrorAction Stop
+                $dc = Get-ADDomainController -ErrorAction Stop
+                Write-Output "Active Directory is fully operational!"
+                $ready = $true
+                break
+            } catch {
+                Write-Output "Attempt ${attempt}: Active Directory not fully operational yet. Error: $_"
+                Start-Sleep -Seconds $retryInterval
+            }
           }
-          
-          # Check if DNS service is running
-          $dnsService = Get-Service DNS -ErrorAction SilentlyContinue
-          if ($dnsService.Status -ne 'Running') {
-              Write-Output "Attempt ${attempt}: DNS service not running yet, status: $($dnsService.Status)"
-              Start-Sleep -Seconds $retryInterval
-              continue
-          }
-          
-          # Verify AD is operational using cmdlets
-          try {
-              # Test AD connectivity with lightweight operation
-              $domain = Get-ADDomain -ErrorAction Stop
-              $dc = Get-ADDomainController -ErrorAction Stop
-              Write-Output "Active Directory is fully operational!"
-              $ready = $true
-              break
-          } catch {
-              Write-Output "Attempt ${attempt}: Active Directory not fully operational yet. Error: $_"
-              Start-Sleep -Seconds $retryInterval
-          }
-        }
 
-        if (-not $ready) {
-            throw "Active Directory DS services did not become fully operational after $maxAttempts attempts"
-            exit 1
-        }
+          if (-not $ready) {
+              $Ansible.Failed = $true
+              throw "Active Directory DS services did not become fully operational after $maxAttempts attempts"
+          }
+          $Ansible.Changed = $false
       register: ad_services_wait
       
     - name: Retry admin group configuration
