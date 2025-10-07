@@ -19,6 +19,8 @@
         [string[]]$Groups
       )
       
+      $ProgressPreference = 'SilentlyContinue'
+      
       try {
         # Check if user already exists
         $userExists = Get-ADUser -Filter {SamAccountName -eq $Username} -ErrorAction SilentlyContinue
@@ -63,13 +65,11 @@
             }
           } catch {
             $errorMessage = $_.Exception.Message
-            # Fixed the colon in string issue
             Write-Warning ("Failed to add " + $Username + " to group " + $group + " - " + $errorMessage)
           }
         }
       } catch {
         $errorMessage = $_.Exception.Message
-        # Fixed the colon in string issue
         Write-Error ("Failed to create or update user " + $Username + " - " + $errorMessage)
         throw $_
       }
@@ -87,6 +87,17 @@
   retries: 3
   delay: 30
   until: usercreate is not failed
+  async: 300  
+  poll: 0
+
+- name: Wait for user creation to complete
+  async_status:
+    jid: "{{ item.ansible_job_id }}"
+  register: job_result
+  until: job_result.finished
+  retries: 60
+  delay: 5
+  with_items: "{{ usercreate.results }}"
 
 - name: Set users SPN lists with PowerShell
   ansible.windows.win_powershell:
@@ -97,6 +108,8 @@
         [string[]]$SPNs
       )
       
+      $ProgressPreference = 'SilentlyContinue'  
+      
       try {
         # Get current SPNs for the user
         $user = Get-ADUser -Identity $Username -Properties ServicePrincipalNames
@@ -106,7 +119,7 @@
         
         # Add any missing SPNs
         foreach ($spn in $SPNs) {
-          if (-not $currentSPNs -contains $spn) {
+          if ($currentSPNs -notcontains $spn) {  
             Set-ADUser -Identity $Username -Add @{ServicePrincipalNames=$spn}
             Write-Output "Added SPN $spn to user $Username"
             $changed = $true
@@ -118,7 +131,6 @@
         $Ansible.Changed = $changed
       } catch {
         $errorMessage = $_.Exception.Message
-        # Fixed the colon in string issue
         Write-Error ("Failed to set SPNs for user " + $Username + " - " + $errorMessage)
       }
     parameters:
@@ -126,3 +138,15 @@
       SPNs: "{{ item.value.spns }}"
   with_dict: "{{ ad_users }}"
   when: item.value.spns is defined
+  async: 300  
+  poll: 0
+
+- name: Wait for SPN configuration to complete
+  async_status:
+    jid: "{{ item.ansible_job_id }}"
+  register: spn_result
+  until: spn_result.finished
+  retries: 60
+  delay: 5
+  with_items: "{{ usercreate.results }}"
+  when: item.ansible_job_id is defined
