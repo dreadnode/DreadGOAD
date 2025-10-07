@@ -1,5 +1,5 @@
 ---
-- import_playbook: data.yml
+- ansible.builtin.import_playbook: data.yml
   vars:
     data_path: "../ad/{{domain_name}}/data/"
   tags: 'data'
@@ -10,7 +10,7 @@
 #    - debug:
 #        "var=ansible_interfaces"
 
-- name: set Network adapter variables
+- name: Set Network adapter variables
   hosts: domain
   tasks:
      - set_fact:
@@ -29,7 +29,7 @@
          nat_adapter="{{domain_adapter}}"
        when: two_adapters == 'no'
 
-- name: show variables
+- name: Show variables
   hosts: domain
   tasks:
     - debug:
