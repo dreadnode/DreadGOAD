@@ -57,8 +57,8 @@ tasks:
       
       Examples: 
         task provision ENV=prod VERBOSE=true
-        task provision PLAYS="build.yml ad-servers.yml"
-        task provision PLAYS=ad-data.yml ENV=test
+        task provision ENV=staging PLAYS="build.yml ad-servers.yml"
+        task provision ENV=dev PLAYS=ad-data.yml
         
       To see all available playbooks:
         task list-plays
