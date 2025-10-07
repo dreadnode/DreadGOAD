@@ -31,6 +31,7 @@
     safe_mode_password: "{{ domain_password }}"
     domain_netbios_name: "{{ netbios_name }}"
   register: retry_domain
+  when: check_domain is failed  
   failed_when: 
     - retry_domain is failed
     - '"needs to be restarted" not in retry_domain.msg | default("")'
