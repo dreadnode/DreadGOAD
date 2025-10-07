@@ -1,6 +1,6 @@
 ---
 - name: Ensure that Admin is present with a valid password
-  win_user:
+  ansible.windows.win_user:
     name: "{{ admin_user }}"
     password: "{{ local_admin_password }}"
     password_never_expires: yes

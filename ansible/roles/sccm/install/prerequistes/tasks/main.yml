@@ -40,7 +40,7 @@
 # Must be run as a member of the Schema Admins security group (we'll go with a domain administrator)
 # Check if the file has already been downloaded (?)
 - name: check MECM installation media exists
-  win_stat:
+  ansible.windows.win_stat:
     path: C:\setup\MCM_Configmgr_2303.exe
   register: mecm_installer_file
 
@@ -56,7 +56,7 @@
     state: absent
 
 - name: extract MECM installation media
-  win_shell: .\MCM_Configmgr_2303.exe -s
+  ansible.windows.win_shell: .\MCM_Configmgr_2303.exe -s
   args:
     chdir: C:\setup
 
@@ -65,7 +65,7 @@
 #    script: Move-Item -Path C:\Windows\Temp\cd.retail.LN -Destination C:\
 
 - name: launching the Active Directory schema extension
-  win_shell: .\extadsch.exe
+  ansible.windows.win_shell: .\extadsch.exe
   args:
     chdir: C:\setup\cd.retail.LN\SMSSETUP\BIN\X64
   vars:
