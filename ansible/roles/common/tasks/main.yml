@@ -24,14 +24,14 @@
   when: enable_http_proxy | bool
 
 - name: Upgrade module PowerShellGet to fix accept license issue
-  win_shell: |
+  ansible.windows.win_shell: |
     $ProgressPreference = 'SilentlyContinue'
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     Install-PackageProvider -Name NuGet -Force
     Install-Module PowerShellGet -Force
 
 - name: Check if ComputerManagementDsc exists
-  win_shell: |
+  ansible.windows.win_shell: |
     if (Get-Module -ListAvailable -Name ComputerManagementDsc) {
       exit 0
     } else {
@@ -41,8 +41,14 @@
   failed_when: false
   changed_when: false
 
+- name: Install ComputerManagementDsc only if needed
+  community.windows.win_psmodule:
+    name: ComputerManagementDsc
+    state: present
+  when: module_check.rc != 0
+
 - name: Check if ActiveDirectoryDSC exists
-  win_shell: |
+  ansible.windows.win_shell: |
     if (Get-Module -ListAvailable -Name ActiveDirectoryDSC) {
       exit 0
     } else {
@@ -60,14 +66,14 @@
   when: ad_dsc_check.rc != 0
 
 - name: Windows | Enable Remote Desktop
-  win_dsc:
+  ansible.windows.win_dsc:
     resource_name: RemoteDesktopAdmin
-    IsSingleInstance : 'yes'
+    IsSingleInstance: 'Yes'
     Ensure: present
     UserAuthentication: Secure
 
 - name: Check if xNetworking exists
-  win_shell: |
+  ansible.windows.win_shell: |
     if (Get-Module -ListAvailable -Name xNetworking) {
       exit 0
     } else {
@@ -84,7 +90,7 @@
   when: xnetworking_check.rc != 0
 
 - name: Firewall | Allow RDP through Firewall
-  win_dsc:
+  ansible.windows.win_dsc:
     resource_name: xFirewall
     Name: "Administrator access for RDP (TCP-In)"
     Ensure: present
