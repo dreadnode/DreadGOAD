@@ -20,7 +20,7 @@
 - name: Setup security with tasks
   hosts: domain
   tasks:
-    - include_role:
+    - ansible.builtin.include_role:
         name: "security/{{ secu }}"
       vars:
         security_vars : "{{ lab.hosts[dict_key].security_vars[secu] | default({}) }}"

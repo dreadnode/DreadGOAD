@@ -13,7 +13,7 @@
   serial: 1
   pre_tasks:
     - name: Debug all MSSQL installation variables
-      debug:
+      ansible.builtin.debug:
         msg: |
           MSSQL Express Installation Variables:
           ===================================

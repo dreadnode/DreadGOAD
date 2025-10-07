@@ -4,7 +4,7 @@
     data_path: "../ad/{{domain_name}}/data/"
   tags: 'data'
 
-- name: "client install"
+- name: Client install
   hosts: sccm
   roles:
     - { role: 'sccm/config/client_install', tags: 'sccm_client_install' }

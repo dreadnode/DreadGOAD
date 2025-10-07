@@ -1,0 +1,86 @@
+---
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: check-symlinks
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-added-large-files
+      - id: detect-private-key
+      - id: check-shebang-scripts-are-executable
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.7
+    hooks:
+      - id: actionlint
+
+  - repo: https://github.com/adrienverge/yamllint.git
+    rev: v1.37.1
+    hooks:
+      - id: yamllint
+        entry: yamllint --strict -c .hooks/linters/yamllint.yaml
+
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.1
+    hooks:
+      - id: codespell
+        entry: codespell -q 3 -f -S ".git,.github,README.md"
+
+  - repo: https://github.com/jumanjihouse/pre-commit-hooks
+    rev: 3.0.0
+    hooks:
+      - id: script-must-have-extension
+        name: Ensure shell scripts end with .sh
+        types: [shell]
+      - id: shellcheck
+      - id: shfmt
+
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.45.0
+    hooks:
+      - id: markdownlint
+        args: ['--fix', '--config', '.hooks/linters/markdownlint.json']
+
+  - repo: https://github.com/ansible/ansible-lint
+    rev: v25.9.1
+    hooks:
+      - id: ansible-lint
+        entry: ansible-lint -v --force-color -c .hooks/linters/ansible-lint.yaml
+        language: python
+        # do not pass files to ansible-lint, see:
+        # https://github.com/ansible-community/ansible-lint/issues/611
+        # pass_filenames: false
+        always_run: true
+        # https://github.com/pre-commit/pre-commit/issues/1526
+        # if you want to use only the base ansible version for linting,
+        # replace 'community' extra with 'core' or just mention the exact
+        # version of Ansible you want to install as a dependency.
+        additional_dependencies: [".[community]"]
+
+  - repo: local
+    hooks:
+      - id: prettier
+        name: Run prettier
+        entry: .hooks/prettier-hook.sh
+        language: script
+        types: [json, yaml]
+
+      - id: docsible
+        name: Generate Ansible documentation with docsible
+        entry: .hooks/docsible-hook.sh
+        language: script
+        always_run: true
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: update-architecture-diagram
+        name: Update Architecture Diagram
+        entry: python .hooks/gen-arch-diagram.py
+        language: python
+        pass_filenames: false
+        always_run: false
+        files: ^(roles/|plugins/|playbooks/).*
+        additional_dependencies: []

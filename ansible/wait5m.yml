@@ -1,4 +1,5 @@
-- name: "wait"
+---
+- name: Wait
   hosts: localhost
   connection: local
   tasks:

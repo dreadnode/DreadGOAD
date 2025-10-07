@@ -21,7 +21,7 @@
         $Ansible.Changed = $true
       }
     parameters:
-      DomainAdapter: "{{domain_adapter}}"
+      DomainAdapter: "{{ domain_adapter }}"
   vars:
     ansible_become: true
     ansible_become_method: runas
