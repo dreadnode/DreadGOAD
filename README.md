@@ -23,6 +23,7 @@ Currently, DreadGOAD provides the following windows-based lab environment:
 
 - [GOAD](https://orange-cyberdefense.github.io/GOAD/labs/GOAD/) : 5 VMs, 2
 forests, 3 domains
+
 <div align="center">
 <img alt="GOAD" width="800" src="./docs/img/GOAD_schema.png">
 </div>

@@ -53,19 +53,19 @@ tasks:
     summary: |
       Runs the complete AD provisioning process with DreadGOAD Ansible playbooks
       using AWS Systems Manager (SSM).
-      
+
       Options:
         ENV=<env>          Environment to target (default: dev)
         VERBOSE=true       Enable verbose Ansible output
         MAX_RETRIES=<n>    Maximum retry attempts (default: 3)
         RETRY_DELAY=<s>    Delay between retries in seconds (default: 30)
         PLAYS="play1.yml play2.yml"  Specific playbooks to run (default: all playbooks)
-      
-      Examples: 
+
+      Examples:
         task provision ENV=prod VERBOSE=true
         task provision ENV=staging PLAYS="build.yml ad-servers.yml"
         task provision ENV=dev PLAYS=ad-data.yml
-        
+
       To see all available playbooks:
         task list-plays
     vars:
@@ -86,13 +86,13 @@ tasks:
     desc: Ensure Active Directory users exist using the ad-data.yml playbook
     summary: |
       Runs the ad-data.yml Ansible playbook to create users in Active Directory.
-      
+
       Options:
         ENV=<env>          Environment to target (default: dev)
         VERBOSE=true       Enable verbose Ansible output
         MAX_RETRIES=<n>    Maximum retry attempts (default: 3)
         RETRY_DELAY=<s>    Delay between retries in seconds (default: 30)
-      
+
       Examples:
         task ad-users
         task ad-users ENV=prod
@@ -187,11 +187,11 @@ tasks:
     desc: Display content of files related to specific playbooks
     summary: |
       Displays the content of files related to a specific Ansible playbook
-      
+
       Options:
         ENV=<env>            Environment to target (default: dev)
         PLAYBOOK=<playbook>  Playbook to get files for
-      
+
       Example: task get-files PLAYBOOK=security
     cmds:
       - PLAYBOOK={{.PLAYBOOK}} ENV={{.ENV}} ./scripts/get-playbook-files.sh
@@ -199,17 +199,17 @@ tasks:
   update-inventory:
     desc: Synchronize Ansible inventory with AWS instance IDs of running EC2 instances and update environment value
     summary: |
-      Retrieves instance IDs from AWS and updates the environment-specific 
+      Retrieves instance IDs from AWS and updates the environment-specific
       Ansible inventory file (default: dev) with the latest instance mappings.
       Also updates the "env=" field in the inventory to match the specified ENV parameter.
-      
+
       Options:
         ENV=<env>            Environment to target (default: dev)
         INVENTORY=<path>     Path to inventory file (default: ./<env>-inventory)
         OUTPUT=<path>        Output file path (default: overwrite inventory file)
         BACKUP=<bool>        Create backup before modifying (default: false)
         JSON=<path>          Path to JSON file with instances data
-      
+
       Examples:
         task update-inventory                     # Update dev inventory with current AWS instances
         task update-inventory ENV=prod            # Update prod inventory and set env=prod in the file

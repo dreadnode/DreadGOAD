@@ -175,7 +175,7 @@ DisplayName for the certificate to export.
 FQDN of Active Directory Domain Controller to target for the operation.
 When not specified it will search for the nearest Domain Controller.
 .PARAMETER Detailed
-Includes all ADObject properties of the template. These are not required for 
+Includes all ADObject properties of the template. These are not required for
 use with the New-ADCSTemplate function.
 .NOTES
 C.R.U.D. AD CS Template Operations in this module.
@@ -232,7 +232,7 @@ When not specified it will search for the nearest Domain Controller.
 String or string array of Active Directory identities (users or groups).
 This is optional for permissioning the template.
 .PARAMETER AutoEnroll
-Default permission is Read and Enroll. Use this switch to also grant AutoEnroll 
+Default permission is Read and Enroll. Use this switch to also grant AutoEnroll
 to the identity. Only used when Identity parameter is used.
 .PARAMETER Publish
 Publish the template to *ALL* Certificate Authority issuers. Use with caution
@@ -423,7 +423,7 @@ param(
 .SYNOPSIS
 Maps a PowerShell drive to the Active Directory Certificate Services location.
 .DESCRIPTION
-Maps a PowerShell drive to the Active Directory Certificate Services location 
+Maps a PowerShell drive to the Active Directory Certificate Services location
 of the Configuration partition under CN=Public Key Services,CN=Services,... .
 The new drive is ADCS:. This is purely for convenience of checking the objects
 updated by functions in the ADCSTemplate module.

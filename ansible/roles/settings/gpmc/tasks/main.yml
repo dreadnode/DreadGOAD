@@ -4,4 +4,3 @@
   ansible.windows.win_feature:
     name: GPMC
     state: present
-

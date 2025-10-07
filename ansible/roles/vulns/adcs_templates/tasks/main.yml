@@ -8,7 +8,7 @@
     dest: "C:\\Program Files\\WindowsPowerShell\\Modules"
 
 - name: create a directory for templates
-  win_file: 
+  win_file:
     path: c:\setup
     state: directory
 
