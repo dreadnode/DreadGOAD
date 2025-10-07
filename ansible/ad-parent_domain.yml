@@ -49,9 +49,9 @@
             }
           } catch {}
           
-          Write-Output "Pending reboot: $pendingReboot"
           $Ansible.Changed = $false
-          if ($pendingReboot) { exit 1 } else { exit 0 }
+          # Output the result as a boolean
+          $pendingReboot
       register: pending_reboot_check
       failed_when: false
       
@@ -59,7 +59,7 @@
       ansible.windows.win_reboot:
         reboot_timeout: 900
         post_reboot_delay: 300
-      when: pending_reboot_check.rc != 0
+      when: pending_reboot_check.output[0] | default(false) | bool
       
   roles:
     - { role: 'domain_controller', tags: 'dc_main_domains' }
