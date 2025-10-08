@@ -193,12 +193,32 @@
     ansible_become_method: runas
     ansible_become_user: "{{ domain_username }}"
     ansible_become_password: "{{ domain_password }}"
+    # Set the async directory explicitly for both tasks
+    ansible_async_dir: 'C:\Users\Administrator\.ansible_async'
   loop: "{{ ad_acls | dict2items }}"
   loop_control:
     label: "{{ item.key }}: {{ item.value.for }} -> {{ item.value.to }}"
   async: 300
   poll: 0
-  register: acl_results 
+  register: acl_results
+
+- name: Wait for ACL operations to complete
+  async_status:
+    jid: "{{ item.ansible_job_id }}"
+  vars:
+    ansible_become: true
+    ansible_become_method: runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+    ansible_async_dir: 'C:\Users\Administrator\.ansible_async'
+  register: acl_job_result
+  until: acl_job_result.finished
+  retries: 60
+  delay: 5
+  loop: "{{ acl_results.results }}"
+  loop_control:
+    label: "Job ID: {{ item.ansible_job_id }}"
+  when: item.ansible_job_id is defined
 
 - name: Wait for ACL operations to complete
   async_status:

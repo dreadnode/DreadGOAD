@@ -8,6 +8,7 @@ This is the ansible inventory file.
 
 - All the vms defined in the vagrant file must be set here.
 - This will do the mapping between IP and the configuration file (data/config.json)
+
 ```
 [default]
 dc01 ansible_host=192.168.56.10 dns_domain=dc01 dict_key=dc01
@@ -19,77 +20,95 @@ srv01 ansible_host=192.168.56.11 dns_domain=dc01 dict_key=srv01
 ## Inventory file : roles
 
 ### domain (mandatory)
+
 - all computers inside domain (mandatory)
 - usage : build.yml, ad-relations.yml, ad-servers.yml, vulnerabilities.yml
 
 ### domain controller (mandatory)
+
 - usage : ad-acl.yml, ad-data.yml, ad-relations.yml, laps.yml
 - all domain controller must be declared here
 
 ### server (mandatory if you want servers)
+
 - domain server to enroll (mandatory if you want servers)
 - usage : ad-data.yml, ad-servers.yml, laps.yml
 
 ### parent_dc (mandatory)
+
 - parent domain controller mandatory even if you don't use child dc
 - usage : ad-servers.yml
 
 ### child_dc (optional)
+
 - child domain controller (need a fqdn child_name.parent_name)
 - usage : ad-servers.yml
 
 ### trust (optional)
+
 - external trust, need domain trust key in config (bidirectionnal)
 - usage : ad-trusts.yml
 
 ### adcs (optional)
+
 - Install adcs
 - usage : adcs.yml
 
 ### adcs_customtemplates (optional)
+
 - install custom templates on the dc
 - usage : adcs.yml
 - by now the template are hardcoded for esc1-4
 
 ### iis (optional)
+
 - install iis with default website asp upload on 80
 - usage : servers.yml
 
 ### mssql (optional)
+
 - install mssql (need the configuration defined in config.json)
 - usage : servers.yml
 
 ### mssql_ssms (optional)
+
 - install mssql gui (does not work on windows server 2016 by default)
 - usage : servers.yml
 
 ### webdav (optional)
+
 - install webdav
 - usage : servers.yml
 
 ### elk_server (optional)
+
 - install elk
 - usage : elk.yml
 - this group is just for the elk linux server
 
 ### elk_log (optional)
+
 - add log agent for elk
 - usage : elk.yml
 - this group is for all windows vm where we want to setup the elk agent
 
 ### update (optional)
+
 - allow computer update (by default yes)
 - usage : update.yml
 
 ### no_update (optional)
+
 - disable computer update
 - usage : update.yml
 
 ### defender_on (optional)
+
 - enable defender (by default defender is enabled on windows)
 - usage : security.yml
 
 ### defender_off (optional)
+
 - disable defender
 - usage : security.yml
 
@@ -109,7 +128,8 @@ srv01 ansible_host=192.168.56.11 dns_domain=dc01 dict_key=srv01
 
 The host configuration contain one key by host : **the key must match the dict_key in inventory**
 
-- Example : 
+- Example :
+
 ```
     "hosts" : {
         "dc01" : {
@@ -144,7 +164,7 @@ The host configuration contain one key by host : **the key must match the dict_k
 - scripts : if you want to play some custom ps1 scripts present in the scripts/ folder (be carrefull to make script than can be played multiple times in case the provisioning crash and you want to rerun all the steps)
 - vulns : this contains specifics roles presents in ansible/roles/vulns
 - vulns_vars : this contains the variables for the vuln roles you want to run
-- use_laps(optional) : true|false  if you want to use laps on this hosts (servers only)
+- use_laps(optional) : true|false if you want to use laps on this hosts (servers only)
 - mssql(optional) : if you add the host to the [mssql] role in the inventory, you should add all the mssql special variables (see the mssql part)
 
 #### use_laps (optional, default false)
@@ -175,6 +195,7 @@ srv02
 - If you add mssql you should add the following variables in the corresponding host in the configuration file, this is mandatory
 
 - Example on srv03
+
 ```
 "hosts" : {
     "srv03" : {
@@ -199,7 +220,6 @@ srv02
             }
         }
 ```
-
 
 ### Configuration file : domains
 
@@ -230,7 +250,7 @@ srv02
             "users" : {
                 "alice" : {
                     "firstname"   : "alice", "surname": "",
-                    "password"    : "aupaysdesmerveilles", 
+                    "password"    : "aupaysdesmerveilles",
                     "description" : "",
                     "groups"      : ["dcadmins","srvadmins"],
                     "path"        : "CN=Users,DC=template,DC=lab"
@@ -254,9 +274,11 @@ srv02
 - users : here you will define all your domain users each key match the user created
 
 #### organisation_units (optional)
+
 - To add custom organisation units (OU)
 
 - Example on sevenkingdoms.local :
+
 ```
 "domains" : {
     "sevenkingdoms.local" : {
@@ -274,6 +296,7 @@ srv02
 ```
 
 #### multi_domain_groups_member (optional)
+
 - Add a user from another domain into a group (must be a domainlocal group)
 
 - Example on sevenkingdoms.local :
@@ -298,9 +321,11 @@ srv02
 ```
 
 #### acls (optional)
+
 - To create ace relations in your active directory
 
 - Example on sevenkingdoms.local
+
 ```
 "domains" : {
     "sevenkingdoms.local" : {
@@ -310,13 +335,14 @@ srv02
             "GenericAll_spy_jorah" : {"for": "Spys", "to": "jorah.mormont", "right": "GenericAll", "inheritance": "None"},
             "GenericAll_khal_esc4" : {"for": "khal.drogo", "to": "CN=ESC4,CN=Certificate Templates,CN=Public Key Services,CN=Services,CN=Configuration,DC=essos,DC=local", "right": "GenericAll", "inheritance": "None"},
             "WriteProperty_petyer_domadmin" : {"for": "viserys.targaryen", "to": "jorah.mormont", "right": "WriteProperty", "inheritance": "All"},
-            "GenericWrite_DragonsFriends_braavos" : {"for": "DragonsFriends", "to": "braavoos$", "right": "GenericWrite", "inheritance": "None"}
+            "GenericWrite_DragonsFriends_braavos" : {"for": "DragonsFriends", "to": "braavos$", "right": "GenericWrite", "inheritance": "None"}
         },
 ```
 
-- acl are in the following format : 
+- acl are in the following format :
+
   - for : the user concerned (user or group name)
-  - to  : the user or group or CN target (where the ace will be applied)
+  - to : the user or group or CN target (where the ace will be applied)
   - right : the right to apply on this list :
     - AccessSystemSecurity
     - CreateChild
@@ -342,7 +368,6 @@ srv02
     - Ext-Write-Self-Membership
     - Ext-Self-Self-Membership
   - inheritance: enable inheritance (All or None)
-
 
 - To add anonymous rpc just add on the dc (this will allow anonymous user listing ):
 
@@ -377,6 +402,7 @@ srv02
 #### trust (for trusts role)
 
 - In case of external trust trust key must be setup in each domains
+
 ```
     "domains" : {
         "sevenkingdoms.local" : {
@@ -390,6 +416,7 @@ srv02
 ```
 
 #### ca_server (for adcs_customtemplates role)
+
 - This param is use to precise the host to use on the template creation, this is mandatory if [adcs_customtemplates] role is used
 
 ```
