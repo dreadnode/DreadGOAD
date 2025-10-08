@@ -33,16 +33,16 @@ class WindowsCommand(Command):
         pass
 
     def check_vmware(self):
-        return self.file_exist("c:\\Program Files (x86)\\VMware\\VMware Workstation\\vmrun.exe")
+        return self.file_exist("C:\\Program Files (x86)\\VMware\\VMware Workstation\\vmrun.exe")
 
     def check_vmware_utility(self):
-        return self.file_exist("c:\\Program Files\\VagrantVMwareUtility\\vagrant-vmware-utility.exe")
+        return self.file_exist("C:\\Program Files\\VagrantVMwareUtility\\vagrant-vmware-utility.exe")
 
     def check_ovftool(self):
-        return self.file_exist("c:\\Program Files\\VMware\\VMware OVF Tool\\ovftool.exe")
+        return self.file_exist("C:\\Program Files\\VMware\\VMware OVF Tool\\ovftool.exe")
 
     def check_virtualbox(self):
-        return self.file_exist("c:\\Program Files\\Oracle\\VirtualBox\\VBoxManage.exe")
+        return self.file_exist("C:\\Program Files\\Oracle\\VirtualBox\\VBoxManage.exe")
 
     def check_terraform(self):
         return self.is_in_path('terraform.exe')

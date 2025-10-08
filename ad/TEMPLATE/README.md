@@ -148,7 +148,7 @@ The host configuration contain one key by host : **the key must match the dict_k
                 "files" : {
                     "rdp" : {
                         "src" : "flag.txt",
-                        "dest" : "c:\\users\\administrators\\desktop\\flag.txt"
+                        "dest" : "C:\\users\\administrators\\desktop\\flag.txt"
                     }
                 }
             }

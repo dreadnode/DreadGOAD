@@ -18,7 +18,7 @@
                 "files" : {
                     "rdp" : {
                         "src" : "flag.txt",
-                        "dest" : "c:\\users\\administrators\\desktop\\flag.txt"
+                        "dest" : "C:\\users\\administrators\\desktop\\flag.txt"
                     }
                 }
             }

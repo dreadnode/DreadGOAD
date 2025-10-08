@@ -22,7 +22,7 @@
             "vulns" : ["disable_firewall", "directory", "files", "adcs_templates"],
             "vulns_vars" : {
                 "directory": {
-                    "setup": "c:\\setup"
+                    "setup": "C:\\setup"
                 },
                 "files" : {
                     "template" : {
@@ -70,7 +70,7 @@
             "vulns" : ["disable_firewall", "directory", "credentials", "autologon", "files", "ntlmdowngrade", "enable_llmnr", "enable_nbt-ns", "shares"],
             "vulns_vars" : {
                 "directory": {
-                    "setup": "c:\\setup"
+                    "setup": "C:\\setup"
                 },
                 "credentials" : {
                     "TERMSRV/castelblack": {
@@ -89,7 +89,7 @@
                 "files" : {
                     "rdp" : {
                         "src" : "dc02/bot_rdp.ps1",
-                        "dest" : "c:\\setup\\bot_rdp.ps1"
+                        "dest" : "C:\\setup\\bot_rdp.ps1"
                     },
                     "sysvol_fake_script": {
                         "src" : "dc02/sysvol_scripts/script.ps1",
