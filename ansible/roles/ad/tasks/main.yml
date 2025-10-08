@@ -155,7 +155,7 @@
   when: ad_groups['global'] is defined
   register: global_managed_by_result
 
-- name: Debug managed_by results
+- name: Show managed_by results
   ansible.builtin.debug:
     msg: 
       - "Domainlocal groups managed_by failures: {{ domainlocal_managed_by_result.results | selectattr('failed', 'defined') | selectattr('failed') | list | length }}"

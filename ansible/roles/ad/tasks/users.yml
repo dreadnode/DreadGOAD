@@ -99,7 +99,7 @@
   delay: 5
   with_items: "{{ usercreate.results }}"
 
-- name: Set users SPN lists with PowerShell
+- name: Set users SPN lists 
   ansible.windows.win_powershell:
     script: |
       [CmdletBinding()]
