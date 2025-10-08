@@ -1,3 +1,4 @@
+---
 - name: Set configure dns
   ansible.windows.win_dns_client:
     adapter_names: "{{domain_adapter}}"

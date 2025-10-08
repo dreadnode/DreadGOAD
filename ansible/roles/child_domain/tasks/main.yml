@@ -90,6 +90,22 @@
   ansible.windows.win_shell: dnscmd . /resetlistenaddresses {{ hostvars[dict_key].ansible_host }}
   when: two_adapters
 
+# Enable TLS 1.2 for PowerShell Gallery access
+- name: Enable TLS 1.2 for PowerShell Gallery (session)
+  ansible.windows.win_shell: |
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+  changed_when: false
+
+- name: Enable TLS 1.2 permanently via registry
+  ansible.windows.win_regedit:
+    path: "{{ item.path }}"
+    name: SchUseStrongCrypto
+    data: 1
+    type: dword
+  loop:
+    - { path: 'HKLM:\SOFTWARE\Microsoft\.NetFramework\v4.0.30319' }
+    - { path: 'HKLM:\SOFTWARE\Wow6432Node\Microsoft\.NetFramework\v4.0.30319' }
+
 - name: Check if xDnsServer exists
   ansible.windows.win_shell: |
     if (Get-Module -ListAvailable -Name xDnsServer) {
