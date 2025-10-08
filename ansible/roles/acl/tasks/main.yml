@@ -219,15 +219,3 @@
   loop_control:
     label: "Job ID: {{ item.ansible_job_id }}"
   when: item.ansible_job_id is defined
-
-- name: Wait for ACL operations to complete
-  async_status:
-    jid: "{{ item.ansible_job_id }}"
-  register: acl_job_result
-  until: acl_job_result.finished
-  retries: 60
-  delay: 5
-  loop: "{{ acl_results.results }}"
-  loop_control:
-    label: "Job ID: {{ item.ansible_job_id }}"
-  when: item.ansible_job_id is defined
