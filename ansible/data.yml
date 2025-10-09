@@ -2,7 +2,6 @@
 - name: Read data files
   hosts: domain:extensions
   gather_facts: true
-  # serial: 1  # Process hosts one at a time
   tasks:
     - name: Load JSON config as a variable
       ansible.builtin.include_vars:

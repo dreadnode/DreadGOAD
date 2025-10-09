@@ -10,7 +10,7 @@
 
 - name: Install MSSQL Express
   hosts: mssql
-  serial: 1
+  # serial: 1  # Removed for parallel execution - saves ~15-20 minutes
   pre_tasks:
     - name: Debug all MSSQL installation variables
       ansible.builtin.debug:
