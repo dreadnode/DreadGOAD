@@ -1,5 +1,6 @@
+---
 - name: Disable Domain firewall
-  community.windows.win_firewall:
+  ansible.windows.win_firewall:
     state: disabled
     profiles:
     - Domain
