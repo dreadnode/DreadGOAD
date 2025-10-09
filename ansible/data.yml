@@ -2,6 +2,7 @@
 - name: Read data files
   hosts: domain:extensions
   gather_facts: true
+  serial: 5  
   tasks:
     - name: Load JSON config as a variable
       ansible.builtin.include_vars:
@@ -14,59 +15,64 @@
         cacheable: true
       run_once: true
 
+    - name: Check if network facts are already cached
+      ansible.builtin.set_fact:
+        skip_network_detection: "{{ host_ipv4 is defined and host_ipv4 != '' }}"
+      
     - name: Get all network information
       ansible.windows.win_powershell:
         script: |
           $ProgressPreference = 'SilentlyContinue'
-          $ErrorActionPreference = 'SilentlyContinue'
-
+          $ErrorActionPreference = 'Stop'
+          
+          # Set a timeout for the entire script
+          $timeout = New-TimeSpan -Seconds 30
+          $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+          
           try {
-            # Get primary adapter
-            $primaryAdapter = Get-NetAdapter | Where-Object {$_.Status -eq "Up"} | Select-Object -First 1
-            $allAdapters = Get-NetAdapter | Where-Object {$_.Status -eq "Up"}
-
-            # Get primary IP address
-            $ipAddresses = Get-NetIPAddress -AddressFamily IPv4 |
-              Where-Object {
-                $_.IPAddress -notmatch '^127\.' -and
-                $_.IPAddress -notmatch '^169\.254\.' -and
-                $_.InterfaceAlias -ne 'Loopback Pseudo-Interface 1'
+            $primaryAdapter = $null
+            $adapters = @()
+            
+            try {
+              $adapters = @(Get-NetAdapter -ErrorAction Stop | Where-Object {$_.Status -eq "Up"})
+              $primaryAdapter = $adapters | Select-Object -First 1
+            } catch {
+              # Fallback to WMI if Get-NetAdapter fails
+              $adapters = @(Get-WmiObject Win32_NetworkAdapter | Where-Object {$_.NetEnabled -eq $true})
+              if ($adapters.Count -gt 0) {
+                $primaryAdapter = @{Name = $adapters[0].NetConnectionID}
               }
-
-            # Prefer the IP on the primary adapter
-            $primaryIP = $ipAddresses | Where-Object { $_.InterfaceAlias -eq $primaryAdapter.Name } | Select-Object -First 1
-            if (-not $primaryIP) {
-              $primaryIP = $ipAddresses | Select-Object -First 1
             }
-
-            # Build result object
-            $result = @{
-              domain_adapter = if ($primaryAdapter) { $primaryAdapter.Name } else { "Ethernet" }
-              adapter_count = $allAdapters.Count
-              nat_adapter = if ($allAdapters.Count -gt 1) {
-                ($allAdapters | Select-Object -Skip 1 -First 1).Name
-              } else {
-                if ($primaryAdapter) { $primaryAdapter.Name } else { "Ethernet" }
+            
+            # Get IP quickly using WMI
+            $primaryIP = ""
+            try {
+              $networkConfigs = Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object {$_.IPEnabled -eq $true -and $_.IPAddress[0] -notmatch '^127\.' -and $_.IPAddress[0] -notmatch '^169\.254\.'}
+              if ($networkConfigs) {
+                $primaryIP = $networkConfigs[0].IPAddress[0]
               }
-              primary_ip = if ($primaryIP) { $primaryIP.IPAddress } else { "" }
+            } catch {
+              $primaryIP = ""
             }
-
-            # Output as simple format for easy parsing
-            Write-Output "DOMAIN_ADAPTER:$($result.domain_adapter)"
-            Write-Output "NAT_ADAPTER:$($result.nat_adapter)"
-            Write-Output "ADAPTER_COUNT:$($result.adapter_count)"
-            Write-Output "PRIMARY_IP:$($result.primary_ip)"
+            
+            Write-Output "DOMAIN_ADAPTER:$(if ($primaryAdapter) { $primaryAdapter.Name } else { 'Ethernet' })"
+            Write-Output "NAT_ADAPTER:$(if ($adapters.Count -gt 1) { $adapters[1].Name } else { if ($primaryAdapter) { $primaryAdapter.Name } else { 'Ethernet' } })"
+            Write-Output "ADAPTER_COUNT:$($adapters.Count)"
+            Write-Output "PRIMARY_IP:$primaryIP"
             $Ansible.Changed = $false
           } catch {
-            # Fallback values
+            # Quick fallback
             Write-Output "DOMAIN_ADAPTER:Ethernet"
-            Write-Output "NAT_ADAPTER:Ethernet"
+            Write-Output "NAT_ADAPTER:Ethernet"  
             Write-Output "ADAPTER_COUNT:1"
             Write-Output "PRIMARY_IP:"
             $Ansible.Changed = $false
           }
+      async: 60  # Maximum 60 seconds
+      poll: 5    # Check every 5 second
       register: network_info
       ignore_errors: true
+      when: not skip_network_detection | default(false)
 
     - name: Set all network facts
       ansible.builtin.set_fact:
@@ -79,6 +85,7 @@
       when:
         - network_info is defined
         - network_info.output is defined
+        - not skip_network_detection | default(false)
 
     - name: Set fallback network facts
       ansible.builtin.set_fact:
@@ -115,6 +122,7 @@
 - name: Create global mappings
   hosts: all
   gather_facts: false
+  serial: 10
   tasks:
     - name: Build all mappings and distribute to all hosts
       ansible.builtin.set_fact:
@@ -139,6 +147,7 @@
       delegate_facts: true
       delegate_to: "{{ item }}"
       loop: "{{ groups['all'] }}"
+      throttle: 5
 
     - name: Debug the mappings
       ansible.builtin.debug:
