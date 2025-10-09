@@ -20,6 +20,6 @@
 - name: Warn if removal failed
   ansible.builtin.debug:
     msg: "WARNING: KB5008380 removal may have failed. Manual intervention might be required."
-  when: 
+  when:
     - kb_check.stdout != ""
     - kb_removal.rc != 0

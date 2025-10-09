@@ -23,7 +23,7 @@
     try {
       $schemaPath = (Get-ADRootDSE).SchemaNamingContext
       $pwdAttr = Get-ADObject -SearchBase $schemaPath -Filter {lDAPDisplayName -eq "ms-Mcs-AdmPwd"} -Properties * -ErrorAction Stop
-      
+
       if ($pwdAttr) {
         Write-Output "LAPS schema attribute found: ms-Mcs-AdmPwd"
         # Get the attribute GUID
@@ -55,7 +55,7 @@
   when: schema_check.rc != 0
   register: schema_update
   failed_when: schema_update.rc != 0 and not "already" in schema_update.stderr
-  
+
 - name: Verify LAPS OU exists
   ansible.windows.win_shell: |
     try {
@@ -75,9 +75,9 @@
       $principal = '{{ item }}'
       $lapsPath = '{{ laps_path }}'
       $computerClassGuid = [GUID]"bf967a86-0de6-11d0-a285-00aa003049e2" # Computer objects class GUID
-      
+
       Write-Output "Starting permissions setup for principal: $principal"
-      
+
       # First verify the LAPS OU exists
       try {
         $lapsOU = Get-ADOrganizationalUnit -Identity $lapsPath -ErrorAction Stop
@@ -86,7 +86,7 @@
         Write-Error "LAPS OU does not exist: $lapsPath - Error: $($_.Exception.Message)"
         return $false
       }
-      
+
       # Find the principal using different methods
       $adObject = $null
       try {
@@ -114,7 +114,7 @@
         Write-Error "Error searching for principal $principal. Error: $($_.Exception.Message)"
         return $false
       }
-      
+
       # Get the schema attribute GUIDs
       try {
         $schemaPath = (Get-ADRootDSE).SchemaNamingContext
@@ -123,12 +123,12 @@
           Write-Error "LAPS schema attribute 'ms-Mcs-AdmPwd' not found. LAPS schema may not be installed correctly."
           return $false
         }
-        
+
         # Get the attribute GUIDs
         $pwdGuid = [GUID]$pwdAttr.SchemaIDGUID
-        
+
         Write-Output "Found password attribute GUID: $pwdGuid"
-        
+
         # Try using the built-in LAPS cmdlet first
         try {
           # Try to use the Set-AdmPwdReadPasswordPermission cmdlet
@@ -138,33 +138,33 @@
         } catch {
           Write-Output "Could not use Set-AdmPwdReadPasswordPermission, falling back to manual ACL manipulation. Error: $($_.Exception.Message)"
         }
-        
+
         # Fallback to manual ACL manipulation if the cmdlet failed
         try {
           # Get the OU object and ACL
           $ouObj = [ADSI]"LDAP://$($lapsOU.DistinguishedName)"
           $acl = $ouObj.psbase.ObjectSecurity
-          
+
           # Set up the ACE for read permission on ms-Mcs-AdmPwd attribute
           $identity = New-Object System.Security.Principal.SecurityIdentifier($adObject.ObjectSID)
           Write-Output "Using SID: $($identity.Value)"
-          
+
           $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
-              $identity, 
+              $identity,
               [System.DirectoryServices.ActiveDirectoryRights]"ReadProperty",
               [System.Security.AccessControl.AccessControlType]"Allow",
               $pwdGuid,
               [System.DirectoryServices.ActiveDirectorySecurityInheritance]"Descendents",
               $computerClassGuid
           )
-          
+
           # Add the ACE to the ACL
           $acl.AddAccessRule($ace)
-          
+
           # Set the modified ACL
           $ouObj.psbase.ObjectSecurity = $acl
           $ouObj.psbase.CommitChanges()
-          
+
           Write-Output "Successfully granted LAPS read permission to $principal on $($lapsOU.DistinguishedName) using manual ACL"
           return $true
         } catch {

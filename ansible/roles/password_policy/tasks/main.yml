@@ -19,23 +19,23 @@
           [Boolean]
           $ComplexityEnabled
       )
-      
+
       try {
           # Check if server is a domain controller and has AD Web Services running
           $isDC = (Get-WmiObject -Class Win32_ComputerSystem).DomainRole -ge 4
-          
+
           if (-not $isDC) {
               Write-Output "This server is not a domain controller, skipping password policy."
               exit 0
           }
-          
+
           # Get the domain name from the computer system
           $Domain = (Get-WmiObject -Class WIN32_ComputerSystem).Domain
-          
+
           # Test if Active Directory Web Services is available
           try {
               Get-ADDomain -Identity $Domain -ErrorAction Stop | Out-Null
-              
+
               # Set password policy
               Set-ADDefaultDomainPasswordPolicy -Identity $Domain `
                   -AuthType Negotiate `
@@ -46,7 +46,7 @@
                   -ReversibleEncryptionEnabled $False `
                   -MinPasswordLength $MinPasswordLength `
                   -MaxPasswordAge "10675199.00:00:00"
-                  
+
               Write-Output "Password policy updated successfully."
           } catch {
               Write-Error "Active Directory Web Services not available: $_"

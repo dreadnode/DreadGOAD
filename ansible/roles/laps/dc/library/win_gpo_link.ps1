@@ -49,4 +49,3 @@ if ($state -eq "present") {
 }
 
 Exit-Json -obj $result
-

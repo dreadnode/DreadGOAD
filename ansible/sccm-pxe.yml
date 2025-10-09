@@ -21,4 +21,3 @@
     naa_user_name: "{{lab.domains[domain].sccm.naa_user| default('')}}"
     naa_user: "{{domain}}\\{{naa_user_name}}"
     naa_pass: "{{lab.domains[domain].users[naa_user_name].password}}"
-

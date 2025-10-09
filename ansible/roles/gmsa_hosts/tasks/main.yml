@@ -1,7 +1,7 @@
 ---
 - name: Install-WindowsFeature RSAT-AD-PowerShell
   ansible.windows.win_feature:
-    name: RSAT-AD-PowerShell 
+    name: RSAT-AD-PowerShell
     state: present
   when: "hostname in item.value.gMSA_HostNames"
   with_dict: "{{ ad_gmsa }}"

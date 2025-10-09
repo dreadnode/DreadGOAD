@@ -13,7 +13,7 @@
 
 - name: install features Remote Differential Compression feature and BITS
   win_feature:
-    name: 
+    name:
       - RDC
       - BITS
   register: win_feature

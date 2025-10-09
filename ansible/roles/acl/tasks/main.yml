@@ -19,7 +19,7 @@
 # Synchronize
 # WriteDacl
 # WriteOwner
-# WriteProperty 
+# WriteProperty
 
 ## extend rights
 # "00299570-246d-11d0-a768-00aa006e0529" {$right = "User-Force-Change-Password"}
@@ -28,7 +28,7 @@
 # "ba33815a-4f93-4c76-87f3-57574bff8109" {$right = "Manage-SID-History"}
 # "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2" {$right = "DS-Replication-Get-Changes-All"}
 
-# acl extended values allowed : 
+# acl extended values allowed :
 # Ext-User-Force-Change-Password', 'Ext-Self-Self-Membership', 'Ext-Write-Self-Membership'
 # ACL abuse scenarios
 # https://sensepost.com/blog/2020/ace-to-rce/
@@ -50,16 +50,16 @@
           [String]
           $inheritance
       )
-      
-      $ProgressPreference = 'SilentlyContinue'  
+
+      $ProgressPreference = 'SilentlyContinue'
       $ErrorActionPreference = 'Stop'
-      
+
       try {
         # Import module once at the beginning
         if (-not (Get-Module -Name ActiveDirectory -ErrorAction SilentlyContinue)) {
           Import-Module ActiveDirectory -ErrorAction Stop
         }
-        
+
         # Define valid ACL values as hash tables for faster lookup
         $aclValues = @{
           'AccessSystemSecurity' = $true
@@ -82,14 +82,14 @@
           'WriteOwner' = $true
           'WriteProperty' = $true
         }
-        
+
         $aclExtendedValueRightGUID = @{
           "Ext-User-Force-Change-Password" = @("ExtendedRight","00299570-246d-11d0-a768-00aa006e0529")
           "Ext-Write-Self-Membership" = @("WriteProperty","bf9679c0-0de6-11d0-a285-00aa003049e2")
           "Ext-Self-Self-Membership" = @("Self","bf9679c0-0de6-11d0-a285-00aa003049e2")
           "Ext-ManageCA" = @("ExtendedRight","18e470eb-9b98-47c5-896e-146c5c77100d")
         }
-        
+
         # Get the SID for the principal
         if ($for.StartsWith("NT AUTHORITY")) {
           $forSID = New-Object System.Security.Principal.NTAccount "$for"
@@ -101,10 +101,10 @@
           }
           $forSID = New-Object System.Security.Principal.SecurityIdentifier $forObj.objectSID
         }
-        
+
         # Resolve target object and get ACL
         $objOU = $null
-        
+
         # Check if $to contains server specification
         $extra_args = @{}
         if ($to -match "\\\\") {
@@ -112,7 +112,7 @@
           $extra_args.Server = $parts[0]
           $to = $parts[1]
         }
-        
+
         # Try to get object as DN first, then as SamAccountName
         try {
           # Test if it's already a DN
@@ -131,13 +131,13 @@
         } catch {
           throw "Failed to get ACL for object: $_"
         }
-      
+
         $type = [System.Security.AccessControl.AccessControlType]::Allow
         # CORRECT - Using cast syntax for variable
         $inheritanceType = [System.DirectoryServices.ActiveDirectorySecurityInheritance] $inheritance
-        
+
         $Ansible.Changed = $false
-        
+
         # Create the appropriate ACE based on right type
         $ace = $null
         if ($aclValues.ContainsKey($right)) {
@@ -159,7 +159,7 @@
           $Ansible.Changed = $false
           return
         }
-        
+
         # Apply the ACE if created
         if ($ace) {
           $objAcl.AddAccessRule($ace)

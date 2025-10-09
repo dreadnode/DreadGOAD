@@ -11,7 +11,7 @@
       $adminUser = "{{ domain_username }}"
       $adminPassword = ConvertTo-SecureString "{{ domain_password }}" -AsPlainText -Force
       $adminCred = New-Object System.Management.Automation.PSCredential($adminUser, $adminPassword)
-      
+
       # Create script block to run with elevated privileges
       $scriptBlock = {
         # Try using repadmin with the Domain Admin privileges
@@ -22,18 +22,18 @@
         } catch {
           $errorMsg = $_.Exception.Message
           Write-Output "Error with repadmin: $errorMsg"
-          
+
           # Alternative method using PowerShell AD cmdlets
           try {
             Import-Module ActiveDirectory
             $domainControllers = Get-ADDomainController -Filter *
-            
+
             foreach ($dc in $domainControllers) {
               Write-Output "Synchronizing DC: $($dc.HostName)"
               $result = Sync-ADObject -Server $dc.HostName -Object (Get-ADDomain).DistinguishedName -Scope Subtree
               Write-Output "Sync result: $result"
             }
-            
+
             return $true
           } catch {
             $errorMsg = $_.Exception.Message
@@ -42,10 +42,10 @@
           }
         }
       }
-      
+
       # Execute with credentials
       $result = Invoke-Command -ScriptBlock $scriptBlock -Credential $adminCred -ComputerName localhost
-      
+
       return $result
     error_action: continue
   register: sync_result
@@ -60,7 +60,7 @@
       $domainUsername = "{{ domain_username }}"
       $domainPassword = ConvertTo-SecureString "{{ domain_password }}" -AsPlainText -Force
       $domainCred = New-Object System.Management.Automation.PSCredential($domainUsername, $domainPassword)
-      
+
       # Convert dictionary to PowerShell object
       $groupMemberships = @{
         {% for group_name, members in domain_groups_members.items() %}
@@ -71,13 +71,13 @@
         ){% if not loop.last %};{% endif %}
         {% endfor %}
       }
-      
+
       $scriptBlock = {
         param($groupMemberships)
-        
+
         Import-Module ActiveDirectory
         $results = @{}
-        
+
         foreach ($groupName in $groupMemberships.Keys) {
           $groupResult = @{
             "name" = $groupName
@@ -85,19 +85,19 @@
             "members_failed" = @()
             "success" = $true
           }
-          
+
           try {
             # Get the group
             $group = Get-ADGroup -Identity $groupName -ErrorAction Stop
             Write-Output "Processing group: $groupName"
-            
+
             foreach ($member in $groupMemberships[$groupName]) {
               try {
                 # Parse the domain and username/group
                 if ($member -match "(.+)\\(.+)") {
                   $memberDomain = $matches[1]
                   $memberName = $matches[2]
-                  
+
                   # First, try to get the member as a user
                   try {
                     Write-Output "Looking up user: $memberName in domain $memberDomain"
@@ -116,7 +116,7 @@
                       throw "Could not find $member as either a user or group. Error: $errorMsg"
                     }
                   }
-                  
+
                   # Add the member to the group
                   Add-ADGroupMember -Identity $group -Members $adObject -ErrorAction Stop
                   Write-Output "Successfully added $member to group $groupName"
@@ -136,18 +136,18 @@
             Write-Output "Error processing group $groupName. Error: $errorMsg"
             $groupResult.success = $false
           }
-          
+
           $results[$groupName] = $groupResult
         }
-        
+
         return $results | ConvertTo-Json -Depth 5
       }
-      
+
       $jsonResults = Invoke-Command -ScriptBlock $scriptBlock -ArgumentList $groupMemberships -Credential $domainCred -ComputerName localhost
-      
+
       try {
         $resultsObj = $jsonResults | ConvertFrom-Json
-        
+
         # Check if any group failed
         $success = $true
         foreach ($groupName in $resultsObj.PSObject.Properties.Name) {
@@ -165,7 +165,7 @@
             }
           }
         }
-        
+
         return $success
       } catch {
         $errorMsg = $_.Exception.Message

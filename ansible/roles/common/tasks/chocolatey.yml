@@ -23,4 +23,4 @@
   - sysinternals
   - wget
   - pstools
-  ignore_errors: yes
+  ignore_errors: true

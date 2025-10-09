@@ -38,7 +38,7 @@
 - name: open ISO and extract wim file
   ansible.windows.win_powershell:
     script: |
-      $mountResult = Mount-DiskImage -ImagePath "c:\setup\win_10_22h2.iso" 
+      $mountResult = Mount-DiskImage -ImagePath "c:\setup\win_10_22h2.iso"
       $driveLetter = ($mountResult | Get-Volume).DriveLetter
       copy "${driveLetter}:\sources\install.wim" "c:\share_iso\install.wim"
       Dismount-DiskImage -ImagePath "c:\setup\win_10_22h2.iso"
@@ -135,7 +135,7 @@
 
         # client package
         $cp = Get-CMPackage -name "Configuration Manager Client Package"
-        
+
         $parameters = @{
           InstallOperatingSystemImage = $true
           Name = $name

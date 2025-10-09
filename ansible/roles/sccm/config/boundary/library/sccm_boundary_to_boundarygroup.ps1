@@ -34,7 +34,7 @@ Set-Location ($siteCode +":")
 
 ($boundary_group_list = Get-CMBoundary -BoundaryGroupName $boundaryGroupName) | out-null
 
-($boundary = Get-CMBoundary -BoundaryName $boundaryName) | out-null 
+($boundary = Get-CMBoundary -BoundaryName $boundaryName) | out-null
 ($boundaryGroup = Get-CMBoundaryGroup -Name $boundaryGroupName) | out-null
 
 $present = $false

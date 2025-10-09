@@ -9,14 +9,14 @@
   ansible.windows.win_powershell:
     script: |
       $ProgressPreference = 'SilentlyContinue'
-      
+
       # Use Get-WindowsFeature for Server (faster than Get-WindowsOptionalFeature)
       $features = @(
-        'Web-Server', 'Web-Mgmt-Tools', 'Web-Mgmt-Console', 
+        'Web-Server', 'Web-Mgmt-Tools', 'Web-Mgmt-Console',
         'Web-Scripting-Tools', 'Web-Mgmt-Service', 'Web-Mgmt-Compat',
         'Web-Metabase', 'Web-Lgcy-Mgmt-Console', 'Web-Lgcy-Scripting', 'Web-WMI'
       )
-      
+
       $missing = @()
       foreach ($feature in $features) {
         $state = Get-WindowsFeature -Name $feature -ErrorAction SilentlyContinue
@@ -24,7 +24,7 @@
           $missing += $feature
         }
       }
-      
+
       if ($missing.Count -eq 0) {
         Write-Output "ALL_INSTALLED"
       } else {

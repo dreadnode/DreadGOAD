@@ -266,4 +266,3 @@ if ($state -eq "absent") {
 }
 
 Exit-Json -obj $result
-

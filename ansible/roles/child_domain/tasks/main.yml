@@ -54,7 +54,7 @@
           [String]
           $DomSafePassword
       )
-      $ProgressPreference = 'SilentlyContinue'  
+      $ProgressPreference = 'SilentlyContinue'
       try {
           $child_domain = Get-ADDomain -Identity $NewDomainName
           $domainExist=$true

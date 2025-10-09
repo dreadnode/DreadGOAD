@@ -19,7 +19,7 @@
 
           [String]
           $group_ldap,
-          
+
           [String]
           $computer
       )
@@ -31,10 +31,10 @@
       Set-Location ($siteCode +":")
 
       # Forest
-      # create a Schedule Token 
+      # create a Schedule Token
       $Schedule = New-CMSchedule -RecurInterval Days -RecurCount 7
-      
-      # Enable the Active Directory Forest Discovery 
+
+      # Enable the Active Directory Forest Discovery
       try {
         Set-CMDiscoveryMethod -ActiveDirectoryForestDiscovery -SiteCode $siteCode -Enabled:$true -PollingSchedule $Schedule -EnableActiveDirectorySiteBoundaryCreation:$true -EnableSubnetBoundaryCreation:$true
       } catch {

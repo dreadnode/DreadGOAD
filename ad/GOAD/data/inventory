@@ -108,7 +108,7 @@ srv03
 [mssql_ssms]
 srv02
 
-; install webdav 
+; install webdav
 [webdav]
 srv02
 srv03

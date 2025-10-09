@@ -159,7 +159,7 @@
       }
     parameters:
       GroupName: "{{ item.key }}"
-      GroupScope: "DomainLocal" 
+      GroupScope: "DomainLocal"
       Path: "{{ item.value.path | default('') }}"
   with_dict: "{{ ad_groups['domainlocal'] | default({}) }}"
   when: ad_groups['domainlocal'] is defined

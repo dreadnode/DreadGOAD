@@ -65,7 +65,7 @@
     ansible_become_method: runas
     ansible_become_user: SYSTEM
     ansible_become_flags: logon_type=batch logon_flags=with_profile
-  failed_when: 
+  failed_when:
     - passwordprop is failed
     - "'already exists' not in passwordprop.msg | default('')"
 

@@ -7,7 +7,7 @@
 # child
 - name: Child DC AD configuration
   hosts: child_dc
-  gather_facts: false  
+  gather_facts: false
   roles:
     - { role: 'child_domain', tags: 'child_domain'}
     - { role: 'dns_conditional_forwarder', tags: 'dns_conditional_forwarder' }
@@ -26,7 +26,7 @@
 
 - name: Parent DC ADD DNS configuration
   hosts: parent_dc
-  gather_facts: false  
+  gather_facts: false
   roles:
     - { role: 'parent_child_dns', tags: 'parent_child_dns'}
   vars:

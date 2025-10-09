@@ -18,17 +18,17 @@
         [string]$City,
         [string[]]$Groups
       )
-      
+
       $ProgressPreference = 'SilentlyContinue'
-      
+
       try {
         # Check if user already exists
         $userExists = Get-ADUser -Filter {SamAccountName -eq $Username} -ErrorAction SilentlyContinue
-        
+
         if (-not $userExists) {
           # Create secure password
           $securePassword = ConvertTo-SecureString -String $Password -AsPlainText -Force
-          
+
           # Create new user
           New-ADUser -SamAccountName $Username `
                     -UserPrincipalName "$Username@$env:USERDNSDOMAIN" `
@@ -41,21 +41,21 @@
                     -City $City `
                     -Description $Description `
                     -AccountPassword $securePassword
-          
+
           Write-Output "Created user $Username"
           $Ansible.Changed = $true
         } else {
           Write-Output "User $Username already exists"
           $Ansible.Changed = $false
         }
-        
+
         # Add user to groups
         foreach ($group in $Groups) {
           try {
             # Check if user is already member of the group
-            $isMember = Get-ADGroupMember -Identity $group -ErrorAction SilentlyContinue | 
+            $isMember = Get-ADGroupMember -Identity $group -ErrorAction SilentlyContinue |
                         Where-Object {$_.SamAccountName -eq $Username}
-            
+
             if (-not $isMember) {
               Add-ADGroupMember -Identity $group -Members $Username -ErrorAction Stop
               Write-Output "Added $Username to group $group"
@@ -87,7 +87,7 @@
   retries: 3
   delay: 30
   until: usercreate is not failed
-  async: 300  
+  async: 300
   poll: 0
 
 - name: Wait for user creation to complete
@@ -99,7 +99,7 @@
   delay: 5
   with_items: "{{ usercreate.results }}"
 
-- name: Set users SPN lists 
+- name: Set users SPN lists
   ansible.windows.win_powershell:
     script: |
       [CmdletBinding()]
@@ -107,19 +107,19 @@
         [string]$Username,
         [string[]]$SPNs
       )
-      
-      $ProgressPreference = 'SilentlyContinue'  
-      
+
+      $ProgressPreference = 'SilentlyContinue'
+
       try {
         # Get current SPNs for the user
         $user = Get-ADUser -Identity $Username -Properties ServicePrincipalNames
         $currentSPNs = $user.ServicePrincipalNames
-        
+
         $changed = $false
-        
+
         # Add any missing SPNs
         foreach ($spn in $SPNs) {
-          if ($currentSPNs -notcontains $spn) {  
+          if ($currentSPNs -notcontains $spn) {
             Set-ADUser -Identity $Username -Add @{ServicePrincipalNames=$spn}
             Write-Output "Added SPN $spn to user $Username"
             $changed = $true
@@ -127,7 +127,7 @@
             Write-Output "SPN $spn already exists for user $Username"
           }
         }
-        
+
         $Ansible.Changed = $changed
       } catch {
         $errorMessage = $_.Exception.Message
@@ -138,7 +138,7 @@
       SPNs: "{{ item.value.spns }}"
   with_dict: "{{ ad_users }}"
   when: item.value.spns is defined
-  async: 300  
+  async: 300
   poll: 0
 
 - name: Wait for SPN configuration to complete

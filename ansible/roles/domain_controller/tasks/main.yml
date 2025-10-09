@@ -6,7 +6,7 @@
   ansible.windows.win_shell:
     Get-NetAdapter -Name "{{ nat_adapter }}" | Set-DNSClient -RegisterThisConnectionsAddress $False
   register: disable_dns_reg
-  failed_when: 
+  failed_when:
     - disable_dns_reg.rc != 0
     - "'Cannot find network adapter' not in disable_dns_reg.stderr"
   when: two_adapters
@@ -22,7 +22,7 @@
   ansible.windows.win_reboot:
     reboot_timeout: 900
     post_reboot_delay: 300
-  when: check_domain.reboot_required | default(false) or 
+  when: check_domain.reboot_required | default(false) or
         (check_domain is failed and "needs to be restarted" in check_domain.msg | default(''))
 
 - name: Re-attempt domain creation
@@ -31,8 +31,8 @@
     safe_mode_password: "{{ domain_password }}"
     domain_netbios_name: "{{ netbios_name }}"
   register: retry_domain
-  when: check_domain is failed  
-  failed_when: 
+  when: check_domain is failed
+  failed_when:
     - retry_domain is failed
     - '"needs to be restarted" not in retry_domain.msg | default("")'
     - '"already exists" not in retry_domain.msg | default("")'
@@ -41,7 +41,7 @@
   ansible.windows.win_reboot:
     reboot_timeout: 900
     post_reboot_delay: 300
-  when: retry_domain.reboot_required | default(false) or 
+  when: retry_domain.reboot_required | default(false) or
         (retry_domain is failed and "needs to be restarted" in retry_domain.msg | default(''))
 
 - name: Wait for domain to fully initialize
@@ -71,7 +71,7 @@
     safe_mode_password: "{{ domain_password }}"
     state: domain_controller
   register: check_domain_controller
-  failed_when: 
+  failed_when:
     - check_domain_controller is failed
     - '"needs to be restarted" not in check_domain_controller.msg | default("")'
     - '"already a domain controller" not in check_domain_controller.msg | default("")'
@@ -80,7 +80,7 @@
   ansible.windows.win_reboot:
     reboot_timeout: 900
     post_reboot_delay: 300
-  when: check_domain_controller.reboot_required | default(false) or 
+  when: check_domain_controller.reboot_required | default(false) or
         (check_domain_controller is failed and "needs to be restarted" in check_domain_controller.msg | default(''))
 
 - name: Re-attempt domain controller promotion if needed
@@ -92,7 +92,7 @@
     state: domain_controller
   register: retry_dc_promotion
   when: check_domain_controller is failed and "needs to be restarted" in check_domain_controller.msg | default('')
-  failed_when: 
+  failed_when:
     - retry_dc_promotion is defined
     - retry_dc_promotion is failed
     - '"needs to be restarted" not in retry_dc_promotion.msg | default("")'
@@ -102,7 +102,7 @@
   ansible.windows.win_reboot:
     reboot_timeout: 900
     post_reboot_delay: 300
-  when: retry_dc_promotion.reboot_required | default(false) or 
+  when: retry_dc_promotion.reboot_required | default(false) or
         (retry_dc_promotion is defined and retry_dc_promotion is failed and "needs to be restarted" in retry_dc_promotion.msg | default(''))
 
 - name: Check domain controller status
@@ -232,10 +232,10 @@
           $maxAttempts = 30
           $retryInterval = 30
           $ready = $false
-          
+
           for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
             Write-Output "Attempt ${attempt}/${maxAttempts}: Checking AD DS services..."
-            
+
             # Check if ADWS service is running
             $adwsService = Get-Service ADWS -ErrorAction SilentlyContinue
             if ($adwsService.Status -ne 'Running') {
@@ -243,7 +243,7 @@
                 Start-Sleep -Seconds $retryInterval
                 continue
             }
-            
+
             # Check if DNS service is running
             $dnsService = Get-Service DNS -ErrorAction SilentlyContinue
             if ($dnsService.Status -ne 'Running') {
@@ -251,7 +251,7 @@
                 Start-Sleep -Seconds $retryInterval
                 continue
             }
-            
+
             # Verify AD is operational using cmdlets
             try {
                 # Test AD connectivity with lightweight operation
@@ -272,7 +272,7 @@
           }
           $Ansible.Changed = $false
       register: ad_services_wait
-      
+
     - name: Retry admin group configuration
       block:
         - name: Ensure admin user is part of Enterprise Admins (retry)
@@ -284,7 +284,7 @@
             state: present
             domain_username: "{{ domain_username }}"
             domain_password: "{{ domain_password }}"
-    
+
         - name: Ensure admin user is part of Domain Admins (retry)
           microsoft.ad.group:
             name: "Domain Admins"

@@ -18,18 +18,18 @@
         # First check if we need to fix SQL Server mode
         $sqlcmd = "C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn\SQLCMD.EXE"
         $testOutput = & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q "SELECT 1 AS ConnectionTest" 2>&1
-        
+
         if ($LASTEXITCODE -ne 0) {
           Write-Output "SQL Server appears to be in single-user mode. Trying to fix..."
           # Restart SQL Server service to get it out of single-user mode
-          Stop-Service -Name 'MSSQL$SQLEXPRESS' -Force 
+          Stop-Service -Name 'MSSQL$SQLEXPRESS' -Force
           Start-Sleep -Seconds 5
           Start-Service -Name 'MSSQL$SQLEXPRESS'
           Start-Sleep -Seconds 10
-          
+
           # Try dedicated admin connection to set multi-user mode
           & $sqlcmd -E -S "localhost\SQLEXPRESS" -A -Q "ALTER DATABASE master SET MULTI_USER WITH ROLLBACK IMMEDIATE"
-          
+
           # Test connection again
           $testOutput = & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q "SELECT 1 AS ConnectionTest" 2>&1
           if ($LASTEXITCODE -ne 0) {
@@ -37,11 +37,11 @@
             exit 1
           }
         }
-        
+
         # Check if linked server already exists
         $linkedServerQuery = "IF EXISTS (SELECT * FROM sys.servers WHERE name = N'{{ item.key }}') SELECT 1 ELSE SELECT 0"
         $exists = & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q $linkedServerQuery | Where-Object { $_ -match '^\s*[0-1]\s*$' }
-        
+
         if ($exists -eq "1") {
           Write-Output "Linked server {{ item.key }} already exists"
         } else {
@@ -52,12 +52,12 @@
             exit 1
           }
         }
-        
+
         # Enable RPC and RPC OUT options
         & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q "EXEC master.dbo.sp_serveroption @server=N'{{ item.key }}', @optname=N'rpc', @optvalue=N'true'"
         & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q "EXEC master.dbo.sp_serveroption @server=N'{{ item.key }}', @optname=N'rpc out', @optvalue=N'true'"
       } catch {
-        Write-Error "Error creating linked server: $_" 
+        Write-Error "Error creating linked server: $_"
         exit 1
       }
   become: true
@@ -68,7 +68,7 @@
   with_dict: "{{ linked_servers }}"
 
 - name: Create logins
-  include_tasks: logins.yml  
+  include_tasks: logins.yml
   vars:
     linked_server: "{{ item.key }}"
     users_mapping: "{{ item.value.users_mapping }}"
@@ -83,14 +83,14 @@
           Write-Error "SQLCMD.EXE not found at $sqlcmd"
           exit 1
         }
-        
+
         # Test connection first
         $testOutput = & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q "SELECT 1 AS ConnectionTest" 2>&1
         if ($LASTEXITCODE -ne 0) {
           Write-Error "Cannot connect to SQL Server: $testOutput"
           exit 1
         }
-        
+
         & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q "EXEC master.dbo.sp_addlinkedsrvlogin @rmtsrvname = N'{{ item.key }}', @locallogin = NULL , @useself = N'True'"
       } catch {
         Write-Error "Error setting default login impersonation: $_"

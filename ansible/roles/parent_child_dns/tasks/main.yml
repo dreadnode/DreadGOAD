@@ -7,19 +7,19 @@
     child_dc: "{{ lab.domains[item].dc }}"
     name_server: "{{ lab.hosts[child_dc].hostname }}.{{ item }}"
     name_server_ip: >-
-      {{ 
-        hostvars[child_dc]['dc_ipv4'] | 
-        default(dc_hostname_to_ip[child_dc] | 
-        default(instance_to_ip[hostvars[child_dc]['ansible_host']] | 
+      {{
+        hostvars[child_dc]['dc_ipv4'] |
+        default(dc_hostname_to_ip[child_dc] |
+        default(instance_to_ip[hostvars[child_dc]['ansible_host']] |
         default('')))
       }}
     zone: "{{ item.split('.')[0] }}"
   loop: "{{ domains }}"
-  when: 
+  when:
     - domain == '.'.join(item.split('.')[1:])
     - name_server_ip != ''
   register: dns_delegation_result
-  failed_when: 
+  failed_when:
     - dns_delegation_result.rc != 0
     - "'already exists' not in dns_delegation_result.stderr"
 
@@ -27,21 +27,21 @@
   ansible.windows.win_dns_zone:
     name: "{{ item }}"
     type: forwarder
-    replication: "forest"  
+    replication: "forest"
     dns_servers:
       - "{{ name_server_ip }}"
   vars:
     child_dc: "{{ lab.domains[item].dc }}"
     name_server_ip: >-
-      {{ 
-        hostvars[child_dc]['dc_ipv4'] | 
-        default(dc_hostname_to_ip[child_dc] | 
-        default(instance_to_ip[hostvars[child_dc]['ansible_host']] | 
+      {{
+        hostvars[child_dc]['dc_ipv4'] |
+        default(dc_hostname_to_ip[child_dc] |
+        default(instance_to_ip[hostvars[child_dc]['ansible_host']] |
         default('')))
       }}
     zone: "{{ item.split('.')[0] }}"
   loop: "{{ domains }}"
-  when: 
+  when:
     - domain == '.'.join(item.split('.')[1:])
     - name_server_ip != ''
 
@@ -54,6 +54,6 @@
       - "From hostname mapping: {{ dc_hostname_to_ip[lab.domains[item].dc] | default('NOT IN MAPPING') }}"
       - "From instance mapping: {{ instance_to_ip[hostvars[lab.domains[item].dc]['ansible_host']] | default('NOT IN MAPPING') }}"
   loop: "{{ domains }}"
-  when: 
+  when:
     - domain == '.'.join(item.split('.')[1:])
   tags: debug

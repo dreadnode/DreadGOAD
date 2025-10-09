@@ -16,14 +16,14 @@
 
 - name: Display mssql variables in use
   ansible.builtin.debug:
-    msg: 
+    msg:
     - "MSSQL version        : {{ sql_version }}"
     - "MSSQL service name   : {{ mssql_service_name }}"
     - "MSSQL download url   : {{ download_url }}"
     - "MSSQL instance       : {{ sql_instance_name }}"
     - "MSSQL connection use : {{ connection_type }}"
 
-- name: Create SQL Server installation directories 
+- name: Create SQL Server installation directories
   ansible.windows.win_file:
     path: "{{ item }}"
     state: directory
@@ -46,7 +46,7 @@
     ansible_become_flags: logon_type=interactive
 
 - name: Create SQL Server configuration file
-  ansible.windows.win_template: 
+  ansible.windows.win_template:
     src: files/sql_conf.ini.{{ sql_version }}.j2
     dest: c:\setup\mssql\sql_conf.ini
 
@@ -101,8 +101,8 @@
     ansible_become_password: "{{ domain_admin_password }}"
     ansible_become_flags: logon_type=interactive
   register: mssql_install
-  failed_when: 
-    - mssql_install.rc != 0 
+  failed_when:
+    - mssql_install.rc != 0
     - >
       (('No features were installed during the setup execution' not in (mssql_install.stdout | default(''))) and
        ('No features were installed during the setup execution' not in (mssql_install.host_out | default(''))))

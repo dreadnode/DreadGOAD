@@ -14,43 +14,43 @@
         cacheable: true
       run_once: true
 
-    - name: Get all network information 
+    - name: Get all network information
       ansible.windows.win_powershell:
         script: |
           $ProgressPreference = 'SilentlyContinue'
           $ErrorActionPreference = 'SilentlyContinue'
-          
+
           try {
             # Get primary adapter
             $primaryAdapter = Get-NetAdapter | Where-Object {$_.Status -eq "Up"} | Select-Object -First 1
             $allAdapters = Get-NetAdapter | Where-Object {$_.Status -eq "Up"}
-            
+
             # Get primary IP address
-            $ipAddresses = Get-NetIPAddress -AddressFamily IPv4 | 
+            $ipAddresses = Get-NetIPAddress -AddressFamily IPv4 |
               Where-Object {
-                $_.IPAddress -notmatch '^127\.' -and 
+                $_.IPAddress -notmatch '^127\.' -and
                 $_.IPAddress -notmatch '^169\.254\.' -and
                 $_.InterfaceAlias -ne 'Loopback Pseudo-Interface 1'
               }
-            
+
             # Prefer the IP on the primary adapter
             $primaryIP = $ipAddresses | Where-Object { $_.InterfaceAlias -eq $primaryAdapter.Name } | Select-Object -First 1
             if (-not $primaryIP) {
               $primaryIP = $ipAddresses | Select-Object -First 1
             }
-            
+
             # Build result object
             $result = @{
               domain_adapter = if ($primaryAdapter) { $primaryAdapter.Name } else { "Ethernet" }
               adapter_count = $allAdapters.Count
-              nat_adapter = if ($allAdapters.Count -gt 1) { 
-                ($allAdapters | Select-Object -Skip 1 -First 1).Name 
-              } else { 
+              nat_adapter = if ($allAdapters.Count -gt 1) {
+                ($allAdapters | Select-Object -Skip 1 -First 1).Name
+              } else {
                 if ($primaryAdapter) { $primaryAdapter.Name } else { "Ethernet" }
               }
               primary_ip = if ($primaryIP) { $primaryIP.IPAddress } else { "" }
             }
-            
+
             # Output as simple format for easy parsing
             Write-Output "DOMAIN_ADAPTER:$($result.domain_adapter)"
             Write-Output "NAT_ADAPTER:$($result.nat_adapter)"
@@ -76,7 +76,7 @@
         two_adapters: "{{ (network_info.output | select('match', '^ADAPTER_COUNT:') | first | regex_replace('^ADAPTER_COUNT:', '') | default('1') | int) > 1 }}"
         host_ipv4: "{{ network_info.output | select('match', '^PRIMARY_IP:') | first | regex_replace('^PRIMARY_IP:', '') | default(ansible_default_ipv4.address | default('')) }}"
         cacheable: true
-      when: 
+      when:
         - network_info is defined
         - network_info.output is defined
 
@@ -94,14 +94,14 @@
       ansible.builtin.set_fact:
         dc_ipv4: "{{ host_ipv4 }}"
         cacheable: true
-      when: 
+      when:
         - host_ipv4 is defined
         - host_ipv4 != ''
         - inventory_hostname in groups['dc']
 
     - name: Show host network configuration
       ansible.builtin.debug:
-        msg: 
+        msg:
           - "hostname: {{ inventory_hostname }}"
           - "instance_id: {{ ansible_host }}"
           - "resolved_ip: {{ host_ipv4 | default('NOT RESOLVED') }}"
@@ -113,7 +113,7 @@
 
 # Create mappings on all hosts
 - name: Create global mappings
-  hosts: all  
+  hosts: all
   gather_facts: false
   tasks:
     - name: Build all mappings and distribute to all hosts
@@ -135,7 +135,7 @@
           {%- endfor -%}
           {{ mapping }}
         cacheable: true
-      run_once: true  
+      run_once: true
       delegate_facts: true
       delegate_to: "{{ item }}"
       loop: "{{ groups['all'] }}"
@@ -146,4 +146,4 @@
           - "DC Hostname to IP mapping: {{ dc_hostname_to_ip | default({}) }}"
           - "Instance to IP mapping: {{ instance_to_ip | default({}) }}"
         verbosity: 2
-      run_once: true 
+      run_once: true

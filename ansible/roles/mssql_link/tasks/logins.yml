@@ -5,24 +5,24 @@
       try {
         # Try to force SQL Server out of single-user mode
         $sqlcmd = "C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn\SQLCMD.EXE"
-        
+
         # Try the most direct approach first - restart the service
         Write-Output "Restarting SQL Server service..."
         Stop-Service -Name 'MSSQL$SQLEXPRESS' -Force
         Start-Sleep -Seconds 5
         Start-Service -Name 'MSSQL$SQLEXPRESS'
         Start-Sleep -Seconds 10
-        
+
         # Try to use dedicated admin connection to set multi-user mode
         & $sqlcmd -E -S "localhost\SQLEXPRESS" -A -Q "ALTER DATABASE master SET MULTI_USER WITH ROLLBACK IMMEDIATE"
-        
+
         # Test if we can connect normally now
         $testOutput = & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q "SELECT 1 AS ConnectionTest" 2>&1
         if ($LASTEXITCODE -ne 0) {
           Write-Error "Still cannot connect to SQL Server: $testOutput"
           exit 1
         }
-        
+
         Write-Output "SQL Server is now in multi-user mode"
       } catch {
         Write-Error "Error fixing SQL Server mode: $_"
@@ -42,12 +42,12 @@
         Write-Error "SQLCMD.EXE not found at $sqlcmd"
         exit 1
       }
-      
+
       # Check if the login mapping already exists to make this idempotent
       $query = "IF EXISTS (SELECT * FROM sys.servers s INNER JOIN sys.linked_logins ll ON s.server_id = ll.server_id INNER JOIN sys.server_principals sp ON ll.local_principal_id = sp.principal_id WHERE s.name = N'{{ linked_server }}' AND sp.name = N'{{ mapping_item.local_login }}') SELECT 1 ELSE SELECT 0"
-      
+
       $exists = & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q $query | Where-Object { $_ -match '^\s*[0-1]\s*$' }
-      
+
       if ($exists -eq "1") {
         Write-Output "Login mapping for {{ mapping_item.local_login }} to {{ linked_server }} already exists"
       } else {

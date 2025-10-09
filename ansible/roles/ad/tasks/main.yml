@@ -5,7 +5,7 @@
       $domainAdmin = "{{ admin_user }}"
       $domainName = "{{ lab.hosts[dict_key].domain }}"
       $domainNetbios = "{{ lab.hosts[dict_key].domain.split('.')[0] }}"
-      
+
       try {
           # Try the built-in AD cmdlet first
           Add-ADGroupMember -Identity "Domain Admins" -Members $domainAdmin -ErrorAction Stop
@@ -13,7 +13,7 @@
           $Ansible.Changed = $true
       } catch {
           Write-Output "Standard AD cmdlet failed: $_"
-          
+
           # If the cmdlet fails, try the traditional NET GROUP command
           try {
               $result = & net group "Domain Admins" "$domainNetbios\$domainAdmin" /add 2>&1
@@ -29,7 +29,7 @@
           }
       }
   register: admin_group_result
-  
+
 - name: organisation units
   import_tasks: ou.yml
 - name: groups
@@ -60,7 +60,7 @@
 - name: Add members to the Global group, preserving existing membership
   microsoft.ad.group:
     name: "{{ item.key }}"
-    scope: "{{ item.value.scope | default('Global') }}"  
+    scope: "{{ item.value.scope | default('Global') }}"
     members:
       add: "{{ item.value.members | default([]) }}"
     state: present
@@ -73,14 +73,14 @@
     script: |
       $groupName = "{{ item.key }}"
       $managedBy = "{{ item.value.managed_by | default('') }}"
-      
+
       try {
           if ([string]::IsNullOrEmpty($managedBy)) {
               Write-Output "No managed_by value provided for $groupName. Skipping."
               $Ansible.Changed = $false
               exit 0
           }
-          
+
           $group = Get-ADGroup -Identity $groupName -ErrorAction Stop
           Set-ADGroup -Identity $groupName -ManagedBy $managedBy -ErrorAction Stop
           Write-Output "Successfully set $managedBy as manager for $groupName"
@@ -102,14 +102,14 @@
     script: |
       $groupName = "{{ item.key }}"
       $managedBy = "{{ item.value.managed_by | default('') }}"
-      
+
       try {
           if ([string]::IsNullOrEmpty($managedBy)) {
               Write-Output "No managed_by value provided for $groupName. Skipping."
               $Ansible.Changed = $false
               exit 0
           }
-          
+
           $group = Get-ADGroup -Identity $groupName -ErrorAction Stop
           Set-ADGroup -Identity $groupName -ManagedBy $managedBy -ErrorAction Stop
           Write-Output "Successfully set $managedBy as manager for $groupName"
@@ -131,14 +131,14 @@
     script: |
       $groupName = "{{ item.key }}"
       $managedBy = "{{ item.value.managed_by | default('') }}"
-      
+
       try {
           if ([string]::IsNullOrEmpty($managedBy)) {
               Write-Output "No managed_by value provided for $groupName. Skipping."
               $Ansible.Changed = $false
               exit 0
           }
-          
+
           $group = Get-ADGroup -Identity $groupName -ErrorAction Stop
           Set-ADGroup -Identity $groupName -ManagedBy $managedBy -ErrorAction Stop
           Write-Output "Successfully set $managedBy as manager for $groupName"
@@ -157,7 +157,7 @@
 
 - name: Show managed_by results
   ansible.builtin.debug:
-    msg: 
+    msg:
       - "Domainlocal groups managed_by failures: {{ domainlocal_managed_by_result.results | selectattr('failed', 'defined') | selectattr('failed') | list | length }}"
       - "Universal groups managed_by failures: {{ universal_managed_by_result.results | selectattr('failed', 'defined') | selectattr('failed') | list | length }}"
       - "Global groups managed_by failures: {{ global_managed_by_result.results | selectattr('failed', 'defined') | selectattr('failed') | list | length }}"

@@ -295,7 +295,7 @@
                 "daenerys.targaryen" : {
                     "firstname"   : "daenerys",
                     "surname"     : "targaryen",
-                    "password"    : "BurnThemAll!", 
+                    "password"    : "BurnThemAll!",
                     "city"        : "-",
                     "description" : "Darnerys Targaryen",
                     "groups"      : ["Targaryen", "Domain Admins"],

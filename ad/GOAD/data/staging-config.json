@@ -49,7 +49,7 @@
                 "responder.ps1",
                 "gpo_abuse.ps1",
                 "rdp_scheduler.ps1",
-                "unconstrained_delegation_user.ps1" 
+                "unconstrained_delegation_user.ps1"
             ],
             "vulns" : ["disable_firewall","directory", "credentials", "autologon", "files", "enable_llmnr", "enable_nbt-ns", "shares"],
             "vulns_vars" : {
@@ -296,7 +296,7 @@
                 "daenerys.targaryen" : {
                     "firstname"   : "daenerys",
                     "surname"     : "targaryen",
-                    "password"    : "BurnThemAll!", 
+                    "password"    : "BurnThemAll!",
                     "city"        : "-",
                     "description" : "Darnerys Targaryen",
                     "groups"      : ["Targaryen", "Domain Admins"],

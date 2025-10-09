@@ -38,7 +38,7 @@
 - name: installing ADK version 2004
   win_shell: .\adksetup.exe /quiet /features OptionId.DeploymentTools OptionId.UserStateMigrationTool
   args:
-    chdir: C:\setup\adk 
+    chdir: C:\setup\adk
 
 - name: installing PE add-on
   win_shell: .\adkwinpesetup.exe /quiet /features OptionId.WindowsPreinstallationEnvironment

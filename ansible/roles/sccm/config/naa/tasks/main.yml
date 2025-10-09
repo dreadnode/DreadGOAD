@@ -1,11 +1,11 @@
 # script source : https://www.oscc.be/sccm/configmgr/powershell/naa/Set-NAA-using-Powershell-in-CB/
 # error on first try :/
 # "The property 'Values' cannot be found on this object. Verify that the property exists and can be set.",
-- name: Create Configuration Manager user account 
+- name: Create Configuration Manager user account
   ansible.windows.win_powershell:
     script: |
       [CmdletBinding()]
-      param ( 
+      param (
           [String]
           $siteCode,
 
