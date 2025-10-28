@@ -14,10 +14,10 @@
     remote_forest: "{{ lab.domains[domain].trust }}"
     zone_name: "{{ remote_forest }}"
     remote_dc: "{{ lab.domains[remote_forest].dc }}"
-    master_server: "{{ hostvars[remote_dc]['dc_ipv4'] | default(hostvars[remote_dc].ansible_host) }}"
+    instance_to_ip: "{{ hostvars[groups['dc'][0]]['instance_to_ip'] | default({}) }}"
+    master_server: "{{ hostvars[remote_dc]['dc_ipv4'] | default(instance_to_ip[hostvars[remote_dc]['ansible_host']] | default(hostvars[remote_dc].ansible_host)) }}"
     replication: forest
     dc_hostname_to_ip: "{{ hostvars[groups['dc'][0]]['dc_hostname_to_ip'] | default({}) }}"
-    instance_to_ip: "{{ hostvars[groups['dc'][0]]['instance_to_ip'] | default({}) }}"
 
 - name: Trusts configuration
   hosts: trust
@@ -33,9 +33,9 @@
     remote_admin_password: "{{ lab.domains[remote_forest].domain_password }}"
     zone_name: "{{ remote_forest }}"
     remote_dc: "{{ lab.domains[remote_forest].dc }}"
-    master_server: "{{ hostvars[remote_dc]['dc_ipv4'] | default(hostvars[remote_dc].ansible_host) }}"
-    dc_hostname_to_ip: "{{ hostvars[groups['dc'][0]]['dc_hostname_to_ip'] | default({}) }}"
     instance_to_ip: "{{ hostvars[groups['dc'][0]]['instance_to_ip'] | default({}) }}"
+    master_server: "{{ hostvars[remote_dc]['dc_ipv4'] | default(instance_to_ip[hostvars[remote_dc]['ansible_host']] | default(hostvars[remote_dc].ansible_host)) }}"
+    dc_hostname_to_ip: "{{ hostvars[groups['dc'][0]]['dc_hostname_to_ip'] | default({}) }}"
 
 - name: Trusts configuration end
   hosts: trust

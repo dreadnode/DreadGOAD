@@ -13,9 +13,9 @@
     domain_username: "{{ admin_user }}@{{ member_domain }}"
     domain_password: "{{ lab.domains[member_domain].domain_password }}"
     domain_dc: "{{ lab.domains[member_domain].dc }}"
-    dns_server_ip: "{{ hostvars[domain_dc]['dc_ipv4'] | default(hostvars[domain_dc].ansible_host) }}"
-    dc_hostname_to_ip: "{{ hostvars[groups['dc'][0]]['dc_hostname_to_ip'] | default({}) }}"
     instance_to_ip: "{{ hostvars[groups['dc'][0]]['instance_to_ip'] | default({}) }}"
+    dns_server_ip: "{{ hostvars[domain_dc]['dc_ipv4'] | default(instance_to_ip[hostvars[domain_dc]['ansible_host']] | default(hostvars[domain_dc].ansible_host)) }}"
+    dc_hostname_to_ip: "{{ hostvars[groups['dc'][0]]['dc_hostname_to_ip'] | default({}) }}"
 
 - name: Workstations AD configuration
   hosts: workstation
@@ -26,6 +26,6 @@
     domain_username: "{{ admin_user }}@{{ member_domain }}"
     domain_password: "{{ lab.domains[member_domain].domain_password }}"
     domain_dc: "{{ lab.domains[member_domain].dc }}"
-    dns_server_ip: "{{ hostvars[domain_dc]['dc_ipv4'] | default(hostvars[domain_dc].ansible_host) }}"
-    dc_hostname_to_ip: "{{ hostvars[groups['dc'][0]]['dc_hostname_to_ip'] | default({}) }}"
     instance_to_ip: "{{ hostvars[groups['dc'][0]]['instance_to_ip'] | default({}) }}"
+    dns_server_ip: "{{ hostvars[domain_dc]['dc_ipv4'] | default(instance_to_ip[hostvars[domain_dc]['ansible_host']] | default(hostvars[domain_dc].ansible_host)) }}"
+    dc_hostname_to_ip: "{{ hostvars[groups['dc'][0]]['dc_hostname_to_ip'] | default({}) }}"

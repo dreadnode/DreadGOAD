@@ -15,6 +15,10 @@ vars:
   LOG_FILE: 'ad_deployment_{{.LOG_DATE}}.log'
   MAX_RETRIES: '{{.MAX_RETRIES | default "3"}}'
   RETRY_DELAY: '{{.RETRY_DELAY | default "30"}}'
+  # Delay in seconds to wait after playbooks that cause reboots
+  POST_REBOOT_DELAY: '{{.POST_REBOOT_DELAY | default "120"}}'
+  # Playbooks that cause reboots and need post-execution delay
+  REBOOT_PLAYBOOKS: 'ad-parent_domain.yml ad-child_domain.yml ad-members.yml ad-trusts.yml'
   VERBOSE: '{{.VERBOSE | default "false"}}'
   VERBOSE_FLAG: '{{if eq .VERBOSE "true"}}-vvv{{else}}{{end}}'
 
@@ -182,6 +186,27 @@ tasks:
       vars: [PLAYBOOK]
     cmds:
       - PLAYBOOK={{.PLAYBOOK}} ENV={{.ENV}} LOG_FILE={{.LOG_FILE}} MAX_RETRIES={{.MAX_RETRIES}} RETRY_DELAY={{.RETRY_DELAY}} VERBOSE_FLAG={{.VERBOSE_FLAG}} ./scripts/run-playbook-with-retry.sh
+      - task: post-playbook-delay
+        vars:
+          PLAYBOOK: '{{.PLAYBOOK}}'
+
+  post-playbook-delay:
+    internal: true
+    requires:
+      vars: [PLAYBOOK]
+    cmds:
+      - |
+        if echo "{{.REBOOT_PLAYBOOKS}}" | grep -q "{{.PLAYBOOK}}"; then
+          {
+            echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Playbook {{.PLAYBOOK}} may have caused reboots"
+            echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Waiting {{.POST_REBOOT_DELAY}} seconds for systems to fully reconnect..."
+          } | tee -a "{{.LOG_FILE}}"
+          sleep {{.POST_REBOOT_DELAY}}
+          {
+            echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Post-reboot delay complete, continuing to next playbook"
+            echo "-----------------------------------------------"
+          } | tee -a "{{.LOG_FILE}}"
+        fi
 
   get-files:
     desc: Display content of files related to specific playbooks

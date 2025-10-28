@@ -7,7 +7,7 @@
   ansible.windows.win_dns_client:
     adapter_names: "{{ domain_adapter }}"
     ipv4_addresses:
-      - "{{ hostvars[remote_dc]['dc_ipv4'] | default(hostvars[remote_dc].ansible_host) }}"
+      - "{{ hostvars[remote_dc]['dc_ipv4'] | default(instance_to_ip[hostvars[remote_dc]['ansible_host']] | default(hostvars[remote_dc].ansible_host)) }}"
     log_path: C:\dns_log.txt
 
 - name: Install windows features - AD Domain Services
@@ -87,7 +87,7 @@
   when: child_result.changed
 
 - name: Enable the {{ domain_adapter }} interface (local) for DNS client requests
-  ansible.windows.win_shell: dnscmd . /resetlistenaddresses {{ hostvars[dict_key].ansible_host }}
+  ansible.windows.win_shell: dnscmd . /resetlistenaddresses {{ host_ipv4 | default(instance_to_ip[hostvars[dict_key]['ansible_host']] | default(hostvars[dict_key].ansible_host)) }}
   when: two_adapters
 
 # Enable TLS 1.2 for PowerShell Gallery access
