@@ -42,3 +42,4 @@ scripts/archives/
 *retry
 *.log
 ansible/.\\AnsiballZ_command.ps1
+.ansible
