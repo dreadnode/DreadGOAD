@@ -21,7 +21,8 @@
     source_dc: "{{ lab.hosts[lab.domains[parent_domain].dc].hostname }}.{{ parent_domain }}"
     zone_name: "{{ parent_domain }}"
     remote_dc: "{{ lab.domains[parent_domain].dc }}"
-    master_server: "{{ hostvars[remote_dc]['dc_ipv4'] | default(hostvars[remote_dc].ansible_host) }}"
+    instance_to_ip: "{{ hostvars[groups['dc'][0]]['instance_to_ip'] | default({}) }}"
+    master_server: "{{ hostvars[remote_dc]['dc_ipv4'] | default(instance_to_ip[hostvars[remote_dc]['ansible_host']] | default(hostvars[remote_dc].ansible_host)) }}"
     replication: none
 
 - name: Parent DC ADD DNS configuration

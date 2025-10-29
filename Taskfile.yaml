@@ -15,6 +15,10 @@ vars:
   LOG_FILE: 'ad_deployment_{{.LOG_DATE}}.log'
   MAX_RETRIES: '{{.MAX_RETRIES | default "3"}}'
   RETRY_DELAY: '{{.RETRY_DELAY | default "30"}}'
+  # Delay in seconds to wait after playbooks that cause reboots
+  POST_REBOOT_DELAY: '{{.POST_REBOOT_DELAY | default "120"}}'
+  # Playbooks that cause reboots and need post-execution delay
+  REBOOT_PLAYBOOKS: 'ad-parent_domain.yml ad-child_domain.yml ad-members.yml ad-trusts.yml'
   VERBOSE: '{{.VERBOSE | default "false"}}'
   VERBOSE_FLAG: '{{if eq .VERBOSE "true"}}-vvv{{else}}{{end}}'
 
@@ -70,17 +74,23 @@ tasks:
         task list-plays
     vars:
       PLAYS: '{{.PLAYS | default .GOAD_PLAYBOOKS}}'
+      # Generate log file name once for this provision run
+      PROVISION_LOG_FILE: 'ad_deployment_{{now | date "20060102_150405"}}.log'
     deps:
       - ensure-log-dir
     cmds:
       - task: log-provision-header
         vars:
           PLAYS: '{{.PLAYS}}'
+          LOG_FILE: '{{.PROVISION_LOG_FILE}}'
       - for: {var: PLAYS, split: ' '}
         task: run-playbook-with-retry
         vars:
           PLAYBOOK: '{{.ITEM}}'
+          LOG_FILE: '{{.PROVISION_LOG_FILE}}'
       - task: log-provision-success
+        vars:
+          LOG_FILE: '{{.PROVISION_LOG_FILE}}'
 
   ad-users:
     desc: Ensure Active Directory users exist using the ad-data.yml playbook
@@ -182,6 +192,31 @@ tasks:
       vars: [PLAYBOOK]
     cmds:
       - PLAYBOOK={{.PLAYBOOK}} ENV={{.ENV}} LOG_FILE={{.LOG_FILE}} MAX_RETRIES={{.MAX_RETRIES}} RETRY_DELAY={{.RETRY_DELAY}} VERBOSE_FLAG={{.VERBOSE_FLAG}} ./scripts/run-playbook-with-retry.sh
+      - task: post-playbook-delay
+        vars:
+          PLAYBOOK: '{{.PLAYBOOK}}'
+          LOG_FILE: '{{.LOG_FILE}}'
+
+  post-playbook-delay:
+    internal: true
+    requires:
+      vars: [PLAYBOOK]
+    cmds:
+      - |
+        # Check if playbook is in reboot list (grep returns 0 if found, 1 if not)
+        if echo "{{.REBOOT_PLAYBOOKS}}" | grep -q "{{.PLAYBOOK}}"; then
+          {
+            echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Playbook {{.PLAYBOOK}} may have caused reboots"
+            echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Waiting {{.POST_REBOOT_DELAY}} seconds for systems to fully reconnect..."
+          } | tee -a "{{.LOG_FILE}}"
+          sleep {{.POST_REBOOT_DELAY}}
+          {
+            echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Post-reboot delay complete, continuing to next playbook"
+            echo "-----------------------------------------------"
+          } | tee -a "{{.LOG_FILE}}"
+        fi
+        # Ensure task always succeeds even if grep doesn't match
+        exit 0
 
   get-files:
     desc: Display content of files related to specific playbooks

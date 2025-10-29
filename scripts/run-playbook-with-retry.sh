@@ -36,13 +36,15 @@ log_message() {
 
 detect_error_type() {
     local temp_log=$1
-    
+
     if grep -q "FAILED! => .* setup" "$temp_log" || grep -q "Invalid control character" "$temp_log"; then
         echo "fact_gathering"
     elif grep -q "No MSFT_NetAdapter objects found with property 'Name' equal to 'Ethernet3'" "$temp_log"; then
         echo "network_adapter"
     elif grep -E "(403.*Forbidden|failed to transfer.*\.ps1|Invoke-WebRequest.*403.*Forbidden)" "$temp_log" >/dev/null 2>&1; then
         echo "ssm_transfer_error"
+    elif grep -q "TargetNotConnected" "$temp_log"; then
+        echo "ssm_reconnection_needed"
     elif grep -q "failed to transfer file" "$temp_log"; then
         echo "connection_error"
     elif grep -q "Windows PowerShell is in NonInteractive mode" "$temp_log"; then
@@ -69,7 +71,7 @@ retry_with_error_specific_settings() {
     case "$error_type" in
         fact_gathering)
             log_message "Retrying with modified fact gathering settings..."
-            env ANSIBLE_GATHERING=explicit run_ansible_command "$temp_log" \
+            ANSIBLE_GATHERING=explicit run_ansible_command "$temp_log" \
                 ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
                 "${limit_args[@]}" --forks=1 \
                 -e "ansible_facts_gathering_timeout=60" \
@@ -87,21 +89,20 @@ retry_with_error_specific_settings() {
             ;;
         ssm_transfer_error)
             log_message "Retrying with SSM/S3 transfer workarounds..."
-            
+
             if [[ -n "$failed_hosts" ]]; then
                 log_message "Attempting to restart SSM agent on failed hosts..."
                 ansible "$failed_hosts" -i "${ENV}-inventory" \
                     -m win_service -a "name=AmazonSSMAgent state=restarted" || true
                 sleep 30
             fi
-            
-            log_message "Waiting 90 seconds for S3/IAM permissions to fully propagate..."
-            sleep 90
-            
-            env ANSIBLE_TIMEOUT=300 run_ansible_command "$temp_log" \
+
+            log_message "Waiting 150 seconds for Windows networking/DNS/S3 access to fully initialize after reboot..."
+            sleep 150
+
+            ANSIBLE_TIMEOUT=300 run_ansible_command "$temp_log" \
                 ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
                 "${limit_args[@]}" --forks=1 \
-                -e "ansible_aws_ssm_bucket_name=${SSM_BUCKET_NAME:-}" \
                 -e "ansible_aws_ssm_retries=10" \
                 -e "ansible_aws_ssm_retry_delay=30" \
                 -e "ansible_connection_timeout=300" \
@@ -111,7 +112,7 @@ retry_with_error_specific_settings() {
             ;;
         connection_error)
             log_message "Retrying with increased connection timeout..."
-            env ANSIBLE_TIMEOUT=180 run_ansible_command "$temp_log" \
+            ANSIBLE_TIMEOUT=180 run_ansible_command "$temp_log" \
                 ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
                 "${limit_args[@]}" \
                 -e "ansible_connection_timeout=180" \
@@ -128,9 +129,36 @@ retry_with_error_specific_settings() {
                 -e "ansible_ps_version=5.1" \
                 "ansible/$playbook"
             ;;
+        ssm_reconnection_needed)
+            log_message "TargetNotConnected detected - waiting for SSM reconnection after reboot..."
+            log_message "Waiting 120 seconds for Windows systems to reboot and SSM agent to reconnect..."
+            sleep 120
+
+            if [[ -n "$failed_hosts" ]]; then
+                log_message "Testing connectivity to failed hosts: $failed_hosts"
+                # Test connectivity with a simple ping
+                for host in $(echo "$failed_hosts" | tr ',' ' '); do
+                    log_message "Testing $host..."
+                    if ansible "$host" -i "${ENV}-inventory" -m ansible.windows.win_ping -o 2>&1 | tee -a "${LOG_FILE}" | grep -q "SUCCESS"; then
+                        log_message "$host is now reachable"
+                    else
+                        log_message "$host is still not reachable - will retry anyway"
+                    fi
+                done
+            fi
+
+            log_message "Retrying playbook with increased connection timeout..."
+            ANSIBLE_TIMEOUT=180 run_ansible_command "$temp_log" \
+                ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
+                "${limit_args[@]}" --forks=1 \
+                -e "ansible_connection_timeout=180" \
+                -e "ansible_timeout=180" \
+                -e "ansible_facts_gathering_timeout=60" \
+                "ansible/$playbook"
+            ;;
         *)
             log_message "Retrying with general robust settings..."
-            env ANSIBLE_SSH_RETRIES=5 ANSIBLE_TIMEOUT=120 run_ansible_command "$temp_log" \
+            ANSIBLE_SSH_RETRIES=5 ANSIBLE_TIMEOUT=120 run_ansible_command "$temp_log" \
                 ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
                 "${limit_args[@]}" --forks=1 \
                 "ansible/$playbook"
@@ -152,7 +180,7 @@ while [[ $retry_count -lt ${MAX_RETRIES} ]] && [[ "$success" = "false" ]]; do
     
     log_message "Starting ansible/${PLAYBOOK}..."
     true > "$temp_log"
-    
+
     ansible_exit_code=0
     run_ansible_command "$temp_log" \
         ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \

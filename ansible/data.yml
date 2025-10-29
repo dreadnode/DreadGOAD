@@ -2,7 +2,7 @@
 - name: Read data files
   hosts: domain:extensions
   gather_facts: true
-  serial: 5  
+  serial: 5
   tasks:
     - name: Load JSON config as a variable
       ansible.builtin.include_vars:
@@ -14,6 +14,35 @@
         lab: "{{ lab }}"
         cacheable: true
       run_once: true
+
+    - name: Load AWS instance_to_ip mapping from file for SSM connections
+      ansible.builtin.include_vars:
+        file: /tmp/aws_instance_mapping.json
+        name: aws_mapping
+      run_once: true
+      when: ansible_connection == 'aws_ssm'
+      ignore_errors: true
+
+    - name: Set instance_to_ip mapping for all hosts
+      ansible.builtin.set_fact:
+        instance_to_ip: "{{ aws_mapping.instance_to_ip | default({}) }}"
+        cacheable: true
+      run_once: true
+      delegate_facts: true
+      delegate_to: "{{ item }}"
+      loop: "{{ groups['all'] }}"
+      when:
+        - ansible_connection == 'aws_ssm'
+        - aws_mapping is defined
+
+    - name: Set host_ipv4 from AWS instance mapping for SSM connections
+      ansible.builtin.set_fact:
+        host_ipv4: "{{ instance_to_ip[ansible_host] | default('') }}"
+        cacheable: true
+      when:
+        - ansible_connection == 'aws_ssm'
+        - instance_to_ip is defined
+        - ansible_host in instance_to_ip
 
     - name: Check if network facts are already cached
       ansible.builtin.set_fact:
