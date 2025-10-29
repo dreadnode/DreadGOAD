@@ -94,8 +94,12 @@
           # Don't fail the task, just report the error
       }
   loop: "{{ ad_groups['domainlocal'] | dict2items }}"
+  loop_control:
+    label: "Setting managed_by for domainlocal group: {{ item.key }}"
   when: ad_groups['domainlocal'] is defined
   register: domainlocal_managed_by_result
+  async: 120
+  poll: 0
 
 - name: Assign managed_by universal groups
   ansible.windows.win_powershell:
@@ -123,8 +127,12 @@
           # Don't fail the task, just report the error
       }
   loop: "{{ ad_groups['universal'] | dict2items }}"
+  loop_control:
+    label: "Setting managed_by for universal group: {{ item.key }}"
   when: ad_groups['universal'] is defined
   register: universal_managed_by_result
+  async: 120
+  poll: 0
 
 - name: Assign managed_by global groups
   ansible.windows.win_powershell:
@@ -152,8 +160,24 @@
           # Don't fail the task, just report the error
       }
   loop: "{{ ad_groups['global'] | dict2items }}"
+  loop_control:
+    label: "Setting managed_by for global group: {{ item.key }}"
   when: ad_groups['global'] is defined
   register: global_managed_by_result
+  async: 120
+  poll: 0
+
+- name: Wait for managed_by operations to complete
+  async_status:
+    jid: "{{ item.ansible_job_id }}"
+  register: managed_by_wait
+  until: managed_by_wait.finished
+  retries: 30
+  delay: 5
+  loop: "{{ (domainlocal_managed_by_result.results | default([])) + (universal_managed_by_result.results | default([])) + (global_managed_by_result.results | default([])) }}"
+  loop_control:
+    label: "Waiting for managed_by job: {{ item.ansible_job_id | default('N/A') }}"
+  when: item.ansible_job_id is defined
 
 - name: Show managed_by results
   ansible.builtin.debug:

@@ -97,7 +97,12 @@
   until: job_result.finished
   retries: 60
   delay: 5
-  with_items: "{{ usercreate.results }}"
+  loop: "{{ usercreate.results }}"
+  loop_control:
+    label: "Creating user: {{ item.item.key }}"
+  when: item.ansible_job_id is defined
+  # Fail fast on errors to detect issues early
+  failed_when: job_result.finished and job_result.failed
 
 - name: Set users SPN lists
   ansible.windows.win_powershell:
@@ -148,5 +153,9 @@
   until: spn_result.finished
   retries: 60
   delay: 5
-  with_items: "{{ usercreate.results }}"
+  loop: "{{ usercreate.results }}"
+  loop_control:
+    label: "Configuring SPN for user: {{ item.item.key }}"
   when: item.ansible_job_id is defined
+  # Fail fast on errors to detect issues early
+  failed_when: spn_result.finished and spn_result.failed

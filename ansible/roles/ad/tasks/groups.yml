@@ -41,8 +41,29 @@
       GroupName: "{{ item.key }}"
       GroupScope: "Universal"
       Path: "{{ item.value.path | default('') }}"
-  with_dict: "{{ ad_groups['universal'] | default({}) }}"
+  loop: "{{ ad_groups['universal'] | dict2items }}"
+  loop_control:
+    label: "Creating universal group: {{ item.key }}"
   when: ad_groups['universal'] is defined
+  register: universal_group_result
+  retries: 3
+  delay: 10
+  until: universal_group_result is not failed
+  async: 120
+  poll: 0
+
+- name: Wait for Universal group creation to complete
+  async_status:
+    jid: "{{ item.ansible_job_id }}"
+  register: universal_group_status
+  until: universal_group_status.finished
+  retries: 30
+  delay: 5
+  loop: "{{ universal_group_result.results }}"
+  loop_control:
+    label: "Waiting for universal group: {{ item.item.key }}"
+  when: universal_group_result is not skipped and item.ansible_job_id is defined
+  failed_when: universal_group_status.finished and universal_group_status.failed
 
 - name: Create Global Groups
   ansible.windows.win_powershell:
@@ -84,12 +105,29 @@
       GroupName: "{{ item.key }}"
       GroupScope: "Global"
       Path: "{{ item.value.path | default('') }}"
-  with_dict: "{{ ad_groups['global'] | default({}) }}"
+  loop: "{{ ad_groups['global'] | dict2items }}"
+  loop_control:
+    label: "Creating global group: {{ item.key }}"
   when: ad_groups['global'] is defined
   register: global_group_result
   retries: 3
   delay: 10
   until: global_group_result is not failed
+  async: 120
+  poll: 0
+
+- name: Wait for Global group creation to complete
+  async_status:
+    jid: "{{ item.ansible_job_id }}"
+  register: global_group_status
+  until: global_group_status.finished
+  retries: 30
+  delay: 5
+  loop: "{{ global_group_result.results }}"
+  loop_control:
+    label: "Waiting for global group: {{ item.item.key }}"
+  when: global_group_result is not skipped and item.ansible_job_id is defined
+  failed_when: global_group_status.finished and global_group_status.failed
 
 - name: Create DomainLocal Groups
   ansible.windows.win_powershell:
@@ -161,9 +199,26 @@
       GroupName: "{{ item.key }}"
       GroupScope: "DomainLocal"
       Path: "{{ item.value.path | default('') }}"
-  with_dict: "{{ ad_groups['domainlocal'] | default({}) }}"
+  loop: "{{ ad_groups['domainlocal'] | dict2items }}"
+  loop_control:
+    label: "Creating domainlocal group: {{ item.key }}"
   when: ad_groups['domainlocal'] is defined
   register: domainlocal_group_result
   retries: 3
   delay: 10
   until: domainlocal_group_result is not failed
+  async: 120
+  poll: 0
+
+- name: Wait for DomainLocal group creation to complete
+  async_status:
+    jid: "{{ item.ansible_job_id }}"
+  register: domainlocal_group_status
+  until: domainlocal_group_status.finished
+  retries: 30
+  delay: 5
+  loop: "{{ domainlocal_group_result.results }}"
+  loop_control:
+    label: "Waiting for domainlocal group: {{ item.item.key }}"
+  when: domainlocal_group_result is not skipped and item.ansible_job_id is defined
+  failed_when: domainlocal_group_status.finished and domainlocal_group_status.failed

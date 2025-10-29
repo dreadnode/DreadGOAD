@@ -213,9 +213,12 @@
     ansible_async_dir: 'C:\Users\Administrator\.ansible_async'
   register: acl_job_result
   until: acl_job_result.finished
-  retries: 60
+  # Reduce retries since ACL ops are fast
+  retries: 40
   delay: 5
   loop: "{{ acl_results.results }}"
   loop_control:
     label: "Job ID: {{ item.ansible_job_id }}"
   when: item.ansible_job_id is defined
+  # Fail fast to detect issues early
+  failed_when: acl_job_result.finished and acl_job_result.failed
