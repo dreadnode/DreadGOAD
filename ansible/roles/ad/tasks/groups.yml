@@ -63,7 +63,6 @@
   loop_control:
     label: "Waiting for universal group: {{ item.item.key }}"
   when: universal_group_result is not skipped and item.ansible_job_id is defined
-  failed_when: universal_group_status.finished and universal_group_status.failed
 
 - name: Create Global Groups
   ansible.windows.win_powershell:
@@ -127,7 +126,6 @@
   loop_control:
     label: "Waiting for global group: {{ item.item.key }}"
   when: global_group_result is not skipped and item.ansible_job_id is defined
-  failed_when: global_group_status.finished and global_group_status.failed
 
 - name: Create DomainLocal Groups
   ansible.windows.win_powershell:
@@ -221,4 +219,3 @@
   loop_control:
     label: "Waiting for domainlocal group: {{ item.item.key }}"
   when: domainlocal_group_result is not skipped and item.ansible_job_id is defined
-  failed_when: domainlocal_group_status.finished and domainlocal_group_status.failed

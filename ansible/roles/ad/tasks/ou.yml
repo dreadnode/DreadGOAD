@@ -50,5 +50,3 @@
   loop_control:
     label: "Waiting for OU: {{ item.item.key }}"
   when: item.ansible_job_id is defined
-  # Fail fast on errors to detect issues early
-  failed_when: ou_result.finished and ou_result.failed
