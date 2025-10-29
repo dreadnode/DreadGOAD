@@ -71,7 +71,7 @@ retry_with_error_specific_settings() {
     case "$error_type" in
         fact_gathering)
             log_message "Retrying with modified fact gathering settings..."
-            env ANSIBLE_GATHERING=explicit run_ansible_command "$temp_log" \
+            ANSIBLE_GATHERING=explicit run_ansible_command "$temp_log" \
                 ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
                 "${limit_args[@]}" --forks=1 \
                 -e "ansible_facts_gathering_timeout=60" \
@@ -89,21 +89,20 @@ retry_with_error_specific_settings() {
             ;;
         ssm_transfer_error)
             log_message "Retrying with SSM/S3 transfer workarounds..."
-            
+
             if [[ -n "$failed_hosts" ]]; then
                 log_message "Attempting to restart SSM agent on failed hosts..."
                 ansible "$failed_hosts" -i "${ENV}-inventory" \
                     -m win_service -a "name=AmazonSSMAgent state=restarted" || true
                 sleep 30
             fi
-            
-            log_message "Waiting 90 seconds for S3/IAM permissions to fully propagate..."
-            sleep 90
-            
-            env ANSIBLE_TIMEOUT=300 run_ansible_command "$temp_log" \
+
+            log_message "Waiting 150 seconds for Windows networking/DNS/S3 access to fully initialize after reboot..."
+            sleep 150
+
+            ANSIBLE_TIMEOUT=300 run_ansible_command "$temp_log" \
                 ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
                 "${limit_args[@]}" --forks=1 \
-                -e "ansible_aws_ssm_bucket_name=${SSM_BUCKET_NAME:-}" \
                 -e "ansible_aws_ssm_retries=10" \
                 -e "ansible_aws_ssm_retry_delay=30" \
                 -e "ansible_connection_timeout=300" \
@@ -113,7 +112,7 @@ retry_with_error_specific_settings() {
             ;;
         connection_error)
             log_message "Retrying with increased connection timeout..."
-            env ANSIBLE_TIMEOUT=180 run_ansible_command "$temp_log" \
+            ANSIBLE_TIMEOUT=180 run_ansible_command "$temp_log" \
                 ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
                 "${limit_args[@]}" \
                 -e "ansible_connection_timeout=180" \
@@ -149,7 +148,7 @@ retry_with_error_specific_settings() {
             fi
 
             log_message "Retrying playbook with increased connection timeout..."
-            env ANSIBLE_TIMEOUT=180 run_ansible_command "$temp_log" \
+            ANSIBLE_TIMEOUT=180 run_ansible_command "$temp_log" \
                 ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
                 "${limit_args[@]}" --forks=1 \
                 -e "ansible_connection_timeout=180" \
@@ -159,7 +158,7 @@ retry_with_error_specific_settings() {
             ;;
         *)
             log_message "Retrying with general robust settings..."
-            env ANSIBLE_SSH_RETRIES=5 ANSIBLE_TIMEOUT=120 run_ansible_command "$temp_log" \
+            ANSIBLE_SSH_RETRIES=5 ANSIBLE_TIMEOUT=120 run_ansible_command "$temp_log" \
                 ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
                 "${limit_args[@]}" --forks=1 \
                 "ansible/$playbook"
@@ -181,7 +180,7 @@ while [[ $retry_count -lt ${MAX_RETRIES} ]] && [[ "$success" = "false" ]]; do
     
     log_message "Starting ansible/${PLAYBOOK}..."
     true > "$temp_log"
-    
+
     ansible_exit_code=0
     run_ansible_command "$temp_log" \
         ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \

@@ -74,17 +74,23 @@ tasks:
         task list-plays
     vars:
       PLAYS: '{{.PLAYS | default .GOAD_PLAYBOOKS}}'
+      # Generate log file name once for this provision run
+      PROVISION_LOG_FILE: 'ad_deployment_{{now | date "20060102_150405"}}.log'
     deps:
       - ensure-log-dir
     cmds:
       - task: log-provision-header
         vars:
           PLAYS: '{{.PLAYS}}'
+          LOG_FILE: '{{.PROVISION_LOG_FILE}}'
       - for: {var: PLAYS, split: ' '}
         task: run-playbook-with-retry
         vars:
           PLAYBOOK: '{{.ITEM}}'
+          LOG_FILE: '{{.PROVISION_LOG_FILE}}'
       - task: log-provision-success
+        vars:
+          LOG_FILE: '{{.PROVISION_LOG_FILE}}'
 
   ad-users:
     desc: Ensure Active Directory users exist using the ad-data.yml playbook
@@ -189,6 +195,7 @@ tasks:
       - task: post-playbook-delay
         vars:
           PLAYBOOK: '{{.PLAYBOOK}}'
+          LOG_FILE: '{{.LOG_FILE}}'
 
   post-playbook-delay:
     internal: true
@@ -196,6 +203,7 @@ tasks:
       vars: [PLAYBOOK]
     cmds:
       - |
+        # Check if playbook is in reboot list (grep returns 0 if found, 1 if not)
         if echo "{{.REBOOT_PLAYBOOKS}}" | grep -q "{{.PLAYBOOK}}"; then
           {
             echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Playbook {{.PLAYBOOK}} may have caused reboots"
@@ -207,6 +215,8 @@ tasks:
             echo "-----------------------------------------------"
           } | tee -a "{{.LOG_FILE}}"
         fi
+        # Ensure task always succeeds even if grep doesn't match
+        exit 0
 
   get-files:
     desc: Display content of files related to specific playbooks
