@@ -1,7 +1,39 @@
 ---
-- name: Reboot before install (long timeout in case of update)
+- name: Check if reboot is pending before install
+  ansible.windows.win_shell: |
+    $PendingReboot = $false
+
+    # Check CBS RebootPending
+    if (Get-ChildItem "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending" -ErrorAction SilentlyContinue) {
+        $PendingReboot = $true
+    }
+
+    # Check Windows Update RebootRequired
+    if (Get-Item "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired" -ErrorAction SilentlyContinue) {
+        $PendingReboot = $true
+    }
+
+    # Check PendingFileRenameOperations
+    $PendingFileRenameOperations = Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager" -Name PendingFileRenameOperations -ErrorAction SilentlyContinue
+    if ($PendingFileRenameOperations) {
+        $PendingReboot = $true
+    }
+
+    if ($PendingReboot) {
+        Write-Output "REBOOT_REQUIRED"
+        exit 1
+    } else {
+        Write-Output "NO_REBOOT_REQUIRED"
+        exit 0
+    }
+  register: reboot_check
+  failed_when: false
+  changed_when: false
+
+- name: Reboot before install if pending (long timeout in case of update)
   ansible.windows.win_reboot:
     reboot_timeout: 1200
+  when: reboot_check.rc == 1
 
 - name: Set variables
   ansible.builtin.set_fact:

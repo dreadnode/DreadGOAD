@@ -30,40 +30,53 @@
     Install-PackageProvider -Name NuGet -Force
     Install-Module PowerShellGet -Force
 
-- name: Check if ComputerManagementDsc exists
+- name: Check all required modules at once
   ansible.windows.win_shell: |
-    if (Get-Module -ListAvailable -Name ComputerManagementDsc) {
-      exit 0
-    } else {
+    $ProgressPreference = 'SilentlyContinue'
+    $modules = @('ComputerManagementDsc', 'ActiveDirectoryDSC', 'xNetworking')
+    $missing = @()
+
+    foreach ($module in $modules) {
+      if (-not (Get-Module -ListAvailable -Name $module)) {
+        $missing += $module
+      }
+    }
+
+    if ($missing.Count -gt 0) {
+      Write-Output ($missing -join ',')
       exit 1
+    } else {
+      Write-Output "ALL_INSTALLED"
+      exit 0
     }
   register: module_check
   failed_when: false
   changed_when: false
 
-- name: Install ComputerManagementDsc only if needed
+- name: Install all missing modules in parallel
   community.windows.win_psmodule:
-    name: ComputerManagementDsc
+    name: "{{ item }}"
     state: present
-  when: module_check.rc != 0
+  loop: "{{ module_check.stdout.split(',') }}"
+  loop_control:
+    label: "Installing module: {{ item }}"
+  when: module_check.rc != 0 and item != '' and item != 'ALL_INSTALLED'
+  register: module_install
+  async: 300
+  poll: 0
 
-- name: Check if ActiveDirectoryDSC exists
-  ansible.windows.win_shell: |
-    if (Get-Module -ListAvailable -Name ActiveDirectoryDSC) {
-      exit 0
-    } else {
-      exit 1
-    }
-  register: ad_dsc_check
-  failed_when: false
-  changed_when: false
-
-- name: Install ActiveDirectoryDSC only if needed
-  community.windows.win_psmodule:
-    name: ActiveDirectoryDSC
-    state: present
-  register: ad_dsc_module
-  when: ad_dsc_check.rc != 0
+- name: Wait for module installations to complete
+  async_status:
+    jid: "{{ item.ansible_job_id }}"
+  register: module_status
+  until: module_status.finished
+  retries: 60
+  delay: 5
+  loop: "{{ module_install.results }}"
+  loop_control:
+    label: "Waiting for module: {{ item.item }}"
+  when: module_install is not skipped and item.ansible_job_id is defined
+  failed_when: module_status.finished and module_status.failed
 
 - name: Windows | Enable Remote Desktop
   ansible.windows.win_dsc:
@@ -71,23 +84,6 @@
     IsSingleInstance: 'Yes'
     Ensure: present
     UserAuthentication: Secure
-
-- name: Check if xNetworking exists
-  ansible.windows.win_shell: |
-    if (Get-Module -ListAvailable -Name xNetworking) {
-      exit 0
-    } else {
-      exit 1
-    }
-  register: xnetworking_check
-  failed_when: false
-  changed_when: false
-
-- name: Install xNetworking only if needed
-  community.windows.win_psmodule:
-    name: xNetworking
-    state: present
-  when: xnetworking_check.rc != 0
 
 - name: Firewall | Allow RDP through Firewall
   ansible.windows.win_dsc:

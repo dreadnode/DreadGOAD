@@ -213,7 +213,8 @@
     ansible_async_dir: 'C:\Users\Administrator\.ansible_async'
   register: acl_job_result
   until: acl_job_result.finished
-  retries: 60
+  # ACL operations can be slow with many objects (observed 173-186s)
+  retries: 50
   delay: 5
   loop: "{{ acl_results.results }}"
   loop_control:
