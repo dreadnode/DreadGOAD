@@ -231,6 +231,28 @@ tasks:
     cmds:
       - PLAYBOOK={{.PLAYBOOK}} ENV={{.ENV}} ./scripts/get-playbook-files.sh
 
+  generate-mapping:
+    desc: Generate AWS instance-to-IP mapping file for Ansible optimization
+    summary: |
+      Queries AWS EC2 for instance private IPs and creates a mapping file
+      that Ansible uses to skip network detection, speeding up playbook execution.
+
+      Options:
+        ENV=<env>            Environment to target (default: dev)
+        INVENTORY=<path>     Path to inventory file (default: ./<env>-inventory)
+        OUTPUT=<path>        Output file path (default: /tmp/aws_instance_mapping.json)
+
+      Examples:
+        task generate-mapping                     # Generate mapping for dev environment
+        task generate-mapping ENV=prod            # Generate mapping for prod environment
+        task generate-mapping OUTPUT=/tmp/my-mapping.json  # Use custom output path
+    vars:
+      INVENTORY: '{{.INVENTORY | default (print "./" .ENV "-inventory")}}'
+      OUTPUT: '{{.OUTPUT | default "/tmp/aws_instance_mapping.json"}}'
+    run: always
+    cmds:
+      - ./scripts/generate-instance-mapping.sh "{{.INVENTORY}}" "{{.OUTPUT}}"
+
   update-inventory:
     desc: Synchronize Ansible inventory with AWS instance IDs of running EC2 instances and update environment value
     summary: |

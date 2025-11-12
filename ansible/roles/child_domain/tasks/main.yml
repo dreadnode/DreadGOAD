@@ -7,7 +7,7 @@
   ansible.windows.win_dns_client:
     adapter_names: "{{ domain_adapter }}"
     ipv4_addresses:
-      - "{{ hostvars[remote_dc]['dc_ipv4'] | default(instance_to_ip[hostvars[remote_dc]['ansible_host']] | default(hostvars[remote_dc].ansible_host)) }}"
+      - "{{ hostvars[remote_dc]['dc_ipv4'] | default(instance_to_ip[hostvars[remote_dc]['ansible_host']] if hostvars[remote_dc]['ansible_host'] in instance_to_ip else hostvars[remote_dc].ansible_host) }}"
     log_path: C:\dns_log.txt
 
 - name: Install windows features - AD Domain Services

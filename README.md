@@ -59,19 +59,32 @@ Before provisioning, ensure the following are installed and configured:
    export TASK_X_REMOTE_TASKFILES=1
    ```
 
-1. **List available Ansible playbooks:**
+2. **List available Ansible playbooks:**
 
    ```bash
    task -y list-plays
    ```
 
-1. **Update the Ansible inventory with AWS instance IDs:**
+3. **Update the Ansible inventory with AWS instance IDs:**
 
    ```bash
    task -y update-inventory ENV=dev --force
    ```
 
-1. **Provision the AD environment:**
+4. **Generate instance-to-IP mapping (recommended for faster provisioning):**
+
+   ```bash
+   task generate-mapping ENV=dev
+   ```
+
+   This pre-computes instance ID → private IP mappings and caches them, skipping
+   the slow PowerShell network detection on each playbook run. This saves ~30-40
+   seconds per playbook execution.
+
+   > **Note:** Re-run this command if infrastructure changes (instances replaced,
+   > IPs changed, etc.)
+
+5. **Provision the AD environment:**
 
    ```bash
    task provision ENV=dev
@@ -81,16 +94,28 @@ Before provisioning, ensure the following are installed and configured:
 
 ### 🛠️ Useful Task Examples
 
-- **Example for provisioning using specific playbooks:**
+- **Provision using specific playbooks:**
 
   ```bash
   task provision PLAYS="build.yml ad-servers.yml" ENV=staging
+  ```
+
+- **Generate instance mapping for staging environment:**
+
+  ```bash
+  task generate-mapping ENV=staging
   ```
 
 - **Inspect files related to specific playbooks:**
 
   ```bash
   task get-files PLAYBOOK=security
+  ```
+
+- **Run with verbose output for debugging:**
+
+  ```bash
+  task provision PLAYS="ad-data.yml" VERBOSE=true
   ```
 
 ---
@@ -222,8 +247,11 @@ or:
 ## 🚨 Important Notes
 
 - **AWS CLI configuration** (`aws configure`) is required.
-- Regularly run `update-inventory` to maintain accurate host data.
-- Provisioning tasks handle retries and error handling.
+- Run `update-inventory` when instance IDs change.
+- Run `generate-mapping` after infrastructure changes for optimal performance.
+- Provisioning tasks handle retries and error handling automatically.
+- The mapping file (`/tmp/aws_instance_mapping.json`) speeds up provisioning by
+  ~30-40 seconds per playbook run.
 
 ---
 

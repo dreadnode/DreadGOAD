@@ -7,19 +7,33 @@ set -euo pipefail
 # Helper functions
 check_ansible_success() {
     local log_file=$1
-    
+
+    # Primary check: Look at PLAY RECAP for actual failures
+    # This is the most reliable indicator of success/failure
     if grep -A 100 "PLAY RECAP" "$log_file" | grep -E "failed=[1-9][0-9]*|unreachable=[1-9][0-9]*" >/dev/null 2>&1; then
         return 1
     fi
-    
-    if grep -E "^fatal:|^FAILED!" "$log_file" >/dev/null 2>&1; then
-        return 1
+
+    # Secondary check: Look for fatal errors that weren't ignored
+    # Extract context around fatal/FAILED lines and check if they're followed by "...ignoring"
+    if grep -E "^fatal:" "$log_file" >/dev/null 2>&1; then
+        # Check if ANY fatal error is NOT followed by "...ignoring" within 10 lines
+        local fatal_lines=$(grep -n "^fatal:" "$log_file" | cut -d: -f1)
+        for line_num in $fatal_lines; do
+            # Get 10 lines after the fatal error
+            local context=$(sed -n "${line_num},$((line_num + 10))p" "$log_file")
+            # If this context doesn't contain "...ignoring", it's a real failure
+            if ! echo "$context" | grep -q "...ignoring"; then
+                return 1
+            fi
+        done
     fi
-    
+
+    # Check for retry file creation (indicates Ansible wants us to retry)
     if grep -q "to retry, use:" "$log_file" >/dev/null 2>&1; then
         return 1
     fi
-    
+
     return 0
 }
 
@@ -43,7 +57,9 @@ detect_error_type() {
         echo "network_adapter"
     elif grep -E "(403.*Forbidden|failed to transfer.*\.ps1|Invoke-WebRequest.*403.*Forbidden)" "$temp_log" >/dev/null 2>&1; then
         echo "ssm_transfer_error"
-    elif grep -q "TargetNotConnected" "$temp_log"; then
+    elif grep -qE "(TargetNotConnected|is not connected)" "$temp_log"; then
+        echo "ssm_reconnection_needed"
+    elif grep -qE "(Timed out waiting for last boot time|timeout waiting for system to reboot)" "$temp_log"; then
         echo "ssm_reconnection_needed"
     elif grep -q "failed to transfer file" "$temp_log"; then
         echo "connection_error"

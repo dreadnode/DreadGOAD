@@ -16,7 +16,7 @@
     dc_key: "{{lab.domains[domain].dc}}"
     dc_name: "{{lab.hosts[dc_key].hostname}}"
     dc_fqdn: "{{dc_name}}.{{domain}}"
-    dc_ip: "{{hostvars[dc_key].ansible_host}}"
+    dc_ip: "{{ hostvars[dc_key]['dc_ipv4'] | default(instance_to_ip[hostvars[dc_key]['ansible_host']] if hostvars[dc_key]['ansible_host'] in instance_to_ip else hostvars[dc_key].ansible_host) }}"
     ip_root: "{{'.'.join(dc_ip.split('.')[:3])}}"
     ip_from: "{{ip_root}}.150"
     ip_to: "{{ip_root}}.200"
