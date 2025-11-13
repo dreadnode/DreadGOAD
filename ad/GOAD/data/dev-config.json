@@ -20,7 +20,7 @@
             },
             "scripts" : ["sidhistory.ps1"],
             "vulns" : ["disable_firewall"],
-            "security": ["account_is_sensitive"],
+            "security": ["account_is_sensitive", "audit_policy"],
             "security_vars": {
                 "account_is_sensitive" : { "renly": {"account" : "renly.baratheon"} }
             }
@@ -84,7 +84,8 @@
                         "dest": "C:\\Windows\\SYSVOL\\domain\\scripts\\secret.ps1"
                     }
                 }
-            }
+            },
+            "security": ["audit_policy"]
         },
         "srv02" : {
             "hostname" : "castelblack",
@@ -175,7 +176,8 @@
                 ]
             },
             "scripts" : ["asrep_roasting2.ps1"],
-            "vulns" : ["ntlmdowngrade", "disable_firewall"]
+            "vulns" : ["ntlmdowngrade", "disable_firewall"],
+            "security": ["audit_policy"]
         },
         "srv03" : {
             "hostname" : "braavos",
