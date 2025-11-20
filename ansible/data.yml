@@ -17,7 +17,7 @@
 
     - name: Load AWS instance_to_ip mapping from file for SSM connections
       ansible.builtin.include_vars:
-        file: /tmp/aws_instance_mapping.json
+        file: "/tmp/aws_instance_mapping_{{ env }}.json"
         name: aws_mapping
       run_once: true
       when: ansible_connection == 'aws_ssm'

@@ -4,7 +4,9 @@
 set -euo pipefail
 
 INVENTORY="${1:-dev-inventory}"
-OUTPUT_FILE="${2:-/tmp/aws_instance_mapping.json}"
+# Extract environment name from inventory (e.g., dev-inventory -> dev)
+ENV_NAME=$(basename "${INVENTORY}" | sed 's/-inventory$//')
+OUTPUT_FILE="${2:-/tmp/aws_instance_mapping_${ENV_NAME}.json}"
 
 # Extract AWS region from inventory
 AWS_REGION=$(grep -E "ansible_aws_ssm_region=" "${INVENTORY}" | head -1 | cut -d= -f2)

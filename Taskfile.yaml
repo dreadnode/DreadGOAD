@@ -83,6 +83,7 @@ tasks:
       PROVISION_LOG_FILE: '$HOME/.ansible/logs/goad/{{.ENV}}-dreadgoad-{{now | date "20060102_150405"}}.log'
     deps:
       - ensure-log-dir
+      - generate-mapping
     cmds:
       - task: log-provision-header
         vars:
@@ -227,7 +228,7 @@ tasks:
       Options:
         ENV=<env>            Environment to target (default: dev)
         INVENTORY=<path>     Path to inventory file (default: ./<env>-inventory)
-        OUTPUT=<path>        Output file path (default: /tmp/aws_instance_mapping.json)
+        OUTPUT=<path>        Output file path (default: /tmp/aws_instance_mapping_<env>.json)
 
       Examples:
         task generate-mapping                     # Generate mapping for dev environment
@@ -235,7 +236,7 @@ tasks:
         task generate-mapping OUTPUT=/tmp/my-mapping.json  # Use custom output path
     vars:
       INVENTORY: '{{.INVENTORY | default (print "./" .ENV "-inventory")}}'
-      OUTPUT: '{{.OUTPUT | default "/tmp/aws_instance_mapping.json"}}'
+      OUTPUT: '{{.OUTPUT | default (print "/tmp/aws_instance_mapping_" .ENV ".json")}}'
     run: always
     cmds:
       - ./scripts/generate-instance-mapping.sh "{{.INVENTORY}}" "{{.OUTPUT}}"

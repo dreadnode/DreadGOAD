@@ -202,6 +202,12 @@
   register: ad_dsc_module
   when: ad_dsc_check.rc != 0
 
+- name: Enable the Active Directory Web Services
+  ansible.windows.win_service:
+    name: adws
+    start_mode: auto
+    state: started
+
 - name: Ensure admin groups are properly configured
   block:
     - name: Ensure admin user is part of Enterprise Admins
@@ -294,3 +300,48 @@
             state: present
             domain_username: "{{ domain_username }}"
             domain_password: "{{ domain_password }}"
+
+- name: Check if SSM Agent is installed
+  ansible.windows.win_service:
+    name: AmazonSSMAgent
+  register: ssm_service_check
+  failed_when: false
+
+- name: Fix SSM Agent after domain controller promotion
+  ansible.windows.win_powershell:
+    script: |
+      $ProgressPreference = 'SilentlyContinue'
+      $ErrorActionPreference = "Stop"
+
+      try {
+        Write-Output "Restarting SSM Agent to recreate ssm-user as domain account..."
+
+        # Restart SSM Agent to trigger recreation of ssm-user
+        Restart-Service -Name AmazonSSMAgent -Force
+
+        # Wait for service to fully restart
+        Start-Sleep -Seconds 10
+
+        # Verify SSM Agent is running
+        $ssmService = Get-Service -Name AmazonSSMAgent
+        if ($ssmService.Status -ne 'Running') {
+          throw "SSM Agent failed to start after restart"
+        }
+
+        Write-Output "SSM Agent restarted successfully"
+        $Ansible.Changed = $true
+      } catch {
+        # Don't fail the playbook if SSM restart fails - it will be handled by retry logic
+        Write-Output "Warning: Failed to restart SSM Agent: $_"
+        $Ansible.Changed = $false
+      }
+  register: ssm_restart
+  when: ssm_service_check.exists | default(false)
+  changed_when: ssm_restart.output | regex_search('SSM Agent restarted successfully')
+
+- name: Wait for SSM Agent to stabilize after domain promotion
+  ansible.builtin.pause:
+    seconds: 30
+  when:
+    - ssm_service_check.exists | default(false)
+    - ssm_restart.changed

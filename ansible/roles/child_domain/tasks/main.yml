@@ -29,72 +29,34 @@
 #   win_shell: netsh interface set interface "{{nat_adapter}}" disable
 
 - name: Add child domain to parent domain
+  microsoft.ad.domain_child:
+    dns_domain_name: "{{ domain }}"
+    domain_admin_user: "{{ parent_domain_user }}"
+    domain_admin_password: "{{ parent_domain_password }}"
+    safe_mode_password: "{{ domain_password }}"
+    database_path: C:\Windows\NTDS
+    sysvol_path: C:\Windows\SYSVOL
+    log_path: C:\Windows\Logs
+    reboot: true
+  register: child_result
+  failed_when:
+    - child_result is failed
+    - '"already exists" not in child_result.msg | default("")'
+
+- name: Configure DNS listener addresses
   ansible.windows.win_powershell:
     script: |
-      [CmdletBinding()]
-      param (
-          [String]
-          $Password,
-
-          [String]
-          $DomainAdmin,
-
-          [String]
-          $ParentDomainName,
-
-          [String]
-          $NewDomainNetbiosName,
-
-          [String]
-          $ReplicationSourceDC,
-
-          [String]
-          $NewDomainName,
-
-          [String]
-          $DomSafePassword
-      )
       $ProgressPreference = 'SilentlyContinue'
+      $ErrorActionPreference = "Stop"
       try {
-          $child_domain = Get-ADDomain -Identity $NewDomainName
-          $domainExist=$true
-      } catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
-          $domainExist=$false
+        dnscmd . /resetlistenaddresses {{ host_ipv4 | default(instance_to_ip[hostvars[dict_key]['ansible_host']] | default(hostvars[dict_key].ansible_host)) }}
+        Write-Output "DNS listener addresses configured successfully"
+      } catch {
+        $Ansible.Failed = $true
+        Write-Error "Failed to configure DNS listener addresses: $_"
       }
-      if (-not $domainExist) {
-        $Ansible.Changed = $true
-        $pass = ConvertTo-SecureString $Password -AsPlainText -Force
-        $Cred = New-Object System.Management.Automation.PSCredential ($DomainAdmin, $pass)
-        $safePassword = ConvertTo-SecureString $DomSafePassword -AsPlainText -Force
-        Install-ADDSDomain -Credential $Cred -SkipPreChecks -NewDomainName $NewDomainName -NewDomainNetbiosName $NewDomainNetbiosName -ParentDomainName $ParentDomainName -ReplicationSourceDC $ReplicationSourceDC -DatabasePath "C:\Windows\NTDS" -SYSVOLPath "C:\Windows\SYSVOL" -LogPath "C:\Windows\Logs" -SafeModeAdministratorPassword $safePassword -Force -NoRebootOnCompletion
-      } else {
-        $Ansible.Changed = $false
-      }
-    parameters:
-      Password: "{{ parent_domain_password }}"
-      DomSafePassword: "{{ domain_password }}"
-      DomainAdmin: "{{ parent_domain_user }}"
-      ParentDomainName: "{{ parent_domain }}"
-      ReplicationSourceDC: "{{ source_dc }}"
-      NewDomainNetbiosName: "{{ netbios_name }}"
-      NewDomainName: "{{ domain.split('.')[0] }}"
-  register: child_result
-
-- name: Reboot
-  ansible.windows.win_reboot:
-    reboot_timeout: 900
-    post_reboot_delay: 100
-  when: child_result.changed
-
-- name: Enable the {{ domain_adapter }} interface (local) for DNS client requests
-  ansible.windows.win_shell: dnscmd . /resetlistenaddresses {{ host_ipv4 | default(instance_to_ip[hostvars[dict_key]['ansible_host']] | default(hostvars[dict_key].ansible_host)) }}
+  register: dns_listener
   when: two_adapters
-
-# Enable TLS 1.2 for PowerShell Gallery access
-- name: Enable TLS 1.2 for PowerShell Gallery (session)
-  ansible.windows.win_shell: |
-    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-  changed_when: false
 
 - name: Enable TLS 1.2 permanently via registry
   ansible.windows.win_regedit:
@@ -149,5 +111,53 @@
   when: activedirectorydsc_check.rc != 0
 
 # issue 156
-- name: Enable the Active directory web services if not enabled
-  ansible.windows.win_shell: Set-Service -Name adws -StartupType Automatic
+- name: Enable the Active Directory Web Services
+  ansible.windows.win_service:
+    name: adws
+    start_mode: auto
+    state: started
+
+- name: Check if SSM Agent is installed
+  ansible.windows.win_service:
+    name: AmazonSSMAgent
+  register: ssm_service_check
+  failed_when: false
+
+- name: Fix SSM Agent after domain controller promotion
+  ansible.windows.win_powershell:
+    script: |
+      $ProgressPreference = 'SilentlyContinue'
+      $ErrorActionPreference = "Stop"
+
+      try {
+        Write-Output "Restarting SSM Agent to recreate ssm-user as domain account..."
+
+        # Restart SSM Agent to trigger recreation of ssm-user
+        Restart-Service -Name AmazonSSMAgent -Force
+
+        # Wait for service to fully restart
+        Start-Sleep -Seconds 10
+
+        # Verify SSM Agent is running
+        $ssmService = Get-Service -Name AmazonSSMAgent
+        if ($ssmService.Status -ne 'Running') {
+          throw "SSM Agent failed to start after restart"
+        }
+
+        Write-Output "SSM Agent restarted successfully"
+        $Ansible.Changed = $true
+      } catch {
+        # Don't fail the playbook if SSM restart fails - it will be handled by retry logic
+        Write-Output "Warning: Failed to restart SSM Agent: $_"
+        $Ansible.Changed = $false
+      }
+  register: ssm_restart
+  when: ssm_service_check.exists | default(false)
+  changed_when: ssm_restart.output | regex_search('SSM Agent restarted successfully')
+
+- name: Wait for SSM Agent to stabilize after domain promotion
+  ansible.builtin.pause:
+    seconds: 30
+  when:
+    - ssm_service_check.exists | default(false)
+    - ssm_restart.changed

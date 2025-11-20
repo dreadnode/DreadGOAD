@@ -60,16 +60,16 @@ detect_error_type() {
         echo "fact_gathering"
     elif grep -q "No MSFT_NetAdapter objects found with property 'Name' equal to 'Ethernet3'" "$temp_log"; then
         echo "network_adapter"
-    elif grep -E "(403.*Forbidden|failed to transfer.*\.ps1|Invoke-WebRequest.*403.*Forbidden)" "$temp_log" >/dev/null 2>&1; then
+    elif grep -q "failed to transfer file" "$temp_log"; then
         echo "ssm_transfer_error"
     elif grep -qE "(TargetNotConnected|is not connected)" "$temp_log"; then
         echo "ssm_reconnection_needed"
     elif grep -qE "(Timed out waiting for last boot time|timeout waiting for system to reboot)" "$temp_log"; then
         echo "ssm_reconnection_needed"
-    elif grep -q "failed to transfer file" "$temp_log"; then
-        echo "connection_error"
     elif grep -q "Windows PowerShell is in NonInteractive mode" "$temp_log"; then
         echo "powershell_interactive"
+    elif grep -qE "(ssm-user.*disabled|SSM.*account.*issue|Windows Local SAM)" "$temp_log"; then
+        echo "ssm_user_account_issue"
     else
         echo "unknown"
     fi
@@ -123,7 +123,20 @@ retry_with_error_specific_settings() {
             log_message "Retrying with SSM/S3 transfer workarounds..."
 
             if [[ -n "$failed_hosts" ]]; then
-                log_message "Attempting to restart SSM agent on failed hosts..."
+                log_message "Attempting to enable ssm-user account and restart SSM agent on failed hosts..."
+
+                # Enable ssm-user account if it's disabled (common issue on DCs after promotion)
+                for host in $(echo "$failed_hosts" | tr ',' ' '); do
+                    log_message "Enabling ssm-user account on $host..."
+                    ansible "$host" -i "${ENV}-inventory" \
+                        -m ansible.windows.win_shell \
+                        -a "net user ssm-user /active:yes" || true
+                done
+
+                sleep 5
+
+                # Restart SSM agent to pick up the account changes
+                log_message "Restarting SSM agent on failed hosts..."
                 ansible "$failed_hosts" -i "${ENV}-inventory" \
                     -m win_service -a "name=AmazonSSMAgent state=restarted" || true
                 sleep 30
@@ -188,6 +201,38 @@ retry_with_error_specific_settings() {
                 -e "ansible_facts_gathering_timeout=60" \
                 "ansible/$playbook"
             ;;
+        ssm_user_account_issue)
+            log_message "SSM user account issue detected (likely after DC promotion)..."
+            log_message "This typically occurs when a server is promoted to a domain controller"
+            log_message "The local SAM database gets disabled, breaking the local ssm-user account"
+
+            if [[ -n "$failed_hosts" ]]; then
+                log_message "Attempting to fix SSM agent on affected hosts: $failed_hosts"
+
+                # Try to restart SSM agent to recreate ssm-user as domain account
+                for host in $(echo "$failed_hosts" | tr ',' ' '); do
+                    log_message "Restarting SSM agent on $host to recreate ssm-user as domain account..."
+
+                    # Use PowerShell to restart SSM agent
+                    ansible "$host" -i "${ENV}-inventory" \
+                        -m ansible.windows.win_powershell \
+                        -a "script='Restart-Service -Name AmazonSSMAgent -Force; Start-Sleep -Seconds 10'" \
+                        2>&1 | tee -a "${LOG_FILE}" || true
+                done
+
+                log_message "Waiting 60 seconds for SSM agent to stabilize..."
+                sleep 60
+            fi
+
+            log_message "Retrying playbook with robust SSM settings..."
+            ANSIBLE_TIMEOUT=180 run_ansible_command "$temp_log" \
+                ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
+                ${limit_args[@]+"${limit_args[@]}"} --forks=1 \
+                -e "ansible_connection_timeout=180" \
+                -e "ansible_timeout=180" \
+                -e "ansible_aws_ssm_timeout=300" \
+                "ansible/$playbook"
+            ;;
         *)
             log_message "Retrying with general robust settings..."
             ANSIBLE_SSH_RETRIES=5 ANSIBLE_TIMEOUT=120 run_ansible_command "$temp_log" \
@@ -214,14 +259,73 @@ while [[ $retry_count -lt ${MAX_RETRIES} ]] && [[ "$success" = "false" ]]; do
     true > "$temp_log"
 
     ansible_exit_code=0
-    run_ansible_command "$temp_log" \
+    # Kill playbook if no output for 10 minutes (not total runtime)
+    IDLE_TIMEOUT=${IDLE_TIMEOUT:-600}
+
+    # Run ansible-playbook with a FIFO to detect idle/hung state
+    mkfifo /tmp/ansible_pipe_$$ 2>/dev/null || true
+    (
         ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
-        ${LIMIT_ARGS[@]+"${LIMIT_ARGS[@]}"} \
-        -e "ansible_facts_gathering_timeout=60" \
-        "ansible/${PLAYBOOK}" || ansible_exit_code=$?
+            ${LIMIT_ARGS[@]+"${LIMIT_ARGS[@]}"} \
+            -e "ansible_facts_gathering_timeout=60" \
+            "ansible/${PLAYBOOK}" 2>&1 | tee "$temp_log" | tee -a "${LOG_FILE}"
+        echo $? > /tmp/ansible_exit_$$
+    ) &
+
+    ansible_pid=$!
+
+    # Monitor for idle timeout
+    last_output_time=$(date +%s)
+    last_size=0
+    while kill -0 $ansible_pid 2>/dev/null; do
+        sleep 5
+
+        # Get current log file size, default to 0 if file doesn't exist yet
+        if [[ -f "$temp_log" ]]; then
+            current_size=$(wc -c < "$temp_log" 2>/dev/null || echo 0)
+        else
+            current_size=0
+        fi
+        current_time=$(date +%s)
+
+        if [[ "$current_size" -gt "$last_size" ]]; then
+            # Output is progressing
+            last_output_time=$current_time
+            last_size=$current_size
+        else
+            # No new output
+            idle_time=$((current_time - last_output_time))
+            if [[ $idle_time -gt $IDLE_TIMEOUT ]]; then
+                log_message "ERROR: No output for ${IDLE_TIMEOUT} seconds, killing playbook (PID: $ansible_pid)"
+                kill -TERM $ansible_pid 2>/dev/null
+                sleep 2
+                kill -KILL $ansible_pid 2>/dev/null
+                ansible_exit_code=124  # Use same exit code as timeout command
+                break
+            fi
+        fi
+    done
+
+    wait $ansible_pid 2>/dev/null || ansible_exit_code=$(cat /tmp/ansible_exit_$$ 2>/dev/null || echo 1)
+    rm -f /tmp/ansible_exit_$$ /tmp/ansible_pipe_$$ 2>/dev/null
     
     log_message "Ansible exit code: $ansible_exit_code"
-    
+
+    # Check if playbook timed out (timeout command returns 124)
+    if [[ "$ansible_exit_code" -eq 124 ]]; then
+        log_message "ERROR: Playbook timed out after ${PLAYBOOK_TIMEOUT} seconds"
+        log_message "This usually indicates hung async tasks or SSM connection issues"
+        retry_count=$((retry_count + 1))
+        if [[ $retry_count -lt ${MAX_RETRIES} ]]; then
+            log_message "Will retry playbook..."
+            continue
+        else
+            log_message "ERROR: ansible/${PLAYBOOK} timed out after ${MAX_RETRIES} attempts. Stopping execution."
+            rm -f "$temp_log"
+            exit 1
+        fi
+    fi
+
     if [[ "$ansible_exit_code" -eq 0 ]] && check_ansible_success "$temp_log"; then
         success=true
         log_message "Completed ansible/${PLAYBOOK} successfully."

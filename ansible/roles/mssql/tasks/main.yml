@@ -122,6 +122,20 @@
     creates: C:\setup\mssql\extraction\SETUP.EXE
   when: not mssql_installed.exists
 
+- name: Check for lingering SQL Server setup processes
+  ansible.windows.win_powershell:
+    script: |
+      $ProgressPreference = 'SilentlyContinue'
+      $setupProcs = Get-Process -Name "setup" -ErrorAction SilentlyContinue
+      if ($setupProcs) {
+        $setupProcs | Stop-Process -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 3
+        $Ansible.Changed = $true
+      } else {
+        $Ansible.Changed = $false
+      }
+  when: not mssql_installed.exists
+
 - name: Install SQL Server
   ansible.windows.win_command: c:\setup\mssql\extraction\SETUP.EXE /configurationfile=c:\setup\mssql\sql_conf.ini
   args:
