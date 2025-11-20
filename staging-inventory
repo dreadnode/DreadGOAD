@@ -50,7 +50,7 @@ dc01 ansible_host=i-0b44adca151333169 dict_key=dc01 dns_domain=dc01 ansible_user
 ; ------------------------------------------------
 ; north.sevenkingdoms.local
 ; ------------------------------------------------
-dc02 ansible_host=i-005f14f3250847389 dict_key=dc02 dns_domain=dc01 ansible_user=ansible
+dc02 ansible_host=i-09ad7ad0c302f4919 dict_key=dc02 dns_domain=dc01 ansible_user=ansible
 srv02 ansible_host=i-01faa215efbf4819c dict_key=srv02 dns_domain=dc02 ansible_user=ansible
 ; ------------------------------------------------
 ; essos.local

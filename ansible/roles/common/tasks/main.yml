@@ -71,6 +71,8 @@
   register: module_install
   async: 300
   poll: 0
+  vars:
+    ansible_win_async_startup_timeout: 30
 
 - name: Wait for module installations to complete
   ansible.builtin.async_status:
