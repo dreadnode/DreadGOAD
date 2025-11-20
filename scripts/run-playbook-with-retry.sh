@@ -1,8 +1,13 @@
 #!/bin/bash
 # Runs a single Ansible playbook with retry logic and error-specific handling
 # Required env vars: PLAYBOOK, ENV, LOG_FILE, MAX_RETRIES, RETRY_DELAY, VERBOSE_FLAG
+# Optional env vars: LIMIT (to limit execution to specific hosts)
 
 set -euo pipefail
+
+# Build limit args if LIMIT is provided
+LIMIT_ARGS=()
+[[ -n "${LIMIT:-}" ]] && LIMIT_ARGS=(--limit "${LIMIT}")
 
 # Helper functions
 check_ansible_success() {
@@ -80,16 +85,27 @@ retry_with_error_specific_settings() {
     local temp_log=$2
     local error_type=$3
     local failed_hosts=$4
-    
+
+    # Build limit args for retry - combine user's LIMIT with failed_hosts
     local limit_args=()
-    [[ -n "$failed_hosts" ]] && limit_args=(--limit "$failed_hosts")
+    if [[ -n "${LIMIT:-}" ]] && [[ -n "$failed_hosts" ]]; then
+        # If user specified LIMIT and there are failed hosts, use both
+        # Ansible will intersect them automatically
+        limit_args=(--limit "${LIMIT}" --limit "$failed_hosts")
+    elif [[ -n "${LIMIT:-}" ]]; then
+        # Only user's LIMIT
+        limit_args=(--limit "${LIMIT}")
+    elif [[ -n "$failed_hosts" ]]; then
+        # Only failed hosts
+        limit_args=(--limit "$failed_hosts")
+    fi
     
     case "$error_type" in
         fact_gathering)
             log_message "Retrying with modified fact gathering settings..."
             ANSIBLE_GATHERING=explicit run_ansible_command "$temp_log" \
                 ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
-                "${limit_args[@]}" --forks=1 \
+                ${limit_args[@]+"${limit_args[@]}"} --forks=1 \
                 -e "ansible_facts_gathering_timeout=60" \
                 -e "gather_timeout=60" \
                 "ansible/$playbook"
@@ -98,7 +114,7 @@ retry_with_error_specific_settings() {
             log_message "Retrying with network adapter fix..."
             run_ansible_command "$temp_log" \
                 ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
-                "${limit_args[@]}" \
+                ${limit_args[@]+"${limit_args[@]}"} \
                 -e "skip_network_adapter_config=true" \
                 -e "bypass_ethernet3_check=true" \
                 "ansible/$playbook"
@@ -118,7 +134,7 @@ retry_with_error_specific_settings() {
 
             ANSIBLE_TIMEOUT=300 run_ansible_command "$temp_log" \
                 ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
-                "${limit_args[@]}" --forks=1 \
+                ${limit_args[@]+"${limit_args[@]}"} --forks=1 \
                 -e "ansible_aws_ssm_retries=10" \
                 -e "ansible_aws_ssm_retry_delay=30" \
                 -e "ansible_connection_timeout=300" \
@@ -130,7 +146,7 @@ retry_with_error_specific_settings() {
             log_message "Retrying with increased connection timeout..."
             ANSIBLE_TIMEOUT=180 run_ansible_command "$temp_log" \
                 ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
-                "${limit_args[@]}" \
+                ${limit_args[@]+"${limit_args[@]}"} \
                 -e "ansible_connection_timeout=180" \
                 -e "ansible_timeout=180" \
                 "ansible/$playbook"
@@ -139,7 +155,7 @@ retry_with_error_specific_settings() {
             log_message "Retrying with PowerShell interactive mode fix..."
             run_ansible_command "$temp_log" \
                 ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
-                "${limit_args[@]}" \
+                ${limit_args[@]+"${limit_args[@]}"} \
                 -e "ansible_shell_type=powershell" \
                 -e "force_ps_module=true" \
                 -e "ansible_ps_version=5.1" \
@@ -166,7 +182,7 @@ retry_with_error_specific_settings() {
             log_message "Retrying playbook with increased connection timeout..."
             ANSIBLE_TIMEOUT=180 run_ansible_command "$temp_log" \
                 ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
-                "${limit_args[@]}" --forks=1 \
+                ${limit_args[@]+"${limit_args[@]}"} --forks=1 \
                 -e "ansible_connection_timeout=180" \
                 -e "ansible_timeout=180" \
                 -e "ansible_facts_gathering_timeout=60" \
@@ -176,7 +192,7 @@ retry_with_error_specific_settings() {
             log_message "Retrying with general robust settings..."
             ANSIBLE_SSH_RETRIES=5 ANSIBLE_TIMEOUT=120 run_ansible_command "$temp_log" \
                 ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
-                "${limit_args[@]}" --forks=1 \
+                ${limit_args[@]+"${limit_args[@]}"} --forks=1 \
                 "ansible/$playbook"
             ;;
     esac
@@ -200,6 +216,7 @@ while [[ $retry_count -lt ${MAX_RETRIES} ]] && [[ "$success" = "false" ]]; do
     ansible_exit_code=0
     run_ansible_command "$temp_log" \
         ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
+        ${LIMIT_ARGS[@]+"${LIMIT_ARGS[@]}"} \
         -e "ansible_facts_gathering_timeout=60" \
         "ansible/${PLAYBOOK}" || ansible_exit_code=$?
     

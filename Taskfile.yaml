@@ -65,16 +65,20 @@ tasks:
         MAX_RETRIES=<n>    Maximum retry attempts (default: 3)
         RETRY_DELAY=<s>    Delay between retries in seconds (default: 30)
         PLAYS="play1.yml play2.yml"  Specific playbooks to run (default: all playbooks)
+        LIMIT=<hosts>      Limit execution to specific hosts (e.g., srv03, dc01)
 
       Examples:
         task provision ENV=prod VERBOSE=true
         task provision ENV=staging PLAYS="build.yml ad-servers.yml"
         task provision ENV=dev PLAYS=ad-data.yml
+        task provision PLAYS=laps.yml LIMIT=srv03
+        task provision LIMIT="dc01,srv03" PLAYS="ad-members.yml laps.yml"
 
       To see all available playbooks:
         task list-plays
     vars:
       PLAYS: '{{.PLAYS | default .GOAD_PLAYBOOKS}}'
+      LIMIT: '{{.LIMIT | default ""}}'
       # Generate log file name once for this provision run
       PROVISION_LOG_FILE: '$HOME/.ansible/logs/goad/{{.ENV}}-dreadgoad-{{now | date "20060102_150405"}}.log'
     deps:
@@ -83,11 +87,13 @@ tasks:
       - task: log-provision-header
         vars:
           PLAYS: '{{.PLAYS}}'
+          LIMIT: '{{.LIMIT}}'
           LOG_FILE: '{{.PROVISION_LOG_FILE}}'
       - for: {var: PLAYS, split: ' '}
         task: run-playbook-with-retry
         vars:
           PLAYBOOK: '{{.ITEM}}'
+          LIMIT: '{{.LIMIT}}'
           LOG_FILE: '{{.PROVISION_LOG_FILE}}'
       - task: log-provision-success
         vars:
@@ -142,6 +148,7 @@ tasks:
           echo "DreadGOAD provisioning process started at $(date)"
           echo "Environment: {{.ENV}}"
           echo "Max Retries: {{.MAX_RETRIES}}"
+          {{if .LIMIT}}echo "Limited to hosts: {{.LIMIT}}"{{end}}
           echo "==============================================="
           echo ""
           echo "Playbooks to be executed:"
@@ -196,7 +203,7 @@ tasks:
     requires:
       vars: [PLAYBOOK]
     cmds:
-      - PLAYBOOK={{.PLAYBOOK}} ENV={{.ENV}} LOG_FILE={{.LOG_FILE}} MAX_RETRIES={{.MAX_RETRIES}} RETRY_DELAY={{.RETRY_DELAY}} VERBOSE_FLAG={{.VERBOSE_FLAG}} ./scripts/run-playbook-with-retry.sh
+      - PLAYBOOK={{.PLAYBOOK}} ENV={{.ENV}} LOG_FILE={{.LOG_FILE}} MAX_RETRIES={{.MAX_RETRIES}} RETRY_DELAY={{.RETRY_DELAY}} VERBOSE_FLAG={{.VERBOSE_FLAG}} LIMIT={{.LIMIT}} ./scripts/run-playbook-with-retry.sh
 
   get-files:
     desc: Display content of files related to specific playbooks

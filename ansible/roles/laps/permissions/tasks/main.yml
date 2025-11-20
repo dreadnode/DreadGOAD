@@ -146,7 +146,9 @@
           $acl = $ouObj.psbase.ObjectSecurity
 
           # Set up the ACE for read permission on ms-Mcs-AdmPwd attribute
-          $identity = New-Object System.Security.Principal.SecurityIdentifier($adObject.ObjectSID)
+          # Get SID as string first, then create SecurityIdentifier
+          $sidString = $adObject.SID.Value
+          $identity = New-Object System.Security.Principal.SecurityIdentifier($sidString)
           Write-Output "Using SID: $($identity.Value)"
 
           $ace = New-Object System.DirectoryServices.ActiveDirectoryAccessRule(
@@ -177,6 +179,6 @@
       }
     error_action: continue
   register: permission_result
-  failed_when: permission_result.output[0] == false
+  failed_when: permission_result.output | last == false
   with_items: "{{ laps_readers }}"
   when: laps_readers is defined

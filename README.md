@@ -100,6 +100,18 @@ Before provisioning, ensure the following are installed and configured:
   task provision PLAYS="build.yml ad-servers.yml" ENV=staging
   ```
 
+- **Limit execution to specific hosts:**
+
+  ```bash
+  task provision PLAYS=laps.yml LIMIT=srv03
+  ```
+
+- **Combine specific playbooks with host limits:**
+
+  ```bash
+  task provision LIMIT="dc01,srv03" PLAYS="ad-members.yml laps.yml"
+  ```
+
 - **Generate instance mapping for staging environment:**
 
   ```bash
