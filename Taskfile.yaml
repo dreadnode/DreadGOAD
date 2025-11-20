@@ -12,7 +12,8 @@ vars:
   GOAD_PLAYBOOKS: 'build.yml ad-servers.yml ad-parent_domain.yml ad-child_domain.yml ad-members.yml ad-trusts.yml ad-data.yml ad-gmsa.yml laps.yml ad-relations.yml adcs.yml ad-acl.yml servers.yml security.yml vulnerabilities.yml'
   INVENTORY_FILE: './{{.ENV}}-inventory'
   LOG_DATE: '{{now | date "20060102_150405"}}'
-  LOG_FILE: 'ad_deployment_{{.LOG_DATE}}.log'
+  LOG_DIR: '$HOME/.ansible/logs/goad'
+  LOG_FILE: '$HOME/.ansible/logs/goad/{{.ENV}}-dreadgoad-{{.LOG_DATE}}.log'
   MAX_RETRIES: '{{.MAX_RETRIES | default "3"}}'
   RETRY_DELAY: '{{.RETRY_DELAY | default "30"}}'
   # Delay in seconds to wait after playbooks that cause reboots
@@ -23,6 +24,7 @@ vars:
   VERBOSE_FLAG: '{{if eq .VERBOSE "true"}}-vvv{{else}}{{end}}'
 
 env:
+  ANSIBLE_CACHE_PLUGIN_CONNECTION: '$HOME/.ansible/cache/{{.ENV}}_dreadgoad_facts'
   ANSIBLE_HOST_KEY_CHECKING: 'False'
   ANSIBLE_RETRY_FILES_ENABLED: 'True'
   ANSIBLE_GATHER_TIMEOUT: '60'
@@ -75,7 +77,7 @@ tasks:
     vars:
       PLAYS: '{{.PLAYS | default .GOAD_PLAYBOOKS}}'
       # Generate log file name once for this provision run
-      PROVISION_LOG_FILE: 'ad_deployment_{{now | date "20060102_150405"}}.log'
+      PROVISION_LOG_FILE: '$HOME/.ansible/logs/goad/{{.ENV}}-dreadgoad-{{now | date "20060102_150405"}}.log'
     deps:
       - ensure-log-dir
     cmds:
@@ -108,7 +110,7 @@ tasks:
         task ad-users ENV=prod
         task ad-users VERBOSE=true
     vars:
-      USER_LOG_FILE: 'user_creation_{{.LOG_DATE}}.log'
+      USER_LOG_FILE: '$HOME/.ansible/logs/goad/{{.ENV}}-dreadgoad-{{.LOG_DATE}}.log'
     deps:
       - ensure-log-dir
     cmds:
@@ -122,9 +124,9 @@ tasks:
   ensure-log-dir:
     internal: true
     cmds:
-      - mkdir -p $(dirname "{{.LOG_FILE}}")
+      - mkdir -p {{.LOG_DIR}}
     status:
-      - test -d $(dirname "{{.LOG_FILE}}")
+      - test -d {{.LOG_DIR}}
 
   log-provision-header:
     internal: true
@@ -281,7 +283,3 @@ tasks:
     run: always
     cmds:
       - ENV={{.ENV}} INVENTORY={{.INVENTORY}} OUTPUT={{.OUTPUT}} BACKUP={{.BACKUP}} BACKUP_FILE={{.BACKUP_FILE}} JSON={{.JSON}} ./scripts/update-inventory.sh
-    sources:
-      - '{{.INVENTORY}}'
-    generates:
-      - '{{if .OUTPUT}}{{.OUTPUT}}{{else}}{{.INVENTORY}}{{end}}'
