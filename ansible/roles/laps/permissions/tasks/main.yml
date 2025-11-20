@@ -89,29 +89,35 @@
 
       # Find the principal using different methods
       $adObject = $null
+
+      # Try as user first
       try {
-        # Try as user
-        $adObject = Get-ADUser -Identity $principal -ErrorAction SilentlyContinue
-        if ($adObject) {
-          Write-Output "Found as user: $($adObject.DistinguishedName)"
-        } else {
-          # Try as group
-          $adObject = Get-ADGroup -Identity $principal -ErrorAction SilentlyContinue
-          if ($adObject) {
-            Write-Output "Found as group: $($adObject.DistinguishedName)"
-          } else {
-            # Try as generic object
-            $adObject = Get-ADObject -Filter {(samAccountName -eq $principal) -or (name -eq $principal)} -Properties ObjectSID -ErrorAction SilentlyContinue
+        $adObject = Get-ADUser -Identity $principal -ErrorAction Stop
+        Write-Output "Found as user: $($adObject.DistinguishedName)"
+      } catch {
+        # Not a user, try as group
+        try {
+          $adObject = Get-ADGroup -Identity $principal -ErrorAction Stop
+          Write-Output "Found as group: $($adObject.DistinguishedName)"
+        } catch {
+          # Not a group, try as generic object
+          try {
+            $adObject = Get-ADObject -Filter {(samAccountName -eq $principal) -or (name -eq $principal)} -Properties ObjectSID -ErrorAction Stop
             if ($adObject) {
               Write-Output "Found as generic object: $($adObject.DistinguishedName)"
             } else {
               Write-Error "Could not find principal $principal in Active Directory"
               return $false
             }
+          } catch {
+            Write-Error "Error searching for principal $principal. Error: $($_.Exception.Message)"
+            return $false
           }
         }
-      } catch {
-        Write-Error "Error searching for principal $principal. Error: $($_.Exception.Message)"
+      }
+
+      if (-not $adObject) {
+        Write-Error "Could not find principal $principal in Active Directory"
         return $false
       }
 

@@ -29,7 +29,7 @@
   until: pri_laps_install is success
   retries: 3
   delay: 5
-  when: laps_download is success or laps_download_alt is success
+  when: laps_download is success
 
 - name: Reboot After Installing LAPS on Servers
   ansible.windows.win_reboot:
@@ -95,6 +95,9 @@
     ansible_become: true
     ansible_become_method: runas
     ansible_become_user: SYSTEM
+  failed_when:
+    - password_expire_time is failed
+    - "'already exists' not in password_expire_time.msg | default('')"
 
 - name: Add LAPS attributes to the Computer Attribute
   win_ad_object:

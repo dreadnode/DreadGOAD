@@ -143,6 +143,7 @@
   when: item.value.spns is defined
   async: 300
   poll: 0
+  register: spn_task
 
 - name: Wait for SPN configuration to complete
   async_status:
@@ -151,7 +152,7 @@
   until: spn_result.finished
   retries: 60
   delay: 5
-  loop: "{{ usercreate.results }}"
+  loop: "{{ spn_task.results }}"
   loop_control:
     label: "Configuring SPN for user: {{ item.item.key }}"
   when: item.ansible_job_id is defined
