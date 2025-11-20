@@ -16,14 +16,13 @@ vars:
   LOG_FILE: '$HOME/.ansible/logs/goad/{{.ENV}}-dreadgoad-{{.LOG_DATE}}.log'
   MAX_RETRIES: '{{.MAX_RETRIES | default "3"}}'
   RETRY_DELAY: '{{.RETRY_DELAY | default "30"}}'
-  # Delay in seconds to wait after playbooks that cause reboots
-  POST_REBOOT_DELAY: '{{.POST_REBOOT_DELAY | default "120"}}'
-  # Playbooks that cause reboots and need post-execution delay
+  # Playbooks that may trigger reboots (tracked for logging purposes only)
   REBOOT_PLAYBOOKS: 'ad-parent_domain.yml ad-child_domain.yml ad-members.yml ad-trusts.yml'
   VERBOSE: '{{.VERBOSE | default "false"}}'
   VERBOSE_FLAG: '{{if eq .VERBOSE "true"}}-vvv{{else}}{{end}}'
 
 env:
+  ANSIBLE_CONFIG: './ansible/ansible.cfg'
   ANSIBLE_CACHE_PLUGIN_CONNECTION: '$HOME/.ansible/cache/{{.ENV}}_dreadgoad_facts'
   ANSIBLE_HOST_KEY_CHECKING: 'False'
   ANSIBLE_RETRY_FILES_ENABLED: 'True'
@@ -115,11 +114,15 @@ tasks:
       - ensure-log-dir
     cmds:
       - task: log-users-header
+        vars:
+          LOG_FILE: '{{.USER_LOG_FILE}}'
       - task: run-playbook-with-retry
         vars:
           PLAYBOOK: 'ad-data.yml'
           LOG_FILE: '{{.USER_LOG_FILE}}'
       - task: log-users-success
+        vars:
+          LOG_FILE: '{{.USER_LOG_FILE}}'
 
   ensure-log-dir:
     internal: true
@@ -161,8 +164,8 @@ tasks:
 
   log-users-header:
     internal: true
-    vars:
-      USER_LOG_FILE: 'user_creation_{{.LOG_DATE}}.log'
+    requires:
+      vars: [LOG_FILE]
     cmds:
       - |
         {
@@ -173,20 +176,20 @@ tasks:
           echo "==============================================="
           echo "Playbook to be executed: ansible/ad-data.yml"
           echo "-----------------------------------------------"
-        } | tee "{{.USER_LOG_FILE}}"
+        } | tee "{{.LOG_FILE}}"
 
   log-users-success:
     internal: true
-    vars:
-      USER_LOG_FILE: 'user_creation_{{.LOG_DATE}}.log'
+    requires:
+      vars: [LOG_FILE]
     cmds:
       - |
         {
           echo "==============================================="
           echo "Active Directory user creation completed successfully at $(date)"
-          echo "Full log available at: {{.USER_LOG_FILE}}"
+          echo "Full log available at: {{.LOG_FILE}}"
           echo "==============================================="
-        } | tee -a "{{.USER_LOG_FILE}}"
+        } | tee -a "{{.LOG_FILE}}"
 
   run-playbook-with-retry:
     internal: true
@@ -194,31 +197,6 @@ tasks:
       vars: [PLAYBOOK]
     cmds:
       - PLAYBOOK={{.PLAYBOOK}} ENV={{.ENV}} LOG_FILE={{.LOG_FILE}} MAX_RETRIES={{.MAX_RETRIES}} RETRY_DELAY={{.RETRY_DELAY}} VERBOSE_FLAG={{.VERBOSE_FLAG}} ./scripts/run-playbook-with-retry.sh
-      - task: post-playbook-delay
-        vars:
-          PLAYBOOK: '{{.PLAYBOOK}}'
-          LOG_FILE: '{{.LOG_FILE}}'
-
-  post-playbook-delay:
-    internal: true
-    requires:
-      vars: [PLAYBOOK]
-    cmds:
-      - |
-        # Check if playbook is in reboot list (grep returns 0 if found, 1 if not)
-        if echo "{{.REBOOT_PLAYBOOKS}}" | grep -q "{{.PLAYBOOK}}"; then
-          {
-            echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Playbook {{.PLAYBOOK}} may have caused reboots"
-            echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Waiting {{.POST_REBOOT_DELAY}} seconds for systems to fully reconnect..."
-          } | tee -a "{{.LOG_FILE}}"
-          sleep {{.POST_REBOOT_DELAY}}
-          {
-            echo "[$(date +%Y-%m-%d\ %H:%M:%S)] Post-reboot delay complete, continuing to next playbook"
-            echo "-----------------------------------------------"
-          } | tee -a "{{.LOG_FILE}}"
-        fi
-        # Ensure task always succeeds even if grep doesn't match
-        exit 0
 
   get-files:
     desc: Display content of files related to specific playbooks

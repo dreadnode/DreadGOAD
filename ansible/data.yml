@@ -65,8 +65,46 @@
 
     - name: Check if network facts are already cached
       ansible.builtin.set_fact:
-        skip_network_detection: "{{ host_ipv4 is defined and host_ipv4 != '' }}"
-      
+        skip_ip_detection: "{{ host_ipv4 is defined and host_ipv4 != '' }}"
+        skip_adapter_detection: "{{ domain_adapter is defined and domain_adapter != '' }}"
+
+    - name: Get adapter names (always needed on first run)
+      ansible.windows.win_powershell:
+        script: |
+          $ProgressPreference = 'SilentlyContinue'
+          $ErrorActionPreference = 'Stop'
+
+          try {
+            $adapters = @(Get-NetAdapter -ErrorAction Stop | Where-Object {$_.Status -eq "Up"})
+            if ($adapters.Count -eq 0) {
+              # Fallback to WMI
+              $wmiAdapters = @(Get-WmiObject Win32_NetworkAdapter | Where-Object {$_.NetEnabled -eq $true})
+              Write-Output "DOMAIN_ADAPTER:$($wmiAdapters[0].NetConnectionID)"
+              if ($wmiAdapters.Count -gt 1) {
+                Write-Output "NAT_ADAPTER:$($wmiAdapters[1].NetConnectionID)"
+              } else {
+                Write-Output "NAT_ADAPTER:$($wmiAdapters[0].NetConnectionID)"
+              }
+              Write-Output "ADAPTER_COUNT:$($wmiAdapters.Count)"
+            } else {
+              Write-Output "DOMAIN_ADAPTER:$($adapters[0].Name)"
+              if ($adapters.Count -gt 1) {
+                Write-Output "NAT_ADAPTER:$($adapters[1].Name)"
+              } else {
+                Write-Output "NAT_ADAPTER:$($adapters[0].Name)"
+              }
+              Write-Output "ADAPTER_COUNT:$($adapters.Count)"
+            }
+            $Ansible.Changed = $false
+          } catch {
+            Write-Output "DOMAIN_ADAPTER:Ethernet"
+            Write-Output "NAT_ADAPTER:Ethernet"
+            Write-Output "ADAPTER_COUNT:1"
+            $Ansible.Changed = $false
+          }
+      register: adapter_info
+      when: not skip_adapter_detection | default(false)
+
     - name: Get all network information
       ansible.windows.win_powershell:
         script: |
@@ -120,9 +158,20 @@
       poll: 5    # Check every 5 second
       register: network_info
       ignore_errors: true
-      when: not skip_network_detection | default(false)
+      when: not skip_ip_detection | default(false)
 
-    - name: Set all network facts
+    - name: Set adapter facts from adapter detection
+      ansible.builtin.set_fact:
+        domain_adapter: "{{ adapter_info.output | select('match', '^DOMAIN_ADAPTER:') | first | regex_replace('^DOMAIN_ADAPTER:', '') | default('Ethernet') }}"
+        nat_adapter: "{{ adapter_info.output | select('match', '^NAT_ADAPTER:') | first | regex_replace('^NAT_ADAPTER:', '') | default('Ethernet') }}"
+        number_of_interfaces: "{{ adapter_info.output | select('match', '^ADAPTER_COUNT:') | first | regex_replace('^ADAPTER_COUNT:', '') | default('1') }}"
+        two_adapters: "{{ (adapter_info.output | select('match', '^ADAPTER_COUNT:') | first | regex_replace('^ADAPTER_COUNT:', '') | default('1') | int) > 1 }}"
+        cacheable: true
+      when:
+        - adapter_info is defined
+        - adapter_info.output is defined
+
+    - name: Set all network facts from full detection
       ansible.builtin.set_fact:
         domain_adapter: "{{ network_info.output | select('match', '^DOMAIN_ADAPTER:') | first | regex_replace('^DOMAIN_ADAPTER:', '') | default('Ethernet') }}"
         nat_adapter: "{{ network_info.output | select('match', '^NAT_ADAPTER:') | first | regex_replace('^NAT_ADAPTER:', '') | default('Ethernet') }}"
@@ -133,7 +182,6 @@
       when:
         - network_info is defined
         - network_info.output is defined
-        - not skip_network_detection | default(false)
 
     - name: Set fallback network facts
       ansible.builtin.set_fact:
