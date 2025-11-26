@@ -110,26 +110,17 @@ tasks:
         DEBUG=true         Enable verbose Ansible output (-vvv)
         MAX_RETRIES=<n>    Maximum retry attempts (default: 3)
         RETRY_DELAY=<s>    Delay between retries in seconds (default: 30)
+        LIMIT=<hosts>      Limit execution to specific hosts (e.g., dc01, dc02)
 
       Examples:
         task ad-users
         task ad-users ENV=prod
         task ad-users DEBUG=true
-    vars:
-      USER_LOG_FILE: '$HOME/.ansible/logs/goad/{{.ENV}}-dreadgoad-{{.LOG_DATE}}.log'
-    deps:
-      - ensure-log-dir
+        task ad-users LIMIT=dc01
     cmds:
-      - task: log-users-header
+      - task: provision
         vars:
-          LOG_FILE: '{{.USER_LOG_FILE}}'
-      - task: run-playbook-with-retry
-        vars:
-          PLAYBOOK: 'ad-data.yml'
-          LOG_FILE: '{{.USER_LOG_FILE}}'
-      - task: log-users-success
-        vars:
-          LOG_FILE: '{{.USER_LOG_FILE}}'
+          PLAYS: 'ad-data.yml'
 
   ensure-log-dir:
     internal: true
@@ -166,35 +157,6 @@ tasks:
         {
           echo "==============================================="
           echo "All selected playbooks completed successfully at $(date)"
-          echo "Full log available at: {{.LOG_FILE}}"
-          echo "==============================================="
-        } | tee -a "{{.LOG_FILE}}"
-
-  log-users-header:
-    internal: true
-    requires:
-      vars: [LOG_FILE]
-    cmds:
-      - |
-        {
-          echo "==============================================="
-          echo "Active Directory user creation started at $(date)"
-          echo "Environment: {{.ENV}}"
-          echo "Max Retries: {{.MAX_RETRIES}}"
-          echo "==============================================="
-          echo "Playbook to be executed: ansible/ad-data.yml"
-          echo "-----------------------------------------------"
-        } | tee "{{.LOG_FILE}}"
-
-  log-users-success:
-    internal: true
-    requires:
-      vars: [LOG_FILE]
-    cmds:
-      - |
-        {
-          echo "==============================================="
-          echo "Active Directory user creation completed successfully at $(date)"
           echo "Full log available at: {{.LOG_FILE}}"
           echo "==============================================="
         } | tee -a "{{.LOG_FILE}}"
