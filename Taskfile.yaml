@@ -18,8 +18,8 @@ vars:
   RETRY_DELAY: '{{.RETRY_DELAY | default "30"}}'
   # Playbooks that may trigger reboots (tracked for logging purposes only)
   REBOOT_PLAYBOOKS: 'ad-parent_domain.yml ad-child_domain.yml ad-members.yml ad-trusts.yml'
-  VERBOSE: '{{.VERBOSE | default "false"}}'
-  VERBOSE_FLAG: '{{if eq .VERBOSE "true"}}-vvv{{else}}{{end}}'
+  DEBUG: '{{.DEBUG | default "false"}}'
+  VERBOSE_FLAG: '{{if eq .DEBUG "true"}}-vvv{{else}}{{end}}'
 
 env:
   ANSIBLE_CONFIG: './ansible/ansible.cfg'
@@ -61,14 +61,14 @@ tasks:
 
       Options:
         ENV=<env>          Environment to target (default: dev)
-        VERBOSE=true       Enable verbose Ansible output
+        DEBUG=true         Enable verbose Ansible output (-vvv)
         MAX_RETRIES=<n>    Maximum retry attempts (default: 3)
         RETRY_DELAY=<s>    Delay between retries in seconds (default: 30)
         PLAYS="play1.yml play2.yml"  Specific playbooks to run (default: all playbooks)
         LIMIT=<hosts>      Limit execution to specific hosts (e.g., srv03, dc01)
 
       Examples:
-        task provision ENV=prod VERBOSE=true
+        task provision ENV=prod DEBUG=true
         task provision ENV=staging PLAYS="build.yml ad-servers.yml"
         task provision ENV=dev PLAYS=ad-data.yml
         task provision PLAYS=laps.yml LIMIT=srv03
@@ -107,14 +107,14 @@ tasks:
 
       Options:
         ENV=<env>          Environment to target (default: dev)
-        VERBOSE=true       Enable verbose Ansible output
+        DEBUG=true         Enable verbose Ansible output (-vvv)
         MAX_RETRIES=<n>    Maximum retry attempts (default: 3)
         RETRY_DELAY=<s>    Delay between retries in seconds (default: 30)
 
       Examples:
         task ad-users
         task ad-users ENV=prod
-        task ad-users VERBOSE=true
+        task ad-users DEBUG=true
     vars:
       USER_LOG_FILE: '$HOME/.ansible/logs/goad/{{.ENV}}-dreadgoad-{{.LOG_DATE}}.log'
     deps:

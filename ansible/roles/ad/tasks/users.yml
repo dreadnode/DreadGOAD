@@ -123,7 +123,7 @@
         # Add any missing SPNs
         foreach ($spn in $SPNs) {
           if ($currentSPNs -notcontains $spn) {
-            Set-ADUser -Identity $Username -Add @{ServicePrincipalNames=$spn}
+            Set-ADUser -Identity $Username -ServicePrincipalNames @{Add=$spn}
             Write-Output "Added SPN $spn to user $Username"
             $changed = $true
           } else {

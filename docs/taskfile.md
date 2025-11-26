@@ -36,13 +36,13 @@ task list-plays
 Runs the complete AD provisioning process using Ansible playbooks.
 
 ```bash
-task provision ENV=prod VERBOSE=true
+task provision ENV=prod DEBUG=true
 ```
 
 Optional variables:
 
 - `ENV`: Environment to target (default: `dev`)
-- `VERBOSE`: Enables verbose output (`true` or `false`, default: `false`)
+- `DEBUG`: Enables verbose Ansible output with `-vvv` flag (`true` or `false`, default: `false`)
 - `MAX_RETRIES`: Maximum retry attempts for failed playbooks (default: `3`)
 - `RETRY_DELAY`: Delay in seconds between retries (default: `30`)
 - `PLAYS`: List of specific playbooks to execute (default: all playbooks)

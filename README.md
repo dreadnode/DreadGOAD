@@ -127,7 +127,7 @@ Before provisioning, ensure the following are installed and configured:
 - **Run with verbose output for debugging:**
 
   ```bash
-  task provision PLAYS="ad-data.yml" VERBOSE=true
+  task provision PLAYS="ad-data.yml" DEBUG=true
   ```
 
 ---
