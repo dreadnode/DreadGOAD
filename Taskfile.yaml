@@ -231,3 +231,93 @@ tasks:
     run: always
     cmds:
       - ENV={{.ENV}} INVENTORY={{.INVENTORY}} OUTPUT={{.OUTPUT}} BACKUP={{.BACKUP}} BACKUP_FILE={{.BACKUP_FILE}} JSON={{.JSON}} ./scripts/update-inventory.sh
+
+  validate-vulns:
+    desc: Validate GOAD vulnerability configurations against documented specifications
+    summary: |
+      Validates that all GOAD vulnerabilities documented in docs/GOAD-vulnerabilities-comprehensive.md
+      are properly configured in the AWS deployment. This includes checking:
+
+      - Credential discovery vulnerabilities (passwords in descriptions, etc.)
+      - Kerberos attack vectors (AS-REP roasting, Kerberoasting)
+      - Network misconfigurations (SMB signing, LLMNR/NBT-NS)
+      - Delegation configurations (unconstrained, constrained, RBCD)
+      - MSSQL configurations and impersonation
+      - ADCS misconfigurations (ESC1-15)
+      - ACL permission chains
+      - Domain trust relationships
+      - Service configurations (IIS, Print Spooler, etc.)
+
+      Options:
+        ENV=<env>            Environment to target (default: dev)
+        VERBOSE=true         Enable verbose output with debug information
+        OUTPUT=<path>        Custom output file path for JSON results
+        REGION=<region>      AWS region (default: us-west-1)
+        FAIL_ON_ERROR=false  Don't exit with error on failed checks (useful for initial validation)
+
+      Examples:
+        task validate-vulns                                    # Validate dev environment
+        task validate-vulns ENV=staging                        # Validate staging environment
+        task validate-vulns VERBOSE=true                       # Enable verbose output
+        task validate-vulns OUTPUT=/tmp/results.json           # Custom output path
+        task validate-vulns ENV=staging FAIL_ON_ERROR=false    # Initial validation, don't fail on errors
+        task validate-vulns ENV=prod VERBOSE=true              # Validate prod with verbose output
+
+      Output:
+        - Console output with color-coded results (✓/✗/⚠)
+        - JSON report file with detailed findings
+        - Exit code 0 if all checks pass, 1 if any fail
+
+      For details on expected vulnerabilities, see:
+        docs/GOAD-vulnerabilities-comprehensive.md
+    vars:
+      VERBOSE: '{{.VERBOSE | default "false"}}'
+      OUTPUT: '{{.OUTPUT | default ""}}'
+      REGION: '{{.REGION | default "us-west-1"}}'
+      FAIL_ON_ERROR: '{{.FAIL_ON_ERROR | default "true"}}'
+    env:
+      AWS_REGION: '{{.REGION}}'
+      AWS_DEFAULT_REGION: '{{.REGION}}'
+    run: always
+    cmds:
+      - |
+        export ENV={{.ENV}}
+        export REGION={{.REGION}}
+        export INVENTORY_FILE={{.INVENTORY_FILE}}
+        export VERBOSE={{.VERBOSE}}
+        export FAIL_ON_ERROR={{.FAIL_ON_ERROR}}
+        {{if .OUTPUT}}export OUTPUT_FILE={{.OUTPUT}}{{end}}
+        ./scripts/validate-goad-vulns.sh
+
+  validate-vulns-quick:
+    desc: Quick validation of critical GOAD vulnerabilities (subset of full validation)
+    summary: |
+      Performs a quick validation of the most critical GOAD vulnerabilities:
+      - User accounts exist in all domains
+      - Key services are running (MSSQL, IIS, ADCS)
+      - SMB signing configuration
+      - Domain trusts
+
+      This is a faster alternative to 'validate-vulns' for quick sanity checks.
+
+      Options:
+        ENV=<env>            Environment to target (default: dev)
+        VERBOSE=true         Enable verbose output
+
+      Example:
+        task validate-vulns-quick
+        task validate-vulns-quick ENV=staging
+    vars:
+      VERBOSE: '{{.VERBOSE | default "false"}}'
+      REGION: '{{.REGION | default "us-west-1"}}'
+    env:
+      AWS_REGION: '{{.REGION}}'
+      AWS_DEFAULT_REGION: '{{.REGION}}'
+    run: always
+    cmds:
+      - |
+        export ENV={{.ENV}}
+        export INVENTORY_FILE={{.INVENTORY_FILE}}
+        export VERBOSE={{.VERBOSE}}
+        export QUICK_MODE=true
+        ./scripts/validate-goad-vulns.sh
