@@ -1,0 +1,32 @@
+---
+# Enable anonymous/null session enumeration
+# This allows unauthenticated users to enumerate users, groups, and shares
+# Reference: https://learn.microsoft.com/en-us/troubleshoot/windows-server/networking/anonymous-access-restrictions-are-enabled
+
+# Set RestrictAnonymous to 0 to allow anonymous enumeration
+# Values:
+#   0 = None. Rely on default permissions (allows anonymous enumeration)
+#   1 = Do not allow enumeration of SAM accounts and shares
+#   2 = No access without explicit anonymous permissions (blocks null sessions)
+- name: Enable anonymous enumeration (RestrictAnonymous = 0)
+  win_regedit:
+    path: HKLM:\System\CurrentControlSet\Control\Lsa
+    name: RestrictAnonymous
+    data: 0x0
+    type: dword
+
+# Also set RestrictAnonymousSAM to 0 for SAM account enumeration
+- name: Enable anonymous SAM enumeration (RestrictAnonymousSAM = 0)
+  win_regedit:
+    path: HKLM:\System\CurrentControlSet\Control\Lsa
+    name: RestrictAnonymousSAM
+    data: 0x0
+    type: dword
+
+# Set EveryoneIncludesAnonymous to 1 for broader anonymous access
+- name: Enable EveryoneIncludesAnonymous
+  win_regedit:
+    path: HKLM:\System\CurrentControlSet\Control\Lsa
+    name: EveryoneIncludesAnonymous
+    data: 0x1
+    type: dword

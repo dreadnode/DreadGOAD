@@ -51,7 +51,7 @@
                 "rdp_scheduler.ps1",
                 "unconstrained_delegation_user.ps1"
             ],
-            "vulns" : ["disable_firewall","directory", "credentials", "autologon", "files", "enable_llmnr", "enable_nbt-ns", "shares"],
+            "vulns" : ["disable_firewall","directory", "credentials", "autologon", "files", "enable_llmnr", "enable_nbt-ns", "shares", "anonymous_enum"],
             "vulns_vars" : {
                 "directory": {
                     "setup": "C:\\setup"
