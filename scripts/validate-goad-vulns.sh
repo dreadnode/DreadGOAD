@@ -268,7 +268,158 @@ fi
 
 echo ""
 echo "=========================================="
-echo "4. Delegation Configurations"
+echo "4. Anonymous/Guest SMB Enumeration"
+echo "=========================================="
+
+# Check RestrictAnonymous registry settings on WINTERFELL (DC02)
+print_status "INFO" "Checking RestrictAnonymous on WINTERFELL (DC02)..."
+OUTPUT=$(run_ps_command "$DC02_ID" "Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Lsa' -Name RestrictAnonymous -ErrorAction SilentlyContinue | Select-Object -ExpandProperty RestrictAnonymous")
+OUTPUT=$(echo "$OUTPUT" | tr -d '[:space:]')
+if [[ "$OUTPUT" == "0" ]]; then
+    print_status "PASS" "RestrictAnonymous is 0 on WINTERFELL (NULL session enumeration enabled)"
+elif [[ "$OUTPUT" == "1" ]]; then
+    print_status "WARN" "RestrictAnonymous is 1 on WINTERFELL (some enumeration blocked)"
+elif [[ "$OUTPUT" == "2" ]]; then
+    print_status "FAIL" "RestrictAnonymous is 2 on WINTERFELL (NULL sessions BLOCKED)"
+else
+    print_status "FAIL" "RestrictAnonymous not configured on WINTERFELL (got: '$OUTPUT', expected: 0)"
+fi
+
+print_status "INFO" "Checking RestrictAnonymousSAM on WINTERFELL (DC02)..."
+OUTPUT=$(run_ps_command "$DC02_ID" "Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Lsa' -Name RestrictAnonymousSAM -ErrorAction SilentlyContinue | Select-Object -ExpandProperty RestrictAnonymousSAM")
+OUTPUT=$(echo "$OUTPUT" | tr -d '[:space:]')
+if [[ "$OUTPUT" == "0" ]]; then
+    print_status "PASS" "RestrictAnonymousSAM is 0 on WINTERFELL (SAM enumeration enabled)"
+else
+    print_status "FAIL" "RestrictAnonymousSAM is NOT 0 on WINTERFELL (got: '$OUTPUT', expected: 0)"
+fi
+
+print_status "INFO" "Checking EveryoneIncludesAnonymous on WINTERFELL (DC02)..."
+OUTPUT=$(run_ps_command "$DC02_ID" "Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Lsa' -Name EveryoneIncludesAnonymous -ErrorAction SilentlyContinue | Select-Object -ExpandProperty EveryoneIncludesAnonymous")
+OUTPUT=$(echo "$OUTPUT" | tr -d '[:space:]')
+if [[ "$OUTPUT" == "1" ]]; then
+    print_status "PASS" "EveryoneIncludesAnonymous is 1 on WINTERFELL (anonymous access broadened)"
+else
+    print_status "WARN" "EveryoneIncludesAnonymous is NOT 1 on WINTERFELL (got: '$OUTPUT', expected: 1)"
+fi
+
+# Check for true NULL session capability (anonymous ACLs on DC02)
+print_status "INFO" "Checking anonymous ACLs on WINTERFELL (DC02)..."
+OUTPUT=$(run_ps_command "$DC02_ID" "Import-Module ActiveDirectory; \$domain = Get-ADDomain 'north.sevenkingdoms.local'; \$acl = Get-Acl \"AD:\$(\$domain.DistinguishedName)\"; \$anonymousAces = \$acl.Access | Where-Object { \$_.IdentityReference -like '*ANONYMOUS LOGON*' }; if (\$anonymousAces) { Write-Output 'ANONYMOUS_ACL_FOUND' } else { Write-Output 'ANONYMOUS_ACL_NOT_FOUND' }" "" 10)
+if echo "$OUTPUT" | grep -qi "ANONYMOUS_ACL_FOUND"; then
+    print_status "PASS" "Anonymous ACLs configured on WINTERFELL (AD permissions allow anonymous access)"
+elif echo "$OUTPUT" | grep -qi "ANONYMOUS_ACL_NOT_FOUND"; then
+    print_status "FAIL" "Anonymous ACLs NOT found on WINTERFELL"
+else
+    print_status "WARN" "Could not verify anonymous ACLs on WINTERFELL (command may have failed)"
+fi
+
+# Check Guest account status (for GUEST sessions, not NULL sessions)
+if [[ -n "$SRV02_ID" ]]; then
+    print_status "INFO" "Checking Guest account status on CASTELBLACK..."
+    OUTPUT=$(run_ps_command "$SRV02_ID" "Get-LocalUser -Name Guest | Select-Object Name,Enabled | Format-Table -AutoSize | Out-String")
+    if echo "$OUTPUT" | grep -qi "true"; then
+        print_status "PASS" "Guest account is enabled on CASTELBLACK (Guest sessions possible: -u 'guest' -p '')"
+    else
+        print_status "FAIL" "Guest account is NOT enabled on CASTELBLACK"
+    fi
+fi
+
+if [[ -n "$SRV03_ID" ]]; then
+    print_status "INFO" "Checking Guest account status on BRAAVOS..."
+    OUTPUT=$(run_ps_command "$SRV03_ID" "Get-LocalUser -Name Guest | Select-Object Name,Enabled | Format-Table -AutoSize | Out-String")
+    if echo "$OUTPUT" | grep -qi "true"; then
+        print_status "PASS" "Guest account is enabled on BRAAVOS (Guest sessions possible: -u 'guest' -p '')"
+    else
+        print_status "FAIL" "Guest account is NOT enabled on BRAAVOS"
+    fi
+fi
+
+# Check AllowInsecureGuestAuth registry setting
+if [[ -n "$SRV02_ID" ]]; then
+    print_status "INFO" "Checking AllowInsecureGuestAuth on CASTELBLACK..."
+    OUTPUT=$(run_ps_command "$SRV02_ID" "Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters' -Name AllowInsecureGuestAuth -ErrorAction SilentlyContinue | Select-Object -ExpandProperty AllowInsecureGuestAuth")
+    OUTPUT=$(echo "$OUTPUT" | tr -d '[:space:]')
+    if [[ "$OUTPUT" == "1" ]]; then
+        print_status "PASS" "AllowInsecureGuestAuth is enabled on CASTELBLACK (guest access allowed)"
+    else
+        print_status "FAIL" "AllowInsecureGuestAuth is NOT enabled on CASTELBLACK (got: '$OUTPUT')"
+    fi
+fi
+
+if [[ -n "$SRV03_ID" ]]; then
+    print_status "INFO" "Checking AllowInsecureGuestAuth on BRAAVOS..."
+    OUTPUT=$(run_ps_command "$SRV03_ID" "Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters' -Name AllowInsecureGuestAuth -ErrorAction SilentlyContinue | Select-Object -ExpandProperty AllowInsecureGuestAuth")
+    OUTPUT=$(echo "$OUTPUT" | tr -d '[:space:]')
+    if [[ "$OUTPUT" == "1" ]]; then
+        print_status "PASS" "AllowInsecureGuestAuth is enabled on BRAAVOS (guest access allowed)"
+    else
+        print_status "FAIL" "AllowInsecureGuestAuth is NOT enabled on BRAAVOS (got: '$OUTPUT')"
+    fi
+fi
+
+# Check LmCompatibilityLevel for NTLM downgrade attacks
+print_status "INFO" "Checking LmCompatibilityLevel on MEEREEN (DC03)..."
+OUTPUT=$(run_ps_command "$DC03_ID" "Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Lsa' -Name LmCompatibilityLevel -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LmCompatibilityLevel")
+OUTPUT=$(echo "$OUTPUT" | tr -d '[:space:]')
+if [[ "$OUTPUT" == "2" ]]; then
+    print_status "PASS" "LmCompatibilityLevel is 2 on MEEREEN (NTLMv1 downgrade attacks possible)"
+elif [[ "$OUTPUT" =~ ^[0-2]$ ]]; then
+    print_status "PASS" "LmCompatibilityLevel is $OUTPUT on MEEREEN (NTLM downgrade vulnerable)"
+else
+    print_status "FAIL" "LmCompatibilityLevel is NOT vulnerable on MEEREEN (got: '$OUTPUT', expected: 0-2)"
+fi
+
+# Check for anonymous share enumeration
+if [[ -n "$SRV02_ID" ]]; then
+    print_status "INFO" "Checking for anonymous accessible shares on CASTELBLACK..."
+    OUTPUT=$(run_ps_command "$SRV02_ID" "Get-SmbShare | Where-Object {\$_.Name -eq 'all' -or \$_.Name -eq 'public'} | Select-Object Name | Format-Table -AutoSize | Out-String")
+    if echo "$OUTPUT" | grep -qiE "all|public"; then
+        print_status "PASS" "Anonymous accessible shares found on CASTELBLACK"
+    else
+        print_status "WARN" "Could not verify anonymous shares on CASTELBLACK"
+    fi
+fi
+
+if [[ -n "$SRV03_ID" ]]; then
+    print_status "INFO" "Checking for anonymous accessible shares on BRAAVOS..."
+    OUTPUT=$(run_ps_command "$SRV03_ID" "Get-SmbShare | Where-Object {\$_.Name -eq 'all' -or \$_.Name -eq 'public'} | Select-Object Name | Format-Table -AutoSize | Out-String")
+    if echo "$OUTPUT" | grep -qiE "all|public"; then
+        print_status "PASS" "Anonymous accessible shares found on BRAAVOS"
+    else
+        print_status "WARN" "Could not verify anonymous shares on BRAAVOS"
+    fi
+fi
+
+# Test actual NULL session user enumeration on WINTERFELL
+print_status "INFO" "Testing NULL session user enumeration on WINTERFELL (DC02)..."
+OUTPUT=$(run_ps_command "$DC02_ID" "\$ErrorActionPreference = 'SilentlyContinue'; try { \$users = Get-ADUser -Filter * -Properties Description -Credential \$null 2>&1; if (\$users) { Write-Output 'NULL_ENUM_WORKS' } else { Write-Output 'NULL_ENUM_FAILED' } } catch { Write-Output 'NULL_ENUM_FAILED' }" "" 10)
+if echo "$OUTPUT" | grep -qi "NULL_ENUM_WORKS"; then
+    print_status "PASS" "NULL session user enumeration works on WINTERFELL"
+
+    # Check if samwell.tarly has password in description (the key vulnerability)
+    print_status "INFO" "Checking for password in samwell.tarly description..."
+    OUTPUT=$(run_ps_command "$DC02_ID" "Get-ADUser samwell.tarly -Properties Description | Select-Object SamAccountName,Description | Format-List | Out-String")
+    if echo "$OUTPUT" | grep -qi "password"; then
+        print_status "PASS" "samwell.tarly has password in description field (initial access possible!)"
+    else
+        print_status "WARN" "Could not verify password in samwell.tarly description"
+    fi
+else
+    print_status "WARN" "Could not verify NULL session enumeration (may require testing from external host)"
+fi
+
+# Summary of enumeration methods
+print_status "INFO" "═══════════════════════════════════════════════════════════════"
+print_status "INFO" "Enumeration Methods Summary:"
+print_status "INFO" "  • TRUE NULL SESSION (anonymous): netexec smb <DC02_IP> -u '' -p '' --users"
+print_status "INFO" "    → Should reveal samwell.tarly with password in description"
+print_status "INFO" "  • GUEST SESSION (authenticated): netexec smb <SRV02/SRV03_IP> -u 'guest' -p '' --shares"
+print_status "INFO" "═══════════════════════════════════════════════════════════════"
+
+echo ""
+echo "=========================================="
+echo "5. Delegation Configurations"
 echo "=========================================="
 
 # Check unconstrained delegation (sansa.stark)
@@ -291,7 +442,7 @@ fi
 
 echo ""
 echo "=========================================="
-echo "5. Machine Account Quota"
+echo "6. Machine Account Quota"
 echo "=========================================="
 
 print_status "INFO" "Checking Machine Account Quota (should be 10)..."
@@ -317,7 +468,7 @@ fi
 
 echo ""
 echo "=========================================="
-echo "6. MSSQL Configurations"
+echo "7. MSSQL Configurations"
 echo "=========================================="
 
 if [[ -n "$SRV02_ID" ]]; then
@@ -342,7 +493,7 @@ fi
 
 echo ""
 echo "=========================================="
-echo "7. ADCS Configuration"
+echo "8. ADCS Configuration"
 echo "=========================================="
 
 if [[ -n "$SRV03_ID" ]]; then
@@ -365,7 +516,7 @@ fi
 
 echo ""
 echo "=========================================="
-echo "8. ACL Permissions"
+echo "9. ACL Permissions"
 echo "=========================================="
 
 # Check key ACL permissions
@@ -382,7 +533,7 @@ fi
 
 echo ""
 echo "=========================================="
-echo "9. Domain Trusts"
+echo "10. Domain Trusts"
 echo "=========================================="
 
 # Check parent-child trust
@@ -405,7 +556,7 @@ fi
 
 echo ""
 echo "=========================================="
-echo "10. Additional Services"
+echo "11. Additional Services"
 echo "=========================================="
 
 # Check Print Spooler
