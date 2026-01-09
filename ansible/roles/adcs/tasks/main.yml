@@ -44,6 +44,8 @@
       domain_username: "{{domain_username}}"
       domain_password: "{{domain_password}}"
       ca_common_name: "{{ca_common_name}}"
+  async: 1800
+  poll: 60
 
 # ESC 8
 # ignore error if already installed
@@ -59,6 +61,8 @@
         $Ansible.Changed = $false
       }
   when: ca_web_enrollment
+  async: 1800
+  poll: 60
 
 - name: Refresh Group Policy
   ansible.windows.win_shell: |

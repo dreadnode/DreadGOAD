@@ -69,7 +69,7 @@
     - item | trim != ''
     - item | trim != 'ALL_INSTALLED'
   register: module_install
-  async: 300
+  async: 600
   poll: 0
   vars:
     ansible_win_async_startup_timeout: 30
@@ -83,12 +83,34 @@
     label: "Waiting for module: {{ async_result_item.item | default('unknown') | trim }}"
   register: async_poll_results
   until: async_poll_results.finished
-  retries: 60
+  retries: 120
   delay: 5
   when:
     - module_install is not skipped
     - async_result_item.ansible_job_id is defined
   failed_when: async_poll_results.finished and async_poll_results.failed
+
+- name: Verify DSC LCM is ready
+  ansible.windows.win_powershell:
+    script: |
+      $ProgressPreference = 'SilentlyContinue'
+      $ErrorActionPreference = "Stop"
+      try {
+        $lcm = Get-DscLocalConfigurationManager
+        if ($lcm.LCMState -ne 'Idle') {
+          throw "LCM not ready, state: $($lcm.LCMState)"
+        }
+        Write-Output "DSC LCM is ready (state: Idle)"
+        $Ansible.Changed = $false
+      } catch {
+        $Ansible.Failed = $true
+        throw $_
+      }
+  register: dsc_ready
+  retries: 5
+  delay: 5
+  until: dsc_ready is not failed
+  changed_when: false
 
 - name: Windows | Enable Remote Desktop
   ansible.windows.win_dsc:
@@ -96,6 +118,10 @@
     IsSingleInstance: 'Yes'
     Ensure: present
     UserAuthentication: Secure
+  register: rdp_result
+  retries: 3
+  delay: 10
+  until: rdp_result is not failed
 
 - name: Firewall | Allow RDP through Firewall
   ansible.windows.win_dsc:
@@ -108,6 +134,10 @@
     Localport: "3389"
     Protocol: "TCP"
     Description: "Opens the listener port for RDP"
+  register: firewall_result
+  retries: 3
+  delay: 10
+  until: firewall_result is not failed
 
 - name: Add a network static route
   ansible.windows.win_route:

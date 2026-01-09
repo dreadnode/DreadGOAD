@@ -39,6 +39,8 @@
     log_path: C:\Windows\Logs
     reboot: true
   register: child_result
+  async: 3600
+  poll: 60
   failed_when:
     - child_result is failed
     - '"already exists" not in child_result.msg | default("")'

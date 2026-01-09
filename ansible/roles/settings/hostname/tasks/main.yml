@@ -9,3 +9,28 @@
     reboot_timeout: 600
     post_reboot_delay: 30
   when: win_hostname.reboot_required
+
+- name: Ensure ssm-user is enabled after reboot (prevents connection failures)
+  ansible.windows.win_powershell:
+    script: |
+      $ErrorActionPreference = "SilentlyContinue"
+      $user = Get-LocalUser -Name ssm-user
+      if ($user -and -not $user.Enabled) {
+        try {
+          # Try using net user command as fallback if Enable-LocalUser fails
+          net user ssm-user /active:yes
+          Write-Output "ssm-user enabled via net user"
+          $Ansible.Changed = $true
+        } catch {
+          Write-Output "Could not enable ssm-user: $_"
+          $Ansible.Changed = $false
+        }
+      } elseif ($user) {
+        Write-Output "ssm-user already enabled"
+        $Ansible.Changed = $false
+      } else {
+        Write-Output "ssm-user does not exist yet"
+        $Ansible.Changed = $false
+      }
+  when: win_hostname.reboot_required
+  failed_when: false

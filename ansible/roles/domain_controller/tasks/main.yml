@@ -16,6 +16,8 @@
     dns_domain_name: "{{ domain }}"
     safe_mode_password: "{{ domain_password }}"
   register: check_domain
+  async: 3600
+  poll: 60
   failed_when: false
 
 - name: Reboot if domain creation requires it
@@ -31,6 +33,8 @@
     safe_mode_password: "{{ domain_password }}"
     domain_netbios_name: "{{ netbios_name }}"
   register: retry_domain
+  async: 3600
+  poll: 60
   when: check_domain is failed
   failed_when:
     - retry_domain is failed
@@ -71,6 +75,8 @@
     safe_mode_password: "{{ domain_password }}"
     state: domain_controller
   register: check_domain_controller
+  async: 3600
+  poll: 60
   failed_when:
     - check_domain_controller is failed
     - '"needs to be restarted" not in check_domain_controller.msg | default("")'
@@ -91,6 +97,8 @@
     safe_mode_password: "{{ domain_password }}"
     state: domain_controller
   register: retry_dc_promotion
+  async: 3600
+  poll: 60
   when: check_domain_controller is failed and "needs to be restarted" in check_domain_controller.msg | default('')
   failed_when:
     - retry_dc_promotion is defined

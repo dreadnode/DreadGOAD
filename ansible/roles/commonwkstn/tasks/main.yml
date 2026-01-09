@@ -24,6 +24,8 @@
     domain_admin_password: "{{ domain_password }}"
     state: domain
   register: domain_state
+  async: 1800
+  poll: 60
   failed_when: false
 
 - name: Reboot if needed
