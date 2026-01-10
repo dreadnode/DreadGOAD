@@ -58,7 +58,7 @@
     - name: Reboot if needed before starting DC configuration
       ansible.windows.win_reboot:
         reboot_timeout: 900
-        post_reboot_delay: 300
+        post_reboot_delay: 120
       when: pending_reboot_check.output[0] | default(false) | bool
 
   roles:

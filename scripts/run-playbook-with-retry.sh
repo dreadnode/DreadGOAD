@@ -53,6 +53,158 @@ log_message() {
     echo "[$(date +%Y-%m-%d\ %H:%M:%S)] $*" | tee -a "${LOG_FILE}"
 }
 
+# Get instance ID from inventory for a hostname
+get_instance_id() {
+    local host=$1
+    grep "^${host} " "${ENV}-inventory" | grep -oE 'ansible_host=i-[a-z0-9]+' | cut -d= -f2
+}
+
+# Fix SSM user on domain controllers using SSM Run Command (bypasses broken ssm-user)
+# This is needed because after DC promotion, the local ssm-user account is destroyed
+# and SSM Agent 2.3.612.0+ won't auto-create it on DCs - must create as domain account
+fix_ssm_user_via_run_command() {
+    local host=$1
+    local instance_id
+    instance_id=$(get_instance_id "$host")
+
+    if [[ -z "$instance_id" ]]; then
+        log_message "ERROR: Could not find instance ID for $host"
+        return 1
+    fi
+
+    log_message "Fixing ssm-user on $host ($instance_id) via SSM Run Command..."
+
+    # Get region from inventory
+    local region
+    region=$(grep 'ansible_aws_ssm_region=' "${ENV}-inventory" | head -1 | cut -d= -f2)
+    region=${region:-us-west-2}
+
+    # PowerShell script to create ssm-user as domain account
+    # Waits for ADWS, creates user if needed, adds to Domain Admins
+    local ps_script='
+$ErrorActionPreference = "Continue"
+$maxWait = 30
+$attempt = 0
+
+# Check if this is a domain controller
+$cs = Get-WmiObject Win32_ComputerSystem
+if ($cs.DomainRole -lt 4) {
+    Write-Output "Not a DC (role=$($cs.DomainRole)), skipping domain ssm-user creation"
+    exit 0
+}
+
+# Wait for ADWS to be running
+Write-Output "Waiting for AD Web Services..."
+while ($attempt -lt $maxWait) {
+    $adws = Get-Service ADWS -ErrorAction SilentlyContinue
+    if ($adws.Status -eq "Running") {
+        Write-Output "ADWS is running"
+        break
+    }
+    if ($adws.Status -eq "Stopped") {
+        Start-Service ADWS -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Seconds 10
+    $attempt++
+}
+
+# Verify AD is accessible
+try {
+    Get-ADDomain -ErrorAction Stop | Out-Null
+    Write-Output "AD is accessible"
+} catch {
+    Write-Output "ERROR: AD not accessible: $_"
+    exit 1
+}
+
+# Create or enable ssm-user
+try {
+    $user = Get-ADUser -Identity ssm-user -ErrorAction Stop
+    Write-Output "ssm-user exists, ensuring enabled..."
+    Enable-ADAccount -Identity ssm-user
+    Set-ADUser -Identity ssm-user -PasswordNeverExpires $true
+} catch {
+    Write-Output "Creating ssm-user domain account..."
+    $pwd = ConvertTo-SecureString "TempP@ss$(Get-Random)!" -AsPlainText -Force
+    New-ADUser -Name ssm-user -AccountPassword $pwd -Enabled $true -PasswordNeverExpires $true
+}
+
+# Add to Domain Admins
+try {
+    Add-ADGroupMember -Identity "Domain Admins" -Members ssm-user -ErrorAction SilentlyContinue
+    Write-Output "ssm-user added to Domain Admins"
+} catch {
+    Write-Output "ssm-user already in Domain Admins or error: $_"
+}
+
+# Restart SSM Agent
+Restart-Service AmazonSSMAgent -Force
+Write-Output "SSM Agent restarted - ssm-user fix complete"
+'
+
+    # Write script to temp file and build JSON properly
+    local tmp_script="/tmp/ssm_fix_script_$$.ps1"
+    local tmp_json="/tmp/ssm_fix_params_$$.json"
+    echo "$ps_script" > "$tmp_script"
+
+    # Use jq to properly escape the script into JSON
+    jq -n --rawfile script "$tmp_script" '{"commands": [$script]}' > "$tmp_json"
+
+    # Send command via SSM Run Command (doesn't need ssm-user to work)
+    local cmd_id
+    cmd_id=$(aws ssm send-command \
+        --instance-ids "$instance_id" \
+        --document-name "AWS-RunPowerShellScript" \
+        --parameters "file://$tmp_json" \
+        --region "$region" \
+        --timeout-seconds 600 \
+        --query 'Command.CommandId' \
+        --output text 2>&1)
+
+    rm -f "$tmp_script" "$tmp_json"
+
+    if [[ ! "$cmd_id" =~ ^[a-f0-9-]+$ ]]; then
+        log_message "ERROR: Failed to send SSM command: $cmd_id"
+        return 1
+    fi
+
+    log_message "SSM command sent: $cmd_id, waiting for completion..."
+
+    # Poll for completion
+    local status="InProgress"
+    local max_polls=60
+    local poll=0
+    while [[ "$status" == "InProgress" || "$status" == "Pending" ]] && [[ $poll -lt $max_polls ]]; do
+        sleep 5
+        status=$(aws ssm get-command-invocation \
+            --command-id "$cmd_id" \
+            --instance-id "$instance_id" \
+            --region "$region" \
+            --query 'Status' \
+            --output text 2>/dev/null || echo "Pending")
+        ((poll++))
+    done
+
+    # Get result
+    local result
+    result=$(aws ssm get-command-invocation \
+        --command-id "$cmd_id" \
+        --instance-id "$instance_id" \
+        --region "$region" \
+        --query '[Status,StandardOutputContent,StandardErrorContent]' \
+        --output text 2>&1)
+
+    log_message "SSM command result: $result"
+
+    if [[ "$status" == "Success" ]]; then
+        log_message "Successfully fixed ssm-user on $host"
+        return 0
+    else
+        log_message "WARNING: SSM command did not succeed (status=$status)"
+        return 1
+    fi
+}
+
 detect_error_type() {
     local temp_log=$1
 
@@ -120,30 +272,19 @@ retry_with_error_specific_settings() {
                 "ansible/$playbook"
             ;;
         ssm_transfer_error)
-            log_message "Retrying with SSM/S3 transfer workarounds..."
+            log_message "SSM transfer error detected - likely ssm-user account issue on DC..."
 
             if [[ -n "$failed_hosts" ]]; then
-                log_message "Attempting to enable ssm-user account and restart SSM agent on failed hosts..."
+                log_message "Fixing ssm-user via SSM Run Command (bypasses broken Session Manager)..."
 
-                # Enable ssm-user account if it's disabled (common issue on DCs after promotion)
+                # Use SSM Run Command to fix ssm-user (doesn't require working ssm-user)
                 for host in $(echo "$failed_hosts" | tr ',' ' '); do
-                    log_message "Enabling ssm-user account on $host..."
-                    ansible "$host" -i "${ENV}-inventory" \
-                        -m ansible.windows.win_shell \
-                        -a "net user ssm-user /active:yes" || true
+                    fix_ssm_user_via_run_command "$host" || true
                 done
 
-                sleep 5
-
-                # Restart SSM agent to pick up the account changes
-                log_message "Restarting SSM agent on failed hosts..."
-                ansible "$failed_hosts" -i "${ENV}-inventory" \
-                    -m win_service -a "name=AmazonSSMAgent state=restarted" || true
+                log_message "Waiting 30 seconds for SSM Agent to stabilize..."
                 sleep 30
             fi
-
-            log_message "Waiting 150 seconds for Windows networking/DNS/S3 access to fully initialize after reboot..."
-            sleep 150
 
             ANSIBLE_TIMEOUT=300 run_ansible_command "$temp_log" \
                 ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
@@ -203,25 +344,16 @@ retry_with_error_specific_settings() {
             ;;
         ssm_user_account_issue)
             log_message "SSM user account issue detected (likely after DC promotion)..."
-            log_message "This typically occurs when a server is promoted to a domain controller"
-            log_message "The local SAM database gets disabled, breaking the local ssm-user account"
+            log_message "Local ssm-user destroyed when server promoted to DC - creating as domain account"
 
             if [[ -n "$failed_hosts" ]]; then
-                log_message "Attempting to fix SSM agent on affected hosts: $failed_hosts"
-
-                # Try to restart SSM agent to recreate ssm-user as domain account
+                # Use SSM Run Command to fix ssm-user (doesn't require working ssm-user)
                 for host in $(echo "$failed_hosts" | tr ',' ' '); do
-                    log_message "Restarting SSM agent on $host to recreate ssm-user as domain account..."
-
-                    # Use PowerShell to restart SSM agent
-                    ansible "$host" -i "${ENV}-inventory" \
-                        -m ansible.windows.win_powershell \
-                        -a "script='Restart-Service -Name AmazonSSMAgent -Force; Start-Sleep -Seconds 10'" \
-                        2>&1 | tee -a "${LOG_FILE}" || true
+                    fix_ssm_user_via_run_command "$host" || true
                 done
 
-                log_message "Waiting 60 seconds for SSM agent to stabilize..."
-                sleep 60
+                log_message "Waiting 30 seconds for SSM Agent to stabilize..."
+                sleep 30
             fi
 
             log_message "Retrying playbook with robust SSM settings..."
@@ -259,8 +391,9 @@ while [[ $retry_count -lt ${MAX_RETRIES} ]] && [[ "$success" = "false" ]]; do
     true > "$temp_log"
 
     ansible_exit_code=0
-    # Kill playbook if no output for 10 minutes (not total runtime)
-    IDLE_TIMEOUT=${IDLE_TIMEOUT:-600}
+    # Kill playbook if no output for 15 minutes (not total runtime)
+    # Needs to be longer than async_status polling (60 retries × 5s = 300s per host)
+    IDLE_TIMEOUT=${IDLE_TIMEOUT:-900}
 
     # Run ansible-playbook with a FIFO to detect idle/hung state
     mkfifo /tmp/ansible_pipe_$$ 2>/dev/null || true

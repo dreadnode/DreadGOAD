@@ -46,17 +46,17 @@ dns_server_forwarder=1.1.1.1
 ; ------------------------------------------------
 ; sevenkingdoms.local
 ; ------------------------------------------------
-dc01 ansible_host=i-0d2f6f6eaaf3c0076 dict_key=dc01 dns_domain=dc01 ansible_user=ansible
+dc01 ansible_host=i-0bc44cec09945eb60 dict_key=dc01 dns_domain=dc01 ansible_user=ansible
 ; ------------------------------------------------
 ; north.sevenkingdoms.local
 ; ------------------------------------------------
-dc02 ansible_host=i-0308e6368bc59e745 dict_key=dc02 dns_domain=dc01 ansible_user=ansible
-srv02 ansible_host=i-0fc08898cc467dfcc dict_key=srv02 dns_domain=dc02 ansible_user=ansible
+dc02 ansible_host=i-0dcc36874a977e8d4 dict_key=dc02 dns_domain=dc01 ansible_user=ansible
+srv02 ansible_host=i-0cf9889090ec09c56 dict_key=srv02 dns_domain=dc02 ansible_user=ansible
 ; ------------------------------------------------
 ; essos.local
 ; ------------------------------------------------
-dc03 ansible_host=i-07dd1d9bee697efc8 dict_key=dc03 dns_domain=dc03 ansible_user=ansible
-srv03 ansible_host=i-044c4db86d1f1381b dict_key=srv03 dns_domain=dc03 ansible_user=ansible
+dc03 ansible_host=i-0ff2afa2f02ff7d30 dict_key=dc03 dns_domain=dc03 ansible_user=ansible
+srv03 ansible_host=i-04edc65c12e32694b dict_key=srv03 dns_domain=dc03 ansible_user=ansible
 
 ; LAB SCENARIO CONFIGURATION -----------------------------
 

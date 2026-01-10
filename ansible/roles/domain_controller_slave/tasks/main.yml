@@ -20,51 +20,7 @@
 
 - name: Reboot to complete domain controller setup
   ansible.windows.win_reboot:
-    reboot_timeout: 600
-    post_reboot_delay: 30
-  when: check_domain_controller.changed
-
-- name: Check if SSM Agent is installed
-  ansible.windows.win_service:
-    name: AmazonSSMAgent
-  register: ssm_service_check
-  failed_when: false
-
-- name: Fix SSM Agent after domain controller promotion
-  ansible.windows.win_powershell:
-    script: |
-      $ProgressPreference = 'SilentlyContinue'
-      $ErrorActionPreference = "Stop"
-
-      try {
-        Write-Output "Restarting SSM Agent to recreate ssm-user as domain account..."
-
-        # Restart SSM Agent to trigger recreation of ssm-user
-        Restart-Service -Name AmazonSSMAgent -Force
-
-        # Wait for service to fully restart
-        Start-Sleep -Seconds 10
-
-        # Verify SSM Agent is running
-        $ssmService = Get-Service -Name AmazonSSMAgent
-        if ($ssmService.Status -ne 'Running') {
-          throw "SSM Agent failed to start after restart"
-        }
-
-        Write-Output "SSM Agent restarted successfully"
-        $Ansible.Changed = $true
-      } catch {
-        # Don't fail the playbook if SSM restart fails - it will be handled by retry logic
-        Write-Output "Warning: Failed to restart SSM Agent: $_"
-        $Ansible.Changed = $false
-      }
-  register: ssm_restart
-  when: ssm_service_check.exists | default(false)
-  changed_when: ssm_restart.output | regex_search('SSM Agent restarted successfully')
-
-- name: Wait for SSM Agent to stabilize after domain promotion
-  ansible.builtin.pause:
-    seconds: 30
-  when:
-    - ssm_service_check.exists | default(false)
-    - ssm_restart.changed
+    reboot_timeout: 900
+    post_reboot_delay: 120
+    test_command: powershell.exe -Command "(Get-Service -Name Netlogon -ErrorAction SilentlyContinue).Status -eq 'Running'"
+  when: check_domain_controller.changed or check_domain_controller.reboot_required | default(false)
