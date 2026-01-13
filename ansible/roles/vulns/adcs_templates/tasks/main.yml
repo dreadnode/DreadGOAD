@@ -2,10 +2,19 @@
 - name: Refresh
   ansible.windows.win_command: gpupdate /force
 
-- name: Install ADCSTemplate Module
+- name: Copy ADCSTemplate zip to remote
   win_copy:
-    src: files/ADCSTemplate
-    dest: "C:\\Program Files\\WindowsPowerShell\\Modules"
+    src: files/ADCSTemplate.zip
+    dest: "C:\\Windows\\Temp\\ADCSTemplate.zip"
+
+- name: Extract ADCSTemplate module
+  win_shell: |
+    $destPath = "C:\Program Files\WindowsPowerShell\Modules\ADCSTemplate"
+    if (Test-Path $destPath) {
+        Remove-Item -Path $destPath -Recurse -Force
+    }
+    Expand-Archive -Path "C:\Windows\Temp\ADCSTemplate.zip" -DestinationPath "C:\Program Files\WindowsPowerShell\Modules" -Force
+    Remove-Item -Path "C:\Windows\Temp\ADCSTemplate.zip" -Force
 
 - name: create a directory for templates
   win_file:

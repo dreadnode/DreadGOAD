@@ -14,13 +14,8 @@
     safe_mode_password: "{{domain_password}}"
     state: domain_controller
     log_path: C:\ansible_win_domain_controller.txt
+    reboot: true
   register: check_domain_controller
-  async: 3600
-  poll: 60
-
-- name: Reboot to complete domain controller setup
-  ansible.windows.win_reboot:
-    reboot_timeout: 900
-    post_reboot_delay: 120
-    test_command: powershell.exe -Command "(Get-Service -Name Netlogon -ErrorAction SilentlyContinue).Status -eq 'Running'"
-  when: check_domain_controller.changed or check_domain_controller.reboot_required | default(false)
+  failed_when:
+    - check_domain_controller is failed
+    - '"already a domain controller" not in check_domain_controller.msg | default("")'

@@ -59,6 +59,59 @@ get_instance_id() {
     grep "^${host} " "${ENV}-inventory" | grep -oE 'ansible_host=i-[a-z0-9]+' | cut -d= -f2
 }
 
+# Quick fix: Re-enable local ssm-user account via SSM Run Command
+# This handles the common case where ssm-user exists but got disabled after reboot
+enable_ssm_user_local() {
+    local host=$1
+    local instance_id
+    instance_id=$(get_instance_id "$host")
+
+    if [[ -z "$instance_id" ]]; then
+        log_message "ERROR: Could not find instance ID for $host"
+        return 1
+    fi
+
+    local region
+    region=$(grep 'ansible_aws_ssm_region=' "${ENV}-inventory" | head -1 | cut -d= -f2)
+    region=${region:-us-west-2}
+
+    log_message "Attempting to re-enable ssm-user on $host ($instance_id)..."
+
+    # Simple command to enable local ssm-user
+    local cmd_id
+    cmd_id=$(aws ssm send-command \
+        --instance-ids "$instance_id" \
+        --document-name "AWS-RunPowerShellScript" \
+        --parameters 'commands=["try { Enable-LocalUser -Name ssm-user -ErrorAction Stop; Write-Output \"ssm-user enabled\" } catch { Write-Output \"Failed: $_\"; exit 1 }"]' \
+        --region "$region" \
+        --timeout-seconds 60 \
+        --query 'Command.CommandId' \
+        --output text 2>&1)
+
+    if [[ ! "$cmd_id" =~ ^[a-f0-9-]+$ ]]; then
+        log_message "Failed to send enable command: $cmd_id"
+        return 1
+    fi
+
+    # Wait briefly for completion
+    sleep 5
+    local status
+    status=$(aws ssm get-command-invocation \
+        --command-id "$cmd_id" \
+        --instance-id "$instance_id" \
+        --region "$region" \
+        --query 'Status' \
+        --output text 2>/dev/null || echo "Failed")
+
+    if [[ "$status" == "Success" ]]; then
+        log_message "Successfully re-enabled ssm-user on $host"
+        return 0
+    else
+        log_message "Could not enable local ssm-user on $host (status=$status), will try domain account fix"
+        return 1
+    fi
+}
+
 # Fix SSM user on domain controllers using SSM Run Command (bypasses broken ssm-user)
 # This is needed because after DC promotion, the local ssm-user account is destroyed
 # and SSM Agent 2.3.612.0+ won't auto-create it on DCs - must create as domain account
@@ -331,6 +384,13 @@ retry_with_error_specific_settings() {
                         log_message "$host is still not reachable - will retry anyway"
                     fi
                 done
+
+                # Re-enable ssm-user after reconnection (often disabled after DC promotion/reboot)
+                log_message "Re-enabling ssm-user on failed hosts (may be disabled after DC reboot)..."
+                for host in $(echo "$failed_hosts" | tr ',' ' '); do
+                    enable_ssm_user_local "$host" || fix_ssm_user_via_run_command "$host" || true
+                done
+                sleep 10
             fi
 
             log_message "Retrying playbook with increased connection timeout..."

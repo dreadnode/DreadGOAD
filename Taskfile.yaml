@@ -84,6 +84,7 @@ tasks:
     deps:
       - ensure-log-dir
       - generate-mapping
+      - prepare-adcs-zips
     cmds:
       - task: log-provision-header
         vars:
@@ -128,6 +129,16 @@ tasks:
       - mkdir -p {{.LOG_DIR}}
     status:
       - test -d {{.LOG_DIR}}
+
+  prepare-adcs-zips:
+    desc: Create ADCSTemplate.zip files for ADCS roles
+    internal: true
+    cmds:
+      - cd ansible/roles/adcs_templates/files && zip -r ADCSTemplate.zip ADCSTemplate/
+      - cd ansible/roles/vulns/adcs_templates/files && zip -r ADCSTemplate.zip ADCSTemplate/
+    status:
+      - test -f ansible/roles/adcs_templates/files/ADCSTemplate.zip
+      - test -f ansible/roles/vulns/adcs_templates/files/ADCSTemplate.zip
 
   log-provision-header:
     internal: true

@@ -97,9 +97,6 @@
   loop_control:
     label: "Setting managed_by for domainlocal group: {{ item.key }}"
   when: ad_groups['domainlocal'] is defined
-  register: domainlocal_managed_by_result
-  async: 120
-  poll: 0
 
 - name: Assign managed_by universal groups
   ansible.windows.win_powershell:
@@ -130,9 +127,6 @@
   loop_control:
     label: "Setting managed_by for universal group: {{ item.key }}"
   when: ad_groups['universal'] is defined
-  register: universal_managed_by_result
-  async: 120
-  poll: 0
 
 - name: Assign managed_by global groups
   ansible.windows.win_powershell:
@@ -163,26 +157,3 @@
   loop_control:
     label: "Setting managed_by for global group: {{ item.key }}"
   when: ad_groups['global'] is defined
-  register: global_managed_by_result
-  async: 120
-  poll: 0
-
-- name: Wait for managed_by operations to complete
-  async_status:
-    jid: "{{ item.ansible_job_id }}"
-  register: managed_by_wait
-  until: managed_by_wait.finished
-  retries: 30
-  delay: 5
-  loop: "{{ (domainlocal_managed_by_result.results | default([])) + (universal_managed_by_result.results | default([])) + (global_managed_by_result.results | default([])) }}"
-  loop_control:
-    label: "Waiting for managed_by job: {{ item.ansible_job_id | default('N/A') }}"
-  when: item.ansible_job_id is defined
-
-- name: Show managed_by results
-  ansible.builtin.debug:
-    msg:
-      - "Domainlocal groups managed_by failures: {{ domainlocal_managed_by_result.results | selectattr('failed', 'defined') | selectattr('failed') | list | length }}"
-      - "Universal groups managed_by failures: {{ universal_managed_by_result.results | selectattr('failed', 'defined') | selectattr('failed') | list | length }}"
-      - "Global groups managed_by failures: {{ global_managed_by_result.results | selectattr('failed', 'defined') | selectattr('failed') | list | length }}"
-  when: domainlocal_managed_by_result is defined or universal_managed_by_result is defined or global_managed_by_result is defined

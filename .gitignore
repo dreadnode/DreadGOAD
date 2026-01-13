@@ -43,3 +43,5 @@ scripts/archives/
 *.log
 ansible/.\\AnsiballZ_command.ps1
 .ansible
+ansible/roles/adcs_templates/files/ADCSTemplate.zip
+ansible/roles/vulns/adcs_templates/files/ADCSTemplate.zip
