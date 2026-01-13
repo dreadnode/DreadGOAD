@@ -1,0 +1,281 @@
+---
+# Base AMI playbook for GOAD MSSQL servers
+# This provisions a Windows Server base image with:
+# - PowerShell DSC modules
+# - IIS web server
+# - SQL Server Express 2019
+# - RDP enabled
+# - Windows Updates applied
+# - Cleanup for AMI creation
+
+- name: Provision GOAD MSSQL Server Base Image
+  hosts: all
+  gather_facts: true
+
+  vars:
+    sql_download_url: "https://go.microsoft.com/fwlink/p/?linkid=866658"
+    sql_instance_name: "SQLEXPRESS"
+
+  tasks:
+    - name: Install PowerShellGet and NuGet provider
+      ansible.windows.win_shell: |
+        $ProgressPreference = 'SilentlyContinue'
+        $ErrorActionPreference = 'Stop'
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Install-PackageProvider -Name NuGet -Force -Confirm:$false
+        Install-Module PowerShellGet -Force -Confirm:$false
+      register: powershellget_install
+      retries: 3
+      delay: 10
+      until: powershellget_install is not failed
+
+    - name: Install required DSC modules
+      community.windows.win_psmodule:
+        name: "{{ item }}"
+        state: present
+        accept_license: true
+        skip_publisher_check: true
+      loop:
+        - ComputerManagementDsc
+        - ActiveDirectoryDsc
+        - xNetworking
+        - NetworkingDsc
+      environment:
+        LOCALAPPDATA: 'C:\Windows\system32\config\systemprofile\AppData\Local'
+      register: dsc_install
+      retries: 3
+      delay: 10
+      until: dsc_install is not failed
+
+    - name: Verify DSC LCM is ready
+      ansible.windows.win_powershell:
+        script: |
+          $ProgressPreference = 'SilentlyContinue'
+          $ErrorActionPreference = "Stop"
+          try {
+            $lcm = Get-DscLocalConfigurationManager
+            if ($lcm.LCMState -ne 'Idle') {
+              throw "LCM not ready, state: $($lcm.LCMState)"
+            }
+            Write-Output "DSC LCM is ready (state: Idle)"
+            $Ansible.Changed = $false
+          } catch {
+            $Ansible.Failed = $true
+            throw $_
+          }
+      register: dsc_ready
+      retries: 5
+      delay: 5
+      until: dsc_ready is not failed
+      changed_when: false
+
+    - name: Install IIS Web Server
+      ansible.windows.win_feature:
+        name:
+          - Web-Server
+          - Web-WebServer
+          - Web-Common-Http
+          - Web-Default-Doc
+          - Web-Dir-Browsing
+          - Web-Http-Errors
+          - Web-Static-Content
+          - Web-Health
+          - Web-Http-Logging
+          - Web-Performance
+          - Web-Stat-Compression
+          - Web-Security
+          - Web-Filtering
+          - Web-Mgmt-Tools
+          - Web-Mgmt-Console
+        state: present
+        include_management_tools: true
+      register: iis_install
+
+    - name: Install WebDAV Publishing
+      ansible.windows.win_feature:
+        name: Web-DAV-Publishing
+        state: present
+      register: webdav_install
+
+    - name: Reboot if IIS installation requires it
+      ansible.windows.win_reboot:
+        reboot_timeout: 600
+        post_reboot_delay: 60
+      when: iis_install.reboot_required or webdav_install.reboot_required
+
+    - name: Create SQL Server setup directories
+      ansible.windows.win_file:
+        path: "{{ item }}"
+        state: directory
+      loop:
+        - C:\setup\mssql
+        - C:\setup\mssql\media
+        - C:\setup\mssql\extraction
+        - C:\setup\mssql\logs
+
+    - name: Download SQL Server Express installer
+      ansible.windows.win_get_url:
+        url: "{{ sql_download_url }}"
+        dest: C:\setup\mssql\sql_installer.exe
+        timeout: 600
+      register: sql_download
+      retries: 3
+      delay: 10
+      until: sql_download is not failed
+
+    - name: Download SQL Express full installation media
+      ansible.windows.win_command: C:\setup\mssql\sql_installer.exe /ACTION=Download /MEDIAPATH=C:\setup\mssql\media /Q
+      args:
+        creates: C:\setup\mssql\media\SQLEXPR_x64_ENU.exe
+      register: sql_media_download
+
+    - name: Extract SQL Server installation files
+      ansible.windows.win_command: C:\setup\mssql\media\SQLEXPR_x64_ENU.exe /x:C:\setup\mssql\extraction /q
+      args:
+        creates: C:\setup\mssql\extraction\SETUP.EXE
+      register: sql_extraction
+
+    - name: Create SQL Server configuration file
+      ansible.windows.win_copy:
+        dest: C:\setup\mssql\sql_conf.ini
+        content: |
+          ;SQL Server 2019 Express Configuration File
+          [OPTIONS]
+          ACTION="Install"
+          QUIET="True"
+          FEATURES=SQLENGINE
+          INSTANCENAME="{{ sql_instance_name }}"
+          SQLSVCACCOUNT="NT AUTHORITY\NETWORK SERVICE"
+          SQLSYSADMINACCOUNTS="BUILTIN\Administrators"
+          AGTSVCACCOUNT="NT AUTHORITY\NETWORK SERVICE"
+          TCPENABLED="1"
+          NPENABLED="1"
+          BROWSERSVCSTARTUPTYPE="Automatic"
+          SECURITYMODE="SQL"
+          SAPWD="TempPassword123!"
+          IACCEPTSQLSERVERLICENSETERMS="True"
+          SUPPRESSPRIVACYSTATEMENTNOTICE="True"
+          UPDATEENABLED="False"
+          USEMICROSOFTUPDATE="False"
+
+    - name: Check if SQL Server is already installed
+      ansible.windows.win_reg_stat:
+        path: "HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL15.{{ sql_instance_name }}"
+      register: mssql_installed
+      failed_when: false
+
+    - name: Install SQL Server Express
+      ansible.windows.win_command: C:\setup\mssql\extraction\SETUP.EXE /configurationfile=C:\setup\mssql\sql_conf.ini
+      args:
+        chdir: C:\setup\mssql
+      register: mssql_install
+      when: not mssql_installed.exists
+      failed_when:
+        - mssql_install.rc != 0
+        - "'No features were installed during the setup execution' not in mssql_install.stdout"
+
+    - name: Configure SQL Server TCP port
+      ansible.windows.win_regedit:
+        path: 'HKLM:\Software\Microsoft\Microsoft SQL Server\MSSQL15.{{ sql_instance_name }}\MSSQLServer\SuperSocketNetLib\Tcp\IPAll'
+        name: TcpPort
+        data: "1433"
+        type: string
+      register: sql_tcp_port
+
+    - name: Reboot if SQL Server port was changed
+      ansible.windows.win_reboot:
+        reboot_timeout: 600
+        post_reboot_delay: 60
+      when: sql_tcp_port.changed
+
+    - name: Enable Remote Desktop
+      ansible.windows.win_dsc:
+        resource_name: RemoteDesktopAdmin
+        IsSingleInstance: 'Yes'
+        Ensure: present
+        UserAuthentication: Secure
+      register: rdp_result
+      retries: 3
+      delay: 10
+      until: rdp_result is not failed
+
+    - name: Allow RDP through Windows Firewall
+      ansible.windows.win_dsc:
+        resource_name: xFirewall
+        Name: "Administrator access for RDP (TCP-In)"
+        Ensure: present
+        Enabled: true
+        Profile: "Domain"
+        Direction: "Inbound"
+        Localport: "3389"
+        Protocol: "TCP"
+        Description: "Opens the listener port for RDP"
+      register: firewall_result
+      retries: 3
+      delay: 10
+      until: firewall_result is not failed
+
+    - name: Allow SQL Server through Windows Firewall (TCP 1433)
+      ansible.windows.win_dsc:
+        resource_name: xFirewall
+        Name: "Access for MSSQL (TCP-In)"
+        Ensure: present
+        Enabled: true
+        Profile: "Domain"
+        Direction: "Inbound"
+        Localport: "1433"
+        Protocol: "TCP"
+        Description: "Opens the listener port for MSSQL"
+
+    - name: Allow SQL Server Browser through Windows Firewall (UDP 1434)
+      ansible.windows.win_dsc:
+        resource_name: xFirewall
+        Name: "Access for MSSQL Browser (UDP-In)"
+        Ensure: present
+        Enabled: true
+        Profile: "Domain"
+        Direction: "Inbound"
+        Localport: "1434"
+        Protocol: "UDP"
+        Description: "Opens the discover port for MSSQL Browser"
+
+    - name: Enable Windows Update service
+      ansible.windows.win_service:
+        name: wuauserv
+        state: started
+        start_mode: auto
+
+    - name: Install all Windows Updates
+      ansible.windows.win_updates:
+        category_names: '*'
+        reboot: true
+        reboot_timeout: 3600
+      register: update_result
+
+    - name: Cleanup for AMI creation
+      ansible.windows.win_powershell:
+        script: |
+          $ProgressPreference = 'SilentlyContinue'
+          Write-Host "Cleaning up for AMI creation..."
+
+          # Clear Windows Update download cache
+          Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\Windows\SoftwareDistribution\Download\*" -Recurse -Force -ErrorAction SilentlyContinue
+          Start-Service -Name wuauserv
+
+          # Clear temp files
+          Remove-Item -Path "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
+
+          # Keep the SQL Server installation files for potential reinstall/repair
+          # But remove the downloaded media to save space
+          Remove-Item -Path "C:\setup\mssql\media\*" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\setup\mssql\extraction\*" -Recurse -Force -ErrorAction SilentlyContinue
+
+          # Clear event logs
+          wevtutil cl Application
+          wevtutil cl Security
+          wevtutil cl System
+
+          Write-Host "Cleanup complete"
+      register: cleanup_result

@@ -451,9 +451,21 @@ while [[ $retry_count -lt ${MAX_RETRIES} ]] && [[ "$success" = "false" ]]; do
     true > "$temp_log"
 
     ansible_exit_code=0
-    # Kill playbook if no output for 15 minutes (not total runtime)
-    # Needs to be longer than async_status polling (60 retries × 5s = 300s per host)
-    IDLE_TIMEOUT=${IDLE_TIMEOUT:-900}
+    # Kill playbook if no output for 20 minutes (not total runtime)
+    # Needs to be longer than win_reboot (900s timeout + 120s post_reboot_delay = 1020s)
+    # and async_status polling (60 retries × 5s = 300s per host)
+    IDLE_TIMEOUT=${IDLE_TIMEOUT:-1200}
+
+    # Kill a process and all its descendants
+    kill_tree() {
+        local pid=$1
+        local sig=${2:-TERM}
+        # Kill children first (depth-first)
+        for child in $(pgrep -P "$pid" 2>/dev/null); do
+            kill_tree "$child" "$sig"
+        done
+        kill -"$sig" "$pid" 2>/dev/null
+    }
 
     # Run ansible-playbook with a FIFO to detect idle/hung state
     mkfifo /tmp/ansible_pipe_$$ 2>/dev/null || true
@@ -466,6 +478,9 @@ while [[ $retry_count -lt ${MAX_RETRIES} ]] && [[ "$success" = "false" ]]; do
     ) &
 
     ansible_pid=$!
+
+    # Clean up on interrupt (Ctrl+C, TERM, etc.)
+    trap 'log_message "Interrupted, killing ansible process tree..."; kill_tree $ansible_pid TERM; sleep 1; kill_tree $ansible_pid KILL; exit 130' INT TERM
 
     # Monitor for idle timeout
     last_output_time=$(date +%s)
@@ -489,10 +504,10 @@ while [[ $retry_count -lt ${MAX_RETRIES} ]] && [[ "$success" = "false" ]]; do
             # No new output
             idle_time=$((current_time - last_output_time))
             if [[ $idle_time -gt $IDLE_TIMEOUT ]]; then
-                log_message "ERROR: No output for ${IDLE_TIMEOUT} seconds, killing playbook (PID: $ansible_pid)"
-                kill -TERM $ansible_pid 2>/dev/null
+                log_message "ERROR: No output for ${IDLE_TIMEOUT} seconds, killing playbook (PID: $ansible_pid) and children"
+                kill_tree $ansible_pid TERM
                 sleep 2
-                kill -KILL $ansible_pid 2>/dev/null
+                kill_tree $ansible_pid KILL
                 ansible_exit_code=124  # Use same exit code as timeout command
                 break
             fi
@@ -500,6 +515,7 @@ while [[ $retry_count -lt ${MAX_RETRIES} ]] && [[ "$success" = "false" ]]; do
     done
 
     wait $ansible_pid 2>/dev/null || ansible_exit_code=$(cat /tmp/ansible_exit_$$ 2>/dev/null || echo 1)
+    trap - INT TERM  # Reset trap
     rm -f /tmp/ansible_exit_$$ /tmp/ansible_pipe_$$ 2>/dev/null
     
     log_message "Ansible exit code: $ansible_exit_code"

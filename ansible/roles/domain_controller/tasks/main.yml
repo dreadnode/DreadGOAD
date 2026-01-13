@@ -20,13 +20,57 @@
   poll: 60
   failed_when: false
 
+# Async tasks don't reliably return reboot_required - check explicitly
+- name: Check if reboot is pending after domain creation
+  ansible.windows.win_powershell:
+    script: |
+      $ProgressPreference = 'SilentlyContinue'
+      # Check multiple reboot indicators
+      $pending = $false
+      $reason = @()
+
+      # Component Based Servicing
+      if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending") {
+          $pending = $true
+          $reason += "CBS"
+      }
+      # Windows Update
+      if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired") {
+          $pending = $true
+          $reason += "WindowsUpdate"
+      }
+      # Pending File Rename
+      $pfro = Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager" -Name PendingFileRenameOperations -EA SilentlyContinue
+      if ($pfro) {
+          $pending = $true
+          $reason += "FileRename"
+      }
+      # DC promo pending (NTDS not running but AD DS installed)
+      $adFeature = Get-WindowsFeature AD-Domain-Services -EA SilentlyContinue
+      $ntds = Get-Service NTDS -EA SilentlyContinue
+      if ($adFeature.InstallState -eq 'Installed' -and $ntds.Status -ne 'Running') {
+          $pending = $true
+          $reason += "DCPromo"
+      }
+
+      $Ansible.Result = @{
+          pending = $pending
+          reasons = $reason -join ","
+      }
+  register: reboot_check
+  when: check_domain is changed
+  changed_when: false
+
 - name: Reboot if domain creation requires it
   ansible.windows.win_reboot:
     reboot_timeout: 900
     post_reboot_delay: 120
     test_command: powershell.exe -Command "(Get-Service -Name Netlogon -ErrorAction SilentlyContinue).Status -eq 'Running'"
-  when: check_domain.reboot_required | default(false) or
-        (check_domain is failed and "needs to be restarted" in check_domain.msg | default(''))
+  when: >-
+    check_domain.reboot_required | default(false) or
+    (check_domain is failed and "needs to be restarted" in check_domain.msg | default('')) or
+    (check_domain is changed) or
+    (reboot_check.result.pending | default(false))
 
 - name: Re-attempt domain creation
   microsoft.ad.domain:
@@ -47,8 +91,10 @@
     reboot_timeout: 900
     post_reboot_delay: 120
     test_command: powershell.exe -Command "(Get-Service -Name Netlogon -ErrorAction SilentlyContinue).Status -eq 'Running'"
-  when: retry_domain.reboot_required | default(false) or
-        (retry_domain is failed and "needs to be restarted" in retry_domain.msg | default(''))
+  when: >-
+    retry_domain.reboot_required | default(false) or
+    (retry_domain is failed and "needs to be restarted" in retry_domain.msg | default('')) or
+    (retry_domain is changed)
 
 - name: Wait for domain to fully initialize
   ansible.windows.win_powershell:
@@ -89,8 +135,10 @@
     reboot_timeout: 900
     post_reboot_delay: 120
     test_command: powershell.exe -Command "(Get-Service -Name Netlogon -ErrorAction SilentlyContinue).Status -eq 'Running'"
-  when: check_domain_controller.reboot_required | default(false) or
-        (check_domain_controller is failed and "needs to be restarted" in check_domain_controller.msg | default(''))
+  when: >-
+    check_domain_controller.reboot_required | default(false) or
+    (check_domain_controller is failed and "needs to be restarted" in check_domain_controller.msg | default('')) or
+    (check_domain_controller is changed)
 
 - name: Re-attempt domain controller promotion if needed
   microsoft.ad.domain_controller:
@@ -109,13 +157,15 @@
     - '"needs to be restarted" not in retry_dc_promotion.msg | default("")'
     - '"already a domain controller" not in retry_dc_promotion.msg | default("")'
 
-- name: Reboot after retry if needed
+- name: Reboot after DC promotion retry if needed
   ansible.windows.win_reboot:
     reboot_timeout: 900
     post_reboot_delay: 120
     test_command: powershell.exe -Command "(Get-Service -Name Netlogon -ErrorAction SilentlyContinue).Status -eq 'Running'"
-  when: retry_dc_promotion.reboot_required | default(false) or
-        (retry_dc_promotion is defined and retry_dc_promotion is failed and "needs to be restarted" in retry_dc_promotion.msg | default(''))
+  when: >-
+    retry_dc_promotion.reboot_required | default(false) or
+    (retry_dc_promotion is defined and retry_dc_promotion is failed and "needs to be restarted" in retry_dc_promotion.msg | default('')) or
+    (retry_dc_promotion is defined and retry_dc_promotion is changed)
 
 - name: Check domain controller status
   ansible.windows.win_powershell:
