@@ -90,6 +90,9 @@ Before provisioning, ensure the following are installed and configured:
    task provision ENV=dev
    ```
 
+   > **Note:** Full provisioning of the DreadGOAD environment typically takes
+   > approximately **2.5 hours** to complete all playbooks.
+
 ---
 
 ### 🛠️ Useful Task Examples
