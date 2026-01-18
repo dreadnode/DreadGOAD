@@ -30,3 +30,43 @@
     name: EveryoneIncludesAnonymous
     data: 0x1
     type: dword
+
+# Enable anonymous SID/name translation via security policy
+# This is CRITICAL for rpcclient enumeration, RID cycling, and LDAP anonymous queries
+# Reference: https://learn.microsoft.com/en-us/windows/security/threat-protection/security-policy-settings/network-access-allow-anonymous-sidname-translation
+- name: Create minimal security policy template with LSAAnonymousNameLookup
+  ansible.windows.win_copy:
+    content: |
+      [Unicode]
+      Unicode=yes
+      [Version]
+      signature="$CHICAGO$"
+      Revision=1
+      [System Access]
+      LSAAnonymousNameLookup = 1
+    dest: C:\temp-anon-policy.inf
+
+- name: Apply LSAAnonymousNameLookup security policy
+  ansible.windows.win_shell: secedit /configure /db C:\windows\security\local.sdb /cfg C:\temp-anon-policy.inf /areas SECURITYPOLICY
+  register: secedit_result
+  failed_when: secedit_result.rc != 0
+
+- name: Remove temporary policy file
+  ansible.windows.win_file:
+    path: C:\temp-anon-policy.inf
+    state: absent
+
+- name: Verify LSAAnonymousNameLookup is enabled
+  ansible.windows.win_shell: |
+    secedit /export /cfg C:\temp-verify.inf
+    $result = Get-Content C:\temp-verify.inf | Select-String 'LSAAnonymousNameLookup'
+    Remove-Item C:\temp-verify.inf -Force
+    Write-Output $result
+  args:
+    executable: powershell.exe
+  register: verify_result
+  changed_when: false
+
+- name: Display LSAAnonymousNameLookup verification
+  ansible.builtin.debug:
+    msg: "LSAAnonymousNameLookup status: {{ verify_result.stdout_lines }}"
