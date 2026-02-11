@@ -53,6 +53,55 @@ log_message() {
     echo "[$(date +%Y-%m-%d\ %H:%M:%S)] $*" | tee -a "${LOG_FILE}"
 }
 
+# Clean up stale SSM sessions to prevent connection saturation
+cleanup_stale_ssm_sessions() {
+    log_message "Cleaning up stale SSM sessions..."
+
+    local region
+    region=$(grep 'ansible_aws_ssm_region=' "${ENV}-inventory" | head -1 | cut -d= -f2)
+    region=${region:-us-west-2}
+
+    # Get all instance IDs from inventory
+    local instance_ids
+    instance_ids=$(grep -oE 'ansible_host=i-[a-z0-9]+' "${ENV}-inventory" | cut -d= -f2 | sort -u | tr '\n' ' ')
+
+    if [[ -z "$instance_ids" ]]; then
+        log_message "No instances found in inventory"
+        return 0
+    fi
+
+    local terminated=0
+    local max_age_minutes=15  # Aggressive cleanup - 15 minutes
+    local cutoff_time
+    cutoff_time=$(date -u -v-${max_age_minutes}M +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -d "${max_age_minutes} minutes ago" +%Y-%m-%dT%H:%M:%S)
+
+    for instance_id in $instance_ids; do
+        # Get active sessions for this instance
+        local sessions
+        sessions=$(aws ssm describe-sessions \
+            --state Active \
+            --filters "key=Target,value=${instance_id}" \
+            --region "$region" \
+            --query "Sessions[?StartDate<='${cutoff_time}'].SessionId" \
+            --output text 2>/dev/null || echo "")
+
+        for session_id in $sessions; do
+            if [[ -n "$session_id" && "$session_id" != "None" ]]; then
+                aws ssm terminate-session --session-id "$session_id" --region "$region" >/dev/null 2>&1 && {
+                    ((terminated++))
+                } || true
+            fi
+        done
+    done
+
+    if [[ $terminated -gt 0 ]]; then
+        log_message "Terminated $terminated stale SSM session(s)"
+        sleep 5  # Brief pause after cleanup
+    else
+        log_message "No stale sessions found"
+    fi
+}
+
 # Get instance ID from inventory for a hostname
 get_instance_id() {
     local host=$1
@@ -327,6 +376,9 @@ retry_with_error_specific_settings() {
         ssm_transfer_error)
             log_message "SSM transfer error detected - likely ssm-user account issue on DC..."
 
+            # Clean up stale sessions first
+            cleanup_stale_ssm_sessions
+
             if [[ -n "$failed_hosts" ]]; then
                 log_message "Fixing ssm-user via SSM Run Command (bypasses broken Session Manager)..."
 
@@ -370,6 +422,10 @@ retry_with_error_specific_settings() {
             ;;
         ssm_reconnection_needed)
             log_message "TargetNotConnected detected - waiting for SSM reconnection after reboot..."
+
+            # Clean up stale sessions first
+            cleanup_stale_ssm_sessions
+
             log_message "Waiting 120 seconds for Windows systems to reboot and SSM agent to reconnect..."
             sleep 120
 
@@ -522,8 +578,12 @@ while [[ $retry_count -lt ${MAX_RETRIES} ]] && [[ "$success" = "false" ]]; do
 
     # Check if playbook timed out (timeout command returns 124)
     if [[ "$ansible_exit_code" -eq 124 ]]; then
-        log_message "ERROR: Playbook timed out after ${PLAYBOOK_TIMEOUT} seconds"
+        log_message "ERROR: Playbook timed out (idle timeout reached)"
         log_message "This usually indicates hung async tasks or SSM connection issues"
+
+        # Clean up stale sessions before retry
+        cleanup_stale_ssm_sessions
+
         retry_count=$((retry_count + 1))
         if [[ $retry_count -lt ${MAX_RETRIES} ]]; then
             log_message "Will retry playbook..."
