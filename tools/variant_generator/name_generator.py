@@ -138,17 +138,29 @@ class NameGenerator:
         return self.ensure_unique(subdomain)
 
     def generate_first_name(self) -> str:
-        """Generate a realistic first name."""
-        name = secrets.choice(self.first_names)
-        return self.ensure_unique(name)
+        """Generate a realistic first name (unique per call context)."""
+        return secrets.choice(self.first_names)
 
     def generate_last_name(self) -> str:
-        """Generate a realistic last name."""
-        name = secrets.choice(self.last_names)
-        return self.ensure_unique(name)
+        """Generate a realistic last name (unique per call context)."""
+        return secrets.choice(self.last_names)
 
     def generate_username(self) -> str:
-        """Generate a username in firstname.lastname format."""
+        """Generate a username in firstname.lastname format.
+
+        Uniqueness is enforced on the final username only, not on
+        individual first/last components. This preserves the full
+        96×96 = 9216 combinatorial space instead of exhausting the
+        ~96-element pools independently.
+        """
+        for _ in range(1000):
+            first = self.generate_first_name()
+            last = self.generate_last_name()
+            username = f"{first.lower()}.{last.lower()}"
+            if username.lower() not in self.used_names:
+                self.used_names.add(username.lower())
+                return username
+        # Fallback: append a counter to force uniqueness
         first = self.generate_first_name()
         last = self.generate_last_name()
         username = f"{first.lower()}.{last.lower()}"
@@ -158,13 +170,13 @@ class NameGenerator:
         """Generate a group name with thematic words."""
         # Mix of single words and compound names
         if secrets.SystemRandom().random() < self.COMPOUND_GROUP_PROBABILITY:
-            # Simple theme word
-            name = secrets.choice(self.group_themes)
-        else:
             # Compound name
             theme = secrets.choice(self.group_themes)
             suffix = secrets.choice(['Team', 'Group', 'Unit', 'Squad', 'Staff'])
             name = f"{theme}{suffix}"
+        else:
+            # Simple theme word
+            name = secrets.choice(self.group_themes)
 
         return self.ensure_unique(name)
 

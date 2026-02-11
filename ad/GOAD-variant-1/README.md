@@ -7,7 +7,7 @@ This is a graph-isomorphic variant of the GOAD (Game of Active Directory) lab en
 - **All entity names have been randomized** while preserving the complete structure
 - **Attack paths remain identical** to the original GOAD
 - **All vulnerabilities preserved** with the same relationships
-- **All 6 provider configs included**: VirtualBox, VMware, Proxmox, AWS, Azure, Ludus
+- **All 7 provider configs included**: VirtualBox, VMware, VMware ESXi, Proxmox, AWS, Azure, Ludus
 
 ## Structure
 

@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import json
 import re
+import secrets
 import shutil
 from pathlib import Path
-from typing import Dict, List, Tuple, Set
+from typing import List, Tuple
 import argparse
-import sys
 
 # Support both package import and direct script execution
 try:
@@ -48,6 +48,12 @@ class GOADVariantGenerator:
         # Ordered replacement list (longest first to avoid substring issues)
         self.replacements: List[Tuple[str, str]] = []
 
+        # Structured password lookup: new_username -> new_password
+        # Built during map_passwords() to fix collisions where a password
+        # string equals a username (e.g., hodor/hodor) and global text
+        # replacement would corrupt the password field.
+        self.user_password_map: dict[str, str] = {}
+
         # Track preserved names (service accounts, etc.)
         self.preserved_users = {"sql_svc"}
 
@@ -66,8 +72,6 @@ class GOADVariantGenerator:
 
     def map_domains(self, config: dict) -> None:
         """Map domain names and NetBIOS names."""
-        domains = config['lab']['domains']
-
         # Identify domain hierarchy
         # Root: sevenkingdoms.local
         # Child: north.sevenkingdoms.local
@@ -110,6 +114,12 @@ class GOADVariantGenerator:
         print(f"  {child_domain} -> {child_full}")
         print(f"  {external_domain} -> {external_full}")
 
+    # Known typos/aliases in upstream GOAD source that differ from canonical hostnames
+    HOSTNAME_ALIASES = {
+        "braavos": ["Bravos"],   # responder.ps1 uses \\Bravos\private
+        "meereen": ["Meren"],    # ntlm_relay.ps1 uses \\Meren\Private
+    }
+
     def map_hosts(self, config: dict) -> None:
         """Map host identifiers and hostnames."""
         hosts = config['lab']['hosts']
@@ -142,13 +152,17 @@ class GOADVariantGenerator:
             # Map capitalized version (for city names, descriptions, etc.)
             self.mappings['misc'][old_hostname.capitalize()] = new_hostname.capitalize()
 
+            # Map known typos/aliases from upstream GOAD source
+            for alias in self.HOSTNAME_ALIASES.get(old_hostname, []):
+                self.mappings['misc'][alias] = new_hostname.capitalize()
+
             print(f"  {host_id}: {old_hostname} -> {new_hostname}")
 
     def map_users(self, config: dict) -> None:
         """Map usernames and their firstname/surname components."""
         domains = config['lab']['domains']
 
-        for domain_name, domain_info in domains.items():
+        for _, domain_info in domains.items():
             users = domain_info.get('users', {})
 
             for username, user_info in users.items():
@@ -196,7 +210,7 @@ class GOADVariantGenerator:
         """Map group names."""
         domains = config['lab']['domains']
 
-        for domain_name, domain_info in domains.items():
+        for _, domain_info in domains.items():
             groups_section = domain_info.get('groups', {})
 
             for group_type in ['universal', 'global', 'domainlocal']:
@@ -216,7 +230,7 @@ class GOADVariantGenerator:
         """Map organizational unit names."""
         domains = config['lab']['domains']
 
-        for domain_name, domain_info in domains.items():
+        for _, domain_info in domains.items():
             ous = domain_info.get('organisation_units', {})
 
             for ou_name in ous.keys():
@@ -230,9 +244,9 @@ class GOADVariantGenerator:
         cities = set()
 
         # Collect all unique cities
-        for domain_name, domain_info in domains.items():
+        for _, domain_info in domains.items():
             users = domain_info.get('users', {})
-            for username, user_info in users.items():
+            for _, user_info in users.items():
                 city = user_info.get('city', '')
                 if city and city != '-':
                     cities.add(city)
@@ -267,12 +281,12 @@ class GOADVariantGenerator:
         passwords = set()
 
         # Domain passwords
-        for domain_name, domain_info in domains.items():
+        for _, domain_info in domains.items():
             if 'domain_password' in domain_info:
                 passwords.add(domain_info['domain_password'])
 
         # User passwords
-        for domain_name, domain_info in domains.items():
+        for _, domain_info in domains.items():
             users = domain_info.get('users', {})
             for username, user_info in users.items():
                 if 'password' in user_info:
@@ -318,14 +332,26 @@ class GOADVariantGenerator:
             self.mappings['passwords'][password] = new_password
             print(f"  {password[:20]}... -> {new_password[:20]}...")
 
+        # Build structured user→password lookup so fix_passwords() can
+        # correct collisions where global text replacement corrupts
+        # password fields (e.g., password "hodor" replaced as username).
+        for _, domain_info in domains.items():
+            users = domain_info.get('users', {})
+            for username, user_info in users.items():
+                if 'password' in user_info:
+                    new_username = self.mappings['users'].get(username, username)
+                    old_password = user_info['password']
+                    new_password = self.mappings['passwords'].get(old_password, old_password)
+                    self.user_password_map[new_username] = new_password
+
     def map_gmsa_accounts(self, config: dict) -> None:
         """Map gMSA account names."""
         domains = config['lab']['domains']
 
-        for domain_name, domain_info in domains.items():
+        for _, domain_info in domains.items():
             gmsa_section = domain_info.get('gmsa', {})
 
-            for gmsa_key, gmsa_info in gmsa_section.items():
+            for _, gmsa_info in gmsa_section.items():
                 if 'gMSA_Name' in gmsa_info:
                     old_gmsa_name = gmsa_info['gMSA_Name']
                     new_gmsa_name = self.name_gen.generate_gmsa_name()
@@ -429,9 +455,6 @@ class GOADVariantGenerator:
                 ))
 
         # 3. DN paths - need to handle DC= components
-        # Build DN component mappings
-        dn_components = {}
-
         # Map domain components in DN paths
         for old_domain, new_domain in self.mappings['domains'].items():
             old_parts = old_domain.replace('.local', '').split('.')
@@ -501,18 +524,43 @@ class GOADVariantGenerator:
         print(f"Built {len(self.replacements)} ordered replacements")
 
     def apply_replacements(self, content: str) -> str:
-        """Apply all replacements to content string."""
+        """
+        Apply all replacements to content string.
+
+        Uses word-boundary aware replacements for firstname/surname components
+        to prevent substring collisions (e.g., 'robert' inside 'roberts').
+        """
         for old, new in self.replacements:
             if old == new:
                 continue
-            content = content.replace(old, new)
+
+            # Check if this is a firstname/surname component (stored in misc mappings)
+            # These are short strings that need word-boundary protection
+            is_name_component = (
+                old in self.mappings['misc'].keys() and
+                not old.endswith('$') and  # Not a computer account
+                not '.' in old and  # Not a FQDN or username
+                not '\\' in old and  # Not a domain-qualified name
+                len(old) < 50 and  # Reasonable name length
+                old.replace('-', '').replace("'", '').isalpha()  # Mostly alphabetic
+            )
+
+            if is_name_component:
+                # Use word-boundary regex for firstname/surname to prevent
+                # "robert" from matching inside "roberts"
+                pattern = r'\b' + re.escape(old) + r'\b'
+                content = re.sub(pattern, new, content)
+            else:
+                # Use simple string replacement for everything else
+                content = content.replace(old, new)
+
         return content
 
     def fix_user_firstname_surname(self, config: dict) -> dict:
         """Fix firstname/surname fields to match the generated usernames."""
         domains = config['lab']['domains']
 
-        for domain_name, domain_info in domains.items():
+        for _, domain_info in domains.items():
             users = domain_info.get('users', {})
 
             for username, user_info in users.items():
@@ -535,11 +583,27 @@ class GOADVariantGenerator:
 
         return config
 
+    def fix_passwords(self, config: dict) -> dict:
+        """Fix password fields that were corrupted by global text replacement.
+
+        When a password string equals a username (e.g., user "hodor" with
+        password "hodor"), global replacement applies the username mapping
+        to the password field. This method corrects those fields using the
+        structured user_password_map built during map_passwords().
+        """
+        for _, domain_info in config['lab']['domains'].items():
+            users = domain_info.get('users', {})
+            for username, user_info in users.items():
+                if username in self.user_password_map:
+                    user_info['password'] = self.user_password_map[username]
+
+        return config
+
     def rebuild_acl_keys(self, config: dict) -> dict:
         """Rebuild ACL dictionary keys to use new entity names."""
         domains = config['lab']['domains']
 
-        for domain_name, domain_info in domains.items():
+        for _, domain_info in domains.items():
             acls = domain_info.get('acls', {})
             if not acls:
                 continue
@@ -550,7 +614,6 @@ class GOADVariantGenerator:
                 # Extract components from "for" and "to" fields to build new key
                 for_entity = acl_data.get('for', '')
                 to_entity = acl_data.get('to', '')
-                right = acl_data.get('right', '')
 
                 # Simplify entity names for key (remove domain prefixes, paths, etc.)
                 for_simple = for_entity.split('\\')[-1].split(',')[0].lower().replace(' ', '_')
@@ -605,6 +668,7 @@ class GOADVariantGenerator:
                     try:
                         config_data = json.loads(new_content)
                         config_data = self.fix_user_firstname_surname(config_data)
+                        config_data = self.fix_passwords(config_data)
                         config_data = self.rebuild_acl_keys(config_data)
                         new_content = json.dumps(config_data, indent=2)
                     except json.JSONDecodeError:
@@ -756,7 +820,7 @@ This is a graph-isomorphic variant of the GOAD (Game of Active Directory) lab en
 - **All entity names have been randomized** while preserving the complete structure
 - **Attack paths remain identical** to the original GOAD
 - **All vulnerabilities preserved** with the same relationships
-- **All 6 provider configs included**: VirtualBox, VMware, Proxmox, AWS, Azure, Ludus
+- **All 7 provider configs included**: VirtualBox, VMware, VMware ESXi, Proxmox, AWS, Azure, Ludus
 
 ## Structure
 
