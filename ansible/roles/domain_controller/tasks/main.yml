@@ -15,6 +15,7 @@
   microsoft.ad.domain:
     dns_domain_name: "{{ domain }}"
     safe_mode_password: "{{ domain_password }}"
+    domain_netbios_name: "{{ netbios_name }}"
   register: check_domain
   async: 3600
   poll: 60
@@ -65,7 +66,7 @@
   ansible.windows.win_reboot:
     reboot_timeout: 900
     post_reboot_delay: 120
-    test_command: powershell.exe -Command "(Get-Service -Name Netlogon -ErrorAction SilentlyContinue).Status -eq 'Running'"
+    test_command: powershell.exe -Command "((Get-Service -Name Netlogon -EA SilentlyContinue).Status -eq 'Running') -and ((Get-Service -Name ADWS -EA SilentlyContinue).Status -eq 'Running')"
   when: >-
     check_domain.reboot_required | default(false) or
     (check_domain is failed and "needs to be restarted" in check_domain.msg | default('')) or
@@ -90,7 +91,7 @@
   ansible.windows.win_reboot:
     reboot_timeout: 900
     post_reboot_delay: 120
-    test_command: powershell.exe -Command "(Get-Service -Name Netlogon -ErrorAction SilentlyContinue).Status -eq 'Running'"
+    test_command: powershell.exe -Command "((Get-Service -Name Netlogon -EA SilentlyContinue).Status -eq 'Running') -and ((Get-Service -Name ADWS -EA SilentlyContinue).Status -eq 'Running')"
   when: >-
     retry_domain.reboot_required | default(false) or
     (retry_domain is failed and "needs to be restarted" in retry_domain.msg | default('')) or
@@ -134,7 +135,7 @@
   ansible.windows.win_reboot:
     reboot_timeout: 900
     post_reboot_delay: 120
-    test_command: powershell.exe -Command "(Get-Service -Name Netlogon -ErrorAction SilentlyContinue).Status -eq 'Running'"
+    test_command: powershell.exe -Command "((Get-Service -Name Netlogon -EA SilentlyContinue).Status -eq 'Running') -and ((Get-Service -Name ADWS -EA SilentlyContinue).Status -eq 'Running')"
   when: >-
     check_domain_controller.reboot_required | default(false) or
     (check_domain_controller is failed and "needs to be restarted" in check_domain_controller.msg | default('')) or
@@ -161,7 +162,7 @@
   ansible.windows.win_reboot:
     reboot_timeout: 900
     post_reboot_delay: 120
-    test_command: powershell.exe -Command "(Get-Service -Name Netlogon -ErrorAction SilentlyContinue).Status -eq 'Running'"
+    test_command: powershell.exe -Command "((Get-Service -Name Netlogon -EA SilentlyContinue).Status -eq 'Running') -and ((Get-Service -Name ADWS -EA SilentlyContinue).Status -eq 'Running')"
   when: >-
     retry_dc_promotion.reboot_required | default(false) or
     (retry_dc_promotion is defined and retry_dc_promotion is failed and "needs to be restarted" in retry_dc_promotion.msg | default('')) or

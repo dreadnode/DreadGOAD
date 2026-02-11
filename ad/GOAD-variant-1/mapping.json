@@ -7,13 +7,13 @@
   "netbios": {
     "SEVENKINGDOMS": "DELTASYSTEMS",
     "NORTH": "HQ",
-    "ESSOS": "VORTEXINDUSTRIES",
+    "ESSOS": "VORTEXIND",
     "sevenkingdoms": "deltasystems",
     "north": "hq",
-    "essos": "vortexindustries",
+    "essos": "vortexind",
     "Sevenkingdoms": "Deltasystems",
     "North": "Hq",
-    "Essos": "Vortexindustries"
+    "Essos": "Vortexind"
   },
   "hosts": {
     "dc01": {

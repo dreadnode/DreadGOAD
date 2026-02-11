@@ -207,6 +207,8 @@ tasks:
         task generate-mapping                     # Generate mapping for dev environment
         task generate-mapping ENV=prod            # Generate mapping for prod environment
         task generate-mapping OUTPUT=/tmp/my-mapping.json  # Use custom output path
+    deps:
+      - update-inventory
     vars:
       INVENTORY: '{{.INVENTORY | default (print "./" .ENV "-inventory")}}'
       OUTPUT: '{{.OUTPUT | default (print "/tmp/aws_instance_mapping_" .ENV ".json")}}'
