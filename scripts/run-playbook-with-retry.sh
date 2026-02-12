@@ -324,8 +324,17 @@ detect_error_type() {
         echo "powershell_interactive"
     elif grep -qE "(ssm-user.*disabled|SSM.*account.*issue|Windows Local SAM)" "$temp_log"; then
         echo "ssm_user_account_issue"
+    elif grep -qE "rc: 1603|rc: 3010" "$temp_log"; then
+        echo "msi_installer_error"
     else
-        echo "unknown"
+        # Extract actual error for unclassified failures
+        local fatal_error
+        fatal_error=$(grep -A5 "^fatal:" "$temp_log" | grep -E "msg:|rc:|stderr:" | head -3 | tr '\n' ' ' | sed 's/^[[:space:]]*//')
+        if [[ -n "$fatal_error" ]]; then
+            echo "unclassified: $fatal_error"
+        else
+            echo "unclassified: $(grep -E 'FAILED|fatal' "$temp_log" | tail -1 | cut -c1-120)"
+        fi
     fi
 }
 
@@ -481,7 +490,23 @@ retry_with_error_specific_settings() {
                 -e "ansible_aws_ssm_timeout=300" \
                 "ansible/$playbook"
             ;;
-        *)
+        msi_installer_error)
+            log_message "MSI installer error (rc 1603/3010) - usually requires reboot..."
+            if [[ -n "$failed_hosts" ]]; then
+                log_message "Rebooting failed hosts before retry: $failed_hosts"
+                for host in $(echo "$failed_hosts" | tr ',' ' '); do
+                    ansible "$host" -i "${ENV}-inventory" -m ansible.windows.win_reboot \
+                        -a "reboot_timeout=600 post_reboot_delay=60" 2>&1 | tee -a "${LOG_FILE}" || true
+                done
+                log_message "Waiting 30 seconds after reboot..."
+                sleep 30
+            fi
+            run_ansible_command "$temp_log" \
+                ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
+                ${limit_args[@]+"${limit_args[@]}"} --forks=1 \
+                "ansible/$playbook"
+            ;;
+        unclassified:*|*)
             log_message "Retrying with general robust settings..."
             ANSIBLE_SSH_RETRIES=5 ANSIBLE_TIMEOUT=120 run_ansible_command "$temp_log" \
                 ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
@@ -605,9 +630,12 @@ while [[ $retry_count -lt ${MAX_RETRIES} ]] && [[ "$success" = "false" ]]; do
         log_message "Detected error type: $error_type"
         
         failed_hosts=$(extract_failed_hosts "$temp_log")
-        [[ -n "$failed_hosts" ]] && log_message "Failed hosts: $failed_hosts"
-        
-        log_message "Attempting error-specific recovery for: $error_type"
+
+        if [[ -n "$failed_hosts" ]]; then
+            log_message "Attempting error-specific recovery for $failed_hosts: $error_type"
+        else
+            log_message "Attempting error-specific recovery: $error_type"
+        fi
         
         retry_exit_code=0
         retry_with_error_specific_settings "${PLAYBOOK}" "$temp_log" "$error_type" "$failed_hosts" || retry_exit_code=$?
