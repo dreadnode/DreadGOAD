@@ -96,18 +96,22 @@ class GOADVariantGenerator:
         self.mappings['domains'][child_domain] = child_full
         self.mappings['domains'][external_domain] = external_full
 
-        # Map NetBIOS names
-        self.mappings['netbios']['SEVENKINGDOMS'] = root_new.upper()
-        self.mappings['netbios']['NORTH'] = child_prefix.upper()
-        self.mappings['netbios']['ESSOS'] = external_new.upper()
+        # Map NetBIOS names (max 15 chars per Windows limit)
+        root_netbios = root_new[:15]
+        child_netbios = child_prefix[:15]
+        external_netbios = external_new[:15]
+
+        self.mappings['netbios']['SEVENKINGDOMS'] = root_netbios.upper()
+        self.mappings['netbios']['NORTH'] = child_netbios.upper()
+        self.mappings['netbios']['ESSOS'] = external_netbios.upper()
 
         # Also map lowercase and capitalized versions for DN paths
-        self.mappings['netbios']['sevenkingdoms'] = root_new.lower()
-        self.mappings['netbios']['north'] = child_prefix.lower()
-        self.mappings['netbios']['essos'] = external_new.lower()
-        self.mappings['netbios']['Sevenkingdoms'] = root_new.capitalize()
-        self.mappings['netbios']['North'] = child_prefix.capitalize()
-        self.mappings['netbios']['Essos'] = external_new.capitalize()
+        self.mappings['netbios']['sevenkingdoms'] = root_netbios.lower()
+        self.mappings['netbios']['north'] = child_netbios.lower()
+        self.mappings['netbios']['essos'] = external_netbios.lower()
+        self.mappings['netbios']['Sevenkingdoms'] = root_netbios.capitalize()
+        self.mappings['netbios']['North'] = child_netbios.capitalize()
+        self.mappings['netbios']['Essos'] = external_netbios.capitalize()
 
         print(f"Domain mappings:")
         print(f"  {root_domain} -> {root_full}")
@@ -433,14 +437,17 @@ class GOADVariantGenerator:
 
         # 2. Domain-qualified usernames
         # Format: DOMAIN\\username and domain.local\\username
+        # Build a lookup from old uppercase NetBIOS to new uppercase NetBIOS
+        # using the authoritative netbios mappings (which respect the 15-char limit)
+        netbios_upper_map = {
+            old_nb: new_nb
+            for old_nb, new_nb in self.mappings['netbios'].items()
+            if old_nb.isupper()
+        }
+
         for old_domain, new_domain in self.mappings['domains'].items():
             old_netbios = old_domain.split('.')[0].upper()
-            new_netbios_parts = new_domain.split('.')[0].split('.')
-            if len(new_netbios_parts) > 1:
-                # Handle child domains like "ops.zenithcorp.local"
-                new_netbios = new_netbios_parts[-2].upper()
-            else:
-                new_netbios = new_domain.split('.')[0].upper()
+            new_netbios = netbios_upper_map.get(old_netbios, new_domain.split('.')[0].upper())
 
             for old_user, new_user in self.mappings['users'].items():
                 # DOMAIN\\username format

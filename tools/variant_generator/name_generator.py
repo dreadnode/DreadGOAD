@@ -121,12 +121,19 @@ class NameGenerator:
         self.used_names.add(name.lower())
         return name
 
+    # Windows NetBIOS name limit
+    MAX_NETBIOS_LENGTH = 15
+
     def generate_domain_name(self) -> str:
-        """Generate a corporate-style domain name."""
-        prefix = secrets.choice(self.domain_prefixes)
-        suffix = secrets.choice(self.domain_suffixes)
-        domain = f"{prefix}{suffix}"
-        return self.ensure_unique(domain)
+        """Generate a corporate-style domain name that fits NetBIOS limits."""
+        for _ in range(1000):
+            prefix = secrets.choice(self.domain_prefixes)
+            suffix = secrets.choice(self.domain_suffixes)
+            domain = f"{prefix}{suffix}"
+            if len(domain) <= self.MAX_NETBIOS_LENGTH:
+                return self.ensure_unique(domain)
+        # Fallback: use prefix only
+        return self.ensure_unique(secrets.choice(self.domain_prefixes))
 
     def generate_subdomain_name(self) -> str:
         """Generate a subdomain name for child domains."""
