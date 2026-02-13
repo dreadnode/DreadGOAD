@@ -1,7 +1,7 @@
 ; GLOBAL CONFIG ----------------------------
 [all:vars]
 ; domain_name : folder inside ad/
-domain_name=GOAD
+domain_name=GOAD-variant-1
 
 ; administrator user
 admin_user=administrator
@@ -19,7 +19,7 @@ ansible_aws_ssm_s3_addressing_style=virtual
 ansible_remote_tmp=C:\Windows\Temp
 
 ; miscellaneous
-data_path="{{ playbook_dir }}/../ad/GOAD/data"
+data_path="{{ playbook_dir }}/../ad/GOAD-variant-1/data"
 
 ; global settings inventory default value
 keyboard_layouts=["en-US", "da-DK", "fr-FR"]
@@ -46,17 +46,17 @@ dns_server_forwarder=1.1.1.1
 ; ------------------------------------------------
 ; sevenkingdoms.local
 ; ------------------------------------------------
-dc01 ansible_host=i-077d1b2efe9e91d31 dict_key=dc01 dns_domain=dc01 ansible_user=ansible
+dc01 ansible_host=i-0e428dfc02f5007dd dict_key=dc01 dns_domain=dc01 ansible_user=ansible
 ; ------------------------------------------------
 ; north.sevenkingdoms.local
 ; ------------------------------------------------
-dc02 ansible_host=i-08f6d9b490a17e680 dict_key=dc02 dns_domain=dc01 ansible_user=ansible
-srv02 ansible_host=i-066d4ab931d7b3318 dict_key=srv02 dns_domain=dc02 ansible_user=ansible
+dc02 ansible_host=i-003cb089e4bffd044 dict_key=dc02 dns_domain=dc01 ansible_user=ansible
+srv02 ansible_host=i-0e5e90aa3674b019f dict_key=srv02 dns_domain=dc02 ansible_user=ansible
 ; ------------------------------------------------
 ; essos.local
 ; ------------------------------------------------
-dc03 ansible_host=i-09f7728a3292014f2 dict_key=dc03 dns_domain=dc03 ansible_user=ansible
-srv03 ansible_host=i-0529a2e263d26937a dict_key=srv03 dns_domain=dc03 ansible_user=ansible
+dc03 ansible_host=i-09be8150780ec08e6 dict_key=dc03 dns_domain=dc03 ansible_user=ansible
+srv03 ansible_host=i-00efbd3b68f5483a8 dict_key=srv03 dns_domain=dc03 ansible_user=ansible
 
 ; LAB SCENARIO CONFIGURATION -----------------------------
 

@@ -43,7 +43,7 @@ tasks:
     cmds:
       - |
         echo "Available playbooks:"
-        for playbook in {{.GOAD_PLAYBOOKS}}; do
+        for playbook in $(echo '{{.GOAD_PLAYBOOKS}}' | tr '\n' ' '); do
           echo "  - $playbook"
         done
         echo ""
@@ -82,6 +82,7 @@ tasks:
       # Generate log file name once for this provision run
       PROVISION_LOG_FILE: '$HOME/.ansible/logs/goad/{{.ENV}}-dreadgoad-{{now | date "20060102_150405"}}.log'
     deps:
+      - ssm:cleanup
       - ensure-log-dir
       - generate-mapping
       - prepare-adcs-zips
@@ -155,7 +156,7 @@ tasks:
           echo "==============================================="
           echo ""
           echo "Playbooks to be executed:"
-          for playbook in {{.PLAYS}}; do
+          for playbook in $(echo '{{.PLAYS}}' | tr '\n' ' '); do
             echo "  - ansible/$playbook"
           done
           echo "-----------------------------------------------"
@@ -207,6 +208,8 @@ tasks:
         task generate-mapping                     # Generate mapping for dev environment
         task generate-mapping ENV=prod            # Generate mapping for prod environment
         task generate-mapping OUTPUT=/tmp/my-mapping.json  # Use custom output path
+    deps:
+      - update-inventory
     vars:
       INVENTORY: '{{.INVENTORY | default (print "./" .ENV "-inventory")}}'
       OUTPUT: '{{.OUTPUT | default (print "/tmp/aws_instance_mapping_" .ENV ".json")}}'
@@ -299,6 +302,128 @@ tasks:
         export FAIL_ON_ERROR={{.FAIL_ON_ERROR}}
         {{if .OUTPUT}}export OUTPUT_FILE={{.OUTPUT}}{{end}}
         ./scripts/validate-goad-vulns.sh
+
+  ssm:cleanup:
+    desc: Clean up stale SSM sessions to prevent connection saturation
+    summary: |
+      Terminates stale SSM sessions that may be blocking new connections.
+      AWS SSM has concurrent session limits per instance, and orphaned sessions
+      from hung/killed playbook runs can cause new connections to hang.
+
+      Options:
+        ENV=<env>            Environment to target (default: dev)
+        MAX_AGE=<minutes>    Sessions older than this are considered stale (default: 30)
+        DRY_RUN=true         Show what would be terminated without doing it
+
+      Examples:
+        task ssm:cleanup                    # Clean stale sessions for dev
+        task ssm:cleanup ENV=prod           # Clean stale sessions for prod
+        task ssm:cleanup MAX_AGE=15         # More aggressive cleanup (15 min)
+        task ssm:cleanup DRY_RUN=true       # Preview what would be cleaned
+    vars:
+      MAX_AGE: '{{.MAX_AGE | default "30"}}'
+      DRY_RUN: '{{.DRY_RUN | default "false"}}'
+      REGION: '{{.REGION | default "us-west-2"}}'
+    run: always
+    silent: true
+    cmds:
+      - |
+        set -e
+        INVENTORY="./{{.ENV}}-inventory"
+
+        # Extract instance IDs from inventory
+        INSTANCE_IDS=$(grep -E 'ansible_host=i-[a-z0-9]+' "$INVENTORY" | sed -E 's/.*ansible_host=(i-[a-z0-9]+).*/\1/' | sort -u)
+
+        if [ -z "$INSTANCE_IDS" ]; then
+          echo "No instance IDs found in $INVENTORY"
+          exit 0
+        fi
+
+        echo "Checking for stale SSM sessions (older than {{.MAX_AGE}} minutes)..."
+        echo "Instances: $(echo $INSTANCE_IDS | tr '\n' ' ')"
+        echo ""
+
+        TOTAL_TERMINATED=0
+        CUTOFF_TIME=$(date -u -v-{{.MAX_AGE}}M +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -d "{{.MAX_AGE}} minutes ago" +%Y-%m-%dT%H:%M:%S)
+
+        for INSTANCE_ID in $INSTANCE_IDS; do
+          # Get active sessions for this instance
+          SESSIONS=$(aws ssm describe-sessions \
+            --state Active \
+            --region {{.REGION}} \
+            --filters "key=Target,value=$INSTANCE_ID" \
+            --query "Sessions[?StartDate<\`$CUTOFF_TIME\`].[SessionId,StartDate]" \
+            --output text 2>/dev/null || true)
+
+          if [ -n "$SESSIONS" ]; then
+            echo "=== $INSTANCE_ID ==="
+            while IFS=$'\t' read -r SESSION_ID START_DATE; do
+              if [ -n "$SESSION_ID" ]; then
+                if [ "{{.DRY_RUN}}" = "true" ]; then
+                  echo "  [DRY RUN] Would terminate: $SESSION_ID (started: $START_DATE)"
+                else
+                  aws ssm terminate-session --session-id "$SESSION_ID" --region {{.REGION}} > /dev/null 2>&1 && \
+                    echo "  Terminated: $SESSION_ID (started: $START_DATE)" && \
+                    TOTAL_TERMINATED=$((TOTAL_TERMINATED + 1))
+                fi
+              fi
+            done <<< "$SESSIONS"
+          fi
+        done
+
+        echo ""
+        if [ "{{.DRY_RUN}}" = "true" ]; then
+          echo "Dry run complete. Use DRY_RUN=false to actually terminate sessions."
+        else
+          echo "Cleanup complete. Terminated $TOTAL_TERMINATED stale session(s)."
+        fi
+
+  ssm:status:
+    desc: Show active SSM sessions for environment instances
+    summary: |
+      Displays all active SSM sessions for instances in the current environment.
+      Useful for debugging connection issues or checking session state.
+
+      Options:
+        ENV=<env>            Environment to target (default: dev)
+
+      Example:
+        task ssm:status
+        task ssm:status ENV=prod
+    vars:
+      REGION: '{{.REGION | default "us-west-2"}}'
+    run: always
+    silent: true
+    cmds:
+      - |
+        set -e
+        INVENTORY="./{{.ENV}}-inventory"
+
+        # Extract instance IDs from inventory
+        INSTANCE_IDS=$(grep -E 'ansible_host=i-[a-z0-9]+' "$INVENTORY" | sed -E 's/.*ansible_host=(i-[a-z0-9]+).*/\1/' | sort -u)
+
+        echo "Active SSM sessions for {{.ENV}} environment:"
+        echo ""
+
+        for INSTANCE_ID in $INSTANCE_IDS; do
+          HOST=$(grep "$INSTANCE_ID" "$INVENTORY" | awk '{print $1}' | head -1)
+          SESSIONS=$(aws ssm describe-sessions \
+            --state Active \
+            --region {{.REGION}} \
+            --filters "key=Target,value=$INSTANCE_ID" \
+            --query 'Sessions[*].[SessionId,StartDate,Status]' \
+            --output text 2>/dev/null || true)
+
+          SESSION_COUNT=$(echo "$SESSIONS" | grep -c . 2>/dev/null || echo "0")
+          if [ "$SESSION_COUNT" = "0" ] || [ -z "$SESSIONS" ]; then
+            echo "[$HOST] $INSTANCE_ID: No active sessions"
+          else
+            echo "[$HOST] $INSTANCE_ID: $SESSION_COUNT active session(s)"
+            echo "$SESSIONS" | while IFS=$'\t' read -r SID SDATE STATUS; do
+              [ -n "$SID" ] && echo "  - $SID ($STATUS, started: $SDATE)"
+            done
+          fi
+        done
 
   validate-vulns-quick:
     desc: Quick validation of critical GOAD vulnerabilities (subset of full validation)

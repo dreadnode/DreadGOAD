@@ -1,0 +1,300 @@
+---
+# Diagnostic playbook to check dc01 (guardian-app) status from another host
+# Run against dc03 or srv03 (vortexindustries.local) which are independent of deltasystems.local
+#
+# Usage:
+#   # First, ensure the AWS mapping file exists:
+#   ansible-playbook -i dev-inventory ansible/data.yml --limit dc03
+#
+#   # Then run diagnostics:
+#   ansible-playbook -i dev-inventory ansible/diagnose-dc01.yml --limit dc03
+#
+#   # Or pass the IP directly if you know it:
+#   ansible-playbook -i dev-inventory ansible/diagnose-dc01.yml --limit dc03 -e dc01_ip=10.x.x.x
+
+- name: Load data for target hosts only
+  hosts: dc03,srv03
+  gather_facts: true
+  serial: 1
+  tasks:
+    - name: Load JSON config
+      ansible.builtin.include_vars:
+        file: "{{ data_path }}/{{ env }}-config.json"
+      run_once: true
+
+    - name: Load AWS instance mapping if available
+      ansible.builtin.include_vars:
+        file: "/tmp/aws_instance_mapping_{{ env }}.json"
+        name: aws_mapping
+      ignore_errors: true
+
+    - name: Set instance_to_ip from AWS mapping
+      ansible.builtin.set_fact:
+        instance_to_ip: "{{ aws_mapping.instance_to_ip | default({}) }}"
+      when: aws_mapping is defined
+
+- name: Diagnose dc01 (deltasystems.local DC) from remote host
+  hosts: dc03,srv03
+  gather_facts: false
+  vars:
+    target_dc: "{{ hostvars['dc01']['ansible_host'] }}"
+    target_hostname: "guardian-app"
+    target_domain: "deltasystems.local"
+    # Get dc01's IP - can be overridden with -e dc01_ip=x.x.x.x
+    dc01_ip: "{{ dc01_ip_override | default(instance_to_ip[target_dc] | default('')) }}"
+
+  tasks:
+    - name: Check if we have dc01's IP
+      ansible.builtin.fail:
+        msg: |
+          Cannot determine dc01's IP address!
+
+          The instance_to_ip mapping doesn't have an entry for {{ target_dc }}.
+
+          Options:
+          1. Run data.yml first to populate the mapping:
+             ansible-playbook -i dev-inventory ansible/data.yml --limit dc03
+
+          2. Pass the IP directly:
+             ansible-playbook -i dev-inventory ansible/diagnose-dc01.yml --limit dc03 -e dc01_ip_override=10.x.x.x
+
+          3. Get the IP from AWS console or CLI:
+             aws ec2 describe-instances --instance-ids {{ target_dc }} --query 'Reservations[0].Instances[0].PrivateIpAddress'
+      when: dc01_ip == '' or dc01_ip == 'unknown'
+
+    - name: Display diagnostic target info
+      ansible.builtin.debug:
+        msg: |
+          Diagnosing dc01 from {{ inventory_hostname }}
+          Target instance ID: {{ target_dc }}
+          Target IP: {{ dc01_ip }}
+          Expected hostname: {{ target_hostname }}
+          Expected domain: {{ target_domain }}
+
+    - name: Test basic network connectivity to dc01
+      ansible.windows.win_powershell:
+        script: |
+          $ProgressPreference = 'SilentlyContinue'
+          $targetIP = "{{ dc01_ip }}"
+
+          $results = @{
+              ping = $null
+              ports = @{}
+              dns_resolution = $null
+          }
+
+          # Test ping
+          Write-Host "Testing ping to $targetIP..."
+          $ping = Test-Connection -ComputerName $targetIP -Count 2 -ErrorAction SilentlyContinue
+          $results.ping = if ($ping) { "SUCCESS - RTT: $($ping[0].ResponseTime)ms" } else { "FAILED" }
+
+          # Test critical ports
+          $ports = @{
+              "DNS (53/TCP)" = 53
+              "Kerberos (88/TCP)" = 88
+              "RPC (135/TCP)" = 135
+              "LDAP (389/TCP)" = 389
+              "SMB (445/TCP)" = 445
+              "LDAPS (636/TCP)" = 636
+              "GC (3268/TCP)" = 3268
+          }
+
+          foreach ($portName in $ports.Keys) {
+              $port = $ports[$portName]
+              Write-Host "Testing $portName..."
+              $test = Test-NetConnection -ComputerName $targetIP -Port $port -WarningAction SilentlyContinue -ErrorAction SilentlyContinue
+              $results.ports[$portName] = if ($test.TcpTestSucceeded) { "OPEN" } else { "CLOSED/FILTERED" }
+          }
+
+          # Test DNS resolution of the domain
+          Write-Host "Testing DNS resolution of {{ target_domain }}..."
+          try {
+              $dns = Resolve-DnsName -Name "{{ target_domain }}" -Server $targetIP -ErrorAction Stop
+              $results.dns_resolution = "SUCCESS - Resolved to: $($dns.IPAddress -join ', ')"
+          } catch {
+              $results.dns_resolution = "FAILED - $($_.Exception.Message)"
+          }
+
+          $Ansible.Result = $results
+          $Ansible.Changed = $false
+      register: network_test
+      failed_when: false
+
+    - name: Display network test results
+      ansible.builtin.debug:
+        msg: |
+          === NETWORK CONNECTIVITY RESULTS ===
+          Ping: {{ network_test.result.ping }}
+
+          Port Status:
+          {% for port, status in network_test.result.ports.items() %}
+            {{ port }}: {{ status }}
+          {% endfor %}
+
+          DNS Resolution of {{ target_domain }}: {{ network_test.result.dns_resolution }}
+
+    - name: Test LDAP connectivity to dc01
+      ansible.windows.win_powershell:
+        script: |
+          $ProgressPreference = 'SilentlyContinue'
+          $targetIP = "{{ dc01_ip }}"
+          $domain = "{{ target_domain }}"
+
+          $results = @{
+              ldap_anonymous = $null
+              ldap_rootdse = $null
+              dc_locator = $null
+          }
+
+          # Test anonymous LDAP bind (RootDSE)
+          Write-Host "Testing LDAP RootDSE query..."
+          try {
+              $ldap = [ADSI]"LDAP://${targetIP}/RootDSE"
+              $results.ldap_rootdse = @{
+                  defaultNamingContext = $ldap.defaultNamingContext.ToString()
+                  dnsHostName = $ldap.dnsHostName.ToString()
+                  serverName = $ldap.serverName.ToString()
+                  isGlobalCatalogReady = $ldap.isGlobalCatalogReady.ToString()
+              }
+          } catch {
+              $results.ldap_rootdse = "FAILED - $($_.Exception.Message)"
+          }
+
+          # Test DC Locator
+          Write-Host "Testing DC Locator for $domain..."
+          try {
+              $dcInfo = nltest /dsgetdc:$domain /server:$targetIP 2>&1
+              $results.dc_locator = $dcInfo -join "`n"
+          } catch {
+              $results.dc_locator = "FAILED - $($_.Exception.Message)"
+          }
+
+          $Ansible.Result = $results
+          $Ansible.Changed = $false
+      register: ldap_test
+      failed_when: false
+
+    - name: Display LDAP test results
+      ansible.builtin.debug:
+        msg: |
+          === LDAP CONNECTIVITY RESULTS ===
+
+          RootDSE Query:
+          {{ ldap_test.result.ldap_rootdse | to_nice_yaml if ldap_test.result.ldap_rootdse is mapping else ldap_test.result.ldap_rootdse }}
+
+          DC Locator (nltest):
+          {{ ldap_test.result.dc_locator }}
+
+    - name: Test WinRM/PowerShell remoting to dc01
+      ansible.windows.win_powershell:
+        script: |
+          $ProgressPreference = 'SilentlyContinue'
+          $targetIP = "{{ dc01_ip }}"
+
+          $results = @{
+              winrm_test = $null
+              remote_services = $null
+              remote_ad_status = $null
+          }
+
+          # Note: This requires credentials and WinRM to be configured
+          # We'll test if WinRM port is open first
+          Write-Host "Testing WinRM port (5985)..."
+          $winrmTest = Test-NetConnection -ComputerName $targetIP -Port 5985 -WarningAction SilentlyContinue
+          $results.winrm_test = if ($winrmTest.TcpTestSucceeded) { "Port 5985 OPEN" } else { "Port 5985 CLOSED" }
+
+          Write-Host "Testing WinRM HTTPS port (5986)..."
+          $winrmHttpsTest = Test-NetConnection -ComputerName $targetIP -Port 5986 -WarningAction SilentlyContinue
+          $results.winrm_https = if ($winrmHttpsTest.TcpTestSucceeded) { "Port 5986 OPEN" } else { "Port 5986 CLOSED" }
+
+          $Ansible.Result = $results
+          $Ansible.Changed = $false
+      register: winrm_test
+      failed_when: false
+
+    - name: Display WinRM test results
+      ansible.builtin.debug:
+        msg: |
+          === WINRM RESULTS ===
+          WinRM HTTP (5985): {{ winrm_test.result.winrm_test }}
+          WinRM HTTPS (5986): {{ winrm_test.result.winrm_https }}
+
+    - name: Check if this host can resolve deltasystems.local
+      ansible.windows.win_powershell:
+        script: |
+          $ProgressPreference = 'SilentlyContinue'
+
+          $results = @{
+              current_dns_servers = (Get-DnsClientServerAddress -AddressFamily IPv4 | Where-Object { $_.ServerAddresses } | Select-Object -ExpandProperty ServerAddresses) -join ", "
+              resolve_deltasystems = $null
+              resolve_guardian_app = $null
+          }
+
+          # Try to resolve deltasystems.local
+          try {
+              $dns = Resolve-DnsName -Name "deltasystems.local" -ErrorAction Stop
+              $results.resolve_deltasystems = "SUCCESS - $($dns.IPAddress -join ', ')"
+          } catch {
+              $results.resolve_deltasystems = "FAILED - $($_.Exception.Message)"
+          }
+
+          # Try to resolve guardian-app.deltasystems.local
+          try {
+              $dns = Resolve-DnsName -Name "guardian-app.deltasystems.local" -ErrorAction Stop
+              $results.resolve_guardian_app = "SUCCESS - $($dns.IPAddress -join ', ')"
+          } catch {
+              $results.resolve_guardian_app = "FAILED - $($_.Exception.Message)"
+          }
+
+          $Ansible.Result = $results
+          $Ansible.Changed = $false
+      register: dns_from_here
+      failed_when: false
+
+    - name: Display DNS resolution from this host
+      ansible.builtin.debug:
+        msg: |
+          === DNS RESOLUTION FROM {{ inventory_hostname }} ===
+          Current DNS Servers: {{ dns_from_here.result.current_dns_servers }}
+          Resolve deltasystems.local: {{ dns_from_here.result.resolve_deltasystems }}
+          Resolve guardian-app.deltasystems.local: {{ dns_from_here.result.resolve_guardian_app }}
+
+    - name: Summary and recommendations
+      ansible.builtin.debug:
+        msg: |
+          ===============================================
+          DIAGNOSTIC SUMMARY FOR DC01 (guardian-app)
+          ===============================================
+
+          Based on the tests above, check:
+
+          1. If LDAP ports (389, 636) are CLOSED:
+             - AD DS services are not running on dc01
+             - DC promotion likely failed or services crashed
+
+          2. If DNS port (53) is CLOSED:
+             - DNS service not running
+             - DC can't serve DNS queries
+
+          3. If RootDSE query FAILED:
+             - AD DS is definitely not functional
+             - Machine may be stuck in partial promotion state
+
+          4. If DC Locator shows ERROR_NO_SUCH_DOMAIN:
+             - Confirms dc01 is not a functioning DC
+             - AD DS promotion never completed or failed
+
+          NEXT STEPS:
+          -----------
+          If dc01 is broken, you may need to:
+          a) SSH/RDP directly to dc01 and check services:
+             - Get-Service NTDS, DNS, Netlogon, ADWS
+             - Get-WindowsFeature AD-Domain-Services
+
+          b) Check Event Viewer for AD DS errors:
+             - Get-EventLog -LogName "Directory Service" -Newest 50
+
+          c) Re-run the domain_controller role against dc01:
+             - ansible-playbook -i dev-inventory ansible/ad-parent_domain.yml --limit dc01
+
+          d) If completely broken, may need to rebuild dc01 from scratch

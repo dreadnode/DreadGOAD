@@ -2,3 +2,5 @@
 collections:
   - name: microsoft.ad
     version: 1.9.2
+  - name: amazon.aws
+    version: 10.2.0

@@ -1,4 +1,22 @@
 ---
+- name: Create scheduled task to keep ssm-user enabled (survives GPO refresh)
+  ansible.windows.win_powershell:
+    script: |
+      $taskName = "KeepSSMUserEnabled"
+      $existingTask = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+      if ($existingTask) {
+        Write-Output "Scheduled task already exists"
+        $Ansible.Changed = $false
+      } else {
+        $action = New-ScheduledTaskAction -Execute "PowerShell.exe" -Argument "-NoProfile -WindowStyle Hidden -Command Enable-LocalUser -Name ssm-user -ErrorAction SilentlyContinue; net localgroup Administrators ssm-user /add 2>`$null"
+        $trigger = New-ScheduledTaskTrigger -Once -At (Get-Date) -RepetitionInterval (New-TimeSpan -Minutes 1)
+        $principal = New-ScheduledTaskPrincipal -UserId SYSTEM -LogonType ServiceAccount -RunLevel Highest
+        Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Force | Out-Null
+        Write-Output "Scheduled task created to keep ssm-user enabled every 5 minutes"
+        $Ansible.Changed = $true
+      }
+  failed_when: false
+
 - name: Change the hostname
   ansible.windows.win_hostname:
     name: "{{ hostname }}"

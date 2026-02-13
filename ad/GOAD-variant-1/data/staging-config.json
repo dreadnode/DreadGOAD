@@ -202,10 +202,10 @@
         "path": "DC=vortexindustries,DC=local",
         "local_groups": {
           "Administrators": [
-            "vortexindustries\\kenneth.carter"
+            "vortexind\\kenneth.carter"
           ],
           "Remote Desktop Users": [
-            "vortexindustries\\OperationsStaff"
+            "vortexind\\OperationsStaff"
           ]
         },
         "scripts": [
@@ -228,11 +228,11 @@
         "use_laps": true,
         "local_groups": {
           "Administrators": [
-            "vortexindustries\\pamela.clark"
+            "vortexind\\pamela.clark"
           ]
         },
         "Remote Desktop Users": [
-          "vortexindustries\\SupportGroup"
+          "vortexind\\SupportGroup"
         ],
         "scripts": [],
         "vulns": [
@@ -246,10 +246,10 @@
           "sa_password": "ZX8HtJQcV!kom[5L]",
           "svcaccount": "sql_svc",
           "sysadmins": [
-            "VORTEXINDUSTRIES\\pamela.clark"
+            "VORTEXIND\\pamela.clark"
           ],
           "executeaslogin": {
-            "VORTEXINDUSTRIES\\catherine.turner": "sa"
+            "VORTEXIND\\catherine.turner": "sa"
           },
           "executeasuser": {},
           "linked_servers": {
@@ -257,7 +257,7 @@
               "data_src": "summit.hq.deltasystems.local",
               "users_mapping": [
                 {
-                  "local_login": "VORTEXINDUSTRIES\\pamela.clark",
+                  "local_login": "VORTEXIND\\pamela.clark",
                   "remote_login": "sa",
                   "remote_password": "6q_E@9Bk]^|LolaX9"
                 }
@@ -271,7 +271,7 @@
       "vortexindustries.local": {
         "dc": "dc03",
         "domain_password": "-cwuyGW494yZnC_M8wLN",
-        "netbios_name": "VORTEXINDUSTRIES",
+        "netbios_name": "VORTEXIND",
         "ca_server": "Titan",
         "trust": "deltasystems.local",
         "laps_path": "OU=Laps,DC=vortexindustries,DC=local",
@@ -299,14 +299,14 @@
               "managed_by": "Administrator",
               "path": "CN=Users,DC=vortexindustries,DC=local",
               "members": [
-                "VORTEXINDUSTRIES\\AdministrationGroup"
+                "VORTEXIND\\AdministrationGroup"
               ]
             },
             "Domain Admins": {
               "managed_by": "Administrator",
               "path": "CN=Users,DC=vortexindustries,DC=local",
               "members": [
-                "VORTEXINDUSTRIES\\Services"
+                "VORTEXIND\\Services"
               ]
             }
           },
@@ -596,7 +596,7 @@
           "emily.baker": {
             "firstname": "emily",
             "surname": "baker",
-            "password": "emily.baker",
+            "password": "jqfay",
             "city": "Dallas",
             "description": "Emily Baker",
             "groups": [
