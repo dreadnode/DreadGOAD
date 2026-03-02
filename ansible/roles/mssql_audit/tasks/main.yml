@@ -1,0 +1,185 @@
+---
+# MSSQL Audit Configuration
+# Enables auditing for impersonation and linked server activity detection
+# Assumes MSSQL Express is already installed
+
+- name: Set MSSQL connection string
+  ansible.builtin.set_fact:
+    mssql_connection_str: "-S localhost\\SQLEXPRESS -E"
+
+- name: Create audit directory
+  ansible.windows.win_file:
+    path: "{{ mssql_audit_file_path }}"
+    state: directory
+
+- name: Create XEvents directory
+  ansible.windows.win_file:
+    path: "{{ mssql_xevents_file_path }}"
+    state: directory
+  when: mssql_enable_xevents
+
+# Enable login auditing at the instance level (works for all editions)
+- name: Enable SQL Server login auditing (all successful and failed logins)
+  ansible.windows.win_shell: |
+    SqlCmd {{ mssql_connection_str }} -Q "EXEC xp_instance_regwrite N'HKEY_LOCAL_MACHINE', N'Software\Microsoft\MSSQLServer\MSSQLServer', N'AuditLevel', REG_DWORD, 3"
+
+# Create Extended Events session for security monitoring
+# This works in SQL Server Express and captures impersonation/linked server activity
+- name: Create Extended Events session for security monitoring
+  ansible.windows.win_shell: |
+    $sql = @"
+    -- Drop existing session if exists
+    IF EXISTS (SELECT * FROM sys.server_event_sessions WHERE name = '{{ mssql_xevents_session_name }}')
+    BEGIN
+        ALTER EVENT SESSION [{{ mssql_xevents_session_name }}] ON SERVER STATE = STOP;
+        DROP EVENT SESSION [{{ mssql_xevents_session_name }}] ON SERVER;
+    END
+
+    -- Create comprehensive security monitoring session
+    CREATE EVENT SESSION [{{ mssql_xevents_session_name }}] ON SERVER
+
+    -- Capture all SQL statements (for EXECUTE AS detection)
+    ADD EVENT sqlserver.sql_statement_completed(
+        ACTION(sqlserver.client_hostname, sqlserver.database_name, sqlserver.username, sqlserver.session_id, sqlserver.sql_text)
+        WHERE (
+            sqlserver.like_i_sql_unicode_string(sqlserver.sql_text, N'%EXECUTE AS%')
+            OR sqlserver.like_i_sql_unicode_string(sqlserver.sql_text, N'%OPENQUERY%')
+            OR sqlserver.like_i_sql_unicode_string(sqlserver.sql_text, N'%EXEC%AT%')
+            OR sqlserver.like_i_sql_unicode_string(sqlserver.sql_text, N'%xp_cmdshell%')
+            OR sqlserver.like_i_sql_unicode_string(sqlserver.sql_text, N'%xp_dirtree%')
+            OR sqlserver.like_i_sql_unicode_string(sqlserver.sql_text, N'%xp_fileexist%')
+            OR sqlserver.like_i_sql_unicode_string(sqlserver.sql_text, N'%sp_addlinkedserver%')
+            OR sqlserver.like_i_sql_unicode_string(sqlserver.sql_text, N'%sp_addlinkedsrvlogin%')
+        )
+    ),
+
+    -- Capture RPC events (linked server calls)
+    ADD EVENT sqlserver.rpc_completed(
+        ACTION(sqlserver.client_hostname, sqlserver.database_name, sqlserver.username, sqlserver.session_id, sqlserver.sql_text)
+    ),
+
+    -- Capture login events
+    ADD EVENT sqlserver.login(
+        ACTION(sqlserver.client_hostname, sqlserver.username, sqlserver.session_id)
+    ),
+
+    ADD EVENT sqlserver.logout(
+        ACTION(sqlserver.client_hostname, sqlserver.username, sqlserver.session_id)
+    )
+
+    -- Write to file for persistence
+    ADD TARGET package0.event_file(
+        SET filename = N'{{ mssql_xevents_file_path }}\{{ mssql_xevents_session_name }}.xel',
+        max_file_size = {{ mssql_audit_max_file_size }},
+        max_rollover_files = {{ mssql_audit_max_rollover_files }}
+    ),
+
+    -- Also ring buffer for quick queries
+    ADD TARGET package0.ring_buffer(
+        SET max_memory = 4096
+    )
+
+    WITH (
+        MAX_MEMORY = 4096 KB,
+        EVENT_RETENTION_MODE = ALLOW_SINGLE_EVENT_LOSS,
+        MAX_DISPATCH_LATENCY = 30 SECONDS,
+        MAX_EVENT_SIZE = 0 KB,
+        MEMORY_PARTITION_MODE = NONE,
+        TRACK_CAUSALITY = ON,
+        STARTUP_STATE = ON
+    );
+    "@
+
+    SqlCmd {{ mssql_connection_str }} -Q "$sql"
+  when: mssql_enable_xevents
+
+- name: Start Extended Events session
+  ansible.windows.win_shell: |
+    SqlCmd {{ mssql_connection_str }} -Q "ALTER EVENT SESSION [{{ mssql_xevents_session_name }}] ON SERVER STATE = START;"
+  when: mssql_enable_xevents
+
+# Create event source for SQL audit events
+- name: Create MSSQL SecurityAudit event source
+  ansible.windows.win_shell: |
+    $source = "MSSQL-SecurityAudit"
+    if (-not [System.Diagnostics.EventLog]::SourceExists($source)) {
+        [System.Diagnostics.EventLog]::CreateEventSource($source, "Application")
+        Write-Output "Created event source: $source"
+    } else {
+        Write-Output "Event source already exists: $source"
+    }
+  register: event_source_result
+  changed_when: "'Created event source' in event_source_result.stdout"
+
+# Create a scheduled task to export XEvents to Windows Event Log periodically
+- name: Create XEvents export script
+  ansible.windows.win_copy:
+    dest: "{{ mssql_audit_file_path }}\\Export-SQLAuditEvents.ps1"
+    content: |
+      # Export SQL Server XEvents to Windows Application Event Log
+      $connectionString = "Server=localhost\SQLEXPRESS;Integrated Security=True;"
+      $eventSource = "MSSQL-SecurityAudit"
+
+      try {
+          $conn = New-Object System.Data.SqlClient.SqlConnection($connectionString)
+          $conn.Open()
+
+          $query = @"
+          SELECT
+              event_data.value('(event/@name)[1]', 'varchar(50)') AS event_name,
+              event_data.value('(event/@timestamp)[1]', 'datetime2') AS event_time,
+              event_data.value('(event/action[@name="username"]/value)[1]', 'varchar(128)') AS username,
+              event_data.value('(event/action[@name="client_hostname"]/value)[1]', 'varchar(128)') AS client_hostname,
+              event_data.value('(event/action[@name="database_name"]/value)[1]', 'varchar(128)') AS database_name,
+              event_data.value('(event/action[@name="sql_text"]/value)[1]', 'nvarchar(max)') AS sql_text
+          FROM (
+              SELECT CAST(target_data AS XML) AS target_data
+              FROM sys.dm_xe_session_targets st
+              JOIN sys.dm_xe_sessions s ON s.address = st.event_session_address
+              WHERE s.name = '{{ mssql_xevents_session_name }}'
+              AND st.target_name = 'ring_buffer'
+          ) AS Data
+          CROSS APPLY target_data.nodes('RingBufferTarget/event') AS XEventData(event_data)
+          WHERE event_data.value('(event/@timestamp)[1]', 'datetime2') > DATEADD(minute, -5, GETUTCDATE())
+      "@
+
+          $cmd = New-Object System.Data.SqlClient.SqlCommand($query, $conn)
+          $cmd.CommandTimeout = 30
+          $reader = $cmd.ExecuteReader()
+
+          while ($reader.Read()) {
+              $sqlText = $reader["sql_text"]
+              if ($sqlText -match "EXECUTE\s+AS|OPENQUERY|EXEC.*AT\s*\[|xp_cmdshell|xp_dirtree|xp_fileexist") {
+                  $message = "SQL Security Event: $($reader['event_name'])`nTime: $($reader['event_time'])`nUser: $($reader['username'])`nClient: $($reader['client_hostname'])`nDatabase: $($reader['database_name'])`nStatement: $sqlText"
+                  [System.Diagnostics.EventLog]::WriteEntry($eventSource, $message, [System.Diagnostics.EventLogEntryType]::Warning, 33205)
+              }
+          }
+          $reader.Close()
+          $conn.Close()
+      } catch {
+          Write-Warning "Error exporting SQL audit events: $_"
+      }
+  when: mssql_enable_xevents
+
+- name: Create scheduled task to export XEvents to Event Log
+  community.windows.win_scheduled_task:
+    name: "Export SQL Audit Events"
+    description: "Exports SQL Server XEvents security events to Windows Application Event Log"
+    actions:
+      - path: powershell.exe
+        arguments: "-ExecutionPolicy Bypass -File {{ mssql_audit_file_path }}\\Export-SQLAuditEvents.ps1"
+    triggers:
+      - type: time
+        start_boundary: "2024-01-01T00:00:00"
+        repetition:
+          interval: PT5M
+    username: SYSTEM
+    state: present
+    enabled: true
+  when: mssql_enable_xevents
+
+- name: Restart MSSQL service to apply login audit setting
+  ansible.windows.win_service:
+    name: "MSSQL$SQLEXPRESS"
+    force_dependent_services: true
+    state: restarted

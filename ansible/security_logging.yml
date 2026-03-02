@@ -1,0 +1,41 @@
+---
+# Security Logging Playbook
+# Enables attack detection logging in GOAD environment
+#
+# NOTE: Alloy deployment is handled separately by nimbus_range playbooks
+#
+# This playbook configures:
+# 1. SQL Server Audit (XEvents) on MSSQL servers - detects impersonation & linked server attacks
+# 2. LDAP Diagnostic Logging on DCs - detects LDAP enumeration (e.g., credential in description)
+#
+# Detection Coverage:
+# - MSSQL Impersonation (EXECUTE AS LOGIN/USER)
+# - MSSQL Linked Server abuse
+# - LDAP enumeration for sensitive attributes
+# - Kerberoasting reconnaissance (SPN queries)
+# - AS-REP roasting reconnaissance (userAccountControl queries)
+# - LAPS/gMSA password queries
+
+- name: Configure LDAP Diagnostic Logging on Domain Controllers
+  hosts: dc
+  gather_facts: true
+  roles:
+    - role: ldap_diagnostic_logging
+  tags:
+    - ldap
+    - dc
+    - logging
+
+- name: Configure SQL Server Audit Logging
+  hosts: mssql
+  gather_facts: true
+  vars:
+    # These should be defined in your inventory or group_vars
+    SQLSVCACCOUNT: "{{ sql_service_account | default('NT AUTHORITY\\NETWORK SERVICE') }}"
+    SQLSVCPASSWORD: "{{ sql_service_password | default('') }}"
+  roles:
+    - role: mssql_audit
+  tags:
+    - mssql
+    - sql
+    - logging
