@@ -253,6 +253,7 @@ or:
 
 ## 🔗 Additional Resources
 
+- [GOAD Vulnerabilities & Attack Scenarios](./docs/GOAD-vulnerabilities-comprehensive.md)
 - [Taskfile Reference](./docs/taskfile.md)
 - [Troubleshooting Guide](./docs/troubleshooting.md)
 - [Synchronizing DreadGOAD with Upstream](./docs/sync-upstream.md)

