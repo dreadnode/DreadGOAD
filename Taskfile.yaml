@@ -425,6 +425,266 @@ tasks:
           fi
         done
 
+  health-check:
+    desc: Verify all GOAD instances are healthy (AD replication, trusts, DNS, services)
+    summary: |
+      Runs health checks across all GOAD instances via SSM to verify:
+      - Domain controllers are responding
+      - AD replication is working with no failures
+      - Domain trusts are established
+      - DNS resolution across domains
+      - Member servers can reach their DCs
+      - Critical services (IIS, MSSQL) are running
+
+      Options:
+        ENV=<env>            Environment to target (default: dev)
+        REGION=<region>      AWS region (default: us-west-1)
+
+      Examples:
+        task health-check
+        task health-check ENV=staging
+        task health-check ENV=prod REGION=us-west-1
+    vars:
+      REGION: '{{.REGION | default "us-west-1"}}'
+    env:
+      AWS_REGION: '{{.REGION}}'
+      AWS_DEFAULT_REGION: '{{.REGION}}'
+    run: always
+    cmds:
+      - |
+        set -e
+        echo "=== GOAD Health Check ({{.ENV}}) ==="
+        echo ""
+
+        # Get instance IDs with names
+        INSTANCES=$(aws ec2 describe-instances \
+          --filters "Name=tag:Name,Values=*{{.ENV}}*dreadgoad*" "Name=instance-state-name,Values=running" \
+          --query 'Reservations[*].Instances[*].[InstanceId,Tags[?Key==`Name`].Value|[0]]' \
+          --output text --region {{.REGION}})
+
+        if [ -z "$INSTANCES" ]; then
+          echo "ERROR: No running GOAD instances found for ENV={{.ENV}}"
+          exit 1
+        fi
+
+        echo "Found instances:"
+        echo "$INSTANCES" | while read -r ID NAME; do
+          echo "  - $NAME ($ID)"
+        done
+        echo ""
+
+        # Get DC instance IDs
+        DC01_ID=$(echo "$INSTANCES" | grep -i dc01 | awk '{print $1}')
+        DC02_ID=$(echo "$INSTANCES" | grep -i dc02 | awk '{print $1}')
+        DC03_ID=$(echo "$INSTANCES" | grep -i dc03 | awk '{print $1}')
+        SRV02_ID=$(echo "$INSTANCES" | grep -i srv02 | awk '{print $1}')
+        SRV03_ID=$(echo "$INSTANCES" | grep -i srv03 | awk '{print $1}')
+
+        # Check DC01 - Primary DC, replication, trusts
+        echo "--- DC01 (kingslanding - sevenkingdoms.local) ---"
+        CMD_ID=$(aws ssm send-command \
+          --instance-ids "$DC01_ID" \
+          --document-name "AWS-RunPowerShellScript" \
+          --parameters 'commands=["Get-ADDomainController -Filter * | Format-Table Name, Domain, IPv4Address, IsGlobalCatalog -AutoSize","Write-Host \"Trusts:\"; Get-ADTrust -Filter * | Format-Table Name, Direction, TrustType -AutoSize","Write-Host \"Replication:\"; repadmin /replsummary"]' \
+          --region {{.REGION}} --query 'Command.CommandId' --output text)
+        sleep 6
+        aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$DC01_ID" --region {{.REGION}} \
+          --query 'StandardOutputContent' --output text
+        echo ""
+
+        # Check DC02 - Child domain, DNS
+        echo "--- DC02 (winterfell - north.sevenkingdoms.local) ---"
+        CMD_ID=$(aws ssm send-command \
+          --instance-ids "$DC02_ID" \
+          --document-name "AWS-RunPowerShellScript" \
+          --parameters 'commands=["Get-ADDomainController -Filter * | Format-Table Name, Domain, IPv4Address -AutoSize","Write-Host \"DNS Test:\"; Resolve-DnsName kingslanding.sevenkingdoms.local -ErrorAction SilentlyContinue | Select Name, IPAddress","Resolve-DnsName meereen.essos.local -ErrorAction SilentlyContinue | Select Name, IPAddress"]' \
+          --region {{.REGION}} --query 'Command.CommandId' --output text)
+        sleep 6
+        aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$DC02_ID" --region {{.REGION}} \
+          --query 'StandardOutputContent' --output text
+        echo ""
+
+        # Check DC03 - Separate forest, forest trust
+        echo "--- DC03 (meereen - essos.local) ---"
+        CMD_ID=$(aws ssm send-command \
+          --instance-ids "$DC03_ID" \
+          --document-name "AWS-RunPowerShellScript" \
+          --parameters 'commands=["Get-ADDomainController -Filter * | Format-Table Name, Domain, IPv4Address -AutoSize","Write-Host \"Forest Trust:\"; Get-ADTrust -Filter * | Format-Table Name, Direction, TrustType, ForestTransitive -AutoSize"]' \
+          --region {{.REGION}} --query 'Command.CommandId' --output text)
+        sleep 6
+        aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$DC03_ID" --region {{.REGION}} \
+          --query 'StandardOutputContent' --output text
+        echo ""
+
+        # Check member servers
+        echo "--- Member Servers (SRV02, SRV03) ---"
+        CMD_ID=$(aws ssm send-command \
+          --instance-ids "$SRV02_ID" "$SRV03_ID" \
+          --document-name "AWS-RunPowerShellScript" \
+          --parameters 'commands=["Write-Host \"=== $env:COMPUTERNAME ===\"","Write-Host \"Domain: $(Get-WmiObject Win32_ComputerSystem | Select -Expand Domain)\"","nltest /dsgetdc: 2>&1 | Select-String -Pattern \"DC:|Address:\"","Get-Service -Name W3SVC,MSSQLSERVER -ErrorAction SilentlyContinue | Format-Table Name, Status -AutoSize"]' \
+          --region {{.REGION}} --query 'Command.CommandId' --output text)
+        sleep 8
+        for SRV_ID in $SRV02_ID $SRV03_ID; do
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$SRV_ID" --region {{.REGION}} \
+            --query 'StandardOutputContent' --output text 2>/dev/null || echo "Waiting for $SRV_ID..."
+        done
+        echo ""
+        echo "=== Health Check Complete ==="
+
+  ssm:run:
+    desc: Run arbitrary PowerShell commands across GOAD instances via SSM
+    summary: |
+      Execute PowerShell commands on one or more GOAD instances using AWS SSM.
+
+      Options:
+        ENV=<env>            Environment to target (default: dev)
+        REGION=<region>      AWS region (default: us-west-1)
+        HOSTS=<hosts>        Comma-separated host names (dc01,dc02,srv02) or 'all' (default: all)
+        CMD=<command>        PowerShell command to execute (required)
+
+      Examples:
+        task ssm:run CMD="Get-ADUser -Filter *"
+        task ssm:run HOSTS=dc01 CMD="Get-ADDomainController -Filter *"
+        task ssm:run HOSTS=dc01,dc02 CMD="Get-Service ADWS"
+        task ssm:run HOSTS=srv02,srv03 CMD="Get-Service MSSQLSERVER"
+        task ssm:run ENV=staging HOSTS=all CMD="whoami"
+    vars:
+      REGION: '{{.REGION | default "us-west-1"}}'
+      HOSTS: '{{.HOSTS | default "all"}}'
+    env:
+      AWS_REGION: '{{.REGION}}'
+      AWS_DEFAULT_REGION: '{{.REGION}}'
+    requires:
+      vars: [CMD]
+    run: always
+    cmds:
+      - |
+        set -e
+
+        # Get all GOAD instances
+        INSTANCES=$(aws ec2 describe-instances \
+          --filters "Name=tag:Name,Values=*{{.ENV}}*dreadgoad*" "Name=instance-state-name,Values=running" \
+          --query 'Reservations[*].Instances[*].[InstanceId,Tags[?Key==`Name`].Value|[0]]' \
+          --output text --region {{.REGION}})
+
+        if [ -z "$INSTANCES" ]; then
+          echo "ERROR: No running GOAD instances found for ENV={{.ENV}}"
+          exit 1
+        fi
+
+        # Filter instances based on HOSTS parameter
+        if [ "{{.HOSTS}}" = "all" ]; then
+          TARGET_IDS=$(echo "$INSTANCES" | awk '{print $1}' | tr '\n' ' ')
+        else
+          TARGET_IDS=""
+          for HOST in $(echo "{{.HOSTS}}" | tr ',' ' '); do
+            ID=$(echo "$INSTANCES" | grep -i "$HOST" | awk '{print $1}')
+            if [ -n "$ID" ]; then
+              TARGET_IDS="$TARGET_IDS $ID"
+            else
+              echo "WARNING: Host '$HOST' not found"
+            fi
+          done
+        fi
+
+        if [ -z "$TARGET_IDS" ]; then
+          echo "ERROR: No matching instances found"
+          exit 1
+        fi
+
+        echo "Running command on: {{.HOSTS}}"
+        echo "Command: {{.CMD}}"
+        echo ""
+
+        # Send command to all target instances
+        CMD_ID=$(aws ssm send-command \
+          --instance-ids $TARGET_IDS \
+          --document-name "AWS-RunPowerShellScript" \
+          --parameters "commands=[\"{{.CMD}}\"]" \
+          --region {{.REGION}} --query 'Command.CommandId' --output text)
+
+        echo "Command ID: $CMD_ID"
+        echo "Waiting for results..."
+        sleep 6
+
+        # Get results from each instance
+        for ID in $TARGET_IDS; do
+          NAME=$(echo "$INSTANCES" | grep "$ID" | awk '{print $2}')
+          echo ""
+          echo "=== $NAME ($ID) ==="
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$ID" --region {{.REGION}} \
+            --query '[Status, StandardOutputContent, StandardErrorContent]' --output text 2>/dev/null || echo "Pending..."
+        done
+
+  verify-trusts:
+    desc: Verify domain trust relationships between all GOAD domains
+    summary: |
+      Validates that all domain trusts are properly configured:
+      - sevenkingdoms.local <-> north.sevenkingdoms.local (parent-child)
+      - sevenkingdoms.local <-> essos.local (forest trust)
+
+      Also tests cross-domain authentication by querying users across trusts.
+
+      Options:
+        ENV=<env>            Environment to target (default: dev)
+        REGION=<region>      AWS region (default: us-west-1)
+
+      Examples:
+        task verify-trusts
+        task verify-trusts ENV=staging
+    vars:
+      REGION: '{{.REGION | default "us-west-1"}}'
+    env:
+      AWS_REGION: '{{.REGION}}'
+      AWS_DEFAULT_REGION: '{{.REGION}}'
+    run: always
+    cmds:
+      - |
+        set -e
+        echo "=== GOAD Trust Verification ({{.ENV}}) ==="
+        echo ""
+
+        # Get DC01 instance ID
+        DC01_ID=$(aws ec2 describe-instances \
+          --filters "Name=tag:Name,Values=*{{.ENV}}*dreadgoad*DC01*" "Name=instance-state-name,Values=running" \
+          --query 'Reservations[*].Instances[*].InstanceId' \
+          --output text --region {{.REGION}})
+
+        if [ -z "$DC01_ID" ]; then
+          echo "ERROR: DC01 not found for ENV={{.ENV}}"
+          exit 1
+        fi
+
+        echo "Using DC01 ($DC01_ID) as trust verification source..."
+        echo ""
+
+        # Run comprehensive trust check from DC01
+        CMD_ID=$(aws ssm send-command \
+          --instance-ids "$DC01_ID" \
+          --document-name "AWS-RunPowerShellScript" \
+          --parameters 'commands=["Write-Host \"=== Domain Trusts from sevenkingdoms.local ===\"","Get-ADTrust -Filter * | Format-Table Name, Direction, TrustType, ForestTransitive, TrustAttributes -AutoSize","Write-Host \"\"","Write-Host \"=== Trust Validation ===\"","nltest /domain_trusts /all_trusts","Write-Host \"\"","Write-Host \"=== Cross-Domain Query Test ===\"","Write-Host \"Querying north.sevenkingdoms.local:\"","Get-ADUser -Filter * -Server winterfell.north.sevenkingdoms.local | Select -First 3 Name | Format-Table -AutoSize","Write-Host \"Querying essos.local:\"","Get-ADUser -Filter * -Server meereen.essos.local | Select -First 3 Name | Format-Table -AutoSize","Write-Host \"\"","Write-Host \"=== Trust Status ===\"","$trusts = Get-ADTrust -Filter *; foreach ($t in $trusts) { Write-Host \"$($t.Name): $(if (Test-ComputerSecureChannel -Server $t.Name -ErrorAction SilentlyContinue) { \"HEALTHY\" } else { \"Check manually\" })\" }"]' \
+          --region {{.REGION}} --query 'Command.CommandId' --output text)
+
+        echo "Waiting for trust verification..."
+        sleep 10
+
+        RESULT=$(aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$DC01_ID" --region {{.REGION}} \
+          --query '[Status, StandardOutputContent, StandardErrorContent]' --output text)
+
+        STATUS=$(echo "$RESULT" | head -1)
+        echo "Status: $STATUS"
+        echo ""
+        echo "$RESULT" | tail -n +2
+
+        if [ "$STATUS" = "Success" ]; then
+          echo ""
+          echo "=== Trust Verification Complete ==="
+        else
+          echo ""
+          echo "WARNING: Trust verification may have issues. Check output above."
+          exit 1
+        fi
+
   validate-vulns-quick:
     desc: Quick validation of critical GOAD vulnerabilities (subset of full validation)
     summary: |
