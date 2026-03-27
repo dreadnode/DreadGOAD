@@ -34,7 +34,7 @@
   vars:
     ansible_become_pass: "{{ SQLSVCPASSWORD }}"
 
-- name: Create logins mapping to specific users
+- name: Configure logins mapping to specific users
   ansible.windows.win_powershell:
     script: |
       $sqlcmd = "C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn\SQLCMD.EXE"
@@ -43,17 +43,21 @@
         exit 1
       }
 
-      # Check if the login mapping already exists to make this idempotent
-      $query = "IF EXISTS (SELECT * FROM sys.servers s INNER JOIN sys.linked_logins ll ON s.server_id = ll.server_id INNER JOIN sys.server_principals sp ON ll.local_principal_id = sp.principal_id WHERE s.name = N'{{ linked_server }}' AND sp.name = N'{{ mapping_item.local_login }}') SELECT 1 ELSE SELECT 0"
+      # Always drop and recreate the login mapping to ensure password is correct
+      # This is necessary because sp_addlinkedsrvlogin doesn't update passwords
+      $dropQuery = "EXEC master.dbo.sp_droplinkedsrvlogin @rmtsrvname = N'{{ linked_server }}', @locallogin = N'{{ mapping_item.local_login }}'"
+      $addQuery = "EXEC master.dbo.sp_addlinkedsrvlogin @rmtsrvname = N'{{ linked_server }}', @locallogin = N'{{ mapping_item.local_login }}', @useself = N'False', @rmtuser = N'{{ mapping_item.remote_login }}', @rmtpassword = N'{{ mapping_item.remote_password }}'"
 
-      $exists = & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q $query | Where-Object { $_ -match '^\s*[0-1]\s*$' }
+      # Drop existing mapping (ignore errors if it doesn't exist)
+      & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q $dropQuery 2>&1 | Out-Null
 
-      if ($exists -eq "1") {
-        Write-Output "Login mapping for {{ mapping_item.local_login }} to {{ linked_server }} already exists"
-      } else {
-        # Add the login mapping
-        & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q "EXEC master.dbo.sp_addlinkedsrvlogin @rmtsrvname = N'{{ linked_server }}', @locallogin = N'{{ mapping_item.local_login }}', @useself = N'False', @rmtuser = N'{{ mapping_item.remote_login }}', @rmtpassword = N'{{ mapping_item.remote_password }}'"
+      # Add the login mapping with correct password
+      $result = & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q $addQuery 2>&1
+      if ($LASTEXITCODE -ne 0) {
+        Write-Error "Failed to add linked server login: $result"
+        exit 1
       }
+      Write-Output "Configured login mapping: {{ mapping_item.local_login }} -> {{ mapping_item.remote_login }}@{{ linked_server }}"
   become: true
   become_method: runas
   become_user: "{{ SQLSVCACCOUNT }}"
