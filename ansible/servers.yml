@@ -31,17 +31,10 @@
           linked_servers: {{ linked_servers }}
       tags: always
 
-    # Check if SQL Server is actually running
-    - name: Check if SQL Server service is running
-      ansible.windows.win_service:
-        name: MSSQL$SQLEXPRESS
-      register: sql_service
-      ignore_errors: true
-
   roles:
-    # Only run the mssql role if the service isn't found or isn't running
-    - { role: 'mssql', tags: 'mssql',
-        when: sql_service.exists is not defined or not sql_service.exists or sql_service.state != 'running' }
+    # mssql role now handles install/config split internally
+    # Installation is skipped if already installed, but config ALWAYS runs
+    - { role: 'mssql', tags: 'mssql' }
     - { role: 'mssql_link', tags: 'mssql, mssql_link'}
   vars:
     domain: "{{ lab.hosts[dict_key].domain }}"
