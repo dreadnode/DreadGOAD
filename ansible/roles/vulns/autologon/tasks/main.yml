@@ -1,6 +1,6 @@
 ---
 - name: Add windows autologon
-  ansible.windows.win_auto_logon:
+  community.windows.win_auto_logon:
     username: "{{ item.value.username }}"
     password: "{{ item.value.password }}"
   with_dict: "{{ vulns_vars }}"

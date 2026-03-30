@@ -8,7 +8,7 @@
   when: force_dns_server | bool
 
 - name: Set a proxy for specific protocols
-  ansible.windows.win_inet_proxy:
+  community.windows.win_inet_proxy:
     proxy:
       http: "{{ ad_http_proxy }}"
       https: "{{ ad_https_proxy }}"
@@ -16,7 +16,7 @@
   when: enable_http_proxy | bool
 
 - name: Configure IE to use a specific proxy per protocol
-  ansible.windows.win_inet_proxy:
+  community.windows.win_inet_proxy:
     proxy:
       http: "{{ ad_http_proxy }}"
       https: "{{ ad_https_proxy }}"
@@ -140,7 +140,7 @@
   until: firewall_result is not failed
 
 - name: Add a network static route
-  ansible.windows.win_route:
+  community.windows.win_route:
     destination: "{{ route_network }}"
     gateway: "{{ route_gateway }}"
     metric: 1

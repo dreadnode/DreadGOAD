@@ -1,6 +1,6 @@
 ---
 - name: Add DNS server zone
-  ansible.windows.win_dns_zone:
+  community.windows.win_dns_zone:
     name: "{{ item }}"
     type: forwarder
     replication: "{{ replication }}"
