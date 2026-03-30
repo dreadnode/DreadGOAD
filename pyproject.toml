@@ -9,7 +9,7 @@ readme = "README.md"
 [tool.poetry.dependencies]
 python = "^3.8"
 rich = "^13.9.4"
-psutil = "^6.1.0"
+psutil = "^7.0.0"
 Jinja2 = "^3.1.4"
 PyYAML = "^6.0.2"
 setuptools = {version = "^75.6.0", python = ">=3.9"}
