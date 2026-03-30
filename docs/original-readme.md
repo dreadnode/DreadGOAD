@@ -3,7 +3,7 @@
   <br>
 </div>
 
-**GOAD (v3)**
+## GOAD (v3)
 
 🔖 Documentation : [https://orange-cyberdefense.github.io/GOAD/](https://orange-cyberdefense.github.io/GOAD/)
 
@@ -25,16 +25,19 @@ This lab use free Windows VM only (180 days). After that delay enter a license o
 ## Available labs
 
 - GOAD Lab family and extensions overview
+
 <div align="center">
 <img alt="GOAD" width="800" src="./docs/img/diagram-GOADv3-full.png">
 </div>
 
 - [GOAD](https://orange-cyberdefense.github.io/GOAD/labs/GOAD/) : 5 vms, 2 forests, 3 domains (full goad lab)
+
 <div align="center">
 <img alt="GOAD" width="800" src="./docs/img/GOAD_schema.png">
 </div>
 
 - [GOAD-Light](https://orange-cyberdefense.github.io/GOAD/labs/GOAD-Light/) : 3 vms, 1 forest, 2 domains (smaller goad lab for those with a smaller pc)
+
 <div align="center">
 <img alt="GOAD Light" width="600" src="./docs/img/GOAD-Light_schema.png">
 </div>
@@ -42,6 +45,7 @@ This lab use free Windows VM only (180 days). After that delay enter a license o
 - [MINILAB](https://orange-cyberdefense.github.io/GOAD/labs/MINILAB/): 2 vms, 1 forest, 1 domain (basic lab with one DC (windows server 2019) and one Workstation (windows 10))
 
 - [SCCM](https://orange-cyberdefense.github.io/GOAD/labs/SCCM/) : 4 vms, 1 forest, 1 domain, with microsoft configuration manager installed
+
 <div align="center">
 <img alt="SCCM" width="600" src="./docs/img/SCCMLAB_overview.png">
 </div>

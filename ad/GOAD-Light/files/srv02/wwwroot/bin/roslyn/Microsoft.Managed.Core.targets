@@ -9,12 +9,12 @@
   <Target Name="ShimReferencePathsWhenCommonTargetsDoesNotUnderstandReferenceAssemblies"
           BeforeTargets="CoreCompile"
           Condition="'@(ReferencePathWithRefAssemblies)' == ''">
-    <!-- 
-      FindReferenceAssembliesForReferences target in Common targets populate this item 
-      since dev15.3. The compiler targets may be used (via NuGet package) on earlier MSBuilds. 
-      If the ReferencePathWithRefAssemblies item is not populated, just use ReferencePaths 
+    <!--
+      FindReferenceAssembliesForReferences target in Common targets populate this item
+      since dev15.3. The compiler targets may be used (via NuGet package) on earlier MSBuilds.
+      If the ReferencePathWithRefAssemblies item is not populated, just use ReferencePaths
       (implementation assemblies) as they are.
-      
+
       Since XAML inner build runs CoreCompile directly (instead of Compile target),
       it also doesn't invoke FindReferenceAssembliesForReferences listed in CompileDependsOn.
       In that case we also populate ReferencePathWithRefAssemblies with implementation assemblies.
@@ -26,7 +26,7 @@
 
   <Target Name="_BeforeVBCSCoreCompile"
           DependsOnTargets="ShimReferencePathsWhenCommonTargetsDoesNotUnderstandReferenceAssemblies">
-    
+
     <ItemGroup Condition="'$(TargetingClr2Framework)' == 'true'">
       <ReferencePathWithRefAssemblies>
         <EmbedInteropTypes />
@@ -54,7 +54,7 @@
     ========================
     DeterministicSourcePaths
     ========================
-    
+
     Unless specified otherwise enable deterministic source root (PathMap) when building deterministically on CI server, but not for local builds.
     In order for the debugger to find source files when debugging a locally built binary the PDB must contain original, unmapped local paths.
   -->
@@ -77,7 +77,7 @@
     InitializeSourceControlInformation is an msbuild target that ensures the SourceRoot items are populated from source control.
     The target is available only if SourceControlInformationFeatureSupported is true.
 
-    A consumer of SourceRoot.MappedPath metadata, such as Source Link generator, shall depend on this target. 
+    A consumer of SourceRoot.MappedPath metadata, such as Source Link generator, shall depend on this target.
   -->
 
   <Target Name="InitializeSourceRootMappedPaths"
@@ -97,22 +97,22 @@
     </ItemGroup>
   </Target>
 
-  <!-- 
+  <!--
     Declare that target InitializeSourceRootMappedPaths that populates MappedPaths metadata on SourceRoot items is available.
   -->
   <PropertyGroup>
     <SourceRootMappedPathsFeatureSupported>true</SourceRootMappedPathsFeatureSupported>
   </PropertyGroup>
 
-  <!-- 
-    If InitializeSourceControlInformation target isn't supported, we just continue without invoking that synchronization target. 
+  <!--
+    If InitializeSourceControlInformation target isn't supported, we just continue without invoking that synchronization target.
     We'll proceed with SourceRoot (and other source control properties) provided by the user (or blank).
   -->
   <Target Name="_InitializeSourceRootMappedPathsFromSourceControl"
           DependsOnTargets="InitializeSourceControlInformation"
           Condition="'$(SourceControlInformationFeatureSupported)' == 'true'" />
 
-  <!-- 
+  <!--
     =======
     PathMap
     =======
@@ -141,11 +141,11 @@
       <!--
         Prepend the SourceRoot.MappedPath values to PathMap, if it already has a value.
         For each emitted source path the compiler applies the first mapping that matches the path.
-        PathMap values set previously will thus only be applied if the mapping provided by 
-        SourceRoot.MappedPath doesn't match. Since SourceRoot.MappedPath is also used by SourceLink 
+        PathMap values set previously will thus only be applied if the mapping provided by
+        SourceRoot.MappedPath doesn't match. Since SourceRoot.MappedPath is also used by SourceLink
         preferring it over manually set PathMap ensures that PathMap is consistent with SourceLink.
-      
-        TODO: quote the paths to avoid misinterpreting ',' and '=' in them as separators, 
+
+        TODO: quote the paths to avoid misinterpreting ',' and '=' in them as separators,
         but quoting doesn't currently work (see https://github.com/dotnet/roslyn/issues/22835).
       -->
       <PathMap>@(_TopLevelSourceRoot->'%(Identity)=%(MappedPath)', ',')$(PathMap)</PathMap>

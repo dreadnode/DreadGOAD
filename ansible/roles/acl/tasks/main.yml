@@ -190,7 +190,7 @@
       inheritance: "{{ item.value.inheritance }}"
   vars:
     ansible_become: true
-    ansible_become_method: runas
+    ansible_become_method: ansible.builtin.runas
     ansible_become_user: "{{ domain_username }}"
     ansible_become_password: "{{ domain_password }}"
     # Set the async directory explicitly for both tasks
@@ -203,11 +203,11 @@
   register: acl_results
 
 - name: Wait for ACL operations to complete
-  async_status:
+  ansible.builtin.async_status:
     jid: "{{ item.ansible_job_id }}"
   vars:
     ansible_become: true
-    ansible_become_method: runas
+    ansible_become_method: ansible.builtin.runas
     ansible_become_user: "{{ domain_username }}"
     ansible_become_password: "{{ domain_password }}"
     ansible_async_dir: 'C:\Users\Administrator\.ansible_async'

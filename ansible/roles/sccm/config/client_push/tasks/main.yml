@@ -33,11 +33,11 @@
       -AddAccount $pushAccount `
       -InstallationProperty $property
     parameters:
-      siteCode: "{{site_code}}"
-      sccmFQDN: "{{sccm_server}}.{{domain}}"
-      pushAccount: "{{push_account}}"
+      siteCode: "{{ site_code }}"
+      sccmFQDN: "{{ sccm_server }}.{{ domain }}"
+      pushAccount: "{{ push_account }}"
   vars:
     ansible_become: yes
-    ansible_become_method: runas
-    ansible_become_user: "{{domain_username}}"
-    ansible_become_password: "{{domain_password}}"
+    ansible_become_method: ansible.builtin.runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"

@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2001,SC2034
 # Generate AWS instance ID to IP mapping for Ansible optimization
 # This speeds up playbook execution by avoiding network detection on each run
 set -euo pipefail
@@ -21,8 +22,8 @@ echo "Generating instance-to-IP mapping from inventory: ${INVENTORY}"
 echo "AWS Region: ${AWS_REGION}"
 
 # Extract instance IDs from inventory
-instance_ids=$(grep -E "ansible_host=i-[a-f0-9]+" "${INVENTORY}" | \
-    grep -oE "i-[a-f0-9]+" | sort -u)
+instance_ids=$(grep -E "ansible_host=i-[a-f0-9]+" "${INVENTORY}" \
+                                                                 | grep -oE "i-[a-f0-9]+" | sort -u)
 
 if [ -z "$instance_ids" ]; then
     echo "Error: No instance IDs found in inventory"
@@ -40,12 +41,14 @@ echo "Querying AWS EC2 for private IP addresses..."
 instance_list=$(echo "$instance_ids" | tr '\n' ',' | sed 's/,$//')
 
 # Query AWS EC2 and build JSON mapping
+# instance_ids needs word splitting for multiple IDs
+# shellcheck disable=SC2086
 mapping=$(aws ec2 describe-instances \
     --region "${AWS_REGION}" \
     --instance-ids $instance_ids \
     --query 'Reservations[].Instances[].[InstanceId, PrivateIpAddress]' \
-    --output json | \
-    jq -r 'map({key: .[0], value: .[1]}) | from_entries | {instance_to_ip: .}')
+    --output json \
+                  | jq -r 'map({key: .[0], value: .[1]}) | from_entries | {instance_to_ip: .}')
 
 if [ -z "$mapping" ] || [ "$mapping" = "null" ]; then
     echo "Error: Failed to retrieve instance information from AWS"

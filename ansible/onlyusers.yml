@@ -1,11 +1,12 @@
 ---
-# Load datas
-- ansible.builtin.import_playbook: data.yml
+# Load data
+- name: Import Data
+  ansible.builtin.import_playbook: data.yml
   vars:
     data_path: "../ad/{{domain_name}}/data/"
   tags: 'data'
 
-# set AD datas ==================================================================================================
+# set AD data ==================================================================================================
 - name: DCs AD data configuration
   hosts: dc01,dc02
   roles:

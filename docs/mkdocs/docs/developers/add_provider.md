@@ -3,15 +3,18 @@
 🚧 TODO TO BE COMPLETED
 
 ## Provider files
+
 - Add the new provider files in each lab location : `ad/<lab>/providers/<provider_name>`
 - Add the new provider files in each extension location : `extensions/<extension>/providers/<provider_name>`
 - Create the provider templates file in : `template/provider/<provider_name>`
 
 ## Provider python class
+
 - Create the new provider class in `goad/provider/`
 
 - If you use vagrant :
     - create the new provider in `goad/provider/vagrant/myprovider.py`
+
 ```python
 from goad.provider.vagrant.vagrant import VagrantProvider
 from goad.utils import *
@@ -32,24 +35,27 @@ class MyProviderProvider(VagrantProvider):
         return all(checks)
 ```
 
-    - add constants in `goad/utils.py`
-    ```python
-    MYPROVIDER = "myprovider"
-    ALLOWED_PROVIDERS = [AWS, VIRTUALBOX, AZURE, VMWARE, PROXMOX, LUDUS, MYPROVIDER]
-    ```
+- add constants in `goad/utils.py`
 
-    - add the check in the command class:
-    ```python
-    # goad/command/cmd.py
-    def check_myprovider(self):
-        pass
-    ```
+```python
+MYPROVIDER = "myprovider"
+ALLOWED_PROVIDERS = [AWS, VIRTUALBOX, AZURE, VMWARE, PROXMOX, LUDUS, MYPROVIDER]
+```
 
-    - add the check in the inherited classes : linux.py/ windows.py / wsl.py
-    - add the new provider in the provider_factory.py file
+- add the check in the command class:
+
+```python
+# goad/command/cmd.py
+def check_myprovider(self):
+    pass
+```
+
+- add the check in the inherited classes : linux.py/ windows.py / wsl.py
+- add the new provider in the provider_factory.py file
 
 - If you use Terraform :
     - create the new provider in `goad/provider/terraform/myprovider.py`
+
 ```python
 from goad.provider.terraform.terraform import TerraformProvider
 from goad.utils import *
@@ -107,10 +113,9 @@ class MyProviderProvider(TerraformProvider):
         pass
 ```
 
-    - add constants in `goad/utils.py`
-    - add the check commands in the cmd.py and the inherited classes : linux.py/ windows.py / wsl.py
-    - add the new provider in the provider_factory.py file
-
+- add constants in `goad/utils.py`
+- add the check commands in the cmd.py and the inherited classes : linux.py/ windows.py / wsl.py
+- add the new provider in the provider_factory.py file
 
 - next adapt the menu if needed in menu.py
 - add dependencies if needed in the requirements files, in the dependencies.py files and in the config.py files

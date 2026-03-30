@@ -22,7 +22,7 @@
     }
     Write-Output "Successfully configured sysadmin: {{ item }}"
   become: true
-  become_method: runas
+  become_method: ansible.builtin.runas
   become_user: "{{ SQLSVCACCOUNT }}"
   vars:
     ansible_become_pass: "{{ SQLSVCPASSWORD }}"
@@ -56,7 +56,7 @@
     }
     Write-Output "Successfully granted IMPERSONATE ON LOGIN::[{{ item.value }}] TO [{{ item.key }}]"
   become: true
-  become_method: runas
+  become_method: ansible.builtin.runas
   become_user: "{{ SQLSVCACCOUNT }}"
   vars:
     ansible_become_pass: "{{ SQLSVCPASSWORD }}"
@@ -94,7 +94,7 @@
     }
     Write-Output "Successfully granted IMPERSONATE ON USER::[{{ item.value.impersonate }}] TO [{{ item.value.user }}] in {{ item.value.db }}"
   become: true
-  become_method: runas
+  become_method: ansible.builtin.runas
   become_user: "{{ SQLSVCACCOUNT }}"
   vars:
     ansible_become_pass: "{{ SQLSVCPASSWORD }}"
@@ -128,7 +128,7 @@
     }
     Write-Output "Successfully enabled sa account"
   become: true
-  become_method: runas
+  become_method: ansible.builtin.runas
   become_user: "{{ SQLSVCACCOUNT }}"
   vars:
     ansible_become_pass: "{{ SQLSVCPASSWORD }}"
@@ -148,7 +148,7 @@
     }
     Write-Output "Successfully enabled mixed mode authentication (LoginMode=2)"
   become: true
-  become_method: runas
+  become_method: ansible.builtin.runas
   become_user: "{{ SQLSVCACCOUNT }}"
   vars:
     ansible_become_pass: "{{ SQLSVCPASSWORD }}"

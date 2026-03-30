@@ -1,9 +1,10 @@
 ---
-# Load datas
-- ansible.builtin.import_playbook: data.yml
+# Load data
+- name: Import Data
+  ansible.builtin.import_playbook: data.yml
   tags: data
 
-# set AD datas ==================================================================================================
+# set AD data ==================================================================================================
 
 - name: GMSA inside AD
   hosts: dc

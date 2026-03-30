@@ -40,7 +40,7 @@
   poll: 0
 
 - name: Wait for OU creation to complete
-  async_status:
+  ansible.builtin.async_status:
     jid: "{{ item.ansible_job_id }}"
   register: ou_result
   until: ou_result.finished

@@ -33,7 +33,7 @@ The lab setup is automated using vagrant and ansible automation tools.
 You can change the vm version in the Vagrantfile according to Stefan Scherer vagrant repository : https://app.vagrantup.com/StefanScherer
 
 
-## Users/Groups and associated vulnerabilites/scenarios
+## Users/Groups and associated vulnerabilities/scenarios
 
 - You can find a lot of the available scenarios on [https://mayfly277.github.io/categories/ad/](https://mayfly277.github.io/categories/ad/)
 
@@ -138,7 +138,7 @@ ESSOS.LOCAL
 - infos : log encyclopedia : https://www.ultimatewindowssecurity.com/securitylog/encyclopedia/
 - the elk is not installed by default due to resources reasons.
 
-- prerequistes:
+- prerequisites:
 - you need `sshpass` for the elk installation
 
 ```bash
@@ -176,7 +176,7 @@ If you want to do that by hand:
 
   2. launch the elk provisionning with the command :
 
-  ```
+  ```bash
   cd ansible
   ansible-playbook -i ../ad/GOAD/data/inventory -i ../ad/GOAD/providers/<your_provider>/inventory elk.yml
   ```

@@ -1,12 +1,12 @@
 # SMB share users only
 - name: Ensure directory structure for public share exists
-  win_file:
+  ansible.windows.win_file:
     path: C:\shares\public
     state: directory
 
 - name: Ensure public share exists
-  win_share:
-    name: public
+  ansible.windows.win_share:
+    name: Public
     description: Basic Read share for all domain users
     path: C:\shares\public
     list: yes
@@ -16,33 +16,33 @@
 # allow anonymous on win10 (https://docs.microsoft.com/fr-fr/troubleshoot/windows-server/networking/guest-access-in-smb2-is-disabled-by-default)
 
 - name: Add or update registry path to allow guest access in SMB
-  win_regedit:
+  ansible.windows.win_regedit:
     path: HKLM:\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters
     name: AllowInsecureGuestAuth
     data: 1
     type: dword
 
 # allow guest user
-- name: activate guest account
-  win_command: net user guest /active:yes
+- name: Activate guest account
+  ansible.windows.win_command: net user guest /active:yes
 
 # SMB share anonymous
 - name: Ensure directory structure for all share exists
-  win_file:
+  ansible.windows.win_file:
     path: C:\shares\all
     state: directory
 
 - name: Add all share everyone rights
-  win_acl:
+  ansible.windows.win_acl:
     path: C:\shares\all
     user: Everyone
     rights: FullControl
     type: allow
     state: present
 
-- name: all shares
-  win_share:
-    name: all
+- name: All shares
+  ansible.windows.win_share:
+    name: All
     description: Basic RW share for all
     path: C:\shares\all
     list: yes

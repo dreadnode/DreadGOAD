@@ -1,6 +1,7 @@
 ---
-# Load datas
-- ansible.builtin.import_playbook: data.yml
+# Load data
+- name: Import Data
+  ansible.builtin.import_playbook: data.yml
   vars:
     data_path: "../ad/{{domain_name}}/data/"
   tags: 'data'

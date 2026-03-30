@@ -90,7 +90,7 @@ if ("$env:PACKER_BUILDER_TYPE" -eq "parallels-iso") {
   if ($(Get-ItemProperty "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion").ProductName.StartsWith("Windows Server")) {
     Write-Output "Installing Print Server service"
     Install-WindowsFeature -Name Print-Server
-  }  
+  }
 }
 
 cmd /c msiexec /qb /x C:\Windows\Temp\7z1900-x64.msi

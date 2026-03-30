@@ -8,7 +8,7 @@
   - GOAD-Light
 
 - Lab infos:
-  - hostname: casterlyrock 
+  - hostname: casterlyrock
   - Users:
     - Administrators :
       - tywin.lannister
@@ -29,14 +29,15 @@
 ## prerequisites
 
 On ludus prepare template :
-```
+
+```bash
 ludus templates add -d win10-21h1-x64-enterprise
 ludus templates build
 ```
 
 ## Install
 
-```
+```bash
 instance_id> install_extension ws01
 ```
 
@@ -44,5 +45,6 @@ instance_id> install_extension ws01
 
 - Not implemented yet
 
-## credits:
+## credits
+
 - asr rules implementation : https://github.com/zuesdevil (https://github.com/Orange-Cyberdefense/GOAD/pull/172)

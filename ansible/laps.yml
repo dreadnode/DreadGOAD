@@ -1,6 +1,7 @@
 ---
-# Load datas
-- ansible.builtin.import_playbook: data.yml
+# Load data
+- name: Import Data
+  ansible.builtin.import_playbook: data.yml
   tags: data
 
 - name: Configure laps on DCs

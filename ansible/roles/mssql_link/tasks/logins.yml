@@ -29,7 +29,7 @@
         exit 1
       }
   become: true
-  become_method: runas
+  become_method: ansible.builtin.runas
   become_user: "{{ SQLSVCACCOUNT }}"
   vars:
     ansible_become_pass: "{{ SQLSVCPASSWORD }}"
@@ -59,7 +59,7 @@
       }
       Write-Output "Configured login mapping: {{ mapping_item.local_login }} -> {{ mapping_item.remote_login }}@{{ linked_server }}"
   become: true
-  become_method: runas
+  become_method: ansible.builtin.runas
   become_user: "{{ SQLSVCACCOUNT }}"
   vars:
     ansible_become_pass: "{{ SQLSVCPASSWORD }}"

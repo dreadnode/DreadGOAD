@@ -35,7 +35,7 @@
 # https://adsecurity.org/?p=3658
 # https://docs.microsoft.com/en-us/previous-versions/tn-archive/ff405676(v=msdn.10)
 
-- name: set acl
+- name: Set acl
   ansible.windows.win_powershell:
     script: |
       [CmdletBinding()]
@@ -107,13 +107,13 @@
         $Ansible.Changed = $true
       }
     parameters:
-      for: "{{item.value.for}}"
-      to: "{{item.value.to}}"
-      right: "{{item.value.right}}"
-      inheritance: "{{item.value.inheritance}}"
+      for: "{{ item.value.for }}"
+      to: "{{ item.value.to }}"
+      right: "{{ item.value.right }}"
+      inheritance: "{{ item.value.inheritance }}"
   vars:
     ansible_become: yes
-    ansible_become_method: runas
-    ansible_become_user: "{{domain_username}}"
-    ansible_become_password: "{{domain_password}}"
+    ansible_become_method: ansible.builtin.runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
   with_dict: "{{ vulns_vars }}"

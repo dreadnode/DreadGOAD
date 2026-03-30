@@ -8,7 +8,7 @@
       - "{{ hostvars[dc]['dc_ipv4'] | default(instance_to_ip[hostvars[dc]['ansible_host']] if hostvars[dc]['ansible_host'] in instance_to_ip else hostvars[dc].ansible_host) }}"
   vars:
     ansible_become: true
-    ansible_become_method: runas
+    ansible_become_method: ansible.builtin.runas
     ansible_become_user: "{{ domain_username }}"
     ansible_become_password: "{{ domain_password }}"
     dc: "{{ lab.domains[item].dc }}"

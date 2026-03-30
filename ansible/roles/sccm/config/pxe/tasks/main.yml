@@ -31,11 +31,11 @@
       #Enable Multicast Feature
       # Add-CMMulticastServicePoint -SiteSystemServerName $DP -SiteCode $siteCode
     parameters:
-      siteCode: "{{site_code}}"
-      sccmFQDN: "{{sccm_server}}.{{domain}}"
-      pass: "{{pxe_pass}}"
+      siteCode: "{{ site_code }}"
+      sccmFQDN: "{{ sccm_server }}.{{ domain }}"
+      pass: "{{ pxe_pass }}"
   vars:
     ansible_become: yes
-    ansible_become_method: runas
-    ansible_become_user: "{{domain_username}}"
-    ansible_become_password: "{{domain_password}}"
+    ansible_become_method: ansible.builtin.runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"

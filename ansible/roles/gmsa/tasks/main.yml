@@ -43,7 +43,7 @@
     error_action: stop
   vars:
     ansible_become: true
-    ansible_become_method: runas
+    ansible_become_method: ansible.builtin.runas
     ansible_become_user: "{{ domain_username }}"
     ansible_become_password: "{{ domain_password }}"
   with_dict: "{{ ad_gmsa }}"

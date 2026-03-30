@@ -1,41 +1,41 @@
 # Download win10 iso
-- name: check downloaded iso file exists
-  win_stat:
+- name: Check downloaded iso file exists
+  ansible.windows.win_stat:
     path: c:\setup\win_10_22h2.iso
   register: iso_file
 
-- name: check wim file exists
-  win_stat:
+- name: Check wim file exists
+  ansible.windows.win_stat:
     path: c:\share_iso\install.wim
   register: wim_file
 
-- name: download win10 iso file (~ 5.4GB )
-  win_get_url:
-      url: "{{win10_iso_url}}"
+- name: Download win10 iso file (~ 5.4GB )
+  ansible.windows.win_get_url:
+      url: "{{ win10_iso_url }}"
       dest: 'c:\setup\win_10_22h2.iso'
   when: not (iso_file.stat.exists or wim_file.stat.exists)
 
-- name: create share folder
-  win_file:
+- name: Create share folder
+  ansible.windows.win_file:
     path: C:\share_iso
     state: directory
 
 - name: Ensure share exists
-  win_share:
-    name: share_iso
+  ansible.windows.win_share:
+    name: Share_iso
     description: iso share for all domain users
     path: C:\share_iso
     list: yes
     full: Administrators
     change: Users
 
-- name: check wim file exists
-  win_stat:
+- name: Check wim file exists
+  ansible.windows.win_stat:
     path: c:\share_iso\install.wim
   register: wim_file
 
 # Extract setup.wim from iso
-- name: open ISO and extract wim file
+- name: Open ISO and extract wim file
   ansible.windows.win_powershell:
     script: |
       $mountResult = Mount-DiskImage -ImagePath "c:\setup\win_10_22h2.iso"
@@ -75,14 +75,14 @@
         $Ansible.Changed = $false
       }
     parameters:
-      siteCode: "{{site_code}}"
-      shareServer: "{{sccm_server}}"
-      sccmFQDN: "{{sccm_server}}.{{domain}}"
+      siteCode: "{{ site_code }}"
+      shareServer: "{{ sccm_server }}"
+      sccmFQDN: "{{ sccm_server }}.{{ domain }}"
   vars:
     ansible_become: yes
-    ansible_become_method: runas
-    ansible_become_user: "{{domain_username}}"
-    ansible_become_password: "{{domain_password}}"
+    ansible_become_method: ansible.builtin.runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
 
 # Create task sequence
 - name: Create Task sequence
@@ -170,19 +170,19 @@
         $Ansible.Changed = $false
       }
     parameters:
-      siteCode: "{{site_code}}"
-      shareServer: "{{sccm_server}}"
-      adminPass: "{{admin_pass}}"
-      domainName : "{{domain}}"
-      ou: "{{ou_location}}"
-      domainAccount: "{{naa_user}}"
-      domainPassword: "{{naa_pass}}"
-      sccmFQDN: "{{sccm_server}}.{{domain}}"
+      siteCode: "{{ site_code }}"
+      shareServer: "{{ sccm_server }}"
+      adminPass: "{{ admin_pass }}"
+      domainName: "{{ domain }}"
+      ou: "{{ ou_location }}"
+      domainAccount: "{{ naa_user }}"
+      domainPassword: "{{ naa_pass }}"
+      sccmFQDN: "{{ sccm_server }}.{{ domain }}"
   vars:
     ansible_become: yes
-    ansible_become_method: runas
-    ansible_become_user: "{{domain_username}}"
-    ansible_become_password: "{{domain_password}}"
+    ansible_become_method: ansible.builtin.runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
 
 # start distribute content
 - name: Start distribute content
@@ -220,17 +220,17 @@
       }
       Start-CMContentDistribution -DeploymentPackageName "Configuration Manager Client Package" -DistributionPointName $distributionPoint
     parameters:
-      siteCode: "{{site_code}}"
-      distributionPoint: "{{sccm_server}}.{{domain}}"
-      sccmFQDN: "{{sccm_server}}.{{domain}}"
+      siteCode: "{{ site_code }}"
+      distributionPoint: "{{ sccm_server }}.{{ domain }}"
+      sccmFQDN: "{{ sccm_server }}.{{ domain }}"
   vars:
     ansible_become: yes
-    ansible_become_method: runas
-    ansible_become_user: "{{domain_username}}"
-    ansible_become_password: "{{domain_password}}"
+    ansible_become_method: ansible.builtin.runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
 
-# update unknow computers
-- name: Update unknow computers collection
+# update unknown computers
+- name: Update unknown computers collection
   ansible.windows.win_powershell:
     script: |
       [CmdletBinding()]
@@ -249,13 +249,13 @@
       Set-Location ($siteCode +":")
       Get-CMCollection -Name "All Unknown Computers" | Invoke-CMCollectionUpdate
     parameters:
-      siteCode: "{{site_code}}"
-      sccmFQDN: "{{sccm_server}}.{{domain}}"
+      siteCode: "{{ site_code }}"
+      sccmFQDN: "{{ sccm_server }}.{{ domain }}"
   vars:
     ansible_become: yes
-    ansible_become_method: runas
-    ansible_become_user: "{{domain_username}}"
-    ansible_become_password: "{{domain_password}}"
+    ansible_become_method: ansible.builtin.runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
 
 # Deploy sequence
 - name: Deploy Task sequence
@@ -304,11 +304,11 @@
         $Ansible.Changed = $false
       }
     parameters:
-      siteCode: "{{site_code}}"
-      domainName : "{{domain}}"
-      sccmFQDN: "{{sccm_server}}.{{domain}}"
+      siteCode: "{{ site_code }}"
+      domainName: "{{ domain }}"
+      sccmFQDN: "{{ sccm_server }}.{{ domain }}"
   vars:
     ansible_become: yes
-    ansible_become_method: runas
-    ansible_become_user: "{{domain_username}}"
-    ansible_become_password: "{{domain_password}}"
+    ansible_become_method: ansible.builtin.runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"

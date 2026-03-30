@@ -63,14 +63,15 @@ sudo /opt/vagrant-vmware-desktop/bin/vagrant-vmware-utility certificate generate
 sudo /opt/vagrant-vmware-desktop/bin/vagrant-vmware-utility service install
 ```
 
-- Note that you will need to install the vmware-desktop plugin after the vagrant installation : 
-```
+- Note that you will need to install the vmware-desktop plugin after the vagrant installation :
+
+```bash
 vagrant plugin install vagrant-vmware-desktop
 ```
 
 ### Install Vagrant
 
-- **vagrant** from their official site [vagrant](https://developer.hashicorp.com/vagrant/downloads). __The version you can install through your favorite package manager (apt, yum, ...) is probably not the latest one__.
+- __vagrant__ from their official site [vagrant](https://developer.hashicorp.com/vagrant/downloads). __The version you can install through your favorite package manager (apt, yum, ...) is probably not the latest one__.
 - Install vagrant plugin vbguest if you want the guest addition: `vagrant plugin install vagrant-vbguest` (not mandatory)
 - Vagrant installation is well describe in [the official vagrant page](https://developer.hashicorp.com/vagrant/downloads) (tests are ok on 2.3.4)
 - Some github issues indicate vagrant got some issue on some version and work well with 2.2.19 (`apt install vagrant=2.2.19`)
@@ -82,6 +83,7 @@ sudo apt update && sudo apt install vagrant
 ```
 
 - on some recent versions (ubuntu 23.04), you should consider run also:
+
 ```bash
 gem install winrm winrm-fs winrm-elevated
 ```
@@ -106,22 +108,23 @@ source .venv/bin/activate
 ```
 
 - Install ansible and pywinrm in the .venv
-  - **ansible** following the extensive guide on their website [ansible](https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html).
-  - **Tested with ansible-core (2.12)**
-  - **pywinrm** be sure you got the pywinrm package installed
+  - __ansible__ following the extensive guide on their website [ansible](https://docs.ansible.com/ansible/latest/installation_guide/intro_installation.html).
+  - __Tested with ansible-core (2.12)__
+  - __pywinrm__ be sure you got the pywinrm package installed
 
-```
+```bash
 python3 -m pip install --upgrade pip
 python3 -m pip install ansible-core==2.12.6
 python3 -m pip install pywinrm
 ```
 
 - Install all the ansible-galaxy requirements
-  - **ansible windows**
-  - **ansible community.windows**
-  - **ansible chocolatey** (not needed anymore)
-  - **ansible community.general**
-```
+  - __ansible windows__
+  - __ansible community.windows__
+  - __ansible chocolatey__ (not needed anymore)
+  - __ansible community.general__
+
+```bash
 ansible-galaxy install -r ansible/requirements.yml
 ```
 
@@ -131,11 +134,13 @@ ansible-galaxy install -r ansible/requirements.yml
 
 - This will launch vagrant up and the ansible playbooks
 - If you run ansible locally
+
 ```bash
 ./goad.sh -t install -l GOAD -p vmware -m local
 ```
 
 - If you run ansible on docker
+
 ```bash
 ./goad.sh -t install -l GOAD -p vmware -m docker
 ```
@@ -144,7 +149,7 @@ ansible-galaxy install -r ansible/requirements.yml
 
 ### Create the vms
 
-- To create the VMs just run 
+- To create the VMs just run
 
 ```bash
 cd ad/GOAD/providers/vmware

@@ -14,25 +14,25 @@
 #     var: ansible_facts.services
 
 - name: Download Wazuh installation script
-  get_url:
+  ansible.builtin.get_url:
     url: "{{ wazuh_install_script_url }}"
     dest: /opt/wazuh/wazuh-install.sh
   when: not ansible_facts.services['wazuh-manager.service'] is defined
 
 - name: Run Wazuh installation script
-  shell: sudo bash /opt/wazuh/wazuh-install.sh -a -i > /opt/wazuh/wazuh-install-output.txt
+  ansible.builtin.shell: sudo bash /opt/wazuh/wazuh-install.sh -a -i > /opt/wazuh/wazuh-install-output.txt
   when: not ansible_facts.services['wazuh-manager.service'] is defined
 
 # FIX false positive on  /bin/diff  cf. https://github.com/wazuh/wazuh/issues/19000
-- name: fix rootkit trojan detection due to issue
+- name: Fix rootkit trojan detection due to issue
   ansible.builtin.lineinfile:
     path: /var/ossec/etc/rootcheck/rootkit_trojans.txt
     search_string: 'diff        !bash|^/bin/sh|file\.h|proc\.h|/dev/[^n]|^/bin/.*sh!'
     line: 'diff        !bash|^/bin/sh|file\.h|proc\.h|/dev/[^nf]|^/bin/.*sh!'
 
 - name: Start Wazuh Manager service
-  service:
-    name: wazuh-manager
+  ansible.builtin.service:
+    name: Wazuh-manager
     state: started
     enabled: yes
 
@@ -58,7 +58,7 @@
   register: access_info
 
 - name: Display username and password
-  debug:
+  ansible.builtin.debug:
     msg:
       - "Username: {{ access_info.stdout_lines[0] }}"
       - "Password: {{ access_info.stdout_lines[1] }}"

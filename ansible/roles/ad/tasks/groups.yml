@@ -53,7 +53,7 @@
   poll: 0
 
 - name: Wait for Universal group creation to complete
-  async_status:
+  ansible.builtin.async_status:
     jid: "{{ item.ansible_job_id }}"
   register: universal_group_status
   until: universal_group_status.finished
@@ -116,7 +116,7 @@
   poll: 0
 
 - name: Wait for Global group creation to complete
-  async_status:
+  ansible.builtin.async_status:
     jid: "{{ item.ansible_job_id }}"
   register: global_group_status
   until: global_group_status.finished
@@ -209,7 +209,7 @@
   poll: 0
 
 - name: Wait for DomainLocal group creation to complete
-  async_status:
+  ansible.builtin.async_status:
     jid: "{{ item.ansible_job_id }}"
   register: domainlocal_group_status
   until: domainlocal_group_status.finished

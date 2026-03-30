@@ -33,7 +33,7 @@ az login
 
 - The goad configuration file as some options for azure:
 
-```
+```ini
 # ~/.goad/goad.ini
 ...
 [azure]
@@ -71,7 +71,7 @@ GOAD/azure/remote/192.168.56.X > install
 - The vm used for goad are defined in the lab terraform file : `ad/<lab>/providers/azure/windows.tf`
 - This file is containing information about each vm in use
 
-```
+```hcl
 "dc01" = {
   name               = "dc01"
   publisher          = "MicrosoftWindowsServer"
@@ -112,6 +112,7 @@ GOAD/azure/remote/192.168.56.X (<instance_id>) > provision_lab # run ansible
 - To setup a socks proxy you can use `ssh_jumpbox_proxy <proxy_port>` in the goad interactive console
 
 - If the command `destroy` or `delete` fails, you can delete the resource group using the CLI
+
 ```bash
 az group delete --name GOAD
 ```

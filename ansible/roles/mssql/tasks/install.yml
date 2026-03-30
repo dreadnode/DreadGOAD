@@ -56,7 +56,7 @@
     }
   vars:
     ansible_become: true
-    ansible_become_method: runas
+    ansible_become_method: ansible.builtin.runas
     ansible_become_user: "{{ domain_admin }}"
     ansible_become_password: "{{ domain_admin_password }}"
     ansible_become_flags: logon_type=interactive
@@ -126,7 +126,7 @@
     chdir: C:\setup\mssql
   vars:
     ansible_become: true
-    ansible_become_method: runas
+    ansible_become_method: ansible.builtin.runas
     ansible_become_user: "{{ domain_admin }}"
     ansible_become_password: "{{ domain_admin_password }}"
     ansible_become_flags: logon_type=interactive

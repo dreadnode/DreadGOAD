@@ -2,7 +2,7 @@
 
 - The extension structure MUST be like this :
 
-```
+```text
 extensions/
     <extension_name>/
         ansible/            # mandatory
@@ -46,10 +46,10 @@ extensions/
   - Ludus
 
 === ":simple-vmware: Vmware workstation" - As an example to add a new box for vmware : - Create the folder `extensions/<extension_name>/providers/vmware/` - Add a file named Vagrantfile - Add the following code for a linux machine (and change box, ip, name, cpu, ram):
-`        boxes.append(
+` boxes.append(
             { :name => "{{lab_name}}-EXTNAME",
             :ip => "{{ip_range}}.66",
-            :box => "bento/ubuntu-22.04", 
+            :box => "bento/ubuntu-22.04",
             :os => "linux",
             :cpus => 2,
             :mem => 4000,
@@ -57,7 +57,7 @@ extensions/
             }
         )
        ` - Add the following code for a windows machine (and change box, ip, name, cpu, ram):
-`        # add windows box
+` # add windows box
         boxes.append(
             { :name => "{{lab_name}}-EXTNAME",
                 :ip => "{{ip_range}}.66",
@@ -70,10 +70,10 @@ extensions/
        `
 
 === ":simple-virtualbox: Virtualbox" - As an example to add a new box for virtualbox : - Create the folder `extensions/<extension_name>/providers/virtualbox/` - Add a file named Vagrantfile - Add the following code for a linux machine (and change box, ip, name, cpu, ram):
-`        boxes.append(
+` boxes.append(
             { :name => "{{lab_name}}-EXTNAME",
             :ip => "{{ip_range}}.66",
-            :box => "bento/ubuntu-22.04", 
+            :box => "bento/ubuntu-22.04",
             :os => "linux",
             :cpus => 2,
             :mem => 4000,
@@ -81,7 +81,7 @@ extensions/
             }
         )
        ` - Add the following code for a windows machine (and change box, ip, name, cpu, ram):
-`        # add windows box
+` # add windows box
         boxes.append(
             { :name => "{{lab_name}}-EXTNAME",
                 :ip => "{{ip_range}}.66",
@@ -94,7 +94,7 @@ extensions/
        `
 
 === ":material-microsoft-azure: Azure" - As an example to add a new box for azure : - Create the folder `extensions/<extension_name>/providers/azure/` - Add a file (linux.tf or windows.tf) depending of the type of vm - For a linux box (linux.tf file) (change box sku, ip, name, box size):
-`        "vmname" = {
+` "vmname" = {
             name               = "vmname"
             linux_sku          = "22_04-lts-gen2"
             linux_version      = "latest"
@@ -103,7 +103,7 @@ extensions/
             size               = "Standard_B2s"  # 2cpu/4G
             }
        ` - For a windows box (windows.tf file) (change box sku, ip, name, box size):
-`        "vmname" = {
+` "vmname" = {
             name               = "vmname"
             publisher          = "MicrosoftWindowsServer"
             offer              = "WindowsServer"
@@ -116,7 +116,7 @@ extensions/
        `
 
 === ":simple-amazon: Aws" - As an example to add a new box for aws : - Create the folder `extensions/<extension_name>/providers/aws/` - Add a file (linux.tf or windows.tf) depending of the type of vm - For a linux box (linux.tf file) (change box sku, ip, name, box size):
-`        "vmname" = {
+` "vmname" = {
             name               = "vmname"
             linux_sku          = "22_04-lts-gen2"
             linux_version      = "latest"
@@ -126,7 +126,7 @@ extensions/
             size               = "t2.medium"
         }
        ` - For a windows box (windows.tf file) (change box sku, ip, name, box size):
-`        "vmname" = {
+` "vmname" = {
             name               = "vmname"
             domain             = "sevenkingdoms.local"
             windows_sku        = "2019-Datacenter"
@@ -136,15 +136,15 @@ extensions/
             password           = "goadadmin_password"
         }
        ` - Find AMI example :
-`        aws ec2 describe-images \
+` aws ec2 describe-images \
           --owners "amazon" \
-          --filters "Name=name,Values=Windows_Server-2019-English-Full-Base*" \ 
+          --filters "Name=name,Values=Windows_Server-2019-English-Full-Base*" \
           --query "Images[*].{ImageId:ImageId,Name:Name,CreationDate:CreationDate,Description:Description}" \
           --output table
        `
 
 === ":simple-proxmox: Proxmox" - As an example to add a new box for proxmox : - Create the folder `extensions/<extension_name>/providers/proxmox/` - Add a file (linux.tf or windows.tf) depending of the type of vm - For a linux box (linux.tf file) (and change characteristics):
-`        "vmname" = {
+` "vmname" = {
             name               = "vmname"
             desc               = "vmname - ubuntu 22.04 - {{ip_range}}.10"
             cores              = 4
@@ -155,7 +155,7 @@ extensions/
             gateway            = "{{ip_range}}.1"
         }
        ` - For a windows box (windows.tf file) (and change characteristics):
-`        "vmname" = {
+` "vmname" = {
             name               = "vmname"
             desc               = "vmname - windows server 2019 - {{ip_range}}.10"
             cores              = 4
@@ -167,11 +167,11 @@ extensions/
         }
        `
 
-    !!! warning
-        be sure to have the template ready to get clone (you should prepare it with packer first)
+!!! warning
+    be sure to have the template ready to get clone (you should prepare it with packer first)
 
 === "🏟️ Ludus" - As an example to add a new box for ludus : - Create the folder `extensions/<extension_name>/providers/ludus/` - Add a file config.yml - For a linux box (linux.tf file) (and change characteristics):
-`        - vm_name: "{{ range_id }}-name"
+` - vm_name: "{{ range_id }}-name"
             hostname: "{{ range_id }}-name"
             template: ubuntu-22.04-x64-server-template
             vlan: 10
@@ -180,7 +180,7 @@ extensions/
             cpus: 2
             linux: true
        ` - For a windows box (windows.tf file) (and change characteristics):
-`        - vm_name: "{{ range_id }}-name"
+` - vm_name: "{{ range_id }}-name"
             hostname: "{{ range_id }}-name"
             template: win2019-server-x64-template
             vlan: 10
@@ -191,8 +191,8 @@ extensions/
                 sysprep: true
        `
 
-    !!! warning
-        be sure to have the template ready before see [https://docs.ludus.cloud/docs/templates](https://docs.ludus.cloud/docs/templates)
+!!! warning
+    be sure to have the template ready before see [https://docs.ludus.cloud/docs/templates](https://docs.ludus.cloud/docs/templates)
 
 ## Ansible inventory
 

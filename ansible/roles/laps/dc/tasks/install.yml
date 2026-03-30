@@ -1,6 +1,6 @@
 ---
 - name: Create Laps OU if not exist
-  win_dsc:
+  ansible.windows.win_dsc:
     resource_name: ADOrganizationalUnit
     name: "{{ laps_path.split(',')[0].split('=')[1] }}"
     path:  "{{ ','.join(laps_path.split(',')[1:]) }}"
@@ -62,7 +62,7 @@
   delay: 120
   vars:
     ansible_become: true
-    ansible_become_method: runas
+    ansible_become_method: ansible.builtin.runas
     ansible_become_user: SYSTEM
     ansible_become_flags: logon_type=batch logon_flags=with_profile
   failed_when:
@@ -93,7 +93,7 @@
   delay: 120
   vars:
     ansible_become: true
-    ansible_become_method: runas
+    ansible_become_method: ansible.builtin.runas
     ansible_become_user: SYSTEM
   failed_when:
     - password_expire_time is failed
@@ -113,7 +113,7 @@
   delay: 120
   vars:
     ansible_become: true
-    ansible_become_method: runas
+    ansible_become_method: ansible.builtin.runas
     ansible_become_user: SYSTEM
 
 - name: Apply DACL to OU Containers

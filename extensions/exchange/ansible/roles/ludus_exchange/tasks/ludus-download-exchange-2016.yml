@@ -1,7 +1,7 @@
 - name: Get Exchange 2016 ISO if needed
   run_once: true
   block:
-    - name:  "Create {{ ludus_install_directory }}/resources/iso directory if it doesn't exist"
+    - name: Create resources ISO directory if it does not exist
       ansible.builtin.file:
         path: "{{ ludus_install_directory }}/resources/iso"
         state: directory
@@ -22,7 +22,7 @@
       delegate_to: localhost
       when: not exchange_iso_check.stat.exists
 
-- name: create EXCHANGE folder
+- name: Create EXCHANGE folder
   ansible.windows.win_file:
     path: "{{ ludus_exchange_iso_directory }}"
     state: directory

@@ -9,7 +9,7 @@ Select the failed instance ̀`load <instance_id>` and just replay the install wi
 
 ## vagrant up - WinRM - digest initialization failed : Initialization Error
 
-```
+```text
 DC01: WinRM username: vagrant
 DC01: WinRM execution_time_limit: PT2H
 DC01: WinRM transport: negotiate
@@ -22,15 +22,17 @@ Message: Digest initialization failed: initialization error
 
 - solution 1: change vagrantfile to not use ssl (https://github.com/Orange-Cyberdefense/GOAD/issues/68)
   - add this lines in vagrantfile to not use ssl :
-    ```
+
+    ```text
     config.winrm.transport = "plaintext"
     config.winrm.basic_auth_only = true
     ```
+
 - solution 2: allow legacy algorithm (https://github.com/Orange-Cyberdefense/GOAD/issues/11)
 
   - add to /etc/ssl/openssl.conf :
 
-  ```
+  ```ini
   [provider_sect]
   default = default_sect
   legacy = legacy_sect
@@ -46,11 +48,11 @@ Message: Digest initialization failed: initialization error
 
 ## vagrant up - cannot load
 
-```
+```text
 <internal:/usr/lib/ruby/vendor_ruby/rubygems/core_ext/kernel_require.rb>:85:in `require': cannot load such file -- winrm (LoadError)
-	from <internal:/usr/lib/ruby/vendor_ruby/rubygems/core_ext/kernel_require.rb>:85:in `require'
-	from /usr/share/rubygems-integration/all/gems/vagrant-2.3.4/plugins/communicators/winrm/shell.rb:9:in `block in <top (required)>'
-	from /usr/share/rubygems-integration/all/gems/vagrant-2.3.4/lib/vagrant/util/silence_warnings.rb:8:in `silence!'
+ from <internal:/usr/lib/ruby/vendor_ruby/rubygems/core_ext/kernel_require.rb>:85:in `require'
+ from /usr/share/rubygems-integration/all/gems/vagrant-2.3.4/plugins/communicators/winrm/shell.rb:9:in `block in <top (required)>'
+ from /usr/share/rubygems-integration/all/gems/vagrant-2.3.4/lib/vagrant/util/silence_warnings.rb:8:in `silence!'
 ```
 
 - solution :
@@ -59,7 +61,7 @@ Message: Digest initialization failed: initialization error
 
 ## vagrant up - cannot load such file -- winrm-elevated (LoadError)
 
-```
+```text
 <internal:/usr/lib/ruby/vendor_ruby/rubygems/core_ext/kernel_require.rb>:85:in `require': cannot load such file -- winrm-elevated (LoadError)
         from <internal:/usr/lib/ruby/vendor_ruby/rubygems/core_ext/kernel_require.rb>:85:in `require'
         from /usr/share/rubygems-integration/all/gems/vagrant-2.3.4/plugins/communicators/winrm/shell.rb:12:in `<top (required)>'
@@ -76,14 +78,14 @@ Message: Digest initialization failed: initialization error
 - or maybe it is a vagrant issue : https://github.com/Orange-Cyberdefense/GOAD/issues/12
 - You could try to switch on port 5985 to connect without ssl as suggest here : https://github.com/Orange-Cyberdefense/GOAD/issues/98 by uncomment the lines in the inventory file you use
 
-```
+```bash
 # ansible_winrm_transport=basic
 # ansible_port=5985
 ```
 
 ## The naming context specified for this replication operation is invalid
 
-```
+```bash
 TASK [groups_domains : synchronizes all domains] *******************************************************************************************************************************************************************************************************************************
 changed: [dc03]
 changed: [dc01]
@@ -94,7 +96,7 @@ fatal: [dc02]: FAILED! => {"changed": true, "cmd": "repadmin /syncall /Ade", "de
 
 ## vagrant up - Vagrant can't use the requested machine because it is locked
 
-```
+```text
 ==> GOAD-SRV03: Configuring and enabling network interfaces...
 Vagrant can't use the requested machine because it is locked! This
 means that another Vagrant process is currently reading or modifying
@@ -103,9 +105,9 @@ again. Details about the machine are shown below:
 ```
 
 - solution : relaunch the provisioning on the broken computer :
-- exemple :
+- example :
 
-```
+```bash
 cd ~/GOAD/ad/GOAD/providers/virtualbox
 vagrant reload GOAD-SRV03 --provisioning
 ```
@@ -114,7 +116,7 @@ vagrant reload GOAD-SRV03 --provisioning
 
 ## The server has rejected the client credentials
 
-```
+```text
 An exception occurred during task execution. To see the full traceback, use -vvv. The error was:    at Microsoft.ActiveDirectory.Management.Commands.ADCmdletBase`1.BeginProcessing()
 failed: [dc02] (item={'key': 'AcrossTheSea', 'value': ['essos.local\\daenerys.targaryen']}) => {"ansible_loop_var": "item", "attempts": 3, "changed": false, "item": {"key": "AcrossTheSea", "value": ["essos.local\\daenerys.targaryen"]}, "msg": "Unhandled exception while executing module: The server has rejected the client credentials."}
 ```
@@ -122,7 +124,7 @@ failed: [dc02] (item={'key': 'AcrossTheSea', 'value': ['essos.local\\daenerys.ta
 - something go wrong with the trust, all the links are not fully establish
 - wait several minutes and relaunch the install
 
-## Groups domain error
+##  Groups domain error
 
 - something go wrong with the trust, all the links are not fully establish
 - wait several minutes and relaunch the playbook
@@ -230,7 +232,7 @@ solution : re-run install
 
 ## mssql : Unable to install SQL Server
 
-```
+```text
 TASK [mssql : Install the database]
 fatal: [192.168.56.22]: FAILED! => {"attempts": 3, "changed": true, "cmd": "C:\\setup\\mssql\\sql_installer.exe /configurationfile=C:\\setup\\mssql\\sql_conf.ini /IACCEPTSQLSERVERLICENSETERMS /MEDIAPATH=C:\\setup\\mssql\\media /QUIET /HIDEPROGRESSBAR", "delta": "0:00:34.891185", "end": "2022-08-17 21:26:53.976793", "msg": "non-zero return code", "rc": 2226323458, "start": "2022-08-17 21:26:19.085608", "stderr": "", "stderr_lines": [], "stdout": "Microsoft (R) SQL Server Installer\r\nCopyright (c) 2019 Microsoft.  All rights reserved.\r\n\r\nDownloading install package...\r\n\r\n\r\nOperation finished with result: Failure\r\n\r\nOops...\r\n\r\nUnable to install SQL Server (setup.exe).\r\n\r\n      Exit code (Decimal): -2068643838\r\n      Exit message: No features were installed during the setup execution. The requested features may already be installed. Please review the summary.txt log for further details.\r\n\r\n  SQL SERVER INSTALL LOG FOLDER\r\n      C:\\Program Files\\Microsoft SQL Server\\150\\Setup Bootstrap\\Log\\20220817_142624\r\n\r\n", "stdout_lines": ["Microsoft (R) SQL Server Installer", "Copyright (c) 2019 Microsoft.  All rights reserved.", "", "Downloading install package...", "", "", "Operation finished with result: Failure", "", "Oops...", "", "Unable to install SQL Server (setup.exe).", "", "      Exit code (Decimal): -2068643838", "      Exit message: No features were installed during the setup execution. The requested features may already be installed. Please review the summary.txt log for further details.", "", "  SQL SERVER INSTALL LOG FOLDER", "      C:\\Program Files\\Microsoft SQL Server\\150\\Setup Bootstrap\\Log\\20220817_142624", ""]}
 ```
@@ -241,7 +243,7 @@ solution : re-run installer
 
 I was using the version of Vagrant in the Ubuntu repo, and then tried to use the version 2.4.0 and 2.3.4 binaries from hashicorp, but kept on running into this error:
 
-```
+```bash
 The guest machine entered an invalid state while waiting for it
 to boot. Valid states are 'starting, running'. The machine is in the
 'poweroff' state. Please verify everything is configured
@@ -263,14 +265,14 @@ Solution : install vagrant from the hashicorp repo
 
 The error may look similar to below:
 
-```
+```text
 ==> proxmox-iso.windows: Error creating VM: error creating VM: 403 Permission check failed (/sdn/zones/localnetwork/vmbr3/10, SDN.Use),
 error status: {"data":null} (params: ......
 ```
 
 It may be fixed by delegating the SDN.Use privilege to the packer user
 
-```
+```bash
 pveum role modify Packer -privs "VM.Config.Disk VM.Config.CPU VM.Config.Memory Datastore.AllocateTemplate Datastore.Audit Datastore.AllocateSpace Sys.Modify VM.Config.Options VM.Allocate VM.Audit VM.Console VM.Config.CDROM VM.Config.Cloudinit VM.Config.Network VM.PowerMgmt VM.Config.HWType VM.Monitor SDN.Use"
 ```
 
@@ -278,7 +280,7 @@ pveum role modify Packer -privs "VM.Config.Disk VM.Config.CPU VM.Config.Memory D
 
 The error may look similar to below:
 
-```
+```text
 root@goadprovisioning:~/GOAD/packer/proxmox# packer build -var-file=windows_server2019_proxmox_cloudinit.pkvars.hcl .
 proxmox-iso.windows: output will be in this color.
 
@@ -294,7 +296,7 @@ proxmox-iso.windows: output will be in this color.
 
 Filesystems such as ZFS (and others) do not support qcow2. From my reading the best approach is to use an ext4 filesystem and modify `config.auto.pkrvars.hcl` with the newly created ext4 volume.
 
-```
+```text
 root@goadprovisioning:~/GOAD/packer/proxmox# vi config.auto.pkrvars.hcl
 ...
 proxmox_vm_storage      = "ext4-qcow2"
@@ -316,7 +318,7 @@ proxmox-iso.windows: output will be in this color.
 
 ## proxmox - packer error creating vm : volume 'local:iso/windows_XXX.iso' does not exist
 
-```
+```text
 ==> proxmox-iso.windows: Error creating VM: error creating VM: unable to create VM 116 - volume 'local:iso/windows_server2019_XXX_en-us.iso' does not exist, error status:  (params: map[agent:1 args: boot: cores:2 cpu:kvm64 description:Packer ephemeral build VM hotplug
 : ide2:local:iso/windows_server2019_XXX_en-us.iso,media=cdrom kvm:true machine: memory:4096 name:WinServer2019x64-cloudinit-qcow2-uptodate net0:virtio=DA:CB:EB:85:08:0E,bridge=vmbr3,tag=10,firewall=false onboot:false ostype:win10 pool:Templates sata0:local:80,format=q
 cow2 scsihw:lsi sockets:1 startup: tags: vmid:116])
@@ -326,7 +328,7 @@ verify your iso files inside proxmox and be sure the iso you want to use exist i
 
 ## ansible adapter name error
 
-```
+```text
 No MSFT_NetAdapter objects found with property 'Name' equal to 'Ethernet'
 
 or
@@ -339,7 +341,7 @@ No MSFT_NetAdapter objects found with property 'Name' equal to 'Ethernet2 '
 
 ## unreachable - proxmox, ansible
 
-```
+```text
 fatal: [dc01]: UNREACHABLE! => {"changed": false, "msg": "ssl: HTTPSConnectionPool(host='192.168.10.40', port=5986): Max retries exceeded with url: /wsman
 ```
 

@@ -52,14 +52,15 @@
 
 Consult their [docs](https://docs.vmware.com/en/VMware-vSphere/8.0/vsphere-esxi-installation/GUID-93D0227B-E5ED-40B0-B8E2-71141A32EB00.html)
 
-- Note that you will need to install the vmware-esxi plugin after the vagrant installation : 
-```
+- Note that you will need to install the vmware-esxi plugin after the vagrant installation :
+
+```bash
 vagrant plugin install vagrant-vmware-esxi
 ```
 
 ### Install Vagrant
 
-- **vagrant** from their official site [vagrant](https://developer.hashicorp.com/vagrant/downloads). __The version you can install through your favorite package manager (apt, yum, ...) is probably not the latest one__.
+- **vagrant** from their official site [vagrant](https://developer.hashicorp.com/vagrant/downloads). **The version you can install through your favorite package manager (apt, yum, ...) is probably not the latest one**.
 - Vagrant installation is well describe in [the official vagrant page](https://developer.hashicorp.com/vagrant/downloads) (tests are ok on 2.3.4)
 - Some github issues indicate vagrant got some issue on some version and work well with 2.2.19 (`apt install vagrant=2.2.19`)
 
@@ -70,6 +71,7 @@ sudo apt update && sudo apt install vagrant
 ```
 
 - on some recent versions (ubuntu 23.04), you should consider run also:
+
 ```bash
 gem install winrm winrm-fs winrm-elevated
 ```
@@ -98,7 +100,7 @@ source .venv/bin/activate
   - **Tested with ansible-core (2.12)**
   - **pywinrm** be sure you got the pywinrm package installed
 
-```
+```bash
 python3 -m pip install --upgrade pip
 python3 -m pip install ansible-core==2.12.6
 python3 -m pip install pywinrm
@@ -109,7 +111,8 @@ python3 -m pip install pywinrm
   - **ansible community.windows**
   - **ansible chocolatey** (not needed anymore)
   - **ansible community.general**
-```
+
+```bash
 ansible-galaxy install -r ansible/requirements.yml
 ```
 
@@ -119,7 +122,7 @@ ansible-galaxy install -r ansible/requirements.yml
 
 Since ESXi server is remote you will need to provide the environment details of the ESXi server. Those are located inside the `ad/<LAB>/providers/vmware_esxi/.env` file.
 
-```
+```text
 GOAD_VAGRANT_ESXIHOSTNAME is the IP or hostname of your ESXi server
 GOAD_VAGRANT_ESXIUSERNAME is the username for your ESXi server
 GOAD_VAGRANT_ESXIPASSWORD is the password for your ESXi server
@@ -140,11 +143,13 @@ source ad/<LAB>/providers/vmware_esxi/.env
 
 - This will launch vagrant up and the ansible playbooks
 - If you run ansible locally
+
 ```bash
 ./goad.sh -t install -l GOAD -p vmware_esxi -m local
 ```
 
 - If you run ansible on docker
+
 ```bash
 ./goad.sh -t install -l GOAD -p vmware_esxi -m docker
 ```
@@ -153,7 +158,7 @@ source ad/<LAB>/providers/vmware_esxi/.env
 
 ### Create the vms
 
-- To create the VMs just run 
+- To create the VMs just run
 
 ```bash
 cd ad/GOAD/providers/vmware_esxi

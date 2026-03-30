@@ -1,12 +1,18 @@
 # create main domains, child domain and enroll servers
-- ansible.builtin.import_playbook: ad-servers.yml
+- name: Import Ad Servers
+  ansible.builtin.import_playbook: ad-servers.yml
 # create the trust relationships
-- ansible.builtin.import_playbook: ad-trusts.yml
-# import the ad datas : users/groups...
-- ansible.builtin.import_playbook: ad-data.yml
+- name: Import Ad Trusts
+  ansible.builtin.import_playbook: ad-trusts.yml
+# import the ad data : users/groups...
+- name: Import Ad Data
+  ansible.builtin.import_playbook: ad-data.yml
 # set the rights and the group domains relations
-- ansible.builtin.import_playbook: ad-relations.yml
+- name: Import Ad Relations
+  ansible.builtin.import_playbook: ad-relations.yml
 # Add adcs
-- ansible.builtin.import_playbook: adcs.yml
+- name: Import Adcs
+  ansible.builtin.import_playbook: adcs.yml
 # set the ACL
-- ansible.builtin.import_playbook: ad-acl.yml
+- name: Import Ad Acl
+  ansible.builtin.import_playbook: ad-acl.yml

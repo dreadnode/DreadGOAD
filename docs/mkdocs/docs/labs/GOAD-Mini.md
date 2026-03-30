@@ -5,12 +5,14 @@ This is a minimalist version of goad with only sevenkingdoms.lab domain. This la
 ![goad_mini.png](../img/goad_mini.png)
 
 ## Servers
-**domain : sevenkingdoms.local**
+
+### domain : sevenkingdoms.local
+
 - **kingslanding** : DC01  running on Windows Server 2019 (with windefender enabled by default)
 
-## Users/Groups and associated vulnerabilites/scenarios
+## Users/Groups and associated vulnerabilities/scenarios
 
-**SEVENKINGDOMS.LOCAL**
+### SEVENKINGDOMS.LOCAL
 
 - LANISTERS
     - tywin.lannister:   ACL forcechangepassword on jaime.lanister

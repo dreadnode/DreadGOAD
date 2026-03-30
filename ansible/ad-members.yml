@@ -1,9 +1,10 @@
 ---
 # Load data
-- ansible.builtin.import_playbook: data.yml
+- name: Import Data
+  ansible.builtin.import_playbook: data.yml
   tags: data
 
-# set AD datas ==================================================================================================
+# set AD data ==================================================================================================
 - name: Servers AD configuration
   hosts: server
   roles:

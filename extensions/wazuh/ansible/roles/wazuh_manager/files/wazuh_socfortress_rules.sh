@@ -1,7 +1,9 @@
 #!/bin/bash
 # Credit to SOC Fortress for this amazing pack
 # credits : https://github.com/socfortress/Wazuh-Rules/blob/main/wazuh_socfortress_rules.sh
+# shellcheck disable=SC2034,SC2009
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+debug=""
 
 clear
 
@@ -12,17 +14,17 @@ if [ -n "$(command -v yum)" ]; then
     sys_type="yum"
     sep="-"
 elif [ -n "$(command -v zypper)" ]; then
-    sys_type="zypper"   
-    sep="-"  
+    sys_type="zypper"
+    sep="-"
 elif [ -n "$(command -v apt-get)" ]; then
-    sys_type="apt-get"   
+    sys_type="apt-get"
     sep="="
 fi
 
 ## Prints information
 logger() {
     now=$(date +'%m/%d/%Y %H:%M:%S')
-    case $1 in 
+    case $1 in
         "-e")
             mtype="INFO:"
             message="$2"
@@ -39,16 +41,13 @@ logger() {
     echo "$now $mtype $message"
 }
 
-
 ## Check if Git exists
-if ! command -v git &> /dev/null
-then
+if ! command -v git &> /dev/null; then
     logger -e "git package could not be found. Please install with yum/apt-get install git."
     exit
-else 
+else
     logger -e "git package found. Continuing..."
 fi
-
 
 checkArch() {
     arch=$(uname -m)
@@ -60,11 +59,10 @@ checkArch() {
 }
 
 restartService() {
-    if [ -n "$(ps -e | egrep '^\s*1\s.*systemd$')" ]; then
-        eval "systemctl restart $1.service ${debug}"
-        if [ "$?" != 0 ]; then
+    if ps -e | grep -qE '^\s*1\s.*systemd$'; then
+        if ! eval "systemctl restart $1.service ${debug}"; then
             logger -e "${1^} could not be restarted. Please check /var/ossec/logs/ossec.log for details."
-            logger -e "An error has occurred. Attempting to restore backed up rules" 
+            logger -e "An error has occurred. Attempting to restore backed up rules"
             \cp -r /tmp/wazuh_rules_backup/* /var/ossec/etc/rules/
             chown wazuh:wazuh /var/ossec/etc/rules/*
             chmod 660 /var/ossec/etc/rules/*
@@ -72,14 +70,13 @@ restartService() {
             rm -rf /tmp/Wazuh-Rules
         else
             sleep 1
-        fi  
-    elif [ -n "$(ps -e | egrep '^\s*1\s.*init$')" ]; then
+        fi
+    elif ps -e | grep -qE '^\s*1\s.*init$'; then
         eval "chkconfig $1 on ${debug}"
         eval "service $1 restart ${debug}"
-        eval "/etc/init.d/$1 start ${debug}"
-        if [ "$?" != 0 ]; then
+        if ! eval "/etc/init.d/$1 start ${debug}"; then
             logger -e "${1^} could not be restarted. Please check /var/ossec/logs/ossec.log for details."
-            logger -e "An error has occurred. Attempting to restore backed up rules" 
+            logger -e "An error has occurred. Attempting to restore backed up rules"
             \cp -r /tmp/wazuh_rules_backup/* /var/ossec/etc/rules/
             chown wazuh:wazuh /var/ossec/etc/rules/*
             chmod 660 /var/ossec/etc/rules/*
@@ -87,14 +84,13 @@ restartService() {
             rm -rf /tmp/Wazuh-Rules
         else
             sleep 1
-        fi     
+        fi
     elif [ -x "/etc/rc.d/init.d/$1" ]; then
-        eval "/etc/rc.d/init.d/$1 start ${debug}"
-        if [ "$?" != 0 ]; then
+        if ! eval "/etc/rc.d/init.d/$1 start ${debug}"; then
             logger -e "${1^} could not be restarted. Please check /var/ossec/logs/ossec.log for details."
         else
             logger "${1^} restarted"
-        fi             
+        fi
     else
         logger -e "${1^} could not restart. No service found on the system."
     fi
@@ -105,7 +101,7 @@ healthCheck() {
     logger "Performing a health check"
     eval "service wazuh-manager restart ${debug}"
     sleep 20
-    if [ -n "$(/var/ossec/bin/wazuh-control status | grep 'wazuh-logcollector not running...')" ]; then
+    if /var/ossec/bin/wazuh-control status | grep -q 'wazuh-logcollector not running...'; then
         logger -e "Wazuh-Manager Service is not healthy. Please check /var/ossec/logs/ossec.log for details."
     else
         logger -e "Wazuh-Manager Service is healthy. Thanks for checking us out :) Get started with our free-for-life tier here: https://www.socfortress.co/trial.html Happy Defending!"
@@ -138,7 +134,7 @@ cloneRules() {
             systemctl restart wazuh-manager
             cd /var/ossec || exit 1
             rm -rf /tmp/Wazuh-Rules
-        else 
+        else
             logger -e "Wazuh-Manager software could not be found or is not installed"
         fi
     elif [ "$sys_type" == "apt-get" ]; then
@@ -162,15 +158,16 @@ cloneRules() {
             systemctl restart wazuh-manager
             cd /var/ossec || exit 1
             rm -rf /tmp/Wazuh-Rules
-        else 
+        else
             logger -e "Wazuh-Manager software could not be found or is not installed"
         fi
     else
         logger "Continuing"
     fi
+    local clone_status=$?
 
-    if [ "$?" != 0 ]; then
-        logger -e "An error has occurred. Attempting to restore backed up rules" 
+    if [ "$clone_status" != 0 ]; then
+        logger -e "An error has occurred. Attempting to restore backed up rules"
         \cp -r /tmp/wazuh_rules_backup/* /var/ossec/etc/rules/
         chown wazuh:wazuh /var/ossec/etc/rules/*
         chmod 660 /var/ossec/etc/rules/*
@@ -178,17 +175,17 @@ cloneRules() {
         cd /var/ossec || exit 1
         rm -rf /tmp/Wazuh-Rules
     else
-        logger -e "Rules downloaded, attempting to restart the Wazuh-Manager service" 
+        logger -e "Rules downloaded, attempting to restart the Wazuh-Manager service"
         restartService "wazuh-manager"
         sleep 5
-    fi     
+    fi
 }
 
 main() {
     if [ "$EUID" -ne 0 ]; then
         logger -e "This script must be run as root."
         exit 1
-    fi   
+    fi
 
     checkArch
     cloneRules

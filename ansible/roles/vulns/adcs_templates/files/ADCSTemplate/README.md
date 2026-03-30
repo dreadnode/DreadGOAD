@@ -1,4 +1,5 @@
-Find all code and samples at this location: [https://github.com/GoateePFE/ADCSTemplate/]()
+<!-- markdownlint-disable MD024 MD046 -->
+Find all code and samples at this location: [https://github.com/GoateePFE/ADCSTemplate/](https://github.com/GoateePFE/ADCSTemplate/)
 
 # ADCSTemplate
 
@@ -70,7 +71,7 @@ Created by Ashley McGlone
 
 [@GoateePFE](https://twitter.com/goateepfe)
 
-[http://aka.ms/goateepfe]()
+[http://aka.ms/goateepfe](http://aka.ms/goateepfe)
 
 
 # Get-Help
@@ -133,21 +134,21 @@ Requires Enterprise Administrator permissions, since this touches the AD Configu
 
 -------------------------- EXAMPLE 1 --------------------------
 
-```
+```powershell
 PS C:\> Export-ADCSTemplate -DisplayName PowerShellCMS
 
 ```
 
 -------------------------- EXAMPLE 2 --------------------------
 
-```
+```powershell
 PS C:\> Export-ADCSTemplate -DisplayName PowerShellCMS -Detailed
 
 ```
 
 -------------------------- EXAMPLE 3 --------------------------
 
-```
+```powershell
 PS C:\> ### Backup all the templates to JSON
 md C:\ADCSTemplates -ErrorAction SilentlyContinue
 cd C:\ADCSTemplates
@@ -158,7 +159,7 @@ dir
 
 -------------------------- EXAMPLE 4 --------------------------
 
-```
+```powershell
 PS C:\> New-ADCSTemplate -DisplayName PowerShellCMS-NEW -JSON (Export-ADCSTemplate -DisplayName PowerShellCMS-OLD)
 
 ```
@@ -205,28 +206,28 @@ Requires Enterprise Administrator permissions, since this touches the AD Configu
 
 -------------------------- EXAMPLE 1 --------------------------
 
-```
+```powershell
 PS C:\> Get-ADCSTemplate
 
 ```
 
 -------------------------- EXAMPLE 2 --------------------------
 
-```
+```powershell
 PS C:\> Get-ADCSTemplate -DisplayName PowerShellCMS
 
 ```
 
 -------------------------- EXAMPLE 3 --------------------------
 
-```
+```powershell
 PS C:\> Get-ADCSTemplate | Sort-Object Name | ft Name, Created, Modified
 
 ```
 
 -------------------------- EXAMPLE 4 --------------------------
 
-```
+```powershell
 PS C:\> ###View template permissions
 (Get-ADCSTemplate pscms).nTSecurityDescriptor
 (Get-ADCSTemplate pscms).nTSecurityDescriptor.Sddl
@@ -269,7 +270,7 @@ Requires Enterprise Administrator permissions, since this touches the AD Configu
 
 -------------------------- EXAMPLE 1 --------------------------
 
-```
+```powershell
 PS C:\> New-ADCSDrive
 PS C:\> Set-Location ADCS:
 
@@ -277,7 +278,7 @@ PS C:\> Set-Location ADCS:
 
 -------------------------- EXAMPLE 2 --------------------------
 
-```
+```powershell
 PS C:\> ### Explore templates with drive
 New-ADCSDrive
 Get-PSDrive
@@ -389,14 +390,14 @@ Requires Enterprise Administrator permissions, since this touches the AD Configu
 
 -------------------------- EXAMPLE 1 --------------------------
 
-```
+```powershell
 PS C:\> New-ADCSTemplate -DisplayName PowerShellCMS -JSON (Get-Content .\pscms.json -Raw)
 
 ```
 
 -------------------------- EXAMPLE 2 --------------------------
 
-```
+```powershell
 PS C:\> New-ADCSTemplate -DisplayName PowerShellCMS -JSON (Get-Content .\pscms.json -Raw) -Server dc1.contoso.com -Identity G_DSCNodes -AutoEnroll -Publish
 # From a client configured for AD CS autoenrollment:
 $Req = @{
@@ -414,7 +415,7 @@ Protect-CmsMessage -To $DocEncrCert -Content "Encrypted with my new cert from th
 
 -------------------------- EXAMPLE 3 --------------------------
 
-```
+```powershell
 PS C:\> New-ADCSTemplate -DisplayName PowerShellCMS-NEW -JSON (Export-ADCSTemplate -DisplayName PowerShellCMS-OLD)
 
 ```
@@ -481,14 +482,14 @@ Requires Enterprise Administrator permissions, since this touches the AD Configu
 
 -------------------------- EXAMPLE 1 --------------------------
 
-```
+```powershell
 PS C:\> Remove-ADCSTemplate -DisplayName PowerShellCMS
 
 ```
 
 -------------------------- EXAMPLE 2 --------------------------
 
-```
+```powershell
 PS C:\> (Get-ADCSTemplate).name | Where-Object {$_ -like "PowerShellCMS*"} | ForEach-Object {Remove-ADCSTemplate -DisplayName $_ -Verbose}
 
 ```
@@ -575,21 +576,21 @@ Requires Enterprise Administrator permissions, since this touches the AD Configu
 
 -------------------------- EXAMPLE 1 --------------------------
 
-```
+```powershell
 PS C:\> Set-ADCSTemplateACL -DisplayName PowerShellCMS -Type Allow -Identity 'CONTOSO\Servers Group' -Enroll
 
 ```
 
 -------------------------- EXAMPLE 2 --------------------------
 
-```
+```powershell
 PS C:\> Set-ADCSTemplateACL -DisplayName PowerShellCMS -Type Allow -Identity 'CONTOSO\Servers Group','CONTOSO\Workstations Group' -Enroll -AutoEnroll
 
 ```
 
 -------------------------- EXAMPLE 3 --------------------------
 
-```
+```powershell
 PS C:\> Set-ADCSTemplateACL -DisplayName PowerShellCMS -Type Deny -Identity 'CONTOSO\Servers Group'
 
 ```

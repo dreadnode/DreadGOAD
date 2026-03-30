@@ -1,6 +1,6 @@
 ---
 - name: Check if Exchange is installed
-  win_service:
+  ansible.windows.win_service:
     name: "MSExchangeFrontendTransport"
   register: exchange_installed
 

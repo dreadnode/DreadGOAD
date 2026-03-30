@@ -91,7 +91,7 @@
   poll: 0
 
 - name: Wait for user creation to complete
-  async_status:
+  ansible.builtin.async_status:
     jid: "{{ item.ansible_job_id }}"
   register: job_result
   until: job_result.finished
@@ -146,7 +146,7 @@
   register: spn_task
 
 - name: Wait for SPN configuration to complete
-  async_status:
+  ansible.builtin.async_status:
     jid: "{{ item.ansible_job_id }}"
   register: spn_result
   until: spn_result.finished

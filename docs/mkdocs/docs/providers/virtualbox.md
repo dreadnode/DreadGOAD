@@ -13,7 +13,7 @@
     - [Vagrant](https://developer.hashicorp.com/vagrant/docs)
     - Vagrant plugins:
         - vagrant-reload
-        - vagrant-vbguest 
+        - vagrant-vbguest
         - winrm
         - winrm-fs
         - winrm-elevated

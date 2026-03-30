@@ -14,7 +14,7 @@ To enter interactive mode just launch goad without the `-t` parameter
 
 ## No lab instance selected
 
-```
+```text
 *** Lab Instances ***
 check ................................... check dependencies before creation
 install / create ........................ install the selected lab and create a lab instance
@@ -35,7 +35,7 @@ set_ip_range <range> .................... set the 3 first digit of the ip to use
 
 Will check the lab dependencies
 
-```
+```text
 check
 ```
 
@@ -45,7 +45,7 @@ check
 
 Install the lab with the current select `config`
 
-```
+```text
 install
 ```
 
@@ -54,7 +54,7 @@ install
     - run vagrant/terraform/ludus depending on the provider to create the machines
     - synchronize source to jumpbox if provider is aws or azure
     - provision jumpbox if provider is aws or azure
-    - run the ansible provisioning 
+    - run the ansible provisioning
 
 ![cmd_install](../img/cmd_install.png)
 
@@ -62,7 +62,7 @@ install
 
 Create an empty instance folder (into the workspaces/ folder)
 
-```
+```text
 create_empty
 ```
 
@@ -74,7 +74,7 @@ List instances
 
 > alias : `ls`
 
-```
+```text
 list
 ```
 
@@ -86,7 +86,7 @@ Select an instance by his name
 
 > alias : `use`, `cd`
 
-```
+```bash
 load <instance name>
 ```
 
@@ -96,7 +96,7 @@ load <instance name>
 
 show current configuration
 
-```
+```text
 config
 ```
 
@@ -106,7 +106,7 @@ config
 
 show available labs
 
-```
+```text
 labs
 ```
 
@@ -117,7 +117,7 @@ labs
 
 Choose the lab to use (GOAD/GOAD-Light/NHA/SCCM/MINILAB)
 
-```
+```bash
 set_lab <lab_name>
 ```
 
@@ -125,7 +125,7 @@ set_lab <lab_name>
 
 Choose the provider to use (virtualbox/vmware/aws/azure/ludus/proxmox)
 
-```
+```bash
 set_provider <lab_name>
 ```
 
@@ -134,7 +134,7 @@ set_provider <lab_name>
 
 Choose the provisioning method (local/runner/docker/remote) (most of the time you don't have to change it)
 
-```
+```bash
 set_provisioning <provisioning_method>
 ```
 
@@ -147,7 +147,7 @@ set_provisioning <provisioning_method>
 
 Set the ip range you want to use (Three first digit, example : 192.168.10)
 
-```
+```bash
 set_ip_range <ip_range>
 ```
 
@@ -156,7 +156,7 @@ set_ip_range <ip_range>
 
 ![console](../img/console2.png)
 
-```
+```text
 *** Manage Lab instance commands ***
 status .................................. show current status
 start ................................... start lab
@@ -206,7 +206,7 @@ delete .................................. delete the currently selected lab inst
 
 Give the current lab status
 
-```
+```text
 status
 ```
 
@@ -214,7 +214,7 @@ status
 
 Start the current lab instance
 
-```
+```text
 start
 ```
 
@@ -222,7 +222,7 @@ start
 
 Stop the current lab instance
 
-```
+```text
 stop
 ```
 
@@ -231,7 +231,7 @@ stop
 !!! danger
     Destroy the current lab instance vms
 
-```
+```text
 destroy
 ```
 
@@ -239,7 +239,7 @@ destroy
 
 Start a vm
 
-```
+```bash
 start_vm <vm_name>
 ```
 
@@ -247,7 +247,7 @@ start_vm <vm_name>
 
 Stop a vm
 
-```
+```bash
 stop_vm <vm_name>
 ```
 
@@ -255,7 +255,7 @@ stop_vm <vm_name>
 
 Restart a vm (start and stop)
 
-```
+```bash
 restart_vm <vm_name>
 ```
 
@@ -264,7 +264,7 @@ restart_vm <vm_name>
 !!! danger
     Destroy a vm
 
-```
+```bash
 destroy_vm <vm_name>
 ```
 
@@ -272,7 +272,7 @@ destroy_vm <vm_name>
 
 List available extensions
 
-```
+```text
 list_extensions
 ```
 
@@ -283,7 +283,7 @@ Add an extension to the lab (providing + provisioning)
 !!! warning
     An installed extension can't be deleted
 
-```
+```bash
 install_extension <extension_name>
 ```
 
@@ -291,7 +291,7 @@ install_extension <extension_name>
 
 Launch provisioning (ansible) for the extension
 
-```
+```bash
 provision_extension <extension_name>
 ```
 
@@ -299,7 +299,7 @@ provision_extension <extension_name>
 
 Prepare jumpbox : run the preparation script on the jumpbox (install dependencies)
 
-```
+```text
 prepare_jumpbox
 ```
 
@@ -307,7 +307,7 @@ prepare_jumpbox
 
 Rsync goad source with the jumpbox
 
-```
+```text
 sync_source_jumpbox
 ```
 
@@ -316,7 +316,7 @@ sync_source_jumpbox
 
 SSH into the jumpbox
 
-```
+```text
 ssh_jumpbox
 ```
 
@@ -324,7 +324,7 @@ ssh_jumpbox
 
 SSH into the jumpbox with a socks proxy option (-D)
 
-```
+```bash
 ssh_jumpbox_proxy <socks_proxy_port>
 ```
 
@@ -332,15 +332,15 @@ ssh_jumpbox_proxy <socks_proxy_port>
 
 Launch providing (machine creation)
 
-```
+```text
 provide
 ```
 
 ### provision
 
-Launch specific playbook  (use playbook in ansible/ folder) 
+Launch specific playbook  (use playbook in ansible/ folder)
 
-```
+```bash
 provision <playbook.yml>
 ```
 
@@ -348,7 +348,7 @@ provision <playbook.yml>
 
 Launch all the lab provisioning  (install labs on machines with ansible)
 
-```
+```text
 provision_lab
 ```
 
@@ -359,69 +359,75 @@ Launch the lab provisioning from a specific playbook (use playbook in ansible/ f
 !!! tip
     useful if the install crash to not redo all the provisioning
 
-```
+```bash
 provision_lab_from <playbook.yml>
 ```
 
-### check
+### check (instance)
 
 Launch the check (same as without instance)
-```
+
+```text
 check
 ```
 
-### install
+### install (instance)
 
 Launch the install (useful if you created an empty instance)
-```
+
+```text
 install
 ```
 
 ### set_as_defualt
 
 Set the current instance as default (automatically loaded on goad start)
-```
+
+```text
 set_as_defualt
 ```
 
 ### update_instance_files
 
 Recreate the files inside the workspace folder
-```
+
+```text
 update_instance_files
 ```
 
-### list
+### list (instance)
 
 List instances
 
 > alias : `ls`
 
-```
+```text
 list
 ```
 
-### load
+### load (instance)
 
 Select an instance by his name (here change the current instance)
 
 > alias : `use`, `cd`
 
-```
+```bash
 load <instance name>
 ```
 
-### config
+### config (instance)
 
 Show current configuration
-```
+
+```text
 config
 ```
 
 ### unload
 
 Unload the instance (alias `cd ..`)
-```
+
+```text
 unload
 ```
 
@@ -430,6 +436,6 @@ unload
 !!! danger
     delete the current instance lab and vms
 
-```
+```text
 delete
 ```

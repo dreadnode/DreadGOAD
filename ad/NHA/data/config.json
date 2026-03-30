@@ -35,9 +35,9 @@
                 },
                 "acls": {
                     "GenericAll_Jonin_signature" : {
-                        "for": "Jonin", 
-                        "to": "CN=SignatureValidation,CN=Certificate Templates,CN=Public Key Services,CN=Services,CN=Configuration,DC=ninja,DC=hack", 
-                        "right": "GenericAll", 
+                        "for": "Jonin",
+                        "to": "CN=SignatureValidation,CN=Certificate Templates,CN=Public Key Services,CN=Services,CN=Configuration,DC=ninja,DC=hack",
+                        "right": "GenericAll",
                         "inheritance": "None"
                     }
                 }
@@ -215,7 +215,7 @@
                 "alice.johnson" : {
                     "firstname"   : "Alice",
                     "surname"     : "johnson",
-                    "password"    : "Ih@teC0mputeRs", 
+                    "password"    : "Ih@teC0mputeRs",
                     "city"        : "ninja",
                     "description" : "hokage",
                     "groups"      : ["Hokage", "Domain Admins"],
@@ -365,7 +365,7 @@
                 "alice" : {
                     "firstname"   : "alice",
                     "surname"     : "johnson",
-                    "password"    : "C0mplexP@ssAD456", 
+                    "password"    : "C0mplexP@ssAD456",
                     "city"        : "ninja",
                     "description" : "hokage",
                     "groups"      : ["Sensei", "Domain Admins"],

@@ -1,3 +1,4 @@
+<!-- markdownlint-disable MD046 -->
 # 🚀 Installation
 
 In the last version, GOAD use no more bash for the installation/management script.
@@ -30,7 +31,7 @@ The goad management script is now written in :simple-python: python to permit mo
 
     # Install Vagrant plugins
     vagrant plugin install vagrant-reload vagrant-vbguest winrm winrm-fs winrm-elevated
-    
+
     # Add some dependencies
     sudo apt install sshpass lftp rsync openssh-client python3.10-venv
 
@@ -72,7 +73,8 @@ The goad management script is now written in :simple-python: python to permit mo
 This are the python dependencies used by goad :
 
 - Mandatory for :simple-python: goad.py:
-```
+
+```bash
 rich
 psutil
 Jinja2
@@ -81,14 +83,17 @@ pyyaml
 
 - Mandatory for :material-ansible: ansible inside goad (for provisioning method local or runner) :
   - python < 3.11
-    ```
+
+    ```bash
     # Ansible
     ansible_runner
     ansible-core==2.12.6
     pywinrm
     ```
+
   - python >= 3.11
-    ```
+
+    ```bash
     # Ansible
     setuptools
     ansible_runner
@@ -97,7 +102,8 @@ pyyaml
     ```
 
 - Mandatory for :material-microsoft-azure: azure provider :
-```
+
+```bash
 # AZURE
 azure-identity
 azure-mgmt-compute
@@ -105,20 +111,23 @@ azure-mgmt-network
 ```
 
 - Mandatory for :simple-amazon: aws provider :
-```
+
+```bash
 # AWS
 boto3
 ```
 
 - Mandatory for :simple-proxmox: proxmox provider:
-```
+
+```bash
 # Proxmox
 proxmoxer
 requests
 ```
 
 - You can launch goad without installing all the pip package but for that you will have to disable some dependencies with the `-d` arguments:
-```
+
+```bash
 -d vmware     : disable vmware provider
 -d virtualbox : disable virtualbox provider
 -d azure      : disable azure provider
@@ -140,7 +149,7 @@ requests
 - If you change the `[default]` config it will change the default selection when goad start
 - Others configurations are related to specific providers
 
-```
+```ini
 [default]
 ; lab: goad / goad-light / minilab / nha / sccm
 lab = GOAD

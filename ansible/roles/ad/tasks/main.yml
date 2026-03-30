@@ -30,12 +30,12 @@
       }
   register: admin_group_result
 
-- name: organisation units
-  import_tasks: ou.yml
-- name: groups
-  import_tasks: groups.yml
-- name: users
-  import_tasks: users.yml
+- name: Organisation units
+  ansible.builtin.import_tasks: ou.yml
+- name: Groups
+  ansible.builtin.import_tasks: groups.yml
+- name: Users
+  ansible.builtin.import_tasks: users.yml
 
 - name: Add members to the Domainlocal group, preserving existing membership
   microsoft.ad.group:

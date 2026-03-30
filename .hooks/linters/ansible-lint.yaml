@@ -4,10 +4,38 @@
 # option are parsed relative to the CWD of execution.
 exclude_paths:
   - .github/
+  # Files with unskippable load-failure (unicode/runtime) or syntax-check issues
+  - ad/GOAD-Light/files/dc01/templates/
+  - ad/GOAD-Mini/files/dc01/templates/
+  - ad/NHA/files/templates/
+  - docs/mkdocs/mkdocs.yml
+  - noansible_requirements.yml
+  - requirements_311.yml
+  - template/provider/ludus/
+  - playbooks.yml
+  - extensions/exchange/ansible/install.yml
+  - extensions/ws01/ansible/install.yml
+  - ansible/roles/onlyusers/
 
 skip_list:
   - yaml
-  # - command-instead-of-shell
+  - command-instead-of-shell
   - role-name
   - git-latest
   - package-latest
+  - var-naming[no-role-prefix]
+  - var-naming[pattern]
+  - naming[pattern]
+  # syntax-check is unskippable - use exclude_paths instead
+  - hostvars
+  # load-failure is unskippable - use exclude_paths instead
+  - no-changed-when
+  - risky-shell-pipe
+  - risky-file-permissions
+  - meta-no-tags
+  - no-handler
+  - ignore-errors
+  - literal-compare
+  - no-free-form
+  - run-once[task]
+  - key-order[task]

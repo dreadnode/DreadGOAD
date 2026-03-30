@@ -5,7 +5,9 @@ Tools for creating graph-isomorphic variants of GOAD (Game of Active Directory) 
 ## Components
 
 ### `name_generator.py`
+
 Generates realistic, human-readable names for all entities:
+
 - **Users**: Realistic first/last name combinations (96 first names × 96 last names)
 - **Hosts**: Tech-themed server names (30 prefixes × 20 suffixes)
 - **Domains**: Corporate-style domain names
@@ -15,7 +17,9 @@ Generates realistic, human-readable names for all entities:
 - **Passwords**: Complexity-equivalent random passwords using cryptographic randomness
 
 ### `goad_variant_generator.py`
+
 Main generator that orchestrates variant creation:
+
 - Extracts entities from source GOAD configuration
 - Generates comprehensive entity mappings
 - Performs ordered text replacements (longest-first to avoid substring collisions)
@@ -59,7 +63,7 @@ generator.validate()
 
 ### Command Line Options
 
-```
+```bash
 --source PATH       Source GOAD directory (default: ad/GOAD)
 --target PATH       Target variant directory (default: ad/GOAD-variant-1)
 --name NAME         Variant name (default: variant-1)
@@ -68,6 +72,7 @@ generator.validate()
 ## What Gets Transformed
 
 ### Entities
+
 - **3 domains** with parent-child and trust relationships
 - **5 VMs** (3 domain controllers, 2 servers)
 - **40+ users** with realistic first.last usernames
@@ -78,6 +83,7 @@ generator.validate()
 - **Passwords** (regenerated with equivalent complexity)
 
 ### Files and Formats
+
 - **JSON**: config.json and data files
 - **YAML/YML**: inventory files, Ludus configs
 - **PowerShell (.ps1)**: 13+ automation scripts
@@ -87,6 +93,7 @@ generator.validate()
 - **Shell scripts**: Automation utilities
 
 ### All 6 Providers
+
 - VirtualBox
 - VMware (Desktop and ESXi)
 - Proxmox
@@ -104,6 +111,7 @@ The generator produces:
    - Binary files copied as-is
 
 2. **mapping.json** - Entity mapping reference
+
    ```json
    {
      "domains": {...},
@@ -135,4 +143,3 @@ To avoid substring collisions, replacements are applied in this order:
 10. OUs: `Westerlands`
 
 This ensures `north.sevenkingdoms.local` is replaced before `sevenkingdoms.local`.
-

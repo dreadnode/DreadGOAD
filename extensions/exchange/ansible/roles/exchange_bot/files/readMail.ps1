@@ -51,7 +51,7 @@ function Process-Attachments {
                     wscript.exe $FilePath
                 }
                 default {
-                    Write-Host "unknow type file : $FilePath"
+                    Write-Host "unknown type file : $FilePath"
                 }
             }
         }

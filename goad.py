@@ -104,7 +104,7 @@ class Goad(cmd.Cmd):
         if self.lab_manager.get_current_instance_provider():
             self.lab_manager.get_current_instance_provider().snapshot()
         self.do_start()
-    
+
     def do_reset(self, arg=''):
         self.do_stop()
         if self.lab_manager.get_current_instance_provider():
@@ -343,7 +343,7 @@ class Goad(cmd.Cmd):
             Log.success('Current Settings')
             self.lab_manager.current_settings.show()
             print()
-            if Utils.confirm('Create lab with theses settings ? (y/N)'):
+            if Utils.confirm('Create lab with these settings ? (y/N)'):
                 Log.info('Create instance folder')
                 self.lab_manager.create_instance()
                 Log.info('Launch providing')

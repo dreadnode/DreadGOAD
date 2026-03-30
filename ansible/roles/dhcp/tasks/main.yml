@@ -11,20 +11,20 @@
   ansible.windows.win_reboot:
   when: win_feature.reboot_required
 
-- name: allow dhcp in dc
+- name: Allow dhcp in dc
   ansible.windows.win_shell: |
-    Add-DHCPServerInDC -DNSName {{dc_fqdn}}
+    Add-DHCPServerInDC -DNSName {{ dc_fqdn }}
   vars:
     ansible_become: yes
-    ansible_become_method: runas
-    ansible_become_user: "{{domain_username}}"
-    ansible_become_password: "{{domain_password}}"
+    ansible_become_method: ansible.builtin.runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
 
 - name: Set dhcp scope
   ansible.windows.win_shell: |
     $s = Get-DhcpServerv4Scope
     if ($null -eq $s) {
-      Add-DhcpServerV4Scope -Name "DHCP Scope" -StartRange {{ip_from}} -EndRange {{ip_to}} -SubnetMask {{ip_mask}} -LeaseDuration {{lease_duration}}
+      Add-DhcpServerV4Scope -Name "DHCP Scope" -StartRange {{ ip_from }} -EndRange {{ ip_to }} -SubnetMask {{ ip_mask }} -LeaseDuration {{ lease_duration }}
     }
 
 - name: Get default gateway
@@ -38,11 +38,11 @@
 
 - name: Add DNS Server and Default Gateway Options in DHCP
   ansible.windows.win_shell: |
-    Set-DhcpServerV4OptionValue -DnsServer {{dns_ip}} -Router {{ip_gateway}}
+    Set-DhcpServerV4OptionValue -DnsServer {{ dns_ip }} -Router {{ ip_gateway }}
 
 #- name: create server option boot server hostname (MECM)
 #  win_shell: |
-#    Set-DhcpServerV4OptionValue -OptionId 66 -Value {{sccm_server}}
+#    Set-DhcpServerV4OptionValue -OptionId 66 -Value {{ sccm_server }}
 #
 #- name: create boot file name (SMSBoot\x64\wdsnbp.com)
 #  win_shell: |
@@ -53,5 +53,5 @@
 # Add-DhcpServerv4OptionDefinition -ComputerName SRV-ADDS-01 -Name PXEClient -Description "PXE Support" -OptionId 060 -Type String
 - name: Restart service DHCP
   ansible.windows.win_service:
-    name: 'dhcpserver'
+    name: 'Dhcpserver'
     state: restarted

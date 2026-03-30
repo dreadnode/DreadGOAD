@@ -41,9 +41,9 @@
       }
     error_action: stop
     parameters:
-      domain_username: "{{domain_username}}"
-      domain_password: "{{domain_password}}"
-      ca_common_name: "{{ca_common_name}}"
+      domain_username: "{{ domain_username }}"
+      domain_password: "{{ domain_password }}"
+      ca_common_name: "{{ ca_common_name }}"
   async: 1800
   poll: 60
 

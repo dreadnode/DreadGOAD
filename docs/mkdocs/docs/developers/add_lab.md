@@ -5,7 +5,8 @@
 - To create a new lab:
     - Create a new folder in `ad/` with the name of the lab
     - Create the following structure:
-    ```
+
+    ```bash
     ad/<lab_name>/
         data/
             config.json                 # json containing all the lab information

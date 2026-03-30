@@ -61,14 +61,14 @@
         exit 1
       }
   become: true
-  become_method: runas
+  become_method: ansible.builtin.runas
   become_user: "{{ SQLSVCACCOUNT }}"
   vars:
     ansible_become_pass: "{{ SQLSVCPASSWORD }}"
   with_dict: "{{ linked_servers }}"
 
 - name: Create logins
-  include_tasks: logins.yml
+  ansible.builtin.include_tasks: logins.yml
   vars:
     linked_server: "{{ item.key }}"
     users_mapping: "{{ item.value.users_mapping }}"
@@ -97,7 +97,7 @@
         exit 1
       }
   become: true
-  become_method: runas
+  become_method: ansible.builtin.runas
   become_user: "{{ SQLSVCACCOUNT }}"
   vars:
     ansible_become_pass: "{{ SQLSVCPASSWORD }}"

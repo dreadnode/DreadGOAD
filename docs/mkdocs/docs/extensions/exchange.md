@@ -21,11 +21,13 @@
 ## Installation
 
 - select your instance
-```
+
+```bash
 load <instance_id>
 ```
 
 - install the exchange extension
-```
+
+```bash
 install_extension exchange
 ```

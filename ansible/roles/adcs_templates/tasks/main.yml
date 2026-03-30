@@ -17,7 +17,7 @@
     Remove-Item -Path "C:\Windows\Temp\ADCSTemplate.zip" -Force
 
 - name: Create a template directory
-  ansible.windows.win_file: 
+  ansible.windows.win_file:
     path: c:\setup
     state: directory
 
@@ -37,7 +37,7 @@
     if (-not(Get-ADCSTemplate -DisplayName "{{ item }}")) { New-ADCSTemplate -DisplayName "{{ item }}" -JSON (Get-Content c:\setup\{{ item }}.json -Raw) -Identity "{{ domain_name }}\Domain Users" -Publish }
   vars:
     ansible_become: true
-    ansible_become_method: runas
+    ansible_become_method: ansible.builtin.runas
     domain_name: "{{ domain }}"
     ansible_become_user: "{{ domain_username }}"
     ansible_become_password: "{{ domain_password }}"
