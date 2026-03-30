@@ -4,7 +4,7 @@
 
 The GOAD lab consists of **3 Active Directory domains** across **2 forests** with a bidirectional trust between them.
 
-```
+```text
 Forest: sevenkingdoms.local          Forest: essos.local
 ├── sevenkingdoms.local (root)       └── essos.local (root)
 │   └── north.sevenkingdoms.local         DC: meereen (DC03)
@@ -20,7 +20,7 @@ Trust: sevenkingdoms.local <──bidirectional──> essos.local
 ## Hosts & IP Addresses
 
 | Host | Hostname | Domain | Private IP | Role | Instance ID |
-|------|----------|--------|------------|------|-------------|
+| ------ | ---------- | -------- | ------------ | ------ | ------------- |
 | DC01 | kingslanding | sevenkingdoms.local | 10.1.2.238 | Domain Controller (parent) | i-014ce68c3bdbf888e |
 | DC02 | winterfell | north.sevenkingdoms.local | 10.1.2.121 | Domain Controller (child) | i-01ef190a91a23eab1 |
 | DC03 | meereen | essos.local | 10.1.2.211 | Domain Controller | i-0f03ae2e9dd3332d7 |
@@ -30,7 +30,7 @@ Trust: sevenkingdoms.local <──bidirectional──> essos.local
 ### Services per Host
 
 | Host | Services |
-|------|----------|
+| ------ | ---------- |
 | DC01 (kingslanding) | ADCS, Defender ON |
 | DC02 (winterfell) | LLMNR, NBT-NS, SMB shares, Defender ON |
 | DC03 (meereen) | ADCS custom templates, LAPS DC, NTLM downgrade, Defender ON |
@@ -46,10 +46,10 @@ Trust: sevenkingdoms.local <──bidirectional──> essos.local
 **DC:** kingslanding (DC01)
 **Domain Admin Password:** `ykRXQ@rWNV4znesz-h!c` (staging)
 
-### Users
+### Users (sevenkingdoms)
 
 | Username | Password | Groups | Description |
-|----------|----------|--------|-------------|
+| ---------- | ---------- | -------- | ------------- |
 | robert.baratheon | `iamthekingoftheworld` | Baratheon, Domain Admins, Small Council, Protected Users | Local admin on DC01 |
 | cersei.lannister | `il0vejaime` | Lannister, Baratheon, Domain Admins, Small Council | Local admin on DC01 |
 | tywin.lannister | `powerkingftw135` | Lannister | - |
@@ -62,10 +62,10 @@ Trust: sevenkingdoms.local <──bidirectional──> essos.local
 | lord.varys | `_W1sper_$` | Small Council | GenericAll on Domain Admins |
 | maester.pycelle | `MaesterOfMaesters` | Small Council | - |
 
-### Groups
+### Groups (sevenkingdoms)
 
 | Group | Type | Managed By |
-|-------|------|------------|
+| ------- | ------ | ------------ |
 | Lannister | Global | tywin.lannister |
 | Baratheon | Global | robert.baratheon |
 | Small Council | Global | - |
@@ -74,9 +74,9 @@ Trust: sevenkingdoms.local <──bidirectional──> essos.local
 | DragonRider | Global | - |
 | AcrossTheNarrowSea | Domain Local | - |
 
-### ACL Attack Paths
+### ACL Attack Paths (sevenkingdoms)
 
-```
+```text
 tywin.lannister ──ForceChangePassword──> jaime.lannister
 jaime.lannister ──GenericWrite──> joffrey.baratheon
 joffrey.baratheon ──WriteDacl──> tyron.lannister
@@ -100,10 +100,10 @@ renly.baratheon ──WriteDACL──> OU=Crownlands
 **Parent Domain:** sevenkingdoms.local
 **Domain Admin Password:** `moydNed_wEKuP8KN6rUx` (staging)
 
-### Users
+### Users (north)
 
 | Username | Password | Groups | Description |
-|----------|----------|--------|-------------|
+| ---------- | ---------- | -------- | ------------- |
 | eddard.stark | `FightP3aceAndHonor!` | Stark, Domain Admins | Local admin on DC02 |
 | catelyn.stark | `robbsansabradonaryarickon` | Stark | Local admin on DC02 |
 | robb.stark | `sexywolfy` | Stark | Local admin on DC02, autologon creds on DC02 |
@@ -117,18 +117,18 @@ renly.baratheon ──WriteDACL──> OU=Crownlands
 | jeor.mormont | `_L0ngCl@w_` | Night Watch, Mormont | Local admin on SRV02 (castelblack) |
 | sql_svc | `YouWillNotKerboroast1ngMeeeeee` | - | SPNs: MSSQLSvc/castelblack:1433 |
 
-### Groups
+### Groups (north)
 
 | Group | Type | Managed By |
-|-------|------|------------|
+| ------- | ------ | ------------ |
 | Stark | Global | eddard.stark |
 | Night Watch | Global | jeor.mormont |
 | Mormont | Global | jeor.mormont |
 | AcrossTheSea | Domain Local | - |
 
-### ACL Attack Paths
+### ACL Attack Paths (north)
 
-```
+```text
 NT AUTHORITY\ANONYMOUS LOGON ──ReadProperty + GenericExecute──> DC=North (anonymous enumeration)
 ```
 
@@ -142,10 +142,10 @@ NT AUTHORITY\ANONYMOUS LOGON ──ReadProperty + GenericExecute──> DC=North
 **Trust:** Bidirectional with sevenkingdoms.local
 **Domain Admin Password:** `M!BbXzL48D9mH9dQzp*e` (staging)
 
-### Users
+### Users (essos)
 
 | Username | Password | Groups | Description |
-|----------|----------|--------|-------------|
+| ---------- | ---------- | -------- | ------------- |
 | daenerys.targaryen | `BurnThemAll!` | Targaryen, Domain Admins | Local admin on DC03 |
 | viserys.targaryen | `GoldCrown` | Targaryen | - |
 | khal.drogo | `horse` | Dothraki | Local admin on SRV03, MSSQL sysadmin on braavos |
@@ -154,10 +154,10 @@ NT AUTHORITY\ANONYMOUS LOGON ──ReadProperty + GenericExecute──> DC=North
 | drogon | `Dracarys` | Dragons | - |
 | sql_svc | `YouWillNotKerboroast1ngMeeeeee` | - | SPNs: MSSQLSvc/braavos:1433 |
 
-### Groups
+### Groups (essos)
 
 | Group | Type | Managed By |
-|-------|------|------------|
+| ------- | ------ | ------------ |
 | Targaryen | Global | viserys.targaryen |
 | Dothraki | Global | khal.drogo |
 | Dragons | Global | - |
@@ -168,14 +168,14 @@ NT AUTHORITY\ANONYMOUS LOGON ──ReadProperty + GenericExecute──> DC=North
 ### Cross-Domain Memberships
 
 | Group | External Members |
-|-------|-----------------|
+| ------- | ----------------- |
 | DragonsFriends | sevenkingdoms.local\tyron.lannister, essos.local\daenerys.targaryen |
 | Spys | sevenkingdoms.local\Small Council |
 | AcrossTheNarrowSea (sevenkingdoms) | essos.local\daenerys.targaryen |
 
-### ACL Attack Paths
+### ACL Attack Paths (essos)
 
-```
+```text
 khal.drogo ──GenericAll──> viserys.targaryen
 Spys ──GenericAll──> jorah.mormont
 khal.drogo ──GenericAll──> ESC4 certificate template
@@ -188,14 +188,14 @@ gmsaDragon$ ──GenericAll──> drogon
 ### gMSA
 
 | Name | FQDN | SPNs |
-|------|------|------|
+| ------ | ------ | ------ |
 | gmsaDragon | gmsaDragon.essos.local | HTTP/braavos, HTTP/braavos.essos.local |
 
 ---
 
 ## MSSQL Linked Servers
 
-```
+```text
 castelblack.north.sevenkingdoms.local (SRV02)
     └──linked──> braavos.essos.local (SRV03)
                  Login: jon.snow -> sa (password: sa_P@ssw0rd!Ess0s)
@@ -208,14 +208,14 @@ braavos.essos.local (SRV03)
 ## MSSQL Service Accounts
 
 | Host | SA Password | Service Account | Sysadmins |
-|------|-------------|-----------------|-----------|
+| ------ | ------------- | ----------------- | ----------- |
 | SRV02 (castelblack) | `Sup1_sa_P@ssw0rd!` | sql_svc | NORTH\jon.snow |
 | SRV03 (braavos) | `sa_P@ssw0rd!Ess0s` | sql_svc | ESSOS\khal.drogo |
 
 ## MSSQL Impersonation
 
 | Host | User | Can Impersonate |
-|------|------|-----------------|
+| ------ | ------ | ----------------- |
 | SRV02 | NORTH\samwell.tarly | sa |
 | SRV02 | NORTH\brandon.stark | NORTH\jon.snow |
 | SRV02 | NORTH\arya.stark | dbo (master), dbo (msdb) |

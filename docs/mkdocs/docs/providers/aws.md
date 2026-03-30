@@ -24,7 +24,7 @@ The architecture is quite the same than the Azure deployment.
 
 ## AWS configuration
 
-You need to configre AWS cli. Use a key with enough privileges on the tenant.
+You need to configure AWS cli. Use a key with enough privileges on the tenant.
 
 ```bash
 aws configure
@@ -34,11 +34,13 @@ aws configure
     - Go to IAM > User > your user > Security credentials
     - Click the Create access key button
     - Create a group "[goad]" in credentials file ~/.aws/credentials
-        ```
+
+        ```ini
         [goad]
         aws_access_key_id = changeme
         aws_secret_access_key = changeme
         ```
+
     - Be sure to chmod 400 the file
 
     !!! warning "credentials in plain text"
@@ -48,7 +50,7 @@ aws configure
 
 - The goad configuration file as some options for aws:
 
-```
+```ini
 # ~/.goad/goad.ini
 ...
 [aws]
@@ -85,7 +87,7 @@ GOAD/aws/remote/192.168.56.X > install
 - The vm used for goad are defined in the lab terraform file : `ad/<lab>/providers/aws/windows.tf`
 - This file is containing information about each vm in use
 
-```
+```hcl
 "dc01" = {
   name               = "dc01"
   domain             = "sevenkingdoms.local"

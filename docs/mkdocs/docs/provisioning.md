@@ -15,7 +15,7 @@ If an extension need data it will be stored in `extensions/<extension>/data/conf
 
 - Example with the exchange install.yml file :
 
-```
+```yaml
 # read local configuration file
 - name: "Read local config file"
   hosts: domain:extensions
@@ -42,14 +42,15 @@ Ansible work with inventories. Inventories files contains all the hosts declarat
 
 
 The inventory files are given to ansible in this order :
+
 - lab inventory file
 - workspace provider inventory file
 - workspace extension(s) inventory file(s)
 - globalsettings.ini file
 
-The order is important as it determine the override order. hosts declarations are merged between all inventory and variables with the same name are override if the same variable is declared. 
+The order is important as it determine the override order. hosts declarations are merged between all inventory and variables with the same name are override if the same variable is declared.
 
-- Example : if i setup dns_server_forwarder=8.8.8.8 in the lab inventory file and dns_server_forwarder=1.1.1.1 in the globalsettings.ini file, the final value for ansible wll be dns_server_forwarder=1.1.1.1
+- Example : if i setup dns_server_forwarder=8.8.8.8 in the lab inventory file and dns_server_forwarder=1.1.1.1 in the globalsettings.ini file, the final value for ansible will be dns_server_forwarder=1.1.1.1
 
 ## playbooks
 
@@ -58,7 +59,8 @@ The order is important as it determine the override order. hosts declarations ar
 - The extension folder can call the main goad roles by using a special ansible.cfg file.
 
 - Example of the exchange ansible.cfg file
-```
+
+```ini
 [defaults]
 ...
 ; add default roles folder into roles_path
@@ -68,5 +70,5 @@ roles_path = ./roles:../../../ansible/roles
 ## labs build
 
 - Instead of call a global main.yml playbook with all the different tasks to do the goad script call each playbook one by one.
-- In this way, there is a fallback mecanism to retry each playbook 3 times before consider it as failed.
+- In this way, there is a fallback mechanism to retry each playbook 3 times before consider it as failed.
 - The list and order of the playbooks played are stored in the playbooks.yml file at the start of the project.

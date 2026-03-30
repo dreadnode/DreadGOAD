@@ -31,7 +31,7 @@ sudo docker run -ti --rm --network host -h goadansible -v $(pwd):/goad -w /goad/
 - Please note that the vms must be in a running state, so vagrant up must have been done and finished before launching the ansible playbook.
 
 
-#### Run ansible on your host (or from a linux vm in the same network as the lab)
+### Run ansible on your host (or from a linux vm in the same network as the lab)
 
 - If you want to play ansible from your host or a linux vm you should launch the following commands :
 
@@ -51,7 +51,7 @@ source .venv/bin/activate
   - **Tested with ansible-core (2.12)**
   - **pywinrm** be sure you got the pywinrm package installed
 
-```
+```bash
 python3 -m pip install --upgrade pip
 python3 -m pip install ansible-core==2.12.6
 python3 -m pip install pywinrm
@@ -62,7 +62,8 @@ python3 -m pip install pywinrm
   - **ansible community.windows**
   - **ansible chocolatey** (not needed anymore)
   - **ansible community.general**
-```
+
+```bash
 ansible-galaxy install -r requirements.yml
 ```
 
@@ -73,6 +74,7 @@ ansible-playbook -i ../ad/GOAD/data/inventory -i ../ad/GOAD/providers/virtualbox
 ```
 
 ### Start / Setup / Run
+
 The default domain will be **sevenkingdoms.local**, on the subnet 192.168.56.1/24 and each machine has been allocated with 2CPU and 4GB of memory. If you want to change some of these performance settings you can modify the Vagrantfile (please note that with less RAM the install process sometimes crash, if it append just relaunch the ansible playbook).
 
 To have the lab up and running this is the commands you should do:
@@ -101,7 +103,7 @@ sudo docker run -ti --rm --network host -h goadansible -v $(pwd):/goad -w /goad/
 - Or you can run playbooks one by one (mostly for debug or if you get trouble during install)
   - The main.yml playbook is build in multiples parts. each parts can be re-run independently but the play order must be keep in cas you want to play one by one :
 
-```
+```python
 ANSIBLE_COMMAND="ansible-playbook -i ../ad/GOAD/data/inventory -i ../ad/GOAD/providers/virtualbox/inventory"
 $ANSIBLE_COMMAND build.yml            # Install stuff and prepare vm
 $ANSIBLE_COMMAND ad-servers.yml       # create main domains, child domain and enroll servers
@@ -110,7 +112,7 @@ $ANSIBLE_COMMAND ad-child_domain.yml  # create child domain
 sleep 5m
 $ANSIBLE_COMMAND ad-members.yml       # add child members
 $ANSIBLE_COMMAND ad-trusts.yml        # create the trust relationships
-$ANSIBLE_COMMAND ad-data.yml          # import the ad datas : users/groups...
+$ANSIBLE_COMMAND ad-data.yml          # import the ad data : users/groups...
 $ANSIBLE_COMMAND ad-gmsa.yml          # run gmsa
 $ANSIBLE_COMMAND laps.yml             # run laps
 $ANSIBLE_COMMAND ad-relations.yml     # set the rights and the group domains relations
@@ -148,7 +150,7 @@ However you might not want this default credentials to be available so there are
 ansible-playbook -i ../ad/<LAB>/data/inventory -i ../ad/<LAB>/providers/<PROVIDER>/inventory disable_vagrant.yml
 ```
 
-If you want again to manage the lab you can reenable the user.
+If you want again to manage the lab you can re-enable the user.
 
 ```bash
 ansible-playbook -i ../ad/<LAB>/data/inventory -i ../ad/<LAB>/providers/<PROVIDER>/inventory enable_vagrant.yml

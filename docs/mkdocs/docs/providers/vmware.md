@@ -11,7 +11,7 @@
 
 ## Prerequisites
 
-- Providing 
+- Providing
     - [Vmware workstation](https://support.broadcom.com/group/ecx/productdownloads?subfamily=VMware+Workstation+Pro)
     - [Vagrant](https://developer.hashicorp.com/vagrant/docs)
     - [Vmware utility driver](https://developer.hashicorp.com/vagrant/install/vmware)

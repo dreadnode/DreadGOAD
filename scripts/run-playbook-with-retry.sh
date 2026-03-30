@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2016,SC2153
 # Runs a single Ansible playbook with retry logic and error-specific handling
 # Required env vars: PLAYBOOK, ENV, LOG_FILE, MAX_RETRIES, RETRY_DELAY, VERBOSE_FLAG
 # Optional env vars: LIMIT (to limit execution to specific hosts)
@@ -15,18 +16,20 @@ check_ansible_success() {
 
     # Primary check: Look at PLAY RECAP for actual failures
     # This is the most reliable indicator of success/failure
-    if grep -A 100 "PLAY RECAP" "$log_file" | grep -E "failed=[1-9][0-9]*|unreachable=[1-9][0-9]*" >/dev/null 2>&1; then
+    if grep -A 100 "PLAY RECAP" "$log_file" | grep -E "failed=[1-9][0-9]*|unreachable=[1-9][0-9]*" > /dev/null 2>&1; then
         return 1
     fi
 
     # Secondary check: Look for fatal errors that weren't ignored
     # Extract context around fatal/FAILED lines and check if they're followed by "...ignoring"
-    if grep -E "^fatal:" "$log_file" >/dev/null 2>&1; then
+    if grep -E "^fatal:" "$log_file" > /dev/null 2>&1; then
         # Check if ANY fatal error is NOT followed by "...ignoring" within 10 lines
-        local fatal_lines=$(grep -n "^fatal:" "$log_file" | cut -d: -f1)
+        local fatal_lines
+        fatal_lines=$(grep -n "^fatal:" "$log_file" | cut -d: -f1)
         for line_num in $fatal_lines; do
             # Get 10 lines after the fatal error
-            local context=$(sed -n "${line_num},$((line_num + 10))p" "$log_file")
+            local context
+            context=$(sed -n "${line_num},$((line_num + 10))p" "$log_file")
             # If this context doesn't contain "...ignoring", it's a real failure
             if ! echo "$context" | grep -q "...ignoring"; then
                 return 1
@@ -35,7 +38,7 @@ check_ansible_success() {
     fi
 
     # Check for retry file creation (indicates Ansible wants us to retry)
-    if grep -q "to retry, use:" "$log_file" >/dev/null 2>&1; then
+    if grep -q "to retry, use:" "$log_file" > /dev/null 2>&1; then
         return 1
     fi
 
@@ -73,7 +76,7 @@ cleanup_stale_ssm_sessions() {
     local terminated=0
     local max_age_minutes=15  # Aggressive cleanup - 15 minutes
     local cutoff_time
-    cutoff_time=$(date -u -v-${max_age_minutes}M +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -d "${max_age_minutes} minutes ago" +%Y-%m-%dT%H:%M:%S)
+    cutoff_time=$(date -u -v-${max_age_minutes}M +%Y-%m-%dT%H:%M:%S 2> /dev/null || date -u -d "${max_age_minutes} minutes ago" +%Y-%m-%dT%H:%M:%S)
 
     for instance_id in $instance_ids; do
         # Get active sessions for this instance
@@ -83,11 +86,11 @@ cleanup_stale_ssm_sessions() {
             --filters "key=Target,value=${instance_id}" \
             --region "$region" \
             --query "Sessions[?StartDate<='${cutoff_time}'].SessionId" \
-            --output text 2>/dev/null || echo "")
+            --output text 2> /dev/null || echo "")
 
         for session_id in $sessions; do
             if [[ -n "$session_id" && "$session_id" != "None" ]]; then
-                aws ssm terminate-session --session-id "$session_id" --region "$region" >/dev/null 2>&1 && {
+                aws ssm terminate-session --session-id "$session_id" --region "$region" > /dev/null 2>&1 && {
                     ((terminated++))
                 } || true
             fi
@@ -150,7 +153,7 @@ enable_ssm_user_local() {
         --instance-id "$instance_id" \
         --region "$region" \
         --query 'Status' \
-        --output text 2>/dev/null || echo "Failed")
+        --output text 2> /dev/null || echo "Failed")
 
     if [[ "$status" == "Success" ]]; then
         log_message "Successfully re-enabled ssm-user on $host"
@@ -283,7 +286,7 @@ Write-Output "SSM Agent restarted - ssm-user fix complete"
             --instance-id "$instance_id" \
             --region "$region" \
             --query 'Status' \
-            --output text 2>/dev/null || echo "Pending")
+            --output text 2> /dev/null || echo "Pending")
         ((poll++))
     done
 
@@ -362,12 +365,12 @@ retry_with_error_specific_settings() {
         # Only failed hosts
         limit_args=(--limit "$failed_hosts")
     fi
-    
+
     case "$error_type" in
         fact_gathering)
             log_message "Retrying with modified fact gathering settings..."
             ANSIBLE_GATHERING=explicit run_ansible_command "$temp_log" \
-                ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
+                ansible-playbook "${VERBOSE_FLAG}" -i "${ENV}-inventory" \
                 ${limit_args[@]+"${limit_args[@]}"} --forks=1 \
                 -e "ansible_facts_gathering_timeout=60" \
                 -e "gather_timeout=60" \
@@ -376,7 +379,7 @@ retry_with_error_specific_settings() {
         network_adapter)
             log_message "Retrying with network adapter fix..."
             run_ansible_command "$temp_log" \
-                ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
+                ansible-playbook "${VERBOSE_FLAG}" -i "${ENV}-inventory" \
                 ${limit_args[@]+"${limit_args[@]}"} \
                 -e "skip_network_adapter_config=true" \
                 -e "bypass_ethernet3_check=true" \
@@ -401,7 +404,7 @@ retry_with_error_specific_settings() {
             fi
 
             ANSIBLE_TIMEOUT=300 run_ansible_command "$temp_log" \
-                ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
+                ansible-playbook "${VERBOSE_FLAG}" -i "${ENV}-inventory" \
                 ${limit_args[@]+"${limit_args[@]}"} --forks=1 \
                 -e "ansible_aws_ssm_retries=10" \
                 -e "ansible_aws_ssm_retry_delay=30" \
@@ -413,7 +416,7 @@ retry_with_error_specific_settings() {
         connection_error)
             log_message "Retrying with increased connection timeout..."
             ANSIBLE_TIMEOUT=180 run_ansible_command "$temp_log" \
-                ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
+                ansible-playbook "${VERBOSE_FLAG}" -i "${ENV}-inventory" \
                 ${limit_args[@]+"${limit_args[@]}"} \
                 -e "ansible_connection_timeout=180" \
                 -e "ansible_timeout=180" \
@@ -422,7 +425,7 @@ retry_with_error_specific_settings() {
         powershell_interactive)
             log_message "Retrying with PowerShell interactive mode fix..."
             run_ansible_command "$temp_log" \
-                ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
+                ansible-playbook "${VERBOSE_FLAG}" -i "${ENV}-inventory" \
                 ${limit_args[@]+"${limit_args[@]}"} \
                 -e "ansible_shell_type=powershell" \
                 -e "force_ps_module=true" \
@@ -460,7 +463,7 @@ retry_with_error_specific_settings() {
 
             log_message "Retrying playbook with increased connection timeout..."
             ANSIBLE_TIMEOUT=180 run_ansible_command "$temp_log" \
-                ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
+                ansible-playbook "${VERBOSE_FLAG}" -i "${ENV}-inventory" \
                 ${limit_args[@]+"${limit_args[@]}"} --forks=1 \
                 -e "ansible_connection_timeout=180" \
                 -e "ansible_timeout=180" \
@@ -483,7 +486,7 @@ retry_with_error_specific_settings() {
 
             log_message "Retrying playbook with robust SSM settings..."
             ANSIBLE_TIMEOUT=180 run_ansible_command "$temp_log" \
-                ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
+                ansible-playbook "${VERBOSE_FLAG}" -i "${ENV}-inventory" \
                 ${limit_args[@]+"${limit_args[@]}"} --forks=1 \
                 -e "ansible_connection_timeout=180" \
                 -e "ansible_timeout=180" \
@@ -502,14 +505,14 @@ retry_with_error_specific_settings() {
                 sleep 30
             fi
             run_ansible_command "$temp_log" \
-                ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
+                ansible-playbook "${VERBOSE_FLAG}" -i "${ENV}-inventory" \
                 ${limit_args[@]+"${limit_args[@]}"} --forks=1 \
                 "ansible/$playbook"
             ;;
-        unclassified:*|*)
+        unclassified:* | *)
             log_message "Retrying with general robust settings..."
             ANSIBLE_SSH_RETRIES=5 ANSIBLE_TIMEOUT=120 run_ansible_command "$temp_log" \
-                ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
+                ansible-playbook "${VERBOSE_FLAG}" -i "${ENV}-inventory" \
                 ${limit_args[@]+"${limit_args[@]}"} --forks=1 \
                 "ansible/$playbook"
             ;;
@@ -527,7 +530,7 @@ while [[ $retry_count -lt ${MAX_RETRIES} ]] && [[ "$success" = "false" ]]; do
         log_message "Waiting ${RETRY_DELAY} seconds before retrying..."
         sleep "${RETRY_DELAY}"
     fi
-    
+
     log_message "Starting ansible/${PLAYBOOK}..."
     true > "$temp_log"
 
@@ -542,21 +545,21 @@ while [[ $retry_count -lt ${MAX_RETRIES} ]] && [[ "$success" = "false" ]]; do
         local pid=$1
         local sig=${2:-TERM}
         # Kill children first (depth-first)
-        for child in $(pgrep -P "$pid" 2>/dev/null); do
+        for child in $(pgrep -P "$pid" 2> /dev/null); do
             kill_tree "$child" "$sig"
         done
-        kill -"$sig" "$pid" 2>/dev/null
+        kill -"$sig" "$pid" 2> /dev/null
     }
 
     # Run ansible-playbook with a FIFO to detect idle/hung state
-    mkfifo /tmp/ansible_pipe_$$ 2>/dev/null || true
-    (
-        ansible-playbook ${VERBOSE_FLAG} -i "${ENV}-inventory" \
+    mkfifo /tmp/ansible_pipe_$$ 2> /dev/null || true
+    {
+        ansible-playbook "${VERBOSE_FLAG}" -i "${ENV}-inventory" \
             ${LIMIT_ARGS[@]+"${LIMIT_ARGS[@]}"} \
             -e "ansible_facts_gathering_timeout=60" \
             "ansible/${PLAYBOOK}" 2>&1 | tee "$temp_log" | tee -a "${LOG_FILE}"
         echo $? > /tmp/ansible_exit_$$
-    ) &
+    } &
 
     ansible_pid=$!
 
@@ -566,12 +569,12 @@ while [[ $retry_count -lt ${MAX_RETRIES} ]] && [[ "$success" = "false" ]]; do
     # Monitor for idle timeout
     last_output_time=$(date +%s)
     last_size=0
-    while kill -0 $ansible_pid 2>/dev/null; do
+    while kill -0 $ansible_pid 2> /dev/null; do
         sleep 5
 
         # Get current log file size, default to 0 if file doesn't exist yet
         if [[ -f "$temp_log" ]]; then
-            current_size=$(wc -c < "$temp_log" 2>/dev/null || echo 0)
+            current_size=$(wc -c < "$temp_log" 2> /dev/null || echo 0)
         else
             current_size=0
         fi
@@ -595,10 +598,10 @@ while [[ $retry_count -lt ${MAX_RETRIES} ]] && [[ "$success" = "false" ]]; do
         fi
     done
 
-    wait $ansible_pid 2>/dev/null || ansible_exit_code=$(cat /tmp/ansible_exit_$$ 2>/dev/null || echo 1)
+    wait $ansible_pid 2> /dev/null || ansible_exit_code=$(cat /tmp/ansible_exit_$$ 2> /dev/null || echo 1)
     trap - INT TERM  # Reset trap
-    rm -f /tmp/ansible_exit_$$ /tmp/ansible_pipe_$$ 2>/dev/null
-    
+    rm -f /tmp/ansible_exit_$$ /tmp/ansible_pipe_$$ 2> /dev/null
+
     log_message "Ansible exit code: $ansible_exit_code"
 
     # Check if playbook timed out (timeout command returns 124)
@@ -625,10 +628,10 @@ while [[ $retry_count -lt ${MAX_RETRIES} ]] && [[ "$success" = "false" ]]; do
         log_message "Completed ansible/${PLAYBOOK} successfully."
     else
         log_message "Playbook failed"
-        
+
         error_type=$(detect_error_type "$temp_log")
         log_message "Detected error type: $error_type"
-        
+
         failed_hosts=$(extract_failed_hosts "$temp_log")
 
         if [[ -n "$failed_hosts" ]]; then
@@ -636,12 +639,12 @@ while [[ $retry_count -lt ${MAX_RETRIES} ]] && [[ "$success" = "false" ]]; do
         else
             log_message "Attempting error-specific recovery: $error_type"
         fi
-        
+
         retry_exit_code=0
         retry_with_error_specific_settings "${PLAYBOOK}" "$temp_log" "$error_type" "$failed_hosts" || retry_exit_code=$?
-        
+
         log_message "Error-specific retry exit code: $retry_exit_code"
-        
+
         if [[ "$retry_exit_code" -eq 0 ]] && check_ansible_success "$temp_log"; then
             success=true
             log_message "Completed ansible/${PLAYBOOK} successfully after error-specific retry."

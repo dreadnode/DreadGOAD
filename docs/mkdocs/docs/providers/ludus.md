@@ -35,7 +35,7 @@ And goad launch the installation ;)
 - If you don't want to do the export LUDUS_API_KEY before using goad you can also add the api_key in the goad.ini configuration file
 - The goad configuration file as some options for ludus:
 
-```
+```ini
 # ~/.goad/goad.ini
 ...
 [ludus]

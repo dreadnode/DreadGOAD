@@ -19,7 +19,7 @@ declare -a files
 
 case "${PLAYBOOK}" in
     build)
-        files=( 
+        files=(
             "ansible/build.yml"
             "ansible/roles/common/tasks/main.yml"
             "ansible/roles/settings/keyboard/tasks/main.yml"

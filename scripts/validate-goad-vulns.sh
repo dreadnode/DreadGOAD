@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2329
 # validate-goad-vulns.sh - Validate GOAD vulnerability configurations
 # Based on: docs/GOAD-vulnerabilities-comprehensive.md
 #
@@ -47,28 +48,28 @@ print_status() {
     case "$status" in
         "PASS")
             echo -e "${GREEN}✓${NC} $message"
-            ((PASSED_CHECKS+=1))
+            ((PASSED_CHECKS += 1))
             ;;
         "FAIL")
             echo -e "${RED}✗${NC} $message"
-            ((FAILED_CHECKS+=1))
+            ((FAILED_CHECKS += 1))
             ;;
         "WARN")
             echo -e "${YELLOW}⚠${NC} $message"
-            ((WARNING_CHECKS+=1))
+            ((WARNING_CHECKS += 1))
             ;;
         "INFO")
             echo -e "${BLUE}ℹ${NC} $message"
             ;;
     esac
-    ((TOTAL_CHECKS+=1))
+    ((TOTAL_CHECKS += 1))
 }
 
 # Function to run PowerShell command via SSM
 run_ps_command() {
     local instance_id="$1"
     local ps_command="$2"
-    local description="${3:-Running command}"
+    local _description="${3:-Running command}"
     local wait_time="${4:-5}"  # Optional 4th parameter for custom wait time
 
     if [[ "$VERBOSE" == "true" ]]; then
@@ -82,7 +83,7 @@ run_ps_command() {
         --parameters "commands=[\"$ps_command\"]" \
         --region "$REGION" \
         --output text \
-        --query 'Command.CommandId' 2>/dev/null || echo "")
+        --query 'Command.CommandId' 2> /dev/null || echo "")
 
     if [[ -z "$command_id" ]]; then
         echo "ERROR: Failed to send command" >&2
@@ -99,7 +100,7 @@ run_ps_command() {
         --instance-id "$instance_id" \
         --region "$REGION" \
         --output text \
-        --query 'StandardOutputContent' 2>/dev/null || echo ""
+        --query 'StandardOutputContent' 2> /dev/null || echo ""
 }
 
 # Function to get instance ID by name pattern
@@ -109,12 +110,12 @@ get_instance_id() {
         --filters "Name=tag:Name,Values=*${name_pattern}*" "Name=instance-state-name,Values=running" \
         --query 'Reservations[0].Instances[0].InstanceId' \
         --region "$REGION" \
-        --output text 2>/dev/null || echo ""
+        --output text 2> /dev/null || echo ""
 }
 
 # Initialize results JSON
 init_results() {
-    cat > "$OUTPUT_FILE" <<EOF
+    cat > "$OUTPUT_FILE" << EOF
 {
   "validation_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
   "environment": "$ENV",
@@ -134,7 +135,7 @@ add_result() {
     local category="$1"
     local check_name="$2"
     local status="$3"
-    local details="$4"
+    local _details="$4"
 
     # This is a simplified version - in production, use jq to properly append
     if [[ "$VERBOSE" == "true" ]]; then

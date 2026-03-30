@@ -15,7 +15,7 @@
 
 ## Installation
 
-- Once you have prepared your provisioning vm (you can use the scripts/setup_proxmox.sh for prerequistes installation)
+- Once you have prepared your provisioning vm (you can use the scripts/setup_proxmox.sh for prerequisites installation)
 - And once your prerequisites are ready see [https://mayfly277.github.io/posts/GOAD-on-proxmox-part2-packer/](https://mayfly277.github.io/posts/GOAD-on-proxmox-part2-packer/) to prepare the template for proxmox
 
 

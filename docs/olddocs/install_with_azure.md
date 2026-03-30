@@ -39,7 +39,7 @@ az login
 
 ## Manual installation
 
-### Build the infrastructure with Terraform.
+### Build the infrastructure with Terraform
 
 1. Initialize Terraform
 
@@ -68,6 +68,7 @@ terraform apply tfplan
 At the end of the terraform apply, the output will show the public ip of the Ubuntu VM. This VM will be used to run the ansible playbook to provision the Windows VM.
 
 ### Windows VM provisionning with Ansible
+
 0. Rsync source on Ubuntu VM
 
 ```bash

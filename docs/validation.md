@@ -45,42 +45,49 @@ task validate-vulns-quick ENV=staging
 The validation script checks the following categories of vulnerabilities:
 
 ### 1. **Credential Discovery** (10 checks)
+
 - ✓ Passwords in user description fields (samwell.tarly)
 - ✓ Username=password combinations (hodor)
 - ✓ Weak password policies
 - ✓ Password spray vulnerabilities
 
 ### 2. **Kerberos Attack Vectors** (12 checks)
+
 - ✓ AS-REP Roasting accounts (brandon.stark, missandei)
 - ✓ Kerberoasting targets (jon.snow, sql_svc)
 - ✓ Service Principal Names configured
 - ✓ Kerberos user enumeration possible
 
 ### 3. **Network Misconfigurations** (8 checks)
+
 - ✓ SMB signing disabled on CASTELBLACK and BRAAVOS
 - ✓ LLMNR/NBT-NS enabled
 - ✓ NTLM relay opportunities
 - ✓ Anonymous SMB session access
 
 ### 4. **Delegation Attacks** (6 checks)
+
 - ✓ Unconstrained delegation (sansa.stark)
 - ✓ Constrained delegation (jon.snow)
 - ✓ Resource-Based Constrained Delegation setup
 - ✓ Machine Account Quota = 10
 
 ### 5. **MSSQL Configurations** (8 checks)
+
 - ✓ MSSQL services running on CASTELBLACK and BRAAVOS
 - ✓ Impersonation permissions (samwell.tarly → sa, arya.stark → dbo)
 - ✓ MSSQL admin accounts (jon.snow, khal.drogo)
 - ✓ Trusted links between servers
 
 ### 6. **ADCS Vulnerabilities** (15+ checks)
+
 - ✓ ADCS installed on BRAAVOS
 - ✓ ADCS Web Enrollment configured (ESC8)
 - ✓ Vulnerable certificate templates (ESC1, ESC2, ESC3, ESC4, ESC6, etc.)
 - ✓ Certificate mapping misconfigurations
 
 ### 7. **ACL Abuse** (20+ checks)
+
 - ✓ ForceChangePassword permissions
 - ✓ GenericWrite on users/computers
 - ✓ WriteDacl permissions
@@ -89,12 +96,14 @@ The validation script checks the following categories of vulnerabilities:
 - ✓ Complete ACL attack chains
 
 ### 8. **Domain Trusts** (4 checks)
+
 - ✓ Parent-child trust (sevenkingdoms ↔ north)
 - ✓ Forest trust (sevenkingdoms ↔ essos)
 - ✓ Cross-forest group memberships
 - ✓ SID history enabled
 
 ### 9. **Services & Miscellaneous** (10 checks)
+
 - ✓ IIS running on CASTELBLACK
 - ✓ Print Spooler service status
 - ✓ LDAP signing not enforced
@@ -106,7 +115,7 @@ The validation script checks the following categories of vulnerabilities:
 
 The script provides color-coded console output:
 
-```
+```text
 ==========================================
 GOAD Vulnerability Validation
 ==========================================
@@ -233,6 +242,7 @@ Use this checklist to track validation progress:
 **Cause**: Instances not running or SSM not accessible
 
 **Solution**:
+
 ```bash
 # Check instance status
 task -y aws:list-running-instances
@@ -253,6 +263,7 @@ aws ec2 describe-instances \
 **Cause**: Script not executable or AWS credentials not configured
 
 **Solution**:
+
 ```bash
 # Make script executable
 chmod +x scripts/validate-goad-vulns.sh
@@ -266,6 +277,7 @@ aws sts get-caller-identity
 **Cause**: AWS CLI calls can be slow, especially when querying multiple instances
 
 **Solution**:
+
 ```bash
 # Option 1: Run with FAIL_ON_ERROR=false to see progress
 task validate-vulns ENV=staging FAIL_ON_ERROR=false
@@ -291,6 +303,7 @@ time aws ec2 describe-instances --region us-west-1 --max-results 5
 **Cause**: SSM commands taking too long
 
 **Solution**:
+
 - Increase sleep time in script (currently 5 seconds)
 - Check network connectivity to instances
 - Verify Windows Remote Management service running
@@ -300,6 +313,7 @@ time aws ec2 describe-instances --region us-west-1 --max-results 5
 **Cause**: Vulnerabilities not fully provisioned
 
 **Solution**:
+
 ```bash
 # Re-run vulnerability provisioning
 task provision PLAYS=vulnerabilities.yml

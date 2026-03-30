@@ -52,7 +52,7 @@ sudo apt install virtualbox
 
 ### Install Vagrant
 
-- **vagrant** from their official site [vagrant](https://developer.hashicorp.com/vagrant/downloads). __The version you can install through your favorite package manager (apt, yum, ...) is probably not the latest one__.
+- **vagrant** from their official site [vagrant](https://developer.hashicorp.com/vagrant/downloads). **The version you can install through your favorite package manager (apt, yum, ...) is probably not the latest one**.
 - Install vagrant plugin vbguest if you want the guest addition: `vagrant plugin install vagrant-vbguest` (not mandatory)
 - Vagrant installation is well describe in [the official vagrant page](https://developer.hashicorp.com/vagrant/downloads) (tests are ok on 2.3.4)
 - Some github issues indicate vagrant got some issue on some version and work well with 2.2.19 (`apt install vagrant=2.2.19`)
@@ -64,6 +64,7 @@ sudo apt update && sudo apt install vagrant
 ```
 
 - on some recent versions (ubuntu 23.04), you should consider run also:
+
 ```bash
 gem install winrm winrm-fs winrm-elevated
 ```
@@ -92,7 +93,7 @@ source .venv/bin/activate
   - **Tested with ansible-core (2.12)**
   - **pywinrm** be sure you got the pywinrm package installed
 
-```
+```bash
 python3 -m pip install --upgrade pip
 python3 -m pip install ansible-core==2.12.6
 python3 -m pip install pywinrm
@@ -103,7 +104,8 @@ python3 -m pip install pywinrm
   - **ansible community.windows**
   - **ansible chocolatey** (not needed anymore)
   - **ansible community.general**
-```
+
+```bash
 ansible-galaxy install -r ansible/requirements.yml
 ```
 
@@ -113,11 +115,13 @@ ansible-galaxy install -r ansible/requirements.yml
 
 - This will launch vagrant up and the ansible playbooks
 - If you run ansible locally
+
 ```bash
 ./goad.sh -t install -l GOAD -p virtualbox -m local
 ```
 
 - If you run ansible on docker
+
 ```bash
 ./goad.sh -t install -l GOAD -p virtualbox  -m docker
 ```
@@ -126,7 +130,7 @@ ansible-galaxy install -r ansible/requirements.yml
 
 ### Create the vms
 
-- To create the VMs just run 
+- To create the VMs just run
 
 ```bash
 cd ad/GOAD/providers/virtualbox

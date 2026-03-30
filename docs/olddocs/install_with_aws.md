@@ -15,7 +15,7 @@ The architecture is the same than the Azure deployment.
 
 ## AWS configuration
 
-You need to configre AWS cli. Use a key with enough privileges on the tenant.
+You need to configure AWS cli. Use a key with enough privileges on the tenant.
 
 ```bash
 aws configure
@@ -45,7 +45,7 @@ Other configurable variables are listed in the `variable.tf` file.
 
 The SSH key necessary to connect the jumpbox is generated in `ad/GOAD/providers/aws/ssh_keys`.
 
-```
+```bash
 ssh goad@$PUBLIC_IP -i ubuntu-jumpbox.pem
 ```
 
@@ -53,7 +53,7 @@ The credentials to access the Windows machines can be found in the usual invento
 
 ## Manual installation
 
-### Build the infrastructure with Terraform.
+### Build the infrastructure with Terraform
 
 1. Initialize Terraform
 
@@ -82,6 +82,7 @@ terraform apply tfplan -var-file="values.tfvars"
 At the end of the terraform apply, the output will show the public ip of the Ubuntu VM. This VM will be used to run the ansible playbook to provision the Windows VM.
 
 ### Windows VM provisionning with Ansible
+
 0. Rsync source on Ubuntu VM
 
 ```bash

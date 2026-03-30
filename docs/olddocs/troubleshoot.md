@@ -4,7 +4,7 @@
 
 ## vagrant up - WinRM - digest initialization failed : Initialization Error
 
-```
+```text
 DC01: WinRM username: vagrant
 DC01: WinRM execution_time_limit: PT2H
 DC01: WinRM transport: negotiate
@@ -17,13 +17,16 @@ Message: Digest initialization failed: initialization error
 
 - solution 1: change vagrantfile to not use ssl (https://github.com/Orange-Cyberdefense/GOAD/issues/68)
     - add this lines in vagrantfile to not use ssl :
-        ```
+
+        ```text
         config.winrm.transport = "plaintext"
         config.winrm.basic_auth_only = true
         ```
+
 - solution 2: allow legacy algorithm (https://github.com/Orange-Cyberdefense/GOAD/issues/11)
     - add to /etc/ssl/openssl.conf :
-    ```
+
+    ```ini
     [provider_sect]
     default = default_sect
     legacy = legacy_sect
@@ -37,23 +40,23 @@ Message: Digest initialization failed: initialization error
 
 - solution 3: downgrade the vagrant version (`sudo apt install vagrant=2.2.19`)
 
-## vagrant up - cannot load 
+## vagrant up - cannot load
 
-```
+```text
 <internal:/usr/lib/ruby/vendor_ruby/rubygems/core_ext/kernel_require.rb>:85:in `require': cannot load such file -- winrm (LoadError)
-	from <internal:/usr/lib/ruby/vendor_ruby/rubygems/core_ext/kernel_require.rb>:85:in `require'
-	from /usr/share/rubygems-integration/all/gems/vagrant-2.3.4/plugins/communicators/winrm/shell.rb:9:in `block in <top (required)>'
-	from /usr/share/rubygems-integration/all/gems/vagrant-2.3.4/lib/vagrant/util/silence_warnings.rb:8:in `silence!'
+ from <internal:/usr/lib/ruby/vendor_ruby/rubygems/core_ext/kernel_require.rb>:85:in `require'
+ from /usr/share/rubygems-integration/all/gems/vagrant-2.3.4/plugins/communicators/winrm/shell.rb:9:in `block in <top (required)>'
+ from /usr/share/rubygems-integration/all/gems/vagrant-2.3.4/lib/vagrant/util/silence_warnings.rb:8:in `silence!'
 ```
 
-- solution : 
+- solution :
   - `gem install winrm`
   - `gem install winrm-fs`
 
 
 ## vagrant up - cannot load such file -- winrm-elevated (LoadError)
 
-```
+```text
 <internal:/usr/lib/ruby/vendor_ruby/rubygems/core_ext/kernel_require.rb>:85:in `require': cannot load such file -- winrm-elevated (LoadError)
         from <internal:/usr/lib/ruby/vendor_ruby/rubygems/core_ext/kernel_require.rb>:85:in `require'
         from /usr/share/rubygems-integration/all/gems/vagrant-2.3.4/plugins/communicators/winrm/shell.rb:12:in `<top (required)>'
@@ -65,19 +68,20 @@ Message: Digest initialization failed: initialization error
 
 ## ansible persistent "unreachable error"
 
-- Unreachable means ansible can't contact the vms. 
+- Unreachable means ansible can't contact the vms.
 - Maybe the vms didn't got the right ip? (try to connect with vagrant/vagrant on vm and look the ip)
 - Or you got a firewall on the vm which do provisioning which block winrm connection ?
 - or maybe it is a vagrant issue : https://github.com/Orange-Cyberdefense/GOAD/issues/12
 - You could try to switch on port 5985 to connect without ssl as suggest here : https://github.com/Orange-Cyberdefense/GOAD/issues/98 by uncomment the lines in the inventory file you use
-```
+
+```bash
 # ansible_winrm_transport=basic
 # ansible_port=5985
 ```
 
 ## The naming context specified for this replication operation is invalid
 
-```
+```bash
 TASK [groups_domains : synchronizes all domains] *******************************************************************************************************************************************************************************************************************************
 changed: [dc03]
 changed: [dc01]
@@ -86,9 +90,9 @@ fatal: [dc02]: FAILED! => {"changed": true, "cmd": "repadmin /syncall /Ade", "de
 
 - relaunch install
 
-## vagrant up - Vagrant can't use the requested machine because it is locked 
+## vagrant up - Vagrant can't use the requested machine because it is locked
 
-```
+```text
 ==> GOAD-SRV03: Configuring and enabling network interfaces...
 Vagrant can't use the requested machine because it is locked! This
 means that another Vagrant process is currently reading or modifying
@@ -96,17 +100,19 @@ the machine. Please wait for that Vagrant process to end and try
 again. Details about the machine are shown below:
 ```
 
-- solution : relaunch the provisioning on the broken computer : 
-- exemple :
-```
+- solution : relaunch the provisioning on the broken computer :
+- example :
+
+```bash
 cd ~/GOAD/ad/GOAD/providers/virtualbox
 vagrant reload GOAD-SRV03 --provisioning
 ```
+
 - and than relaunch the install script
 
 ## The server has rejected the client credentials
 
-```
+```text
 An exception occurred during task execution. To see the full traceback, use -vvv. The error was:    at Microsoft.ActiveDirectory.Management.Commands.ADCmdletBase`1.BeginProcessing()
 failed: [dc02] (item={'key': 'AcrossTheSea', 'value': ['essos.local\\daenerys.targaryen']}) => {"ansible_loop_var": "item", "attempts": 3, "changed": false, "item": {"key": "AcrossTheSea", "value": ["essos.local\\daenerys.targaryen"]}, "msg": "Unhandled exception while executing module: The server has rejected the client credentials."}
 ```
@@ -114,7 +120,7 @@ failed: [dc02] (item={'key': 'AcrossTheSea', 'value': ['essos.local\\daenerys.ta
 - something go wrong with the trust, all the links are not fully establish
 - wait several minutes and relaunch the install
 
-## Groups domain error
+##  Groups domain error
 
 - something go wrong with the trust, all the links are not fully establish
 - wait several minutes and relaunch the playbook
@@ -158,11 +164,11 @@ fatal: [xxx]: FAILED! => {
 
 ```bash
 ERROR! no action detected in task. This often indicates a misspelled module name, or incorrect module path.
- 
+
 The error appears to have been in '/home/hrrb0032/Documents/mission/GOAD/roles/domain_controller/tasks/main.yml': line 8, column 3, but maybe elsewhere in the file depending on the exact syntax problem.
- 
+
 The offending line appears to be:
- 
+
 - name: disable enhanced exit codes
 ^ here
 ```
@@ -170,11 +176,13 @@ The offending line appears to be:
 solution : upgrade Ansible
 
 ### old ansible.windows version
+
 ```bash
 ERROR! couldn't resolve module/action 'win_powershell'. This often indicates a misspelling, missing collection, or incorrect module path.
 ```
 
 - solution: reinstall ansible.windows module :
+
 ```bash
 ansible-galaxy collection install ansible.windows --force
 ```
@@ -184,15 +192,15 @@ ansible-galaxy collection install ansible.windows --force
 ```bash
 PLAY [DC01 - kingslanding] *******************************************************
 
- 
+
 
 TASK [Gathering Facts] ***********************************************************
 fatal: [192.168.56.10]: FAILED! => {"msg": "winrm or requests is not installed: No module named winrm"}
 
- 
+
 
 PLAY RECAP ***********************************************************************
-192.168.56.10              : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+192.168.56.10              : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0
 ```
 
 solution : pip install pywinrm
@@ -211,7 +219,7 @@ solution : wait or if crashed then re-run install
 
 
 
-## Domain controller : ensure Users are present 
+## Domain controller : ensure Users are present
 
 ```bash
 TASK [domain_controller : Ensure that Users presents in ou=<kingdom>,dc=SEVENKINGDOMS,dc=local] ***************************************************************************
@@ -219,10 +227,12 @@ An exception occurred during task execution. To see the full traceback, use -vvv
 failed: [192.168.56.10] (item={u'key': u'lord.varys', u'value': {u'city': u"King's Landing", u'password': u'_W1sper_$', u'name': u'Lord Varys', u'groups': u'Small Council', u'path': u'OU=Users,OU=Crownlands,OU=kingdoms,DC=SEVENKINGDOMS,DC=local'}}) => {"ansible_loop_var": "item", "changed": false, "item": {"key": "lord.varys", "value": {"city": "King's Landing", "groups": "Small Council", "name": "Lord Varys", "password": "_W1sper_$", "path": "OU=Users,OU=Crownlands,OU=kingdoms,DC=SEVENKINGDOMS,DC=local"}}, "msg": "Unhandled exception while executing module: An unspecified error has occurred"}
 
 ```
+
  solution : re-run install
 
 ## mssql : Unable to install SQL Server
-```
+
+```bash
 TASK [mssql : Install the database]
 fatal: [192.168.56.22]: FAILED! => {"attempts": 3, "changed": true, "cmd": "c:\\setup\\mssql\\sql_installer.exe /configurationfile=c:\\setup\\mssql\\sql_conf.ini /IACCEPTSQLSERVERLICENSETERMS /MEDIAPATH=c:\\setup\\mssql\\media /QUIET /HIDEPROGRESSBAR", "delta": "0:00:34.891185", "end": "2022-08-17 21:26:53.976793", "msg": "non-zero return code", "rc": 2226323458, "start": "2022-08-17 21:26:19.085608", "stderr": "", "stderr_lines": [], "stdout": "Microsoft (R) SQL Server Installer\r\nCopyright (c) 2019 Microsoft.  All rights reserved.\r\n\r\nDownloading install package...\r\n\r\n\r\nOperation finished with result: Failure\r\n\r\nOops...\r\n\r\nUnable to install SQL Server (setup.exe).\r\n\r\n      Exit code (Decimal): -2068643838\r\n      Exit message: No features were installed during the setup execution. The requested features may already be installed. Please review the summary.txt log for further details.\r\n\r\n  SQL SERVER INSTALL LOG FOLDER\r\n      c:\\Program Files\\Microsoft SQL Server\\150\\Setup Bootstrap\\Log\\20220817_142624\r\n\r\n", "stdout_lines": ["Microsoft (R) SQL Server Installer", "Copyright (c) 2019 Microsoft.  All rights reserved.", "", "Downloading install package...", "", "", "Operation finished with result: Failure", "", "Oops...", "", "Unable to install SQL Server (setup.exe).", "", "      Exit code (Decimal): -2068643838", "      Exit message: No features were installed during the setup execution. The requested features may already be installed. Please review the summary.txt log for further details.", "", "  SQL SERVER INSTALL LOG FOLDER", "      c:\\Program Files\\Microsoft SQL Server\\150\\Setup Bootstrap\\Log\\20220817_142624", ""]}
 ```
@@ -234,7 +244,7 @@ solution : re-run installer
 
 I was using the version of Vagrant in the Ubuntu repo, and then tried to use the version 2.4.0 and 2.3.4 binaries from hashicorp, but kept on running into this error:
 
-```
+```bash
 The guest machine entered an invalid state while waiting for it
 to boot. Valid states are 'starting, running'. The machine is in the
 'poweroff' state. Please verify everything is configured
@@ -249,25 +259,29 @@ VirtualBox GUI is open.
 The primary issue for this error is that the provider you're using
 is not properly configured. This is very rarely a Vagrant issue.
 ```
+
 Solution : install vagrant from the hashicorp repo
 
 ## proxmox: error creating VM: 403 Permission check failed (/sdn/zones/localnetwork/vmbr3/10, SDN.Use)
 
 The error may look similar to below:
-```
-==> proxmox-iso.windows: Error creating VM: error creating VM: 403 Permission check failed (/sdn/zones/localnetwork/vmbr3/10, SDN.Use), 
+
+```text
+==> proxmox-iso.windows: Error creating VM: error creating VM: 403 Permission check failed (/sdn/zones/localnetwork/vmbr3/10, SDN.Use),
 error status: {"data":null} (params: ......
 ```
 
 It may be fixed by delegating the SDN.Use privilege to the packer user
-```
+
+```bash
 pveum role modify Packer -privs "VM.Config.Disk VM.Config.CPU VM.Config.Memory Datastore.AllocateTemplate Datastore.Audit Datastore.AllocateSpace Sys.Modify VM.Config.Options VM.Allocate VM.Audit VM.Console VM.Config.CDROM VM.Config.Cloudinit VM.Config.Network VM.PowerMgmt VM.Config.HWType VM.Monitor SDN.Use"
 ```
 
-## proxmox: ==> proxmox-iso.windows: Error creating VM: error creating VM: unable to create VM 103 - unsupported format 'qcow2' 
+## proxmox: ==> proxmox-iso.windows: Error creating VM: error creating VM: unable to create VM 103 - unsupported format 'qcow2'
 
 The error may look similar to below:
-```
+
+```text
 root@goadprovisioning:~/GOAD/packer/proxmox# packer build -var-file=windows_server2019_proxmox_cloudinit.pkvars.hcl .
 proxmox-iso.windows: output will be in this color.
 
@@ -283,7 +297,7 @@ proxmox-iso.windows: output will be in this color.
 
 Filesystems such as ZFS (and others) do not support qcow2. From my reading the best approach is to use an ext4 filesystem and modify `config.auto.pkrvars.hcl` with the newly created ext4 volume.
 
-```
+```text
 root@goadprovisioning:~/GOAD/packer/proxmox# vi config.auto.pkrvars.hcl
 ...
 proxmox_vm_storage      = "ext4-qcow2"
@@ -305,20 +319,20 @@ proxmox-iso.windows: output will be in this color.
 
 ## proxmox - packer error creating vm :  volume 'local:iso/windows_XXX.iso' does not exist
 
-```
+```text
 ==> proxmox-iso.windows: Error creating VM: error creating VM: unable to create VM 116 - volume 'local:iso/windows_server2019_XXX_en-us.iso' does not exist, error status:  (params: map[agent:1 args: boot: cores:2 cpu:kvm64 description:Packer ephemeral build VM hotplug
 : ide2:local:iso/windows_server2019_XXX_en-us.iso,media=cdrom kvm:true machine: memory:4096 name:WinServer2019x64-cloudinit-qcow2-uptodate net0:virtio=DA:CB:EB:85:08:0E,bridge=vmbr3,tag=10,firewall=false onboot:false ostype:win10 pool:Templates sata0:local:80,format=q
-cow2 scsihw:lsi sockets:1 startup: tags: vmid:116])   
+cow2 scsihw:lsi sockets:1 startup: tags: vmid:116])
 ```
 
 verify your iso files inside proxmox and be sure the iso you want to use exist in proxmox
 
-## ansible adapter name error 
+## ansible adapter name error
 
-```
+```text
 No MSFT_NetAdapter objects found with property 'Name' equal to 'Ethernet'
 
-or 
+or
 
 No MSFT_NetAdapter objects found with property 'Name' equal to 'Ethernet2 '
 ```
@@ -327,11 +341,10 @@ No MSFT_NetAdapter objects found with property 'Name' equal to 'Ethernet2 '
 - if not change them to match the inventory name in the vm.
 
 ## unreachable - proxmox, ansible
-```
+
+```text
 fatal: [dc01]: UNREACHABLE! => {"changed": false, "msg": "ssl: HTTPSConnectionPool(host='192.168.10.40', port=5986): Max retries exceeded with url: /wsman
 ```
 
 - may be the vm is not well ready after the terraform creation. retry the install.
 - if you still get the error connect to the vm and verify the static ip is corresponding with the one expect.
-
-

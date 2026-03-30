@@ -1,7 +1,7 @@
 # :material-microsoft-windows: Windows
 
 - First you will prepare your windows host for an hypervisor
-- Second you will choose between 
+- Second you will choose between
     - install debian 12 with WSL to run goad install script
     - Or prepare your windows host (install with a provisioning machine)
 
@@ -95,11 +95,11 @@
         New Linux installations, installed using the wsl --install command, will be set to WSL 2 by default.
         The wsl --set-version command can be used to downgrade from WSL 2 to WSL 1 or to update previously installed Linux distributions from WSL 1 to WSL 2.
         To see whether your Linux distribution is set to WSL 1 or WSL 2, use the command: `wsl -l -v`.
-        To change versions, use the command: `wsl --set-version <distro name> <wsl_version>` replacing <distro name> with the name of the Linux distribution that you want to update. 
+        To change versions, use the command: `wsl --set-version <distro name> <wsl_version>` replacing <distro name> with the name of the Linux distribution that you want to update.
         As an example: `wsl --set-version Debian 1` will set your Debian distribution to use WSL 1.
 
     !!! tip "use wsl version1"
-        by now wsl was tested succefully with version 1 
+        by now wsl was tested successfully with version 1
 
     ### Install WSL
 
@@ -134,20 +134,20 @@
     !!! info "For vmware or virtualbox only"
         This mode doesn't need WSL but it is only if you plan to install goad locally on vmware or virtualbox
 
-    - Prerequistes:
-        - :simple-python: [python](https://www.python.org/downloads/windows/) on your windows (tested ok with python 3.10) 
+    - Prerequisites:
+        - :simple-python: [python](https://www.python.org/downloads/windows/) on your windows (tested ok with python 3.10)
         - :simple-git: [git](https://git-scm.com/downloads/win)
-    
-    - Checkout GOAD : 
+
+    - Checkout GOAD :
         ```
         git clone https://github.com/Orange-Cyberdefense/GOAD
         cd GOAD/
         ```
-    - Install python dependencies (choose the noansible file) : 
+    - Install python dependencies (choose the noansible file) :
         ```
         pip install -r noansible_requirements.yml
         ```
-    - Launch goad with vm provisioning method : 
+    - Launch goad with vm provisioning method :
         ```
         py goad.py -m vm
         ```

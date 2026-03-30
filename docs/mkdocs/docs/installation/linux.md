@@ -10,7 +10,7 @@
     - Vagrant
         - In order to download vm and create them on virtualbox you need to install vagrant
         - [https://developer.hashicorp.com/vagrant/install#linux](https://developer.hashicorp.com/vagrant/install#linux)
-    
+
     - Virtualbox
         - Install virtualbox
         ```bash
@@ -37,7 +37,7 @@
     - Vagrant
         - In order to download vm and create them on virtualbox you need to install vagrant
         - [https://developer.hashicorp.com/vagrant/install#linux](https://developer.hashicorp.com/vagrant/install#linux)
-    
+
     - Vmware workstation
         - Install vmware workstation [https://support.broadcom.com/group/ecx/productdownloads?subfamily=VMware+Workstation+Pro](https://support.broadcom.com/group/ecx/productdownloads?subfamily=VMware+Workstation+Pro)
 
@@ -70,7 +70,7 @@
 === ":simple-amazon: Aws"
     - AWS CLI
 
-        - Install aws cli 
+        - Install aws cli
             [https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html#getting-started-install-instructions](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html#getting-started-install-instructions)
         - Create an aws access key and secret for goad usage
             - Go to IAM > User > your user > Security credentials
@@ -104,7 +104,7 @@
     - Be sure to create an administrator user and keep his api key
 
     - Once your installation is complete on ludus server (debian 12) and your user is created do :
-    
+
     ```bash
     git clone https://github.com/Orange-Cyberdefense/GOAD.git
     cd GOAD
@@ -120,22 +120,22 @@
 ## Prepare your python environment for goad.py
 
 === "Classic"
-    
+
     - To run the Goad installation/management script you will need : **Python version >=3.8** with venv module installed
-    
-    - Install the python3-venv corresponding to your python version 
-    
+
+    - Install the python3-venv corresponding to your python version
+
     ```bash
     sudo apt install python<version>-venv
     ```
-    
+
     - Example:
-    
+
     ```bash
     sudo apt install python3.10-venv
     ```
 
-    - Then you are ready to launch 
+    - Then you are ready to launch
 
     ```
     ./goad.sh
@@ -159,7 +159,7 @@
     - Install python dependencies:
     ```
     poetry install
-    ``` 
+    ```
 
     - Install ansible-galaxy requirements:
         - If python < 3.11
@@ -178,24 +178,24 @@
     ```
 
 === "Provisioning with docker"
-    
+
     !!! info
         With this method ansible-core will not be installed locally on your venv
-    
+
     - [x] be sure you have docker installed on your os for the provisioning part (ansible will be run from the container)
     - [x] To run the Goad installation/management script you will need :
         -  Python (version >= 3.8) with venv module installed
-    
-    - Install the python3-venv corresponding to your python version 
-    
+
+    - Install the python3-venv corresponding to your python version
+
     ```bash
     sudo apt install python<version>-venv
     ```
-    
+
     - Example:
-    
+
     ```bash
     sudo apt install python3.10-venv
     ```
-    
+
     - Run goad with `./goad_docker.sh` instead of `./goad.sh` to install the dependencies without the ansible part (local and runner provisioning method will not be available)

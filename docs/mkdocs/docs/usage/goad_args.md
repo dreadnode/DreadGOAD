@@ -2,7 +2,7 @@
 
 - Launch goad.py script (or goad.sh wrapper) with arguments
 
-```bash
+```text
 usage: goad.py [-h] [-t TASK] [-l LAB] [-p PROVIDER] [-ip IP_RANGE] [-m METHOD] [-i INSTANCE] [-e EXTENSIONS] [-a ANSIBLE_ONLY] [-r RUN_PLAYBOOK]
 
 Description : goad lab management console.
