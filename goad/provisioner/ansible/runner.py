@@ -47,4 +47,3 @@ class LocalAnsibleProvisionerEmbed(Ansible):
                 break
         # print(runner_result.stats)
         return run_complete
-

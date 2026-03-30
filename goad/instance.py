@@ -161,7 +161,7 @@ class LabInstance:
         esxi_net_nat = config.get_value('vmware_esxi', 'esxi_net_nat')
         esxi_net_domain = config.get_value('vmware_esxi', 'esxi_net_domain')
         esxi_datastore = config.get_value('vmware_esxi', 'esxi_datastore')
-        
+
         # load .env template
         environment = Environment(loader=FileSystemLoader(GoadPath.get_template_path(self.provider_name)))
         envfile_template = environment.get_template(".env")
