@@ -1,0 +1,133 @@
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  gitAuthor: 'cowdogmoo-renovate-bot <157187596+cowdogmoo-renovate-bot[bot]@users.noreply.github.com>',
+  extends: [
+    'config:recommended',
+    'docker:enableMajor',
+    ':disableRateLimiting',
+    ':dependencyDashboard',
+    ':semanticCommits',
+    ':enablePreCommit',
+    ':automergeDigest',
+    'helpers:pinGitHubActionDigests',
+  ],
+  dependencyDashboardLabels: [
+    'renovate-dashboard',
+  ],
+  dependencyDashboardTitle: 'Renovate Dashboard 🤖',
+  suppressNotifications: [
+    'prIgnoreNotification',
+  ],
+  rebaseWhen: 'conflicted',
+  commitBodyTable: true,
+  labels: [
+    'renovate',
+  ],
+  'pre-commit': {
+    enabled: true,
+  },
+  pip_requirements: {
+    managerFilePatterns: [
+      '/(^|/)requirements\\.txt$/',
+      '/(^|/)\\.hooks/requirements\\.txt$/',
+    ],
+  },
+  packageRules: [
+    {
+      description: 'Auto merge Galaxy dependencies',
+      matchManagers: [
+        'ansible-galaxy',
+      ],
+      automerge: true,
+      automergeType: 'pr',
+      matchUpdateTypes: [
+        'minor',
+        'patch',
+      ],
+    },
+    {
+      description: 'Auto-merge GitHub Actions',
+      matchManagers: [
+        'github-actions',
+      ],
+      automerge: true,
+      automergeType: 'pr',
+      matchUpdateTypes: [
+        'major',
+        'minor',
+        'patch',
+      ],
+    },
+    {
+      description: 'Auto-merge pre-commit hooks',
+      matchManagers: [
+        'pre-commit',
+      ],
+      automerge: true,
+      automergeType: 'pr',
+      matchUpdateTypes: [
+        'minor',
+        'patch',
+      ],
+    },
+    {
+      description: 'Auto-merge pip dependencies',
+      matchManagers: [
+        'pip_requirements',
+      ],
+      automerge: true,
+      automergeType: 'pr',
+      matchUpdateTypes: [
+        'minor',
+        'patch',
+      ],
+    },
+    {
+      description: 'Group Ansible Galaxy dependencies',
+      matchManagers: [
+        'ansible-galaxy',
+      ],
+      groupName: 'ansible-dependencies',
+    },
+  ],
+  customManagers: [
+    {
+      customType: 'regex',
+      description: 'Update Python version in GitHub Actions workflows',
+      managerFilePatterns: [
+        '/^\\.github\\/workflows\\/[^/]+\\.ya?ml$/',
+      ],
+      matchStrings: [
+        'PYTHON_VERSION:\\s*["\']?(?<currentValue>[0-9.]+)["\']?',
+      ],
+      depNameTemplate: 'python',
+      datasourceTemplate: 'python-version',
+    },
+    {
+      customType: 'regex',
+      description: 'Update Go version in GitHub Actions workflows',
+      managerFilePatterns: [
+        '/^\\.github\\/workflows\\/[^/]+\\.ya?ml$/',
+      ],
+      matchStrings: [
+        'GO_VERSION:\\s*["\']?(?<currentValue>[0-9.]+)["\']?',
+      ],
+      depNameTemplate: 'go',
+      datasourceTemplate: 'golang-version',
+    },
+    {
+      customType: 'regex',
+      description: 'Update Task version in GitHub Actions workflows',
+      managerFilePatterns: [
+        '/^\\.github\\/workflows\\/[^/]+\\.ya?ml$/',
+      ],
+      matchStrings: [
+        'TASK_VERSION:\\s*(?<currentValue>[0-9.]+)',
+      ],
+      depNameTemplate: 'task',
+      datasourceTemplate: 'github-releases',
+      packageNameTemplate: 'go-task/task',
+      extractVersionTemplate: '^v(?<version>.+)$',
+    },
+  ],
+}
