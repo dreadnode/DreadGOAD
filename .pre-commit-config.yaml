@@ -29,7 +29,7 @@ repos:
     hooks:
       - id: codespell
         entry: codespell -q 3 -f -S ".git,.github,README.md"
-        exclude: '(\.min\.css\.map|\.css\.map|\.min\.map|\.min\.js|sysmonconfig-export\.xml|jquery\.validate\.(min\.)?js)$'
+        exclude: '(\.min\.css\.map|\.css\.map|\.min\.map|\.min\.js|sysmonconfig-export\.xml|jquery\.validate\.(min\.)?js|jquery-3\.4\.1(\.slim)?\.js|modernizr-[\d\.]+\.js)$'
 
   - repo: https://github.com/jumanjihouse/pre-commit-hooks
     rev: 3.0.0
