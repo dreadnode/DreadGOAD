@@ -8,12 +8,12 @@
             $DomainAdapter
         )
       Add-PSSnapin Microsoft.Exchange.Management.PowerShell.SnapIn
-      
+
       $transport_service = Get-TransportService
-      
+
       $adapterGUID = (Get-WmiObject Win32_NetworkAdapter | Where-Object { $_.NetConnectionID -eq $DomainAdapter }).GUID
       $adapterGUID = $adapterGUID -replace '.*\\|\{|\}', ''
-      
+
       if ( $transport_service.InternalDNSAdapterGuid -ne $null -And $adapterGUID -eq $transport_service.InternalDNSAdapterGuid.Guid ) {
         $Ansible.Changed = $false
       } else {
@@ -31,7 +31,7 @@
   when: two_adapters  # Only execute if two_adapters are defined
 
 - name: Restart the Exchange Transport service
-  win_service:
+  ansible.windows.win_service:
     name: MSExchangeTransport
     state: restarted
   when: two_adapters and internal_dns_adapter.changed

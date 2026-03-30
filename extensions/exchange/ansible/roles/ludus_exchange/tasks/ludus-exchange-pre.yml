@@ -4,7 +4,8 @@
     path: "{{ exchange_prereqs_complete_file }}"
   register: prereq_check
 
-- block:
+- name: Install Exchange prerequisites
+  block:
     - name: Install IIS 6 Compatibility Features
       ansible.windows.win_feature:
         name:
@@ -91,7 +92,7 @@
         state: present
       register: pri_exchange_ucma_install
 
-    - name: reboot after installing Unified Communications Managed API 4.0 Runtime
+    - name: Reboot after installing Unified Communications Managed API 4.0 Runtime
       ansible.windows.win_reboot:
       when: pri_exchange_ucma_install.reboot_required
 
@@ -120,6 +121,6 @@
   when: not prereq_check.stat.exists
 
 - name: Check if pre-req installation is already completed
-  debug:
+  ansible.builtin.debug:
     msg: "Pre-req installation is already completed. Skipping Pre-req installation tasks."
   when: prereq_check.stat.exists
