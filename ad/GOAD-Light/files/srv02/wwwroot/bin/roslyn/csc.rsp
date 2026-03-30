@@ -3,7 +3,7 @@
 # This file contains command-line options that the C#
 # command line compiler (CSC) will process as part
 # of every compilation, unless the "/noconfig" option
-# is specified. 
+# is specified.
 
 # Reference the common Framework libraries
 /r:Accessibility.dll

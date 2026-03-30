@@ -30,7 +30,7 @@ srv01
 srv02
 srv03
 
-; domain controler (mandatory)
+; domain controller (mandatory)
 ; usage : ad-acl.yml, ad-data.yml, ad-relations.yml, laps.yml
 [dc]
 dc01
@@ -47,13 +47,13 @@ srv03
 ; usage : ad-servers.yml, laps.yml
 [workstation]
 
-; parent domain controler (mandatory)
+; parent domain controller (mandatory)
 ; usage : ad-servers.yml
 [parent_dc]
 dc01
 dc02
 
-; child domain controler (need a fqdn child_name.parent_name)
+; child domain controller (need a fqdn child_name.parent_name)
 ; usage : ad-servers.yml
 [child_dc]
 ; external trust, need domain trust key in config (bidirectionnal)
@@ -87,7 +87,7 @@ srv02
 [mssql_ssms]
 srv02
 
-; install webdav 
+; install webdav
 [webdav]
 ; install elk
 ; usage : elk.yml

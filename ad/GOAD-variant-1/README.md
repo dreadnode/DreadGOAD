@@ -35,8 +35,8 @@ See `mapping.json` for the complete entity mapping from GOAD to this variant.
 ## Purpose
 
 This variant allows:
+
 - **Multiple lab instances** without name conflicts
 - **Training scenarios** with fresh environments
 - **Testing automation** against different entity names
 - **Validation** that tools work beyond hardcoded names
-

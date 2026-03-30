@@ -62,7 +62,7 @@
             "users" : {
                 "alice" : {
                     "firstname"   : "alice", "surname": "",
-                    "password"    : "aupaysdesmerveilles", 
+                    "password"    : "aupaysdesmerveilles",
                     "description" : "",
                     "groups"      : ["dcadmins","srvadmins"],
                     "path"        : "CN=Users,DC=template,DC=lab"

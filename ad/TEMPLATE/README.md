@@ -9,7 +9,7 @@ This is the ansible inventory file.
 - All the vms defined in the vagrant file must be set here.
 - This will do the mapping between IP and the configuration file (data/config.json)
 
-```
+```ini
 [default]
 dc01 ansible_host=192.168.56.10 dns_domain=dc01 dict_key=dc01
 srv01 ansible_host=192.168.56.11 dns_domain=dc01 dict_key=srv01
@@ -80,7 +80,7 @@ srv01 ansible_host=192.168.56.11 dns_domain=dc01 dict_key=srv01
 - install webdav
 - usage : servers.yml
 
-### elk_server (optional)
+###  elk_server (optional)
 
 - install elk
 - usage : elk.yml
@@ -114,7 +114,7 @@ srv01 ansible_host=192.168.56.11 dns_domain=dc01 dict_key=srv01
 
 ## Configuration file : data/config.json
 
-```
+```json
 "lab" : {
     "hosts" : {
        # here the hosts configuration
@@ -130,7 +130,7 @@ The host configuration contain one key by host : **the key must match the dict_k
 
 - Example :
 
-```
+```json
     "hosts" : {
         "dc01" : {
             "hostname" : "dctemplate",
@@ -157,7 +157,7 @@ The host configuration contain one key by host : **the key must match the dict_k
 
 - hostname : here put the hostname of the host
 - type : [dc|server] this variable is not read by now but could be used in the future
-- local_admin_password : the administrator password (if the host is a domain controler, this password will be used as the administrator password of the domain)
+- local_admin_password : the administrator password (if the host is a domain controller, this password will be used as the administrator password of the domain)
 - domain : the domain of the host
 - path: the path in the domain
 - local_groups: here you can make local modifications to the vm local groups
@@ -169,7 +169,7 @@ The host configuration contain one key by host : **the key must match the dict_k
 
 #### use_laps (optional, default false)
 
-```
+```json
 "use_laps": true,
 ```
 
@@ -179,7 +179,7 @@ The host configuration contain one key by host : **the key must match the dict_k
 
 - To install and configure mssql you should add the host where you want it installed in your inventory file :
 
-```
+```ini
 ; install mssql on these hosts
 ; usage : servers.yml
 [mssql]
@@ -196,7 +196,7 @@ srv02
 
 - Example on srv03
 
-```
+```json
 "hosts" : {
     "srv03" : {
         ...
@@ -227,7 +227,7 @@ srv02
 - You should setup on key for each domain (here template.lab)
 - The key should match the domain key defined on the host part
 
-```
+```json
 "domains" : {
     "template.lab" : {
             "dc": "dc01",
@@ -267,8 +267,8 @@ srv02
     }
 ```
 
-- dc : this is the matching host key for the primary domain controler
-- domain_password : this must be the same as the administrator password of the primary domain controler
+- dc : this is the matching host key for the primary domain controller
+- domain_password : this must be the same as the administrator password of the primary domain controller
 - netbios_name: the netbios name of the domain
 - groups : here you can define "universal","global" or "domainlocal" groups
 - users : here you will define all your domain users each key match the user created
@@ -279,7 +279,7 @@ srv02
 
 - Example on sevenkingdoms.local :
 
-```
+```json
 "domains" : {
     "sevenkingdoms.local" : {
             ...
@@ -301,7 +301,7 @@ srv02
 
 - Example on sevenkingdoms.local :
 
-```
+```json
 "domains" : {
     "sevenkingdoms.local" : {
             ...
@@ -326,7 +326,7 @@ srv02
 
 - Example on sevenkingdoms.local
 
-```
+```json
 "domains" : {
     "sevenkingdoms.local" : {
         ...
@@ -371,7 +371,7 @@ srv02
 
 - To add anonymous rpc just add on the dc (this will allow anonymous user listing ):
 
-```
+```json
 "acls" : {
     "anonymous_rpc" : {"for": "NT AUTHORITY\\ANONYMOUS LOGON", "to": "DC=North,DC=sevenkingdoms,DC=local", "right": "ReadProperty", "inheritance": "All"},
     "anonymous_rpc2" : {"for": "NT AUTHORITY\\ANONYMOUS LOGON", "to": "DC=North,DC=sevenkingdoms,DC=local", "right": "GenericExecute", "inheritance": "All"}
@@ -384,7 +384,7 @@ srv02
 - all hosts with use_laps : true will be moved to that OU and laps will be applied
 - laps_readers list all the users and group allow to read the laps password
 
-```
+```json
 "domains" : {
     "north.sevenkingdoms.local" : {
         ...
@@ -403,7 +403,7 @@ srv02
 
 - In case of external trust trust key must be setup in each domains
 
-```
+```json
     "domains" : {
         "sevenkingdoms.local" : {
             ...
@@ -419,7 +419,7 @@ srv02
 
 - This param is use to precise the host to use on the template creation, this is mandatory if [adcs_customtemplates] role is used
 
-```
+```json
    "domains" : {
         "essos.local" : {
             ...
