@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2329
+# shellcheck disable=SC2317,SC2329
 
 # This source code come from the opensource project DetectionLab : https://github.com/clong/DetectionLab
 # This script is meant to verify that your system is configured to build the lab successfully.

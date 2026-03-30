@@ -90,9 +90,9 @@ cleanup_stale_ssm_sessions() {
 
         for session_id in $sessions; do
             if [[ -n "$session_id" && "$session_id" != "None" ]]; then
-                aws ssm terminate-session --session-id "$session_id" --region "$region" > /dev/null 2>&1 && {
+                if aws ssm terminate-session --session-id "$session_id" --region "$region" > /dev/null 2>&1; then
                     ((terminated++))
-                } || true
+                fi
             fi
         done
     done

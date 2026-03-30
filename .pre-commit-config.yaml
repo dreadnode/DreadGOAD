@@ -29,7 +29,7 @@ repos:
     hooks:
       - id: codespell
         entry: codespell -q 3 -f -S ".git,.github,README.md"
-        exclude: '(\.min\.css\.map|\.css\.map|\.min\.map|\.min\.js|sysmonconfig-export\.xml|jquery\.validate\.(min\.)?js)$'
+        exclude: '(\.min\.css\.map|\.css\.map|\.min\.map|\.min\.js|sysmonconfig-export\.xml|jquery\.validate\.(min\.)?js|jquery-3\.4\.1(\.slim)?\.js|modernizr-[\d\.]+\.js)$'
 
   - repo: https://github.com/jumanjihouse/pre-commit-hooks
     rev: 3.0.0
@@ -54,6 +54,7 @@ repos:
       - id: ansible-lint
         entry: ansible-lint -v --force-color -c .hooks/linters/ansible-lint.yaml
         language: python
+        language_version: python3
         # do not pass files to ansible-lint, see:
         # https://github.com/ansible-community/ansible-lint/issues/611
         # pass_filenames: false

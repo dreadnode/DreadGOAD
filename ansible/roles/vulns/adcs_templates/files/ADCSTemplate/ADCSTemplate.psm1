@@ -128,7 +128,7 @@ param(
     [switch]$Enroll,
     [switch]$AutoEnroll
 )
-    ## Potential issue here that the AD: drive may not be targetting the selected DC in the -SERVER parameter
+    ## Potential issue here that the AD: drive may not be targeting the selected DC in the -SERVER parameter
     $TemplatePath        = "AD:\" + (Get-ADCSTemplate -DisplayName $DisplayName -Server $Server).DistinguishedName
     $acl                 = Get-ACL $TemplatePath
     $InheritedObjectType = [GUID]'00000000-0000-0000-0000-000000000000'
@@ -344,7 +344,7 @@ param(
     #endregion
 
     #region PERMISSIONS
-    ## Potential issue here that the AD: drive may not be targetting the selected DC in the -SERVER parameter
+    ## Potential issue here that the AD: drive may not be targeting the selected DC in the -SERVER parameter
     If ($PSBoundParameters.ContainsKey('Identity')) {
         If ($AutoEnroll) {
             Set-ADCSTemplateACL -DisplayName $DisplayName -Server $Server -Type Allow -Identity $Identity -Enroll -AutoEnroll

@@ -3,6 +3,7 @@
 # and not relative to the CWD of execution. CLI arguments passed to the --exclude
 # option are parsed relative to the CWD of execution.
 exclude_paths:
+  - .claude/
   - .github/
   # Files with unskippable load-failure (unicode/runtime) or syntax-check issues
   - ad/GOAD-Light/files/dc01/templates/

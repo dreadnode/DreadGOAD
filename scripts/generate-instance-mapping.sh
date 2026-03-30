@@ -62,7 +62,7 @@ echo ""
 echo "✓ Mapping generated successfully: ${OUTPUT_FILE}"
 echo ""
 echo "Contents:"
-cat "${OUTPUT_FILE}" | jq '.'
+jq '.' "${OUTPUT_FILE}"
 
 # Show summary
 instance_count=$(echo "$mapping" | jq '.instance_to_ip | length')
