@@ -50,6 +50,7 @@ jobs:
       - name: Install Ansible collections
         run: |
           ansible-galaxy collection install -r requirements.yml --force
+          ansible-galaxy collection install -r ansible/requirements.yml --force
 
       - name: Set up Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6
