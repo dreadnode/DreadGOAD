@@ -1,13 +1,15 @@
 ---
 
-# Load datas
-- ansible.builtin.import_playbook: data.yml
+# Load data
+- name: Import Data
+  ansible.builtin.import_playbook: data.yml
   vars:
-    data_path: "../ad/{{domain_name}}/data/"
+    data_path: "../ad/{{ domain_name }}/data/"
   tags: 'data'
 
 # Prepare servers
-- ansible.builtin.import_playbook: build.yml
+- name: Import Build
+  ansible.builtin.import_playbook: build.yml
 # Add monitoring
 #- ansible.builtin.import_playbook: elk.yml
 
@@ -19,41 +21,57 @@
 # create main domains, child domain and enroll servers
 
 ## AD ----------
-- ansible.builtin.import_playbook: ad-servers.yml
-- ansible.builtin.import_playbook: ad-parent_domain.yml
-- ansible.builtin.import_playbook: ad-child_domain.yml
-- ansible.builtin.import_playbook: ad-members.yml
+- name: Import Ad Servers
+  ansible.builtin.import_playbook: ad-servers.yml
+- name: Import Ad Parent Domain
+  ansible.builtin.import_playbook: ad-parent_domain.yml
+- name: Import Ad Child Domain
+  ansible.builtin.import_playbook: ad-child_domain.yml
+- name: Import Ad Members
+  ansible.builtin.import_playbook: ad-members.yml
 # create the trust relationships
-- ansible.builtin.import_playbook: ad-trusts.yml
-# import the ad datas : users/groups...
-- ansible.builtin.import_playbook: ad-data.yml
+- name: Import Ad Trusts
+  ansible.builtin.import_playbook: ad-trusts.yml
+# import the ad data: users/groups...
+- name: Import Ad Data
+  ansible.builtin.import_playbook: ad-data.yml
 # set the GMAS accounts
-- ansible.builtin.import_playbook: ad-gmsa.yml
+- name: Import Ad Gmsa
+  ansible.builtin.import_playbook: ad-gmsa.yml
 # install LAPS
-- ansible.builtin.import_playbook: laps.yml
-- ansible.builtin.import_playbook: localusers.yml
+- name: Import Laps
+  ansible.builtin.import_playbook: laps.yml
+- name: Import Localusers
+  ansible.builtin.import_playbook: localusers.yml
 ## MSSQL + IIS  ----------
 # configure servers vulns (done in the middle of ad install to let time before install relations and acl)
 #- ansible.builtin.import_playbook: servers.yml
 ## AD - servers localgroup + rdp + inter domain relations & acl
 # set the rights and the group domains relations
-- ansible.builtin.import_playbook: ad-relations.yml
+- name: Import Ad Relations
+  ansible.builtin.import_playbook: ad-relations.yml
 # set adcs
-- ansible.builtin.import_playbook: adcs.yml
+- name: Import Adcs
+  ansible.builtin.import_playbook: adcs.yml
 # set the ACL
-- ansible.builtin.import_playbook: ad-acl.yml
+- name: Import Ad Acl
+  ansible.builtin.import_playbook: ad-acl.yml
 
 ## SERVERS ---------
 ### MSSQL + IIS  ----------
-# configure servers vulns (done in the midle of ad install to let time before install relations and acl)
-- ansible.builtin.import_playbook: servers.yml
+# configure servers vulns (done in the middle of ad install to let time before install relations and acl)
+- name: Import Servers
+  ansible.builtin.import_playbook: servers.yml
 
 ## SECURITY -----
 # --------------------------------------------------------------------
 # specifics security linked to the scenario are here
-- ansible.builtin.import_playbook: security.yml
+- name: Import Security
+  ansible.builtin.import_playbook: security.yml
 # --------------------------------------------------------------------
 # specifics vulns linked to the scenario are here
-- ansible.builtin.import_playbook: vulnerabilities.yml
+- name: Import Vulnerabilities
+  ansible.builtin.import_playbook: vulnerabilities.yml
 
-- ansible.builtin.import_playbook: reboot.yml
+- name: Import Reboot
+  ansible.builtin.import_playbook: reboot.yml

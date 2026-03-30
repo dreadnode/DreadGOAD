@@ -2,7 +2,7 @@
 # DNSCHANGE
 # - name: "disable interface {{nat_adapter}} before join domain"
 #   win_shell: netsh interface set interface "{{nat_adapter}}" disable
-- name: Disable the registration of the {{ nat_adapter }} interface (NAT address) in DNS
+- name: Disable the registration of the NAT interface in DNS
   ansible.windows.win_shell:
     Get-NetAdapter -Name "{{ nat_adapter }}" | Set-DNSClient -RegisterThisConnectionsAddress $False
   register: disable_dns_reg
@@ -201,7 +201,7 @@
   when: dns_feature.reboot_required | default(false)
 
 - name: Check if xDnsServer exists
-  win_shell: |
+  ansible.windows.win_shell: |
     if (Get-Module -ListAvailable -Name xDnsServer) {
       exit 0
     } else {
@@ -249,7 +249,7 @@
   when: dns_server_forwarder is defined
 
 - name: Check if ActiveDirectoryDSC exists
-  win_shell: |
+  ansible.windows.win_shell: |
     if (Get-Module -ListAvailable -Name ActiveDirectoryDSC) {
       exit 0
     } else {

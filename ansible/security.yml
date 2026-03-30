@@ -1,6 +1,7 @@
 ---
-# Load datas
-- ansible.builtin.import_playbook: data.yml
+# Load data
+- name: Import Data
+  ansible.builtin.import_playbook: data.yml
   tags: data
 
 - name: Setup enable defender
@@ -20,10 +21,11 @@
 - name: Setup security with tasks
   hosts: domain
   tasks:
-    - ansible.builtin.include_role:
+    - name: "Include security role {{ secu }}"
+      ansible.builtin.include_role:
         name: "security/{{ secu }}"
       vars:
-        security_vars : "{{ lab.hosts[dict_key].security_vars[secu] | default({}) }}"
+        security_vars: "{{ lab.hosts[dict_key].security_vars[secu] | default({}) }}"
         domain: "{{ lab.hosts[dict_key].domain }}"
         domain_username: "{{ domain }}\\{{ admin_user }}"
         domain_password: "{{ lab.domains[domain].domain_password }}"

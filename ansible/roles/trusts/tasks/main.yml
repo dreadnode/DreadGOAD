@@ -40,7 +40,7 @@
       RemoteAdminPassword: "{{ remote_admin_password }}"
   vars:
     ansible_become: true
-    ansible_become_method: runas
+    ansible_become_method: ansible.builtin.runas
     ansible_become_user: "{{ domain_username }}"
     ansible_become_password: "{{ domain_password }}"
   register:

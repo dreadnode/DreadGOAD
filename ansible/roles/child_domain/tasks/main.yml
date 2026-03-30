@@ -1,9 +1,9 @@
 ---
-- name: Disable the registration of the {{ nat_adapter }} interface (NAT address) in DNS
+- name: Disable the registration of the NAT interface in DNS
   ansible.windows.win_shell: Get-NetAdapter {{ nat_adapter }} | Set-DNSClient -RegisterThisConnectionsAddress $False
   when: two_adapters
 
-- name: Set configure dns to {{ parent_domain }}
+- name: Set configure DNS to parent domain
   ansible.windows.win_dns_client:
     adapter_names: "{{ domain_adapter }}"
     ipv4_addresses:
@@ -117,4 +117,3 @@
     name: adws
     start_mode: auto
     state: started
-

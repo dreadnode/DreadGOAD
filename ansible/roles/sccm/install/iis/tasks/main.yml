@@ -1,18 +1,18 @@
 # Step 6 – Install Web Server IIS (Prerequisites)
 # --------------------------------------------------------------
 
-- name: create directory to store the install files
+- name: Create directory to store the install files
   ansible.windows.win_file:
     path: C:\setup
     state: directory
 
-- name: create directory to store the install files
+- name: Create directory to store the install files
   ansible.windows.win_file:
     path: C:\setup\net3.5
     state: directory
 
-- name: install features Remote Differential Compression feature and BITS
-  win_feature:
+- name: Install features Remote Differential Compression feature and BITS
+  ansible.windows.win_feature:
     name:
       - RDC
       - BITS
@@ -28,16 +28,16 @@
     state: started
     start_mode: auto
 
-- name: install .NET Framework 3.5 with DISM
-  win_shell: DISM /Online /Enable-Feature /FeatureName:NetFx3 /All
+- name: Install .NET Framework 3.5 with DISM
+  ansible.windows.win_shell: DISM /Online /Enable-Feature /FeatureName:NetFx3 /All
   vars:
     ansible_become: yes
-    ansible_become_method: runas
-    ansible_become_user: "{{domain_username}}"
-    ansible_become_password: "{{domain_password}}"
+    ansible_become_method: ansible.builtin.runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
 
-- name: install IIS feature and other components
-  win_feature:
+- name: Install IIS feature and other components
+  ansible.windows.win_feature:
     name:
       - Web-Server
       - Web-Dyn-Compression

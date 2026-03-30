@@ -1,4 +1,4 @@
 - name: Run SQL COMMAND
-  win_shell: |
-    SqlCmd -E {{item.value.cmd}}
+  ansible.windows.win_shell: |
+    SqlCmd -E {{ item.value.cmd }}
   with_dict: "{{ vulns_vars }}"

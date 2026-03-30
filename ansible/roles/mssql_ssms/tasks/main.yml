@@ -12,18 +12,18 @@
   register: ssms_reboot_pending
 
 - name: Reboot before SSMS install if pending
-  win_reboot:
+  ansible.windows.win_reboot:
     reboot_timeout: 600
     msg: "Rebooting before SSMS installation due to pending reboot"
   when: ssms_reboot_pending.output[0] | default(false) | bool
 
 - name: Check SQL Server Manager Studio installer exists
-  win_stat:
+  ansible.windows.win_stat:
     path: c:\setup\mssql\SSMS_installer.exe
   register: ssms_installer_file
 
 - name: Get the installer
-  win_get_url:
+  ansible.windows.win_get_url:
     url: https://aka.ms/ssmsfullsetup
     dest: c:\setup\mssql\SSMS_installer.exe
   when: not ssms_installer_file.stat.exists
@@ -49,6 +49,6 @@
   when: not (ssms_installation.output[0] | default(false) | bool)
 
 - name: Reboot after install
-  win_reboot:
+  ansible.windows.win_reboot:
     reboot_timeout: 600
   when: not (ssms_installation.output[0] | default(false) | bool)

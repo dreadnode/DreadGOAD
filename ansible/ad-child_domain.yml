@@ -1,6 +1,7 @@
 ---
 # Load data
-- ansible.builtin.import_playbook: data.yml
+- name: Import Data
+  ansible.builtin.import_playbook: data.yml
   tags: data
 
 # set AD data ==================================================================================================

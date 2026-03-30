@@ -1,9 +1,10 @@
 ---
-# Load datas
-- ansible.builtin.import_playbook: data.yml
+# Load data
+- name: Import Data
+  ansible.builtin.import_playbook: data.yml
   tags: data
 
-# set AD datas ==================================================================================================
+# set AD data ==================================================================================================
 
 - name: Adjust rights configuration
   hosts: domain
@@ -13,7 +14,7 @@
   vars:
     local_groups: "{{ lab.hosts[dict_key].local_groups  | default({}) }}"
 
-# doesen't work see : https://github.com/ansible-collections/community.windows/blob/main/plugins/modules/win_domain_group_membership.ps1
+# doesn't work see : https://github.com/ansible-collections/community.windows/blob/main/plugins/modules/win_domain_group_membership.ps1
 # ligne 62 : use the given credentials to distant domain -> wrong
 - name: Cross domain groups
   hosts: dc

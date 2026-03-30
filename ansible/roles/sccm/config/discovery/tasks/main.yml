@@ -1,5 +1,5 @@
 - name: Restart service SMS_SITE_COMPONENT_MANAGER
-  win_service:
+  ansible.windows.win_service:
     name: 'SMS_SITE_COMPONENT_MANAGER'
     force_dependent_services: yes
     state: restarted
@@ -70,12 +70,12 @@
       Invoke-CMForestDiscovery -SiteCode $siteCode -Verbose
     error_action: stop
     parameters:
-      siteCode: "{{site_code}}"
-      sccmFQDN: "{{sccm_server}}.{{domain}}"
+      siteCode: "{{ site_code }}"
+      sccmFQDN: "{{ sccm_server }}.{{ domain }}"
       group_ldap: "LDAP://CN=SCCM-Managed-Device,CN=USERS,DC=sccm,DC=lab"
       computer: "MECM"
   vars:
     ansible_become: yes
-    ansible_become_method: runas
-    ansible_become_user: "{{domain_username}}"
-    ansible_become_password: "{{domain_password}}"
+    ansible_become_method: ansible.builtin.runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"

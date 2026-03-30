@@ -40,11 +40,11 @@
       $component.PropLists = $props
       $component.Put() | Out-Null
     parameters:
-      siteCode: "{{site_code}}"
-      sccmFQDN: "{{sccm_server}}.{{domain}}"
-      user: "{{naa_user}}"
+      siteCode: "{{ site_code }}"
+      sccmFQDN: "{{ sccm_server }}.{{ domain }}"
+      user: "{{ naa_user }}"
   vars:
     ansible_become: yes
-    ansible_become_method: runas
-    ansible_become_user: "{{domain_username}}"
-    ansible_become_password: "{{domain_password}}"
+    ansible_become_method: ansible.builtin.runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"

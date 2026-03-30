@@ -31,13 +31,13 @@
         $Ansible.Changed = $false
       }
     parameters:
-      siteCode: "{{site_code}}"
-      sccmFQDN: "{{sccm_server}}.{{domain}}"
-      username: "{{item.value.name}}"
-      password: "{{item.value.password}}"
+      siteCode: "{{ site_code }}"
+      sccmFQDN: "{{ sccm_server }}.{{ domain }}"
+      username: "{{ item.value.name }}"
+      password: "{{ item.value.password }}"
   with_dict: "{{ cma_users }}"
   vars:
     ansible_become: yes
-    ansible_become_method: runas
-    ansible_become_user: "{{domain_username}}"
-    ansible_become_password: "{{domain_password}}"
+    ansible_become_method: ansible.builtin.runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"

@@ -1,9 +1,9 @@
 
 
 configuration CreateADDomainWithCS
-{ 
-   param 
-   ( 
+{
+   param
+   (
         [Parameter(Mandatory)]
         [String]$DomainName,
 
@@ -12,13 +12,13 @@ configuration CreateADDomainWithCS
 
         [Int]$RetryCount = 60,
         [Int]$RetryIntervalSec = 5
-    ) 
-    
+    )
+
     Import-DscResource -ModuleName PSDesiredStateConfiguration
     Import-DscResource -ModuleName xActiveDirectory -ModuleVersion 2.17.0.0
     Import-DscResource -ModuleName xAdcsDeployment -ModuleVersion 1.4.0.0
     Import-DscResource -ModuleName ADCSTemplate -ModuleVersion 1.0.1.0
-    
+
     [System.Management.Automation.PSCredential]$DomainCreds = New-Object System.Management.Automation.PSCredential ("$DomainName\$($AdminCreds.UserName)", $AdminCreds.Password)
 
     Node $AllNodes.NodeName
@@ -31,26 +31,26 @@ configuration CreateADDomainWithCS
             AllowModuleOverWrite = $true
         }
 
-        WindowsFeature ADDSInstall 
-        { 
+        WindowsFeature ADDSInstall
+        {
             Ensure = 'Present'
             Name = 'AD-Domain-Services'
-        }  
+        }
 
         WindowsFeature ADDSPowerShell
-        { 
-            Ensure = 'Present' 
+        {
+            Ensure = 'Present'
             Name = 'RSAT-AD-PowerShell'
         }
 
         # Optional GUI tools
         WindowsFeature ADDSTools
-        { 
-            Ensure = 'Present' 
+        {
+            Ensure = 'Present'
             Name = 'RSAT-ADDS'
         }
 
-        xADDomain FirstDS 
+        xADDomain FirstDS
         {
             DomainName = $DomainName
             DomainAdministratorCredential = $DomainCreds
@@ -70,7 +70,7 @@ configuration CreateADDomainWithCS
             RetryCount = $RetryCount
             RetryIntervalSec = $RetryIntervalSec
             DependsOn = "[xADDomain]FirstDS"
-        } 
+        }
 #>
 
         Script xWaitForADDomain_Alternative
@@ -128,7 +128,7 @@ configuration CreateADDomainWithCS
             }
 
             ForEach ($ChildOU in $ConfigurationData.NonNodeData.ChildOUs) {
-                
+
                 xADOrganizationalUnit "OU_$($RootOU)_$ChildOU"
                 {
                     Name = $ChildOU
@@ -208,7 +208,7 @@ configuration CreateADDomainWithCS
             Ensure = 'Present'
             Credential = $DomainCreds
             CAType = 'EnterpriseRootCA'
-            DependsOn = '[WindowsFeature]ADCS-Cert-Authority'              
+            DependsOn = '[WindowsFeature]ADCS-Cert-Authority'
         }
 
         xADCSWebEnrollment CertSrv
@@ -257,7 +257,7 @@ $configData = @{
         }
     )
     NonNodeData = @{
-        
+
         UserData = @'
 UserName,Password,Dept
 TaniumAdmin,P@ssw0rd,Tanium
@@ -418,5 +418,3 @@ $DocEncrCert = (dir Cert:\LocalMachine\My -DocumentEncryptionCert)[-1]
 Protect-CmsMessage -To $DocEncrCert -Content "Encrypted with my new cert from the new template!"
 
 #endregion ####################################################################
-
-

@@ -1,7 +1,7 @@
 # Step 3 - Creating the System Management Container
 # --------------------------------------------------------------
 
-- name: create the System Management Container
+- name: Create the System Management Container
   ansible.windows.win_powershell:
     script: |
       $systemDN = "CN=System," + (Get-ADDomain).DistinguishedName
@@ -12,7 +12,7 @@
 
 # Not children inherited (is it bad?)
 # SRV01 is hardcoded
-- name: create the System Management Container
+- name: Create the System Management Container
   ansible.windows.win_powershell:
     script: |
       [CmdletBinding()]
@@ -27,24 +27,24 @@
       $acl.AddAccessRule($ace)
       Set-ACL -Path "AD:\$systemMgmtDN" -AclObject $acl
     parameters:
-      SCCMServer: "{{sccm_server}}"
+      SCCMServer: "{{ sccm_server }}"
 
 # Step 5 – Extending Active Directory Schema
 # --------------------------------------------------------------
 
-- name: create directory to store the downloaded prerequisite files
+- name: Create directory to store the downloaded prerequisite files
   ansible.windows.win_file:
     path: C:\setup
     state: directory
 
 # Must be run as a member of the Schema Admins security group (we'll go with a domain administrator)
 # Check if the file has already been downloaded (?)
-- name: check MECM installation media exists
+- name: Check MECM installation media exists
   ansible.windows.win_stat:
     path: C:\setup\MCM_Configmgr_2303.exe
   register: mecm_installer_file
 
-- name: download MECM installation media
+- name: Download MECM installation media
   ansible.windows.win_get_url:
     url: https://go.microsoft.com/fwlink/p/?LinkID=2195628&clcid=0x409&culture=en-us&country=us
     dest: C:\setup\MCM_Configmgr_2303.exe
@@ -55,7 +55,7 @@
     path: C:\setup\cd.retail.LN
     state: absent
 
-- name: extract MECM installation media
+- name: Extract MECM installation media
   ansible.windows.win_shell: .\MCM_Configmgr_2303.exe -s
   args:
     chdir: C:\setup
@@ -64,13 +64,13 @@
 #  ansible.windows.win_powershell:
 #    script: Move-Item -Path C:\Windows\Temp\cd.retail.LN -Destination C:\
 
-- name: launching the Active Directory schema extension
+- name: Launching the Active Directory schema extension
   ansible.windows.win_shell: .\extadsch.exe
   args:
     chdir: C:\setup\cd.retail.LN\SMSSETUP\BIN\X64
   vars:
     ansible_become: yes
-    ansible_become_method: runas
-    domain_name: "{{domain}}"
-    ansible_become_user: "{{domain_username}}"
-    ansible_become_password: "{{domain_password}}"
+    ansible_become_method: ansible.builtin.runas
+    domain_name: "{{ domain }}"
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"

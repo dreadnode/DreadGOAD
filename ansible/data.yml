@@ -110,15 +110,15 @@
         script: |
           $ProgressPreference = 'SilentlyContinue'
           $ErrorActionPreference = 'Stop'
-          
+
           # Set a timeout for the entire script
           $timeout = New-TimeSpan -Seconds 30
           $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
-          
+
           try {
             $primaryAdapter = $null
             $adapters = @()
-            
+
             try {
               $adapters = @(Get-NetAdapter -ErrorAction Stop | Where-Object {$_.Status -eq "Up"})
               $primaryAdapter = $adapters | Select-Object -First 1
@@ -129,7 +129,7 @@
                 $primaryAdapter = @{Name = $adapters[0].NetConnectionID}
               }
             }
-            
+
             # Get IP quickly using WMI
             $primaryIP = ""
             try {
@@ -140,7 +140,7 @@
             } catch {
               $primaryIP = ""
             }
-            
+
             Write-Output "DOMAIN_ADAPTER:$(if ($primaryAdapter) { $primaryAdapter.Name } else { 'Ethernet' })"
             Write-Output "NAT_ADAPTER:$(if ($adapters.Count -gt 1) { $adapters[1].Name } else { if ($primaryAdapter) { $primaryAdapter.Name } else { 'Ethernet' } })"
             Write-Output "ADAPTER_COUNT:$($adapters.Count)"
@@ -149,7 +149,7 @@
           } catch {
             # Quick fallback
             Write-Output "DOMAIN_ADAPTER:Ethernet"
-            Write-Output "NAT_ADAPTER:Ethernet"  
+            Write-Output "NAT_ADAPTER:Ethernet"
             Write-Output "ADAPTER_COUNT:1"
             Write-Output "PRIMARY_IP:"
             $Ansible.Changed = $false

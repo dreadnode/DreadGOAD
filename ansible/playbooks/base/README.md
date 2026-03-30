@@ -5,6 +5,7 @@ These playbooks are used by [warpgate](https://github.com/CowDogMoo/warpgate) to
 ## Purpose
 
 Instead of installing software at runtime (which is slow), these playbooks pre-bake common software into AMIs:
+
 - PowerShell DSC modules
 - Windows Server roles (AD DS, IIS, SQL Server)
 - RDP configuration
@@ -16,7 +17,9 @@ This reduces GOAD deployment time from **60-90 minutes** to **15-30 minutes**.
 ## Playbooks
 
 ### `dc_base.yml` - Domain Controller Base
+
 Provisions Windows Server with:
+
 - PowerShell DSC modules (ActiveDirectoryDsc, ComputerManagementDsc, xNetworking, NetworkingDsc, xDnsServer)
 - AD Domain Services role (NOT promoted - promotion happens at runtime)
 - DNS Server role
@@ -28,13 +31,16 @@ Provisions Windows Server with:
 **Used by**: `goad-dc-base` and `goad-dc-base-2016` warpgate templates
 
 **Runtime tasks still needed**:
+
 - DC promotion (`microsoft.ad.domain`)
 - Domain-specific DNS configuration
 - Trust relationships
 - User/Group/OU creation
 
 ### `mssql_base.yml` - SQL Server Base
+
 Provisions Windows Server with:
+
 - All of member_base.yml content
 - SQL Server Express 2019
 - SQL Server firewall rules (TCP 1433, UDP 1434)
@@ -43,6 +49,7 @@ Provisions Windows Server with:
 **Used by**: `goad-mssql-base` and `goad-mssql-base-2016` warpgate templates
 
 **Runtime tasks still needed**:
+
 - Domain join
 - SQL Server domain authentication
 - SQL logins for domain users
@@ -50,7 +57,9 @@ Provisions Windows Server with:
 - Linked servers
 
 ### `member_base.yml` - Member Server Base
+
 Provisions Windows Server with:
+
 - PowerShell DSC modules (ComputerManagementDsc, ActiveDirectoryDsc, xNetworking, NetworkingDsc)
 - IIS web server + WebDAV
 - RDP enabled
@@ -59,6 +68,7 @@ Provisions Windows Server with:
 **Used by**: `goad-member-base` and `goad-member-base-2016` warpgate templates
 
 **Runtime tasks still needed**:
+
 - Domain join
 - Member server roles (IIS apps, ADCS, etc.)
 - GPO application
@@ -120,6 +130,7 @@ ansible-playbook -i inventory.ini playbooks/base/dc_base.yml
 ## Connection Requirements
 
 These playbooks expect:
+
 - **Windows target** with SSM agent running (pre-installed on AWS AMIs)
 - **AWS credentials** with SSM permissions in the build environment
 - **Network connectivity** to download:
@@ -132,6 +143,7 @@ These playbooks expect:
 These playbooks intentionally avoid requiring variables. They use sensible defaults for base image provisioning.
 
 The only configurable variable is in `mssql_base.yml`:
+
 ```yaml
 vars:
   sql_download_url: "https://go.microsoft.com/fwlink/p/?linkid=866658"  # SQL Server Express 2019
@@ -141,7 +153,9 @@ vars:
 ## Design Decisions
 
 ### Why Not Domain Join in Base Images?
+
 Domain join requires:
+
 - Active Directory domain to exist
 - Domain-specific DNS servers
 - Computer name assignment
@@ -150,20 +164,25 @@ Domain join requires:
 These are environment-specific and happen at runtime.
 
 ### Why Not Install Everything?
+
 We only install software that:
+
 1. Takes significant time (10+ minutes)
 2. Is common across all GOAD deployments
 3. Doesn't require domain membership
 4. Doesn't change between environments
 
 Examples of what's NOT included:
+
 - ADCS (requires domain)
 - LAPS (requires domain)
 - Vulnerability injection (lab-specific)
 - User accounts (lab-specific)
 
 ### Why Separate Playbooks?
+
 Three separate playbooks instead of one parameterized playbook because:
+
 - Clear separation of concerns
 - Easier to maintain
 - Faster execution (no conditional logic)
@@ -183,6 +202,7 @@ These playbooks are part of the warpgate template build pipeline:
 ## Maintenance
 
 When updating these playbooks:
+
 1. Test manually against a fresh Windows Server instance
 2. Verify AMI builds in warpgate CI/CD
 3. Confirm GOAD runtime deployment still works

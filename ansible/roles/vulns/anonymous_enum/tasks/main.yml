@@ -9,7 +9,7 @@
 #   1 = Do not allow enumeration of SAM accounts and shares
 #   2 = No access without explicit anonymous permissions (blocks null sessions)
 - name: Enable anonymous enumeration (RestrictAnonymous = 0)
-  win_regedit:
+  ansible.windows.win_regedit:
     path: HKLM:\System\CurrentControlSet\Control\Lsa
     name: RestrictAnonymous
     data: 0x0
@@ -17,7 +17,7 @@
 
 # Also set RestrictAnonymousSAM to 0 for SAM account enumeration
 - name: Enable anonymous SAM enumeration (RestrictAnonymousSAM = 0)
-  win_regedit:
+  ansible.windows.win_regedit:
     path: HKLM:\System\CurrentControlSet\Control\Lsa
     name: RestrictAnonymousSAM
     data: 0x0
@@ -25,7 +25,7 @@
 
 # Set EveryoneIncludesAnonymous to 1 for broader anonymous access
 - name: Enable EveryoneIncludesAnonymous
-  win_regedit:
+  ansible.windows.win_regedit:
     path: HKLM:\System\CurrentControlSet\Control\Lsa
     name: EveryoneIncludesAnonymous
     data: 0x1

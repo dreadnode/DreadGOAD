@@ -1,6 +1,6 @@
 ---
 - name: Retrieve LAPS Password on server
-  win_shell: |
+  ansible.windows.win_shell: |
     try {
       $server = Get-AdComputer -Identity "{{ hostname }}" -ErrorAction Stop
       $obj = Get-ADObject -Identity $server.DistinguishedName -Properties ms-Mcs-AdmPwd
@@ -24,6 +24,6 @@
   with_dict: "{{ hosts_dict }}"
 
 - name: Show new laps password
-  debug: msg="{{ item.stdout_lines }}"
+  ansible.builtin.debug: msg="{{ item.stdout_lines }}"
   when: item.stdout_lines is defined
   with_items: "{{ powershell_password.results }}"
