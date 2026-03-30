@@ -58,4 +58,3 @@ resource "aws_instance" "linux-goad-vm" {
     command = "echo '${tls_private_key.linux_ssh.private_key_openssh}' > ../ssh_keys/${each.value.name}_ssh.pem && echo '${tls_private_key.linux_ssh.public_key_openssh}' > ../ssh_keys/${each.value.name}_ssh.pub && chmod 600 ../ssh_keys/*"
   }
 }
-
