@@ -1,7 +1,7 @@
 ansible-core==2.19.2
 docker==7.1.0
 docsible==0.7.25
-molecule==25.9.0
+molecule==26.3.0
 molecule-docker==2.1.0
 molecule-plugins[docker]==25.8.12
 pre-commit==4.3.0
