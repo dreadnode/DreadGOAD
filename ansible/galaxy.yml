@@ -39,3 +39,4 @@ build_ignore:
   - .ansible
   - scripts
   - docs
+  - "roles/*/molecule"
