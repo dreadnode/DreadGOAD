@@ -91,7 +91,7 @@ cleanup_stale_ssm_sessions() {
         for session_id in $sessions; do
             if [[ -n "$session_id" && "$session_id" != "None" ]]; then
                 if aws ssm terminate-session --session-id "$session_id" --region "$region" > /dev/null 2>&1; then
-                    ((terminated++))
+                    terminated=$((terminated + 1))
                 fi
             fi
         done
@@ -313,7 +313,7 @@ Write-Output "SSM Agent restarted - ssm-user fix complete"
 detect_error_type() {
     local temp_log=$1
 
-    if grep -q "FAILED! => .* setup" "$temp_log" || grep -q "Invalid control character" "$temp_log"; then
+    if grep -q "FAILED! => .* setup" "$temp_log" || grep -q "Invalid control character" "$temp_log" || grep -q "modules failed to execute: ansible.legacy.setup" "$temp_log" || grep -q "Module result deserialization failed" "$temp_log"; then
         echo "fact_gathering"
     elif grep -q "No MSFT_NetAdapter objects found with property 'Name' equal to 'Ethernet3'" "$temp_log"; then
         echo "network_adapter"
@@ -370,7 +370,7 @@ retry_with_error_specific_settings() {
         fact_gathering)
             log_message "Retrying with modified fact gathering settings..."
             ANSIBLE_GATHERING=explicit run_ansible_command "$temp_log" \
-                ansible-playbook "${VERBOSE_FLAG}" -i "${ENV}-inventory" \
+                ansible-playbook ${VERBOSE_FLAG:+"${VERBOSE_FLAG}"} -i "${ENV}-inventory" \
                 ${limit_args[@]+"${limit_args[@]}"} --forks=1 \
                 -e "ansible_facts_gathering_timeout=60" \
                 -e "gather_timeout=60" \
@@ -379,7 +379,7 @@ retry_with_error_specific_settings() {
         network_adapter)
             log_message "Retrying with network adapter fix..."
             run_ansible_command "$temp_log" \
-                ansible-playbook "${VERBOSE_FLAG}" -i "${ENV}-inventory" \
+                ansible-playbook ${VERBOSE_FLAG:+"${VERBOSE_FLAG}"} -i "${ENV}-inventory" \
                 ${limit_args[@]+"${limit_args[@]}"} \
                 -e "skip_network_adapter_config=true" \
                 -e "bypass_ethernet3_check=true" \
@@ -404,7 +404,7 @@ retry_with_error_specific_settings() {
             fi
 
             ANSIBLE_TIMEOUT=300 run_ansible_command "$temp_log" \
-                ansible-playbook "${VERBOSE_FLAG}" -i "${ENV}-inventory" \
+                ansible-playbook ${VERBOSE_FLAG:+"${VERBOSE_FLAG}"} -i "${ENV}-inventory" \
                 ${limit_args[@]+"${limit_args[@]}"} --forks=1 \
                 -e "ansible_aws_ssm_retries=10" \
                 -e "ansible_aws_ssm_retry_delay=30" \
@@ -416,7 +416,7 @@ retry_with_error_specific_settings() {
         connection_error)
             log_message "Retrying with increased connection timeout..."
             ANSIBLE_TIMEOUT=180 run_ansible_command "$temp_log" \
-                ansible-playbook "${VERBOSE_FLAG}" -i "${ENV}-inventory" \
+                ansible-playbook ${VERBOSE_FLAG:+"${VERBOSE_FLAG}"} -i "${ENV}-inventory" \
                 ${limit_args[@]+"${limit_args[@]}"} \
                 -e "ansible_connection_timeout=180" \
                 -e "ansible_timeout=180" \
@@ -425,7 +425,7 @@ retry_with_error_specific_settings() {
         powershell_interactive)
             log_message "Retrying with PowerShell interactive mode fix..."
             run_ansible_command "$temp_log" \
-                ansible-playbook "${VERBOSE_FLAG}" -i "${ENV}-inventory" \
+                ansible-playbook ${VERBOSE_FLAG:+"${VERBOSE_FLAG}"} -i "${ENV}-inventory" \
                 ${limit_args[@]+"${limit_args[@]}"} \
                 -e "ansible_shell_type=powershell" \
                 -e "force_ps_module=true" \
@@ -463,7 +463,7 @@ retry_with_error_specific_settings() {
 
             log_message "Retrying playbook with increased connection timeout..."
             ANSIBLE_TIMEOUT=180 run_ansible_command "$temp_log" \
-                ansible-playbook "${VERBOSE_FLAG}" -i "${ENV}-inventory" \
+                ansible-playbook ${VERBOSE_FLAG:+"${VERBOSE_FLAG}"} -i "${ENV}-inventory" \
                 ${limit_args[@]+"${limit_args[@]}"} --forks=1 \
                 -e "ansible_connection_timeout=180" \
                 -e "ansible_timeout=180" \
@@ -486,7 +486,7 @@ retry_with_error_specific_settings() {
 
             log_message "Retrying playbook with robust SSM settings..."
             ANSIBLE_TIMEOUT=180 run_ansible_command "$temp_log" \
-                ansible-playbook "${VERBOSE_FLAG}" -i "${ENV}-inventory" \
+                ansible-playbook ${VERBOSE_FLAG:+"${VERBOSE_FLAG}"} -i "${ENV}-inventory" \
                 ${limit_args[@]+"${limit_args[@]}"} --forks=1 \
                 -e "ansible_connection_timeout=180" \
                 -e "ansible_timeout=180" \
@@ -505,14 +505,14 @@ retry_with_error_specific_settings() {
                 sleep 30
             fi
             run_ansible_command "$temp_log" \
-                ansible-playbook "${VERBOSE_FLAG}" -i "${ENV}-inventory" \
+                ansible-playbook ${VERBOSE_FLAG:+"${VERBOSE_FLAG}"} -i "${ENV}-inventory" \
                 ${limit_args[@]+"${limit_args[@]}"} --forks=1 \
                 "ansible/$playbook"
             ;;
         unclassified:* | *)
             log_message "Retrying with general robust settings..."
             ANSIBLE_SSH_RETRIES=5 ANSIBLE_TIMEOUT=120 run_ansible_command "$temp_log" \
-                ansible-playbook "${VERBOSE_FLAG}" -i "${ENV}-inventory" \
+                ansible-playbook ${VERBOSE_FLAG:+"${VERBOSE_FLAG}"} -i "${ENV}-inventory" \
                 ${limit_args[@]+"${limit_args[@]}"} --forks=1 \
                 "ansible/$playbook"
             ;;
@@ -554,7 +554,7 @@ while [[ $retry_count -lt ${MAX_RETRIES} ]] && [[ "$success" = "false" ]]; do
     # Run ansible-playbook with a FIFO to detect idle/hung state
     mkfifo /tmp/ansible_pipe_$$ 2> /dev/null || true
     {
-        ansible-playbook "${VERBOSE_FLAG}" -i "${ENV}-inventory" \
+        ansible-playbook ${VERBOSE_FLAG:+"${VERBOSE_FLAG}"} -i "${ENV}-inventory" \
             ${LIMIT_ARGS[@]+"${LIMIT_ARGS[@]}"} \
             -e "ansible_facts_gathering_timeout=60" \
             "ansible/${PLAYBOOK}" 2>&1 | tee "$temp_log" | tee -a "${LOG_FILE}"
