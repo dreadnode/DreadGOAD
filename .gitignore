@@ -12,8 +12,8 @@ __pycache__/
 .task/
 
 # Build artifacts
-roles/adcs_templates/files/ADCSTemplate.zip
-roles/vulns_adcs_templates/files/ADCSTemplate.zip
+ansible/roles/adcs_templates/files/ADCSTemplate.zip
+ansible/roles/vulns_adcs_templates/files/ADCSTemplate.zip
 
 # Scenario data (keep only tracked environments)
 ad/PURPLE

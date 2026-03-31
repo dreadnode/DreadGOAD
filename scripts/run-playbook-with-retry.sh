@@ -374,7 +374,7 @@ retry_with_error_specific_settings() {
                 ${limit_args[@]+"${limit_args[@]}"} --forks=1 \
                 -e "ansible_facts_gathering_timeout=60" \
                 -e "gather_timeout=60" \
-                "playbooks/$playbook"
+                "ansible/playbooks/$playbook"
             ;;
         network_adapter)
             log_message "Retrying with network adapter fix..."
@@ -383,7 +383,7 @@ retry_with_error_specific_settings() {
                 ${limit_args[@]+"${limit_args[@]}"} \
                 -e "skip_network_adapter_config=true" \
                 -e "bypass_ethernet3_check=true" \
-                "playbooks/$playbook"
+                "ansible/playbooks/$playbook"
             ;;
         ssm_transfer_error)
             log_message "SSM transfer error detected - likely ssm-user account issue on DC..."
@@ -411,7 +411,7 @@ retry_with_error_specific_settings() {
                 -e "ansible_connection_timeout=300" \
                 -e "ansible_command_timeout=300" \
                 -e "ansible_aws_ssm_timeout=300" \
-                "playbooks/$playbook"
+                "ansible/playbooks/$playbook"
             ;;
         connection_error)
             log_message "Retrying with increased connection timeout..."
@@ -420,7 +420,7 @@ retry_with_error_specific_settings() {
                 ${limit_args[@]+"${limit_args[@]}"} \
                 -e "ansible_connection_timeout=180" \
                 -e "ansible_timeout=180" \
-                "playbooks/$playbook"
+                "ansible/playbooks/$playbook"
             ;;
         powershell_interactive)
             log_message "Retrying with PowerShell interactive mode fix..."
@@ -430,7 +430,7 @@ retry_with_error_specific_settings() {
                 -e "ansible_shell_type=powershell" \
                 -e "force_ps_module=true" \
                 -e "ansible_ps_version=5.1" \
-                "playbooks/$playbook"
+                "ansible/playbooks/$playbook"
             ;;
         ssm_reconnection_needed)
             log_message "TargetNotConnected detected - waiting for SSM reconnection after reboot..."
@@ -468,7 +468,7 @@ retry_with_error_specific_settings() {
                 -e "ansible_connection_timeout=180" \
                 -e "ansible_timeout=180" \
                 -e "ansible_facts_gathering_timeout=60" \
-                "playbooks/$playbook"
+                "ansible/playbooks/$playbook"
             ;;
         ssm_user_account_issue)
             log_message "SSM user account issue detected (likely after DC promotion)..."
@@ -491,7 +491,7 @@ retry_with_error_specific_settings() {
                 -e "ansible_connection_timeout=180" \
                 -e "ansible_timeout=180" \
                 -e "ansible_aws_ssm_timeout=300" \
-                "playbooks/$playbook"
+                "ansible/playbooks/$playbook"
             ;;
         msi_installer_error)
             log_message "MSI installer error (rc 1603/3010) - usually requires reboot..."
@@ -507,14 +507,14 @@ retry_with_error_specific_settings() {
             run_ansible_command "$temp_log" \
                 ansible-playbook ${VERBOSE_FLAG:+"${VERBOSE_FLAG}"} -i "${ENV}-inventory" \
                 ${limit_args[@]+"${limit_args[@]}"} --forks=1 \
-                "playbooks/$playbook"
+                "ansible/playbooks/$playbook"
             ;;
         unclassified:* | *)
             log_message "Retrying with general robust settings..."
             ANSIBLE_SSH_RETRIES=5 ANSIBLE_TIMEOUT=120 run_ansible_command "$temp_log" \
                 ansible-playbook ${VERBOSE_FLAG:+"${VERBOSE_FLAG}"} -i "${ENV}-inventory" \
                 ${limit_args[@]+"${limit_args[@]}"} --forks=1 \
-                "playbooks/$playbook"
+                "ansible/playbooks/$playbook"
             ;;
     esac
 }
@@ -557,7 +557,7 @@ while [[ $retry_count -lt ${MAX_RETRIES} ]] && [[ "$success" = "false" ]]; do
         ansible-playbook ${VERBOSE_FLAG:+"${VERBOSE_FLAG}"} -i "${ENV}-inventory" \
             ${LIMIT_ARGS[@]+"${LIMIT_ARGS[@]}"} \
             -e "ansible_facts_gathering_timeout=60" \
-            "playbooks/${PLAYBOOK}" 2>&1 | tee "$temp_log" | tee -a "${LOG_FILE}"
+            "ansible/playbooks/${PLAYBOOK}" 2>&1 | tee "$temp_log" | tee -a "${LOG_FILE}"
         echo $? > /tmp/ansible_exit_$$
     } &
 

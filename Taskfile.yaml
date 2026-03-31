@@ -22,7 +22,7 @@ vars:
   VERBOSE_FLAG: '{{if eq .DEBUG "true"}}-vvv{{else}}{{end}}'
 
 env:
-  ANSIBLE_CONFIG: './ansible.cfg'
+  ANSIBLE_CONFIG: './ansible/ansible.cfg'
   ANSIBLE_CACHE_PLUGIN_CONNECTION: '$HOME/.ansible/cache/{{.ENV}}_dreadgoad_facts'
   ANSIBLE_HOST_KEY_CHECKING: 'False'
   ANSIBLE_RETRY_FILES_ENABLED: 'True'
@@ -135,11 +135,11 @@ tasks:
     desc: Create ADCSTemplate.zip files for ADCS roles
     internal: true
     cmds:
-      - cd roles/adcs_templates/files && zip -r ADCSTemplate.zip ADCSTemplate/
-      - cd roles/vulns_adcs_templates/files && zip -r ADCSTemplate.zip ADCSTemplate/
+      - cd ansible/roles/adcs_templates/files && zip -r ADCSTemplate.zip ADCSTemplate/
+      - cd ansible/roles/vulns_adcs_templates/files && zip -r ADCSTemplate.zip ADCSTemplate/
     status:
-      - test -f roles/adcs_templates/files/ADCSTemplate.zip
-      - test -f roles/vulns_adcs_templates/files/ADCSTemplate.zip
+      - test -f ansible/roles/adcs_templates/files/ADCSTemplate.zip
+      - test -f ansible/roles/vulns_adcs_templates/files/ADCSTemplate.zip
 
   log-provision-header:
     internal: true
@@ -157,7 +157,7 @@ tasks:
           echo ""
           echo "Playbooks to be executed:"
           for playbook in $(echo '{{.PLAYS}}' | tr '\n' ' '); do
-            echo "  - playbooks/$playbook"
+            echo "  - ansible/playbooks/$playbook"
           done
           echo "-----------------------------------------------"
         } | tee "{{.LOG_FILE}}"

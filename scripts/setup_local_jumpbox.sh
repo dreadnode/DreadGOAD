@@ -22,8 +22,8 @@ python3 -m pip install --upgrade pip
 cd "$GOAD_REPO" || exit
 python3 -m pip install -r requirements.yml
 
-cd "$GOAD_REPO/ansible" || exit
-/home/vagrant/.local/bin/ansible-galaxy install -r requirements.yml
+cd "$GOAD_REPO" || exit
+/home/vagrant/.local/bin/ansible-galaxy collection install -r ansible/requirements.yml
 
 # set color
 sudo sed -i '/force_color_prompt=yes/s/^#//g' /home/*/.bashrc

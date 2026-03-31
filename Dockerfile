@@ -13,4 +13,4 @@ RUN apt-get update -y && \
 
 COPY ./ansible/requirements.yml .
 
-RUN ansible-galaxy install -r requirements.yml
+RUN ansible-galaxy collection install -r requirements.yml

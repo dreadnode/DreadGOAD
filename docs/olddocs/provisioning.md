@@ -64,7 +64,7 @@ python3 -m pip install pywinrm
   - **ansible community.general**
 
 ```bash
-ansible-galaxy install -r requirements.yml
+ansible-galaxy collection install -r ansible/requirements.yml
 ```
 
 - And than you can launch the ansible provisioning with (note that the vms must be in a running state, so vagrant up must have been done before that)

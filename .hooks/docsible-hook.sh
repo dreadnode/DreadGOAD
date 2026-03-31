@@ -22,7 +22,7 @@ fi
 FILES_MODIFIED=0
 
 # Process roles
-for role_dir in roles/*/; do
+for role_dir in ansible/roles/*/; do
     [ -d "$role_dir" ] || continue
 
     role_name=$(basename "$role_dir")

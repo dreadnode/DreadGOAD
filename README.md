@@ -140,7 +140,7 @@ ansible-galaxy collection install dreadnode-goad-1.0.0.tar.gz
 ### Install dependencies
 
 ```bash
-ansible-galaxy collection install -r requirements.yml
+ansible-galaxy collection install -r ansible/requirements.yml
 ```
 
 ---
@@ -319,7 +319,7 @@ The GOAD lab provides:
     - role: dreadnode.goad.domain_controller
 ```
 
-For full orchestration, use the playbooks in the `playbooks/` directory with
+For full orchestration, use the playbooks in the `ansible/playbooks/` directory with
 the Taskfile:
 
 ```bash
