@@ -1,0 +1,5 @@
+---
+- name: "Enable vagrant"
+  hosts: domain
+  roles:
+    - { role: 'enable_user', tags: 'enable_vagrant', username: "vagrant"}
