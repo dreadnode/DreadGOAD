@@ -24,7 +24,7 @@
     - "'already exists' not in dns_delegation_result.stderr"
 
 - name: Create conditional forwarder to child domain
-  community.windows.win_dns_zone:
+  ansible.windows.win_dns_zone:
     name: "{{ item }}"
     type: forwarder
     replication: "forest"
