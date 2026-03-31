@@ -17,6 +17,7 @@ tags:
   - pentest
   - goad
 dependencies:
+  amazon.aws: ">=9.0.0"
   ansible.windows: ">=2.5.0"
   community.general: "*"
   community.windows: ">=2.3.0"

@@ -1,8 +1,6 @@
 ---
 # read global configuration file and set up adapters
-- ansible.builtin.import_playbook: "../../../ansible/data.yml"
-  vars:
-    data_path: "../ad/{{domain_name}}/data/"
+- ansible.builtin.import_playbook: "../../../ansible/playbooks/data.yml"
   tags: 'data'
 
 - name: Read local config file

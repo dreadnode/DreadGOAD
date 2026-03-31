@@ -1,9 +1,7 @@
 ---
 - name: Disable Domain firewall
-  ansible.windows.win_firewall:
-    state: disabled
-    profiles:
-    - Domain
-    - Private
-    - Public
+  ansible.windows.win_powershell:
+    script: |
+      Set-NetFirewallProfile -Profile Domain,Private,Public -Enabled False
+      $Ansible.Changed = $true
   tags: disable_firewall
