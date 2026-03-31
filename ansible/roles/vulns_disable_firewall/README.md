@@ -15,7 +15,7 @@ Disable Windows Firewall profiles for attack simulation
 
 ### main.yml
 
-- **Disable Domain firewall** (ansible.windows.win_firewall)
+- **Disable Domain firewall** (ansible.windows.win_powershell)
 
 ## Example Playbook
 
