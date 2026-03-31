@@ -20,119 +20,119 @@ declare -a files
 case "${PLAYBOOK}" in
     build)
         files=(
-            "ansible/build.yml"
+            "ansible/playbooks/build.yml"
             "ansible/roles/common/tasks/main.yml"
-            "ansible/roles/settings/keyboard/tasks/main.yml"
-            "ansible/roles/settings/no_updates/tasks/main.yml"
-            "ansible/roles/settings/updates/tasks/default.yml"
+            "ansible/roles/settings_keyboard/tasks/main.yml"
+            "ansible/roles/settings_no_updates/tasks/main.yml"
+            "ansible/roles/settings_updates/tasks/default.yml"
             "ad/GOAD/data/${ENV}-config.json"
-            "ansible/data.yml"
+            "ansible/playbooks/data.yml"
         )
         ;;
     ad-servers)
         files=(
-            "ansible/ad-servers.yml"
-            "ansible/roles/settings/admin_password/tasks/main.yml"
-            "ansible/roles/settings/hostname/tasks/main.yml"
+            "ansible/playbooks/ad-servers.yml"
+            "ansible/roles/settings_admin_password/tasks/main.yml"
+            "ansible/roles/settings_hostname/tasks/main.yml"
             "ad/GOAD/data/${ENV}-config.json"
-            "ansible/data.yml"
+            "ansible/playbooks/data.yml"
         )
         ;;
     ad-parent-domain)
         files=(
-            "ansible/ad-parent_domain.yml"
+            "ansible/playbooks/ad-parent_domain.yml"
             "ansible/roles/domain_controller/tasks/main.yml"
             "${ENV}-inventory"
             "ad/GOAD/data/${ENV}-config.json"
-            "ansible/data.yml"
+            "ansible/playbooks/data.yml"
         )
         ;;
     ad-child-domain)
         files=(
-            "ansible/ad-child_domain.yml"
+            "ansible/playbooks/ad-child_domain.yml"
             "ansible/roles/child_domain/tasks/main.yml"
             "ansible/roles/dns_conditional_forwarder/tasks/main.yml"
             "ansible/roles/parent_child_dns/tasks/main.yml"
             "${ENV}-inventory"
             "ad/GOAD/data/${ENV}-config.json"
-            "ansible/data.yml"
+            "ansible/playbooks/data.yml"
         )
         ;;
     ad-members)
         files=(
-            "ansible/ad-members.yml"
+            "ansible/playbooks/ad-members.yml"
             "ansible/roles/member_server/tasks/main.yml"
             "ansible/roles/commonwkstn/tasks/main.yml"
             "${ENV}-inventory"
             "ad/GOAD/data/${ENV}-config.json"
-            "ansible/data.yml"
+            "ansible/playbooks/data.yml"
         )
         ;;
     ad-trusts)
         files=(
-            "ansible/ad-trusts.yml"
-            "ansible/roles/settings/disable_nat_adapter/tasks/main.yml"
+            "ansible/playbooks/ad-trusts.yml"
+            "ansible/roles/settings_disable_nat_adapter/tasks/main.yml"
             "ansible/roles/dns_conditional_forwarder/tasks/main.yml"
             "ansible/roles/trusts/tasks/main.yml"
-            "ansible/roles/settings/enable_nat_adapter/tasks/main.yml"
+            "ansible/roles/settings_enable_nat_adapter/tasks/main.yml"
             "ansible/roles/dc_dns_conditional_forwarder/tasks/main.yml"
             "${ENV}-inventory"
             "ad/GOAD/data/${ENV}-config.json"
-            "ansible/data.yml"
+            "ansible/playbooks/data.yml"
         )
         ;;
     ad-data)
         files=(
-            "ansible/ad-data.yml"
+            "ansible/playbooks/ad-data.yml"
             "ansible/roles/password_policy/tasks/main.yml"
             "ansible/roles/ad/tasks/main.yml"
             "ansible/roles/ad/tasks/users.yml"
             "ansible/roles/ad/tasks/groups.yml"
             "ansible/roles/ad/tasks/ou.yml"
-            "ansible/roles/settings/copy_files/tasks/main.yml"
+            "ansible/roles/settings_copy_files/tasks/main.yml"
             "ansible/roles/move_to_ou/tasks/main.yml"
             "${ENV}-inventory"
             "ad/GOAD/data/${ENV}-config.json"
-            "ansible/data.yml"
+            "ansible/playbooks/data.yml"
         )
         ;;
     ad-gmsa)
         files=(
-            "ansible/ad-gmsa.yml"
+            "ansible/playbooks/ad-gmsa.yml"
             "ansible/roles/gmsa/tasks/main.yml"
             "ansible/roles/gmsa_hosts/tasks/main.yml"
             "${ENV}-inventory"
             "ad/GOAD/data/${ENV}-config.json"
-            "ansible/data.yml"
+            "ansible/playbooks/data.yml"
         )
         ;;
     laps)
         files=(
-            "ansible/laps.yml"
-            "ansible/roles/laps/dc/tasks/main.yml"
-            "ansible/roles/laps/dc/vars/main.yml"
-            "ansible/roles/laps/dc/tasks/move_server_to_ou.yml"
-            "ansible/roles/laps/dc/tasks/install.yml"
-            "ansible/roles/laps/dc/defaults/main.yml"
+            "ansible/playbooks/laps.yml"
+            "ansible/roles/laps_dc/tasks/main.yml"
+            "ansible/roles/laps_dc/vars/main.yml"
+            "ansible/roles/laps_dc/tasks/move_server_to_ou.yml"
+            "ansible/roles/laps_dc/tasks/install.yml"
+            "ansible/roles/laps_dc/defaults/main.yml"
             "${ENV}-inventory"
             "ad/GOAD/data/${ENV}-config.json"
-            "ansible/data.yml"
+            "ansible/playbooks/data.yml"
         )
         ;;
     ad-relations)
         files=(
-            "ansible/ad-relations.yml"
-            "ansible/roles/settings/adjust_rights/tasks/main.yml"
-            "ansible/roles/settings/user_rights/tasks/main.yml"
+            "ansible/playbooks/ad-relations.yml"
+            "ansible/roles/settings_adjust_rights/tasks/main.yml"
+            "ansible/roles/settings_user_rights/tasks/main.yml"
             "ansible/roles/groups_domains/tasks/main.yml"
             "${ENV}-inventory"
             "ad/GOAD/data/${ENV}-config.json"
-            "ansible/data.yml"
+            "ansible/playbooks/data.yml"
         )
         ;;
     adcs)
         files=(
-            "ansible/adcs.yml"
+            "ansible/playbooks/adcs.yml"
             "ansible/roles/adcs/tasks/main.yml"
             "ansible/roles/adcs_templates/tasks/main.yml"
             "ansible/roles/adcs_templates/files/ESC1.json"
@@ -146,21 +146,21 @@ case "${PLAYBOOK}" in
             "ansible/roles/adcs_templates/files/ADCSTemplate/ADCSTemplate.psm1"
             "${ENV}-inventory"
             "ad/GOAD/data/${ENV}-config.json"
-            "ansible/data.yml"
+            "ansible/playbooks/data.yml"
         )
         ;;
     ad-acl)
         files=(
-            "ansible/ad-acl.yml"
+            "ansible/playbooks/ad-acl.yml"
             "ansible/roles/acl/tasks/main.yml"
             "${ENV}-inventory"
             "ad/GOAD/data/${ENV}-config.json"
-            "ansible/data.yml"
+            "ansible/playbooks/data.yml"
         )
         ;;
     servers)
         files=(
-            "ansible/servers.yml"
+            "ansible/playbooks/servers.yml"
             "ansible/roles/iis/tasks/main.yml"
             "ansible/roles/iis/files/index.html"
             "ansible/roles/mssql/tasks/main.yml"
@@ -173,54 +173,54 @@ case "${PLAYBOOK}" in
             "ansible/roles/webdav/tasks/main.yml"
             "${ENV}-inventory"
             "ad/GOAD/data/${ENV}-config.json"
-            "ansible/data.yml"
+            "ansible/playbooks/data.yml"
         )
         ;;
     security)
         files=(
-            "ansible/security.yml"
-            "ansible/roles/settings/windows_defender/tasks/main.yml"
-            "ansible/roles/security/account_is_sensitive/tasks/main.yml"
-            "ansible/roles/security/powershell_restrict/tasks/main.yml"
-            "ansible/roles/security/enable_run_as_ppl/tasks/main.yml"
+            "ansible/playbooks/security.yml"
+            "ansible/roles/settings_windows_defender/tasks/main.yml"
+            "ansible/roles/security_account_is_sensitive/tasks/main.yml"
+            "ansible/roles/security_powershell_restrict/tasks/main.yml"
+            "ansible/roles/security_enable_run_as_ppl/tasks/main.yml"
             "${ENV}-inventory"
             "ad/GOAD/data/${ENV}-config.json"
-            "ansible/data.yml"
+            "ansible/playbooks/data.yml"
         )
         ;;
     vulnerabilities)
         files=(
-            "ansible/vulnerabilities.yml"
-            "ansible/roles/vulns/schedule/tasks/main.yml"
-            "ansible/roles/vulns/autologon/tasks/main.yml"
-            "ansible/roles/vulns/openshares/tasks/main.yml"
-            "ansible/roles/vulns/disable_firewall/tasks/main.yml"
-            "ansible/roles/vulns/ntlmdowngrade/tasks/main.yml"
-            "ansible/roles/vulns/enable_credssp_client/tasks/main.yml"
-            "ansible/roles/vulns/administrator_folder/tasks/main.yml"
-            "ansible/roles/vulns/acls/tasks/main.yml"
-            "ansible/roles/vulns/smbv1/tasks/main.yml"
-            "ansible/roles/vulns/enable_llmnr/tasks/main.yml"
-            "ansible/roles/vulns/adcs_templates/tasks/main.yml"
-            "ansible/roles/vulns/adcs_templates/files/ADCSTemplate/ADCSTemplate.psd1"
-            "ansible/roles/vulns/adcs_templates/files/ADCSTemplate/ADCSTemplate.psm1"
-            "ansible/roles/vulns/adcs_templates/files/ADCSTemplate/Examples/Tanium.json"
-            "ansible/roles/vulns/adcs_templates/files/ADCSTemplate/Examples/Demo.ps1"
-            "ansible/roles/vulns/adcs_templates/files/ADCSTemplate/Examples/Build-ADCS.ps1"
-            "ansible/roles/vulns/adcs_templates/files/ADCSTemplate/Examples/PowerShellCMS.json"
-            "ansible/roles/vulns/adcs_templates/files/ADCSTemplate/DSCResources/COMMUNITY_ADCSTemplate/COMMUNITY_ADCSTemplate.psm1"
-            "ansible/roles/vulns/adcs_templates/files/ADCSTemplate/DSCResources/COMMUNITY_ADCSTemplate/COMMUNITY_ADCSTemplate.schema.mof"
-            "ansible/roles/vulns/permissions/tasks/main.yml"
-            "ansible/roles/vulns/enable_nbt-ns/tasks/main.yml"
-            "ansible/roles/vulns/directory/tasks/main.yml"
-            "ansible/roles/vulns/files/tasks/main.yml"
-            "ansible/roles/vulns/enable_credssp_server/tasks/main.yml"
-            "ansible/roles/vulns/shares/tasks/main.yml"
-            "ansible/roles/vulns/mssql/tasks/main.yml"
-            "ansible/roles/vulns/credentials/tasks/main.yml"
+            "ansible/playbooks/vulnerabilities.yml"
+            "ansible/roles/vulns_schedule/tasks/main.yml"
+            "ansible/roles/vulns_autologon/tasks/main.yml"
+            "ansible/roles/vulns_openshares/tasks/main.yml"
+            "ansible/roles/vulns_disable_firewall/tasks/main.yml"
+            "ansible/roles/vulns_ntlmdowngrade/tasks/main.yml"
+            "ansible/roles/vulns_enable_credssp_client/tasks/main.yml"
+            "ansible/roles/vulns_administrator_folder/tasks/main.yml"
+            "ansible/roles/vulns_acls/tasks/main.yml"
+            "ansible/roles/vulns_smbv1/tasks/main.yml"
+            "ansible/roles/vulns_enable_llmnr/tasks/main.yml"
+            "ansible/roles/vulns_adcs_templates/tasks/main.yml"
+            "ansible/roles/vulns_adcs_templates/files/ADCSTemplate/ADCSTemplate.psd1"
+            "ansible/roles/vulns_adcs_templates/files/ADCSTemplate/ADCSTemplate.psm1"
+            "ansible/roles/vulns_adcs_templates/files/ADCSTemplate/Examples/Tanium.json"
+            "ansible/roles/vulns_adcs_templates/files/ADCSTemplate/Examples/Demo.ps1"
+            "ansible/roles/vulns_adcs_templates/files/ADCSTemplate/Examples/Build-ADCS.ps1"
+            "ansible/roles/vulns_adcs_templates/files/ADCSTemplate/Examples/PowerShellCMS.json"
+            "ansible/roles/vulns_adcs_templates/files/ADCSTemplate/DSCResources/COMMUNITY_ADCSTemplate/COMMUNITY_ADCSTemplate.psm1"
+            "ansible/roles/vulns_adcs_templates/files/ADCSTemplate/DSCResources/COMMUNITY_ADCSTemplate/COMMUNITY_ADCSTemplate.schema.mof"
+            "ansible/roles/vulns_permissions/tasks/main.yml"
+            "ansible/roles/vulns_enable_nbt_ns/tasks/main.yml"
+            "ansible/roles/vulns_directory/tasks/main.yml"
+            "ansible/roles/vulns_files/tasks/main.yml"
+            "ansible/roles/vulns_enable_credssp_server/tasks/main.yml"
+            "ansible/roles/vulns_shares/tasks/main.yml"
+            "ansible/roles/vulns_mssql/tasks/main.yml"
+            "ansible/roles/vulns_credentials/tasks/main.yml"
             "${ENV}-inventory"
             "ad/GOAD/data/${ENV}-config.json"
-            "ansible/data.yml"
+            "ansible/playbooks/data.yml"
         )
         ;;
     *)

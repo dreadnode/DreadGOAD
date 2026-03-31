@@ -1,0 +1,21 @@
+---
+galaxy_info:
+  role_name: vulns_acls
+  namespace: dreadnode
+  author: Dreadnode
+  company: Dreadnode
+  description: Configure vulnerable ACL permissions for attack simulation
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Windows
+      versions:
+        - all
+  galaxy_tags:
+    - windows
+    - active_directory
+    - vulnerability
+    - acl
+    - pentest
+
+dependencies: []

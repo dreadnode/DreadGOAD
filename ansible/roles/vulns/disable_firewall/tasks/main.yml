@@ -1,9 +1,0 @@
----
-- name: Disable Domain firewall
-  ansible.windows.win_firewall:
-    state: disabled
-    profiles:
-    - Domain
-    - Private
-    - Public
-  tags: disable_firewall

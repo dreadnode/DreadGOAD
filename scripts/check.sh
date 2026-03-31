@@ -299,7 +299,7 @@ check_ansible_env() {
         fi
     done
     if [ $GALAXY_OK -eq 0 ]; then
-        (echo >&2 "${ERROR} ansible-galaxy requirements missing consider doing : ansible-galaxy install -r ansible/requirements.yml")
+        (echo >&2 "${ERROR} ansible-galaxy requirements missing consider doing : ansible-galaxy collection install -r ansible/requirements.yml")
         exit 1
     else
         (echo >&2 "${GOODTOGO} ansible-galaxy requirements ok")

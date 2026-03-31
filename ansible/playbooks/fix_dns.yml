@@ -1,0 +1,10 @@
+---
+# Load data
+- name: Import Data
+  ansible.builtin.import_playbook: data.yml
+  tags: 'data'
+
+- name: Setup dns again on all domain computers
+  hosts: domain
+  roles:
+    - { role: 'dreadnode.goad.fix_dns', tags: 'fix_dns' }

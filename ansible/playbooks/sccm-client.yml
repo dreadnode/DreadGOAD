@@ -1,0 +1,16 @@
+---
+- name: Import Data
+  ansible.builtin.import_playbook: data.yml
+  tags: 'data'
+
+- name: Client install
+  hosts: sccm
+  roles:
+    - { role: 'dreadnode.goad.sccm_config_client_install', tags: 'sccm_client_install' }
+  vars:
+    domain: "{{lab.hosts[dict_key].domain}}"
+    domain_username: "{{domain}}\\{{admin_user}}"
+    domain_password: "{{lab.domains[domain].domain_password}}"
+    sccm_server: "{{lab.domains[domain].sccm.sccm_server | default('')}}"
+    site_code: "{{lab.domains[domain].sccm.site_code}}"
+    clients: "{{lab.domains[domain].sccm.clients| default([])}}"

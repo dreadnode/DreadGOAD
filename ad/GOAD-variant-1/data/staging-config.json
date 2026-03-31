@@ -69,7 +69,7 @@
           "autologon",
           "files",
           "enable_llmnr",
-          "enable_nbt-ns",
+          "enable_nbt_ns",
           "shares",
           "anonymous_enum"
         ],

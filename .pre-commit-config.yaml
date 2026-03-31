@@ -87,5 +87,5 @@ repos:
         language: python
         pass_filenames: false
         always_run: false
-        files: ^(roles/|plugins/|playbooks/).*
+        files: ^ansible/(roles/|plugins/|playbooks/).*
         additional_dependencies: []

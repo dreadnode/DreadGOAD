@@ -1,5 +1,5 @@
 - name: "Create users"
-  community.windows.win_domain_user:
+  microsoft.ad.user:
     name: "{{ item.key }}"
     firstname: "{{item.value.firstname}}"
     surname: "{{ item.value.surname }}"

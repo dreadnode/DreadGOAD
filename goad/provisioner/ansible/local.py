@@ -1,3 +1,4 @@
+import os
 from goad.log import Log
 from goad.utils import *
 from goad.provisioner.ansible.ansible import Ansible
@@ -8,7 +9,7 @@ class LocalAnsibleProvisionerCmd(Ansible):
 
     def run_playbook(self, playbook, inventories, tries=3, timeout=30, playbook_path=None):
         if playbook_path is None:
-            playbook_path = self.path
+            playbook_path = self.path + 'playbooks' + os.path.sep
 
         Log.info(f'Run playbook : {playbook} with inventory file(s) : {", ".join(inventories)}')
 

@@ -21,7 +21,7 @@ python3 -m pip install pywinrm
 
 ######################################################################################################
 # ANSIBLE Galaxy
-ansible-galaxy install -r ansible/requirements.yml
+ansible-galaxy collection install -r ansible/requirements.yml
 
 echo "#################################################"
 echo "You will need to run: source .venv/bin/activate"

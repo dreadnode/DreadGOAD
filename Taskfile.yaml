@@ -53,6 +53,29 @@ tasks:
         echo "  Run a single playbook: task provision PLAYS=ad-data.yml"
     silent: true
 
+  check-ansible-version:
+    desc: Verify ansible-core version is compatible with AWS SSM Windows connections
+    internal: true
+    silent: true
+    cmds:
+      - |
+        ANSIBLE_VERSION=$(ansible --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+        MAJOR=$(echo "$ANSIBLE_VERSION" | cut -d. -f1)
+        MINOR=$(echo "$ANSIBLE_VERSION" | cut -d. -f2)
+        if [ "$MAJOR" -gt 2 ] || { [ "$MAJOR" -eq 2 ] && [ "$MINOR" -ge 19 ]; }; then
+          echo "ERROR: ansible-core $ANSIBLE_VERSION detected. Versions >=2.19 break Windows"
+          echo "       module execution over AWS SSM (pipelining bug in SSM plugin)."
+          echo ""
+          echo "       Fix: pip install 'ansible-core>=2.17.0,<2.18.0'"
+          echo ""
+          echo "       See requirements.txt for details."
+          exit 1
+        fi
+        if [ -z "$ANSIBLE_VERSION" ]; then
+          echo "ERROR: ansible-core not found. Install it: pip install -r requirements.txt"
+          exit 1
+        fi
+
   provision:
     desc: Run the DreadGOAD provisioning process with error handling and retries
     summary: |
@@ -82,6 +105,7 @@ tasks:
       # Generate log file name once for this provision run
       PROVISION_LOG_FILE: '$HOME/.ansible/logs/goad/{{.ENV}}-dreadgoad-{{now | date "20060102_150405"}}.log'
     deps:
+      - check-ansible-version
       - ssm:cleanup
       - ensure-log-dir
       - generate-mapping
@@ -136,10 +160,10 @@ tasks:
     internal: true
     cmds:
       - cd ansible/roles/adcs_templates/files && zip -r ADCSTemplate.zip ADCSTemplate/
-      - cd ansible/roles/vulns/adcs_templates/files && zip -r ADCSTemplate.zip ADCSTemplate/
+      - cd ansible/roles/vulns_adcs_templates/files && zip -r ADCSTemplate.zip ADCSTemplate/
     status:
       - test -f ansible/roles/adcs_templates/files/ADCSTemplate.zip
-      - test -f ansible/roles/vulns/adcs_templates/files/ADCSTemplate.zip
+      - test -f ansible/roles/vulns_adcs_templates/files/ADCSTemplate.zip
 
   log-provision-header:
     internal: true
@@ -157,7 +181,7 @@ tasks:
           echo ""
           echo "Playbooks to be executed:"
           for playbook in $(echo '{{.PLAYS}}' | tr '\n' ' '); do
-            echo "  - ansible/$playbook"
+            echo "  - ansible/playbooks/$playbook"
           done
           echo "-----------------------------------------------"
         } | tee "{{.LOG_FILE}}"

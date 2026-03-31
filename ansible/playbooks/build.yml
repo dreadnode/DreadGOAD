@@ -1,0 +1,22 @@
+---
+# Load data
+- name: Import Data
+  ansible.builtin.import_playbook: data.yml
+  tags: data
+
+- name: Build all
+  hosts: domain
+  roles:
+    - { role: 'dreadnode.goad.common', tags: 'common', http_proxy: "{{ enable_http_proxy }}"}
+    - { role: 'dreadnode.goad.settings_keyboard', tags: 'keyboard', layouts: "{{ keyboard_layouts }}" }
+
+# do not add srv with no update -> generate error on iis install
+- name: Build all no update
+  hosts: no_update
+  roles:
+    - { role: 'dreadnode.goad.settings_no_updates', tags: 'no_updates' }
+
+- name: Launch windows updates before continue
+  hosts: update
+  roles:
+    - { role: 'dreadnode.goad.settings_updates', tags: 'updates'}

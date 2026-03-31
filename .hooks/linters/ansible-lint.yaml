@@ -11,11 +11,11 @@ exclude_paths:
   - ad/NHA/files/templates/
   - docs/mkdocs/mkdocs.yml
   - noansible_requirements.yml
-  - requirements_311.yml
+  - ansible/requirements_311.yml
   - template/provider/ludus/
   - playbooks.yml
-  - extensions/exchange/ansible/install.yml
-  - extensions/ws01/ansible/install.yml
+  - ansible/extensions/exchange/ansible/install.yml
+  - ansible/extensions/ws01/ansible/install.yml
   - ansible/roles/onlyusers/
 
 skip_list:

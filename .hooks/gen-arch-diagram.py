@@ -28,7 +28,6 @@ class AnsibleCollectionAnalyzer:
                 if role_dir.is_dir() and not role_dir.name.startswith('.'):
                     self.structure['roles'].append({
                         'name': role_dir.name,
-                        'has_molecule': (role_dir / 'molecule').exists()
                     })
 
         # Analyze plugins
@@ -45,7 +44,6 @@ class AnsibleCollectionAnalyzer:
                 if item.is_dir() and not item.name.startswith('.'):
                     self.structure['playbooks'].append({
                         'name': item.name,
-                        'has_molecule': (item / 'molecule').exists()
                     })
 
         return self.structure
@@ -65,19 +63,13 @@ def generate_mermaid(structure):
     if structure['roles']:
         lines.append("    Collection --> Roles[⚙️ Roles]")
         for i, role in enumerate(structure['roles']):
-            role_label = role['name']
-            if role['has_molecule']:
-                role_label += " 🧪"
-            lines.append(f"    Roles --> R{i}[{role_label}]")
+            lines.append(f"    Roles --> R{i}[{role['name']}]")
 
     # Add playbooks
     if structure['playbooks']:
         lines.append("    Collection --> Playbooks[📚 Playbooks]")
         for i, playbook in enumerate(structure['playbooks']):
-            pb_label = playbook['name']
-            if playbook['has_molecule']:
-                pb_label += " 🧪"
-            lines.append(f"    Playbooks --> PB{i}[{pb_label}]")
+            lines.append(f"    Playbooks --> PB{i}[{playbook['name']}]")
 
     lines.append("```")
     return '\n'.join(lines)
@@ -127,7 +119,7 @@ def update_readme(mermaid_content):
 def main():
     """Main function for pre-commit hook"""
     # Analyze collection from current directory
-    analyzer = AnsibleCollectionAnalyzer('.')
+    analyzer = AnsibleCollectionAnalyzer('ansible')
     structure = analyzer.analyze()
 
     # Generate Mermaid diagram
