@@ -93,7 +93,7 @@ jobs:
             MATRIX_JSON="["
             FIRST=true
             for mol_dir in ansible/roles/*/molecule; do
-              role=$(basename $(dirname "$mol_dir"))
+              role=$(basename "$(dirname "$mol_dir")")
               if [[ "$FIRST" == "true" ]]; then
                 FIRST=false
               else
