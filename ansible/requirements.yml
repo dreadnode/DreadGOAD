@@ -5,7 +5,7 @@ collections:
     version: 1.11.0
   - name: community.general
   - name: community.windows
-    version: 1.11.0
+    version: 1.13.0
   - name: chocolatey.chocolatey
 # - name: goad.windows
 #   type: dir
