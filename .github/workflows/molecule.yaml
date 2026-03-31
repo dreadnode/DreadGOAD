@@ -267,3 +267,4 @@ jobs:
             echo "::error::Molecule test failed for ${{ matrix.name }}"
             docker ps -a 2>/dev/null || true
             exit 1
+          fi
