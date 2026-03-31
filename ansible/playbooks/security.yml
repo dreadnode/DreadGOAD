@@ -21,7 +21,7 @@
 - name: Setup security with tasks
   hosts: domain
   tasks:
-    - name: "Include security role {{ secu }}"
+    - name: "Include security role"
       ansible.builtin.include_role:
         name: "dreadnode.goad.security_{{ secu }}"
       vars:
@@ -32,6 +32,7 @@
       loop: "{{ lab.hosts[dict_key].security | default([]) }}"
       loop_control:
         loop_var: secu
+        label: "{{ secu }}"
 
 # Configure SACL auditing on Domain Controllers for DCSync detection
 - name: Configure DC SACL auditing for attack detection
