@@ -765,14 +765,14 @@ tests = ["pytest (>=5.4.1)", "pytest-cov (>=2.8.1)", "pytest-mypy (>=0.8.0)", "p
 
 [[package]]
 name = "proxmoxer"
-version = "2.1.0"
+version = "2.3.0"
 description = "Python Wrapper for the Proxmox 2.x API (HTTP and SSH)"
 optional = false
 python-versions = "*"
 groups = ["main"]
 files = [
-    {file = "proxmoxer-2.1.0-py3-none-any.whl", hash = "sha256:59d69abc5742c6c1b1737ce2944599136f66cdbbb1d044cd4b7aad30100ddde6"},
-    {file = "proxmoxer-2.1.0.tar.gz", hash = "sha256:d92993782e74ed8a76ff355dc050f58aa039fa697f9349a68e643552bd0fa62e"},
+    {file = "proxmoxer-2.3.0-py3-none-any.whl", hash = "sha256:1c03445e95cf9c53b6e50614dbaf561e0e1eb3ec878cf45ddde4bc4421c56743"},
+    {file = "proxmoxer-2.3.0.tar.gz", hash = "sha256:0b0b2067187af1fc6d4257a46ac68c8fd79cc25d2813637cdae7a9a98fbfd11f"},
 ]
 
 [[package]]
