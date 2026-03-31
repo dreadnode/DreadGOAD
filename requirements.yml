@@ -1,6 +1,9 @@
 ---
 collections:
-  - name: microsoft.ad
-    version: 1.10.0
-  - name: amazon.aws
-    version: 10.3.0
+  - name: ansible.windows
+    version: ">=2.5.0"
+  - name: community.general
+  - name: community.windows
+    version: ">=2.3.0"
+  - name: chocolatey.chocolatey
+    version: ">=1.5.3"

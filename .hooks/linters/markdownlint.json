@@ -12,6 +12,7 @@
   "MD055": false,
   "MD056": false,
   "MD057": false,
+  "MD060": false,
   "line-length": false,
   "no-multiple-blanks": false
 }

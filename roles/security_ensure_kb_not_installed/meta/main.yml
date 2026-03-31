@@ -1,0 +1,14 @@
+---
+galaxy_info:
+  role_name: security_ensure_kb_not_installed
+  namespace: dreadnode
+  author: Dreadnode
+  description: security ensure ku not installed
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Windows
+      versions:
+        - all
+
+dependencies: []

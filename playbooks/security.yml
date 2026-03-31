@@ -1,0 +1,40 @@
+---
+# Load data
+- name: Import Data
+  ansible.builtin.import_playbook: data.yml
+  tags: data
+
+- name: Setup enable defender
+  hosts: defender_on
+  roles:
+    - { role: 'dreadnode.goad.settings_windows_defender', tags: 'windows_defender', windows_defender_status: 'on' }
+  vars:
+    script_path: "ad/{{ domain_name }}/scripts"
+
+- name: Setup disable defender
+  hosts: defender_off
+  roles:
+    - { role: 'dreadnode.goad.settings_windows_defender', tags: 'windows_defender', windows_defender_status: 'off' }
+  vars:
+    script_path: "ad/{{ domain_name }}/scripts"
+
+- name: Setup security with tasks
+  hosts: domain
+  tasks:
+    - name: "Include security role {{ secu }}"
+      ansible.builtin.include_role:
+        name: "dreadnode.goad.security_{{ secu }}"
+      vars:
+        security_vars: "{{ lab.hosts[dict_key].security_vars[secu] | default({}) }}"
+        domain: "{{ lab.hosts[dict_key].domain }}"
+        domain_username: "{{ domain }}\\{{ admin_user }}"
+        domain_password: "{{ lab.domains[domain].domain_password }}"
+      loop: "{{ lab.hosts[dict_key].security | default([]) }}"
+      loop_control:
+        loop_var: secu
+
+# Configure SACL auditing on Domain Controllers for DCSync detection
+- name: Configure DC SACL auditing for attack detection
+  hosts: dc
+  roles:
+    - { role: 'dreadnode.goad.dc_audit_sacl', tags: 'dc_audit_sacl' }

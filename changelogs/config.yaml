@@ -1,0 +1,5 @@
+---
+notesdir: fragments
+changes_file: changelog.yaml
+changes_format: combined
+title: dreadnode.goad

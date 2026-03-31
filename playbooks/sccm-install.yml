@@ -1,0 +1,34 @@
+---
+- name: Import Data
+  ansible.builtin.import_playbook: data.yml
+  vars:
+    data_path: "ad/{{domain_name}}/data/"
+  tags: 'data'
+
+- name: "Setup Prerequisites"
+  hosts: dc
+  roles:
+    - { role: 'dreadnode.goad.sccm_install_prerequisites', tags: 'sccm_prerequisites', when: sccm_server != ''}
+  vars:
+    domain: "{{lab.hosts[dict_key].domain}}"
+    domain_username: "{{domain}}\\{{admin_user}}"
+    domain_password: "{{lab.domains[domain].domain_password}}"
+    site_code: "{{lab.domains[domain].sccm.site_code}}"
+    sccm_server: "{{lab.domains[domain].sccm.sccm_server | default('')}}"
+    sccm_mssql_server: "{{lab.domains[domain].sccm.sccm_mssql_server | default('')}}"
+
+- name: "Install SCCM"
+  hosts: sccm
+  roles:
+    - { role: 'dreadnode.goad.sccm_install_iis', tags: 'sccm_iis'}
+    - { role: 'dreadnode.goad.sccm_install_adk', tags: 'sccm_adk'}
+#    - { role: 'sccm/mssql', tags: 'sccm_wsus', when: sccm_server != ''} # done by the server playbook
+    - { role: 'dreadnode.goad.sccm_install_wsus', tags: 'sccm_wsus'}
+    - { role: 'dreadnode.goad.sccm_install_mecm', tags: 'sccm_mecm'}
+  vars:
+    domain: "{{lab.hosts[dict_key].domain}}"
+    domain_username: "{{domain}}\\{{admin_user}}"
+    domain_password: "{{lab.domains[domain].domain_password}}"
+    site_code: "{{lab.domains[domain].sccm.site_code}}"
+    sccm_server: "{{lab.domains[domain].sccm.sccm_server | default('')}}"
+    sccm_mssql_server: "{{lab.domains[domain].sccm.sccm_mssql_server | default('')}}"
