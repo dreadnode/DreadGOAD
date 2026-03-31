@@ -3,7 +3,7 @@
 
 ## Description
 
-ad
+Configure Active Directory domain administrator membership and settings
 
 ## Requirements
 
@@ -59,7 +59,7 @@ ad
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

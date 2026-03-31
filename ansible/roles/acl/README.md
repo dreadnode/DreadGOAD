@@ -3,7 +3,7 @@
 
 ## Description
 
-acl
+Configure Active Directory ACL permissions on objects
 
 ## Requirements
 
@@ -29,7 +29,7 @@ acl
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

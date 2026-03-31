@@ -3,7 +3,7 @@
 
 ## Description
 
-dns conditional forwarder
+Configure DNS conditional forwarders on member servers
 
 ## Requirements
 
@@ -28,7 +28,7 @@ dns conditional forwarder
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

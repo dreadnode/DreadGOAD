@@ -3,7 +3,7 @@
 
 ## Description
 
-sccm config accounts
+Configure SCCM service accounts and permissions
 
 ## Requirements
 
@@ -28,7 +28,7 @@ sccm config accounts
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

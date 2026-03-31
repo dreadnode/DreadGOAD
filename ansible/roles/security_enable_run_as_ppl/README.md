@@ -3,7 +3,7 @@
 
 ## Description
 
-security enaule run as ppl
+Enable LSA Protection (RunAsPPL) for credential hardening
 
 ## Requirements
 
@@ -28,7 +28,7 @@ security enaule run as ppl
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

@@ -3,7 +3,7 @@
 
 ## Description
 
-security powershell restrict
+Configure PowerShell execution policy restrictions
 
 ## Requirements
 
@@ -28,7 +28,7 @@ security powershell restrict
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

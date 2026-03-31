@@ -3,7 +3,7 @@
 
 ## Description
 
-vulns anonymous enum
+Enable anonymous and null session enumeration for attack simulation
 
 ## Requirements
 
@@ -40,7 +40,7 @@ vulns anonymous enum
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

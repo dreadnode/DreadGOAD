@@ -3,7 +3,7 @@
 
 ## Description
 
-settings windows defender
+Install and configure Windows Defender antivirus settings
 
 ## Requirements
 
@@ -33,7 +33,7 @@ settings windows defender
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

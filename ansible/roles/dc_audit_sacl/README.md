@@ -7,7 +7,7 @@ Configure SACL auditing on Domain Controllers for attack detection
 
 ## Requirements
 
-- Ansible >= 2.14
+- Ansible >= 2.15
 
 ## Role Variables
 
@@ -48,9 +48,9 @@ Configure SACL auditing on Domain Controllers for attack detection
 
 - **Author**: Dreadnode
 - **Company**: Dreadnode
-- **License**: proprietary
+- **License**: GPL-3.0-or-later
 
 ## Platforms
 
-- Windows: 2019, 2022
+- Windows: all
 <!-- DOCSIBLE END -->

@@ -3,7 +3,7 @@
 
 ## Description
 
-disaule user
+Disable an Active Directory user account
 
 ## Requirements
 
@@ -28,7 +28,7 @@ disaule user
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

@@ -3,7 +3,7 @@
 
 ## Description
 
-gmsa hosts
+Configure hosts authorized to use Group Managed Service Accounts
 
 ## Requirements
 
@@ -29,7 +29,7 @@ gmsa hosts
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

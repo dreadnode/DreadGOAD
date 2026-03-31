@@ -3,7 +3,7 @@
 
 ## Description
 
-domain controller slave
+Promote a Windows server as a replica domain controller
 
 ## Requirements
 
@@ -29,7 +29,7 @@ domain controller slave
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

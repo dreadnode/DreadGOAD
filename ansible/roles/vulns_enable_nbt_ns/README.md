@@ -3,7 +3,7 @@
 
 ## Description
 
-vulns enaule nut ns
+Enable NetBIOS Name Service for poisoning attack simulation
 
 ## Requirements
 
@@ -28,7 +28,7 @@ vulns enaule nut ns
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

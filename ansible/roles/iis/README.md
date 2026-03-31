@@ -3,7 +3,7 @@
 
 ## Description
 
-iis
+Install and configure Internet Information Services web server
 
 ## Requirements
 
@@ -34,7 +34,7 @@ iis
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

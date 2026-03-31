@@ -3,7 +3,7 @@
 
 ## Description
 
-parent child dns
+Configure DNS delegation between parent and child domains
 
 ## Requirements
 
@@ -30,7 +30,7 @@ parent child dns
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

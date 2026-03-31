@@ -1,9 +1,9 @@
 <!-- DOCSIBLE START -->
-# settings_no_updates
+# settings_gpmc
 
 ## Description
 
-Disable Windows Update service to preserve lab state
+Install Group Policy Management Console
 
 ## Requirements
 
@@ -15,14 +15,14 @@ Disable Windows Update service to preserve lab state
 
 ### main.yml
 
-- **Disable windows update** (ansible.windows.win_shell)
+- **Install Group Policy Management Console** (ansible.windows.win_feature)
 
 ## Example Playbook
 
 ```yaml
 - hosts: servers
   roles:
-    - settings_no_updates
+    - settings_gpmc
 ```
 
 ## Author Information

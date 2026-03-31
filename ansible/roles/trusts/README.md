@@ -3,7 +3,7 @@
 
 ## Description
 
-trusts
+Configure Active Directory domain trust relationships
 
 ## Requirements
 
@@ -30,7 +30,7 @@ trusts
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

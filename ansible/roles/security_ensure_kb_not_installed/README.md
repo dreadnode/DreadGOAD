@@ -3,7 +3,7 @@
 
 ## Description
 
-security ensure ku not installed
+Ensure specific Windows KB updates are not installed
 
 ## Requirements
 
@@ -31,7 +31,7 @@ security ensure ku not installed
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

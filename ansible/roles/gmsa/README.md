@@ -3,7 +3,7 @@
 
 ## Description
 
-gmsa
+Create and configure Group Managed Service Accounts
 
 ## Requirements
 
@@ -28,7 +28,7 @@ gmsa
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

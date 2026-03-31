@@ -3,7 +3,7 @@
 
 ## Description
 
-vulns credentials
+Store credentials in Windows Credential Manager for attack simulation
 
 ## Requirements
 
@@ -28,7 +28,7 @@ vulns credentials
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

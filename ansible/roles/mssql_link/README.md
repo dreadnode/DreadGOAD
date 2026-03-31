@@ -3,7 +3,7 @@
 
 ## Description
 
-mssql link
+Configure linked servers between SQL Server instances
 
 ## Requirements
 
@@ -36,7 +36,7 @@ mssql link
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

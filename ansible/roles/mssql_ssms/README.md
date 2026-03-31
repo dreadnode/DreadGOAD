@@ -3,7 +3,7 @@
 
 ## Description
 
-mssql ssms
+Install SQL Server Management Studio
 
 ## Requirements
 
@@ -34,7 +34,7 @@ mssql ssms
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

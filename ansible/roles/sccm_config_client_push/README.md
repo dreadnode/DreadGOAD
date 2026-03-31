@@ -3,7 +3,7 @@
 
 ## Description
 
-sccm config client push
+Configure SCCM client push installation settings
 
 ## Requirements
 
@@ -28,7 +28,7 @@ sccm config client push
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

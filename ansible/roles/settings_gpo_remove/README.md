@@ -3,7 +3,7 @@
 
 ## Description
 
-settings gpo remove
+Remove specified Group Policy Objects from the domain
 
 ## Requirements
 
@@ -28,7 +28,7 @@ settings gpo remove
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

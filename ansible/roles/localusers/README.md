@@ -3,7 +3,7 @@
 
 ## Description
 
-localusers
+Create and manage local Windows user accounts
 
 ## Requirements
 
@@ -28,7 +28,7 @@ localusers
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

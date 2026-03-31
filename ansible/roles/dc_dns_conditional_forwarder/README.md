@@ -3,7 +3,7 @@
 
 ## Description
 
-dc dns conditional forwarder
+Configure DNS conditional forwarders on Domain Controllers
 
 ## Requirements
 
@@ -28,7 +28,7 @@ dc dns conditional forwarder
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

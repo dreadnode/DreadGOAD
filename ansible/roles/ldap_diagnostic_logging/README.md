@@ -51,10 +51,10 @@ Configure LDAP diagnostic logging on Domain Controllers for security monitoring
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
-- **License**: MIT
+- **Company**: Dreadnode
+- **License**: GPL-3.0-or-later
 
 ## Platforms
 
-- Windows: 2019, 2022
+- Windows: all
 <!-- DOCSIBLE END -->

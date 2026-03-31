@@ -3,7 +3,7 @@
 
 ## Description
 
-vulns smuv1
+Enable SMBv1 protocol for attack simulation
 
 ## Requirements
 
@@ -29,7 +29,7 @@ vulns smuv1
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

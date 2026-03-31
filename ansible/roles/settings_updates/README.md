@@ -3,7 +3,7 @@
 
 ## Description
 
-settings updates
+Install Windows updates on managed hosts
 
 ## Requirements
 
@@ -29,7 +29,7 @@ settings updates
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

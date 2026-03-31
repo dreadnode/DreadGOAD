@@ -3,7 +3,7 @@
 
 ## Description
 
-sccm install mecm
+Install Microsoft Endpoint Configuration Manager site server
 
 ## Requirements
 
@@ -42,7 +42,7 @@ sccm install mecm
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

@@ -3,7 +3,7 @@
 
 ## Description
 
-vulns disaule firewall
+Disable Windows Firewall profiles for attack simulation
 
 ## Requirements
 
@@ -28,7 +28,7 @@ vulns disaule firewall
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

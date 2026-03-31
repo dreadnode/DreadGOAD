@@ -3,7 +3,7 @@
 
 ## Description
 
-settings hostname
+Configure Windows hostname and scheduled maintenance tasks
 
 ## Requirements
 
@@ -31,7 +31,7 @@ settings hostname
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

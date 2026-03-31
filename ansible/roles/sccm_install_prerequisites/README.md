@@ -3,7 +3,7 @@
 
 ## Description
 
-sccm install prerequisites
+Install SCCM prerequisites including System Management container
 
 ## Requirements
 
@@ -35,7 +35,7 @@ sccm install prerequisites
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

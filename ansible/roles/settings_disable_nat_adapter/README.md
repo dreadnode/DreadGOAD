@@ -3,7 +3,7 @@
 
 ## Description
 
-settings disaule nat adapter
+Disable the NAT network adapter on Windows hosts
 
 ## Requirements
 
@@ -28,7 +28,7 @@ settings disaule nat adapter
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

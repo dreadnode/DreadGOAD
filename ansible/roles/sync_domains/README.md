@@ -3,7 +3,7 @@
 
 ## Description
 
-sync domains
+Synchronize Active Directory replication across all domain controllers
 
 ## Requirements
 
@@ -28,7 +28,7 @@ sync domains
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

@@ -3,7 +3,7 @@
 
 ## Description
 
-security audit policy
+Configure Windows audit policies for file share and object access logging
 
 ## Requirements
 
@@ -35,7 +35,7 @@ security audit policy
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

@@ -3,7 +3,7 @@
 
 ## Description
 
-vulns shares
+Create SMB file shares for attack simulation
 
 ## Requirements
 
@@ -29,7 +29,7 @@ vulns shares
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

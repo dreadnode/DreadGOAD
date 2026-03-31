@@ -3,7 +3,7 @@
 
 ## Description
 
-commonwkstn
+Apply common configuration for Windows workstations
 
 ## Requirements
 
@@ -32,7 +32,7 @@ commonwkstn
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

@@ -3,7 +3,7 @@
 
 ## Description
 
-laps verify
+Verify LAPS password retrieval is working correctly
 
 ## Requirements
 
@@ -29,7 +29,7 @@ laps verify
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

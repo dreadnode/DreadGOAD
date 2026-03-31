@@ -3,7 +3,7 @@
 
 ## Description
 
-vulns directory
+Create vulnerable directory structures for attack simulation
 
 ## Requirements
 
@@ -28,7 +28,7 @@ vulns directory
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

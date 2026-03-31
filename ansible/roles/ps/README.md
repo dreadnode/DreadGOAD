@@ -3,7 +3,7 @@
 
 ## Description
 
-ps
+Execute arbitrary PowerShell scripts on Windows hosts
 
 ## Requirements
 
@@ -28,7 +28,7 @@ ps
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

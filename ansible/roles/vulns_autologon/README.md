@@ -3,7 +3,7 @@
 
 ## Description
 
-vulns autologon
+Configure Windows autologon credentials for attack simulation
 
 ## Requirements
 
@@ -28,7 +28,7 @@ vulns autologon
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

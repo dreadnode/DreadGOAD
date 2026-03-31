@@ -3,7 +3,7 @@
 
 ## Description
 
-sccm config naa
+Configure SCCM Network Access Account
 
 ## Requirements
 
@@ -28,7 +28,7 @@ sccm config naa
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

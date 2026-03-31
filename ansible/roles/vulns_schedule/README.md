@@ -3,7 +3,7 @@
 
 ## Description
 
-vulns schedule
+Create vulnerable scheduled tasks for attack simulation
 
 ## Requirements
 
@@ -28,7 +28,7 @@ vulns schedule
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

@@ -3,7 +3,7 @@
 
 ## Description
 
-settings user rights
+Configure user rights assignments for Remote Desktop access
 
 ## Requirements
 
@@ -28,7 +28,7 @@ settings user rights
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

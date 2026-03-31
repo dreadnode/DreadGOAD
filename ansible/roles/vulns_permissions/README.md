@@ -3,7 +3,7 @@
 
 ## Description
 
-vulns permissions
+Configure weak file and folder permissions for attack simulation
 
 ## Requirements
 
@@ -28,7 +28,7 @@ vulns permissions
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

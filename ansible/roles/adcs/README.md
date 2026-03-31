@@ -3,7 +3,7 @@
 
 ## Description
 
-adcs
+Install and configure Active Directory Certificate Services
 
 ## Requirements
 
@@ -33,7 +33,7 @@ adcs
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

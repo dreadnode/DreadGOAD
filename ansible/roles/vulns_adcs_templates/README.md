@@ -3,7 +3,7 @@
 
 ## Description
 
-vulns adcs templates
+Deploy vulnerable ADCS certificate templates for attack simulation
 
 ## Requirements
 
@@ -32,7 +32,7 @@ vulns adcs templates
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

@@ -3,7 +3,7 @@
 
 ## Description
 
-child domain
+Promote a Windows server as a child domain controller
 
 ## Requirements
 
@@ -40,7 +40,7 @@ child domain
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

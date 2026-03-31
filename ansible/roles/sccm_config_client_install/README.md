@@ -3,7 +3,7 @@
 
 ## Description
 
-sccm config client install
+Install SCCM client on managed endpoints
 
 ## Requirements
 
@@ -28,7 +28,7 @@ sccm config client install
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

@@ -3,7 +3,7 @@
 
 ## Description
 
-settings keyuoard
+Configure keyboard layout and language settings on Windows
 
 ## Requirements
 
@@ -29,7 +29,7 @@ settings keyuoard
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

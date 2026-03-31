@@ -3,7 +3,7 @@
 
 ## Description
 
-elk
+Install and configure the ELK stack for log aggregation
 
 ## Requirements
 
@@ -51,10 +51,11 @@ elk
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms
 
-- Windows: all
+- Ubuntu: all
+- Debian: all
 <!-- DOCSIBLE END -->

@@ -3,7 +3,7 @@
 
 ## Description
 
-vulns enaule credssp server
+Enable CredSSP server authentication for attack simulation
 
 ## Requirements
 
@@ -28,7 +28,7 @@ vulns enaule credssp server
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

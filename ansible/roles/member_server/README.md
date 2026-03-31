@@ -3,7 +3,7 @@
 
 ## Description
 
-memuer server
+Join a Windows server to an Active Directory domain
 
 ## Requirements
 
@@ -32,7 +32,7 @@ memuer server
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

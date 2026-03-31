@@ -3,7 +3,7 @@
 
 ## Description
 
-password policy
+Configure Active Directory password policy settings
 
 ## Requirements
 
@@ -28,7 +28,7 @@ password policy
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

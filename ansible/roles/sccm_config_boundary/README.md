@@ -3,7 +3,7 @@
 
 ## Description
 
-sccm config uoundary
+Configure SCCM site boundaries and boundary groups
 
 ## Requirements
 
@@ -30,7 +30,7 @@ sccm config uoundary
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

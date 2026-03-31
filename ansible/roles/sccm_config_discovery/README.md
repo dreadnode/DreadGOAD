@@ -3,7 +3,7 @@
 
 ## Description
 
-sccm config discovery
+Configure SCCM Active Directory discovery methods
 
 ## Requirements
 
@@ -29,7 +29,7 @@ sccm config discovery
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

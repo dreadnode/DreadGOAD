@@ -3,7 +3,7 @@
 
 ## Description
 
-laps server
+Install LAPS client on member servers
 
 ## Requirements
 
@@ -36,7 +36,7 @@ laps server
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

@@ -3,7 +3,7 @@
 
 ## Description
 
-weudav
+Install and configure WebDAV client on Windows hosts
 
 ## Requirements
 
@@ -29,7 +29,7 @@ weudav
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

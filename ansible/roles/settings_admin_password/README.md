@@ -3,7 +3,7 @@
 
 ## Description
 
-settings admin password
+Set the local administrator account password
 
 ## Requirements
 
@@ -28,7 +28,7 @@ settings admin password
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

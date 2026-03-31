@@ -3,7 +3,7 @@
 
 ## Description
 
-sccm install adk
+Install Windows Assessment and Deployment Kit for SCCM
 
 ## Requirements
 
@@ -35,7 +35,7 @@ sccm install adk
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

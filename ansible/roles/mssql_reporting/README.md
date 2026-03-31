@@ -3,7 +3,7 @@
 
 ## Description
 
-mssql reporting
+Install SQL Server Reporting Services
 
 ## Requirements
 
@@ -32,7 +32,7 @@ mssql reporting
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

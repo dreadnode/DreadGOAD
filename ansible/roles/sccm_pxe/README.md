@@ -3,7 +3,7 @@
 
 ## Description
 
-sccm pxe
+Configure PXE boot with Windows 10 image for SCCM OSD
 
 ## Requirements
 
@@ -45,7 +45,7 @@ sccm pxe
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

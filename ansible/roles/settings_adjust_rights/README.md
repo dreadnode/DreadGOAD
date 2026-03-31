@@ -3,7 +3,7 @@
 
 ## Description
 
-settings adjust rights
+Configure local group membership for domain users
 
 ## Requirements
 
@@ -28,7 +28,7 @@ settings adjust rights
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

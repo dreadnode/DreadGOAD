@@ -3,7 +3,7 @@
 
 ## Description
 
-mssql
+Install and configure Microsoft SQL Server Express
 
 ## Requirements
 
@@ -83,7 +83,7 @@ mssql
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

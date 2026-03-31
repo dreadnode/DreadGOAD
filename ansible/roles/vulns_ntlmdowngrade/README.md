@@ -3,7 +3,7 @@
 
 ## Description
 
-vulns ntlmdowngrade
+Configure NTLM authentication downgrade for attack simulation
 
 ## Requirements
 
@@ -28,7 +28,7 @@ vulns ntlmdowngrade
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

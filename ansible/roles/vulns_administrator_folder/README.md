@@ -3,7 +3,7 @@
 
 ## Description
 
-vulns administrator folder
+Configure administrator profile folder for attack simulation
 
 ## Requirements
 
@@ -35,7 +35,7 @@ vulns administrator folder
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

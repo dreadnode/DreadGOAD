@@ -3,7 +3,7 @@
 
 ## Description
 
-laps permissions
+Configure LAPS permissions for OU-level password access
 
 ## Requirements
 
@@ -32,7 +32,7 @@ laps permissions
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

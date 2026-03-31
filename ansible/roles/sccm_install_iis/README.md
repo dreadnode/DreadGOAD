@@ -3,7 +3,7 @@
 
 ## Description
 
-sccm install iis
+Install IIS prerequisites for SCCM site server
 
 ## Requirements
 
@@ -35,7 +35,7 @@ sccm install iis
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

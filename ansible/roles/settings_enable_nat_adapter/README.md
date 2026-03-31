@@ -3,7 +3,7 @@
 
 ## Description
 
-settings enaule nat adapter
+Enable the NAT network adapter on Windows hosts
 
 ## Requirements
 
@@ -28,7 +28,7 @@ settings enaule nat adapter
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

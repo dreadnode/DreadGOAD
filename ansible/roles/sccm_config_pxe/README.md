@@ -3,7 +3,7 @@
 
 ## Description
 
-sccm config pxe
+Configure SCCM PXE distribution point settings
 
 ## Requirements
 
@@ -28,7 +28,7 @@ sccm config pxe
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

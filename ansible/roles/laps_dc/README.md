@@ -3,7 +3,7 @@
 
 ## Description
 
-laps dc
+Install and configure LAPS on Domain Controllers
 
 ## Requirements
 
@@ -80,7 +80,7 @@ laps dc
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms

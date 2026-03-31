@@ -3,7 +3,7 @@
 
 ## Description
 
-security account is sensitive
+Mark Active Directory accounts as sensitive to prevent delegation
 
 ## Requirements
 
@@ -28,7 +28,7 @@ security account is sensitive
 ## Author Information
 
 - **Author**: Dreadnode
-- **Company**:
+- **Company**: Dreadnode
 - **License**: GPL-3.0-or-later
 
 ## Platforms
