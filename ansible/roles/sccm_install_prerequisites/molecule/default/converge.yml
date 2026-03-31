@@ -1,0 +1,10 @@
+---
+# Syntax-check only: Windows roles require actual Windows hosts.
+# This converge playbook is used for `molecule syntax` validation.
+- name: Converge
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Include role under test
+      ansible.builtin.include_role:
+        name: dreadnode.goad.sccm_install_prerequisites
