@@ -25,8 +25,6 @@ concurrency:
 env:
   GO_VERSION: "1.26.1"
   PYTHON_VERSION: "3.14.3"
-  TASK_X_REMOTE_TASKFILES: "1"
-  TASK_VERSION: 3.49.1
 
 jobs:
   pre-commit:
@@ -81,11 +79,6 @@ jobs:
 
           # Add Go bin directory to PATH
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-
-      - name: Setup go-task
-        run: |
-          sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin v${{ env.TASK_VERSION }}
-          task --version
 
       - name: Run pre-commit
         run: |

@@ -11,24 +11,17 @@ The GOAD validation system checks that all 50+ vulnerabilities documented in [`G
 ### Run Full Validation
 
 ```bash
-cd /Users/l/dreadnode/DreadOps/apps/DreadGOAD
+# Validate staging environment (default)
+dreadgoad validate
 
-# Validate dev environment (default)
-task validate-vulns
-
-# Validate staging environment
-task validate-vulns ENV=staging
+# Validate a specific environment
+dreadgoad validate --env dev
 
 # Enable verbose output
-task validate-vulns VERBOSE=true
+dreadgoad validate --verbose
 
 # Initial validation without failing on errors
-task validate-vulns ENV=staging FAIL_ON_ERROR=false
-
-# Run script directly (useful for debugging)
-ENV=staging REGION=us-west-1 INVENTORY_FILE=./staging-inventory \
-  VERBOSE=true FAIL_ON_ERROR=false \
-  ./scripts/validate-goad-vulns.sh
+dreadgoad validate --env staging --no-fail
 ```
 
 ### Run Quick Validation
@@ -36,8 +29,8 @@ ENV=staging REGION=us-west-1 INVENTORY_FILE=./staging-inventory \
 For a faster sanity check of critical vulnerabilities:
 
 ```bash
-task validate-vulns-quick
-task validate-vulns-quick ENV=staging
+dreadgoad validate --quick
+dreadgoad validate --quick --env dev
 ```
 
 ## What Gets Validated
@@ -245,17 +238,10 @@ Use this checklist to track validation progress:
 
 ```bash
 # Check instance status
-task -y aws:list-running-instances
+dreadgoad lab status
 
 # Verify SSM agent is running
 aws ssm describe-instance-information --filters "Key=tag:Name,Values=*dreadgoad*"
-
-# Test instance discovery manually
-aws ec2 describe-instances \
-  --filters "Name=tag:Name,Values=*dreadgoad*" "Name=instance-state-name,Values=running" \
-  --region us-west-1 \
-  --query 'Reservations[*].Instances[*].[InstanceId,Tags[?Key==`Name`].Value|[0]]' \
-  --output table
 ```
 
 #### 2. "Permission denied" errors
@@ -279,21 +265,11 @@ aws sts get-caller-identity
 **Solution**:
 
 ```bash
-# Option 1: Run with FAIL_ON_ERROR=false to see progress
-task validate-vulns ENV=staging FAIL_ON_ERROR=false
+# Option 1: Run with --no-fail to see progress
+dreadgoad validate --env staging --no-fail --verbose
 
-# Option 2: Run script directly with all parameters
-ENV=staging REGION=us-west-1 INVENTORY_FILE=./staging-inventory \
-  VERBOSE=true FAIL_ON_ERROR=false \
-  ./scripts/validate-goad-vulns.sh
-
-# Option 3: Test AWS CLI connectivity first
+# Option 2: Test AWS CLI connectivity first
 time aws ec2 describe-instances --region us-west-1 --max-results 5
-
-# If AWS CLI is slow, check:
-# - Network connectivity
-# - AWS credentials are valid
-# - Region is correct
 ```
 
 **Note**: The script may take 1-2 minutes to complete due to multiple AWS API calls. This is normal.
@@ -316,10 +292,10 @@ time aws ec2 describe-instances --region us-west-1 --max-results 5
 
 ```bash
 # Re-run vulnerability provisioning
-task provision PLAYS=vulnerabilities.yml
+dreadgoad provision --plays vulnerabilities.yml
 
 # Or provision specific vulnerability roles
-task provision PLAYS=vulnerabilities.yml LIMIT=dc02
+dreadgoad provision --plays vulnerabilities.yml --limit dc02
 ```
 
 ## Advanced Usage
@@ -336,7 +312,7 @@ vim scripts/validate-goad-vulns.sh
 ### Custom Output Location
 
 ```bash
-task validate-vulns OUTPUT=/path/to/custom-report.json
+dreadgoad validate --output /path/to/custom-report.json
 ```
 
 ### Integrate with CI/CD
@@ -348,7 +324,7 @@ Use the validation script in your CI/CD pipeline:
 - name: Validate GOAD Deployment
   run: |
     cd apps/DreadGOAD
-    task validate-vulns ENV=staging
+    dreadgoad validate --env staging
   continue-on-error: false
 ```
 
@@ -356,7 +332,7 @@ Use the validation script in your CI/CD pipeline:
 
 ```bash
 # Run validation and generate HTML report
-task validate-vulns OUTPUT=/tmp/report.json
+dreadgoad validate --output /tmp/report.json
 python3 scripts/generate-html-report.py /tmp/report.json > /tmp/report.html
 ```
 
@@ -406,7 +382,7 @@ After validation:
 ## Related Documentation
 
 - [`GOAD-vulnerabilities-comprehensive.md`](./GOAD-vulnerabilities-comprehensive.md) - Complete vulnerability catalog
-- [`taskfile.md`](./taskfile.md) - Task usage documentation
+- [`cli.md`](./cli.md) - CLI usage and configuration reference
 - [GOAD Official Docs](https://github.com/Orange-Cyberdefense/GOAD) - Upstream documentation
 - [Mayfly's Walkthrough Series](https://mayfly277.github.io/categories/goad/) - Attack technique guides
 
