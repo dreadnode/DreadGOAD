@@ -721,7 +721,7 @@ func (g *Generator) isNameComponent(old string) bool {
 	}
 	cleaned := strings.ReplaceAll(strings.ReplaceAll(old, "-", ""), "'", "")
 	for _, c := range cleaned {
-		if !('a' <= c && c <= 'z') && !('A' <= c && c <= 'Z') {
+		if ('a' > c || c > 'z') && ('A' > c || c > 'Z') {
 			return false
 		}
 	}
