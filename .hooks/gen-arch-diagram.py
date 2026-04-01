@@ -131,8 +131,8 @@ def discover_collection(collection_path):
 
     playbooks_dir = base / "playbooks"
     if playbooks_dir.exists():
-        playbooks = [d.name for d in playbooks_dir.iterdir()
-                     if d.is_dir() and not d.name.startswith(".")]
+        playbooks = [f.stem for f in playbooks_dir.glob("*.yml")
+                     if not f.name.startswith(".") and not f.name.endswith(".retry")]
 
     return sorted(roles), sorted(plugins), sorted(playbooks)
 
@@ -202,8 +202,13 @@ def generate_mermaid(roles, plugins, playbooks):
         lines.append("")
         lines.append(
             f'    Collection --> Playbooks'
-            f'["Playbooks<br/><i>{len(playbooks)} playbooks</i>"]'
+            f'["Playbooks<br/><i>{len(playbooks)} playbook{"s" if len(playbooks) != 1 else ""}</i>"]'
         )
+        chunks = []
+        for i in range(0, len(playbooks), 3):
+            chunks.append(" &bull; ".join(playbooks[i:i + 3]))
+        pb_summary = "<br/>".join(chunks)
+        lines.append(f'    Playbooks -.- Playbooks_detail["{pb_summary}"]')
 
     # Styles
     lines.append("")
@@ -213,6 +218,7 @@ def generate_mermaid(roles, plugins, playbooks):
         lines.append("    style Plugins_detail fill:#ebedef,stroke:#34495e,color:#333")
     if playbooks:
         lines.append("    style Playbooks fill:#7f8c8d,stroke:#6c7a7d,color:#fff")
+        lines.append("    style Playbooks_detail fill:#2a2a2a,stroke:#6c7a7d,color:#ccc")
     for cat_name, cat_cfg in CATEGORIES:
         cat_roles = categorized.get(cat_name, [])
         if not cat_roles:
