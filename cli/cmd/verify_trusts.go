@@ -6,8 +6,6 @@ import (
 	"strings"
 	"time"
 
-	daws "github.com/dreadnode/dreadgoad/internal/aws"
-	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
@@ -30,32 +28,25 @@ func init() {
 }
 
 func runVerifyTrusts(cmd *cobra.Command, args []string) error {
-	cfg := config.Get()
 	ctx := context.Background()
 
-	region := cfg.Region
-	if region == "" {
-		region = "us-west-1"
-	}
-
-	client, err := daws.NewClient(ctx, region)
-	if err != nil {
-		return fmt.Errorf("create AWS client: %w", err)
-	}
-
-	title := fmt.Sprintf(" GOAD Trust Verification (%s) ", cfg.Env)
+	title := fmt.Sprintf(" GOAD Trust Verification ")
 	pad := 90 - len(title)
 	left := pad / 2
 	right := pad - left
-	fmt.Printf("%s%s%s\n\n", strings.Repeat("=", left), title, strings.Repeat("=", right))
+	fmt.Printf("%s%s%s\n", strings.Repeat("=", left), title, strings.Repeat("=", right))
 
-	// Find DC01
-	dc01, err := client.FindInstanceByHostname(ctx, cfg.Env, "DC01")
+	infra, err := requireInfra(ctx)
 	if err != nil {
-		return fmt.Errorf("find DC01: %w", err)
+		return err
 	}
 
-	fmt.Printf("Using DC01 (%s) as trust verification source...\n\n", dc01.InstanceID)
+	dc01ID, ok := infra.HostMap["DC01"]
+	if !ok {
+		return fmt.Errorf("DC01 not found in discovered instances")
+	}
+
+	fmt.Printf("Using DC01 (%s) as trust verification source...\n\n", dc01ID)
 
 	trustScript := `Write-Host "=== Domain Trusts from sevenkingdoms.local ==="
 Get-ADTrust -Filter * | Format-Table Name, Direction, TrustType, ForestTransitive, TrustAttributes -AutoSize
@@ -78,7 +69,7 @@ foreach ($t in $trusts) {
     Write-Host "$($t.Name): $(if (Test-ComputerSecureChannel -Server $t.Name -ErrorAction SilentlyContinue) { 'HEALTHY' } else { 'Check manually' })"
 }`
 
-	result, err := client.RunPowerShellCommand(ctx, dc01.InstanceID, trustScript, 2*time.Minute)
+	result, err := infra.Client.RunPowerShellCommand(ctx, dc01ID, trustScript, 2*time.Minute)
 	if err != nil {
 		return fmt.Errorf("run trust verification: %w", err)
 	}

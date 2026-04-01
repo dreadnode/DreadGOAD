@@ -6,8 +6,6 @@ import (
 	"strings"
 	"time"
 
-	daws "github.com/dreadnode/dreadgoad/internal/aws"
-	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
@@ -40,43 +38,17 @@ type healthCheck struct {
 }
 
 func runHealthCheck(cmd *cobra.Command, args []string) error {
-	cfg := config.Get()
 	ctx := context.Background()
 
-	region := cfg.Region
-	if region == "" {
-		region = "us-west-1"
-	}
-
-	client, err := daws.NewClient(ctx, region)
-	if err != nil {
-		return fmt.Errorf("create AWS client: %w", err)
-	}
-
-	title := fmt.Sprintf(" GOAD Health Check (%s) ", cfg.Env)
+	title := fmt.Sprintf(" GOAD Health Check ")
 	pad := 90 - len(title)
 	left := pad / 2
 	right := pad - left
-	fmt.Printf("%s%s%s\n\n", strings.Repeat("=", left), title, strings.Repeat("=", right))
+	fmt.Printf("%s%s%s\n", strings.Repeat("=", left), title, strings.Repeat("=", right))
 
-	instances, err := client.DiscoverInstances(ctx, cfg.Env)
+	infra, err := requireInfra(ctx)
 	if err != nil {
-		return fmt.Errorf("discover instances: %w", err)
-	}
-
-	if len(instances) == 0 {
-		return fmt.Errorf("no running GOAD instances found for env=%s", cfg.Env)
-	}
-
-	// Map hostnames to instance IDs
-	hostMap := make(map[string]string)
-	for _, inst := range instances {
-		name := strings.ToUpper(inst.Name)
-		for _, h := range []string{"DC01", "DC02", "DC03", "SRV02", "SRV03"} {
-			if strings.Contains(name, h) {
-				hostMap[h] = inst.InstanceID
-			}
-		}
+		return err
 	}
 
 	fmt.Printf("%-40s %-10s %s\n", "CHECK", "STATUS", "DETAIL")
@@ -88,14 +60,14 @@ func runHealthCheck(cmd *cobra.Command, args []string) error {
 	failed := 0
 
 	for _, check := range checks {
-		instanceID, ok := hostMap[check.host]
+		instanceID, ok := infra.HostMap[check.host]
 		if !ok {
 			color.Red("%-40s %-10s %s", check.name, "SKIP", "instance not found")
 			failed++
 			continue
 		}
 
-		result, err := client.RunPowerShellCommand(ctx, instanceID, check.command, 90*time.Second)
+		result, err := infra.Client.RunPowerShellCommand(ctx, instanceID, check.command, 90*time.Second)
 		if err != nil {
 			color.Red("%-40s %-10s %s", check.name, "FAIL", err.Error())
 			failed++
