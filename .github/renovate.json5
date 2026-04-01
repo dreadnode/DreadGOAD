@@ -71,6 +71,13 @@
       ],
     },
     {
+      description: 'Disable updates for ansible-core (pinned to <2.18 due to SSM pipelining bug)',
+      matchPackageNames: [
+        'ansible-core',
+      ],
+      enabled: false,
+    },
+    {
       description: 'Auto-merge pip dependencies',
       matchManagers: [
         'pip_requirements',
