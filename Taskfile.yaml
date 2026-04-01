@@ -1,0 +1,9 @@
+---
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+# Minimal Taskfile - the Go CLI (dreadgoad) handles most operations.
+# This remote include provides pre-commit tasks for CI.
+version: '3'
+
+includes:
+  pre-commit:
+    taskfile: https://raw.githubusercontent.com/CowDogMoo/taskfile-templates/main/pre-commit/Taskfile.yaml
