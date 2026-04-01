@@ -207,9 +207,9 @@ func TestExtractFatalContext(t *testing.T) {
 			want:   "fatal: [DC01]: FAILED! => {\"msg\": \"broken\"}\nrc: 1",
 		},
 		{
-			name: "fatal line truncated to 120 chars",
+			name:   "fatal line truncated to 120 chars",
 			output: "fatal: " + string(make([]byte, 200)),
-			want: "fatal: " + string(make([]byte, 113)),
+			want:   "fatal: " + string(make([]byte, 113)),
 		},
 		{
 			name:   "FAILED in last line as fallback",

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+REPO_ROOT=$(git rev-parse --show-toplevel 2> /dev/null)
 cd "${REPO_ROOT}/cli"
 
 pkgs=$(go list ./...)

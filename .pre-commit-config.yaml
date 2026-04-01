@@ -31,23 +31,6 @@ repos:
         entry: codespell -q 3 -f -S ".git,.github,README.md"
         exclude: '(\.min\.css\.map|\.css\.map|\.min\.map|\.min\.js|sysmonconfig-export\.xml|jquery\.validate\.(min\.)?js|jquery-3\.4\.1(\.slim)?\.js|modernizr-[\d\.]+\.js)$'
 
-  - repo: https://github.com/dnephin/pre-commit-golang
-    rev: v0.5.1
-    hooks:
-      - id: go-fmt
-        args: [cli/]
-      - id: go-imports
-        args: [cli/]
-      - id: go-cyclo
-        args: [-over=15, cli/]
-      - id: golangci-lint
-        args: [--timeout=5m, --enable=unused, cli/...]
-      - id: go-critic
-        args: [cli/...]
-      - id: go-build
-        args: [cli/...]
-      - id: go-mod-tidy
-
   - repo: https://github.com/jumanjihouse/pre-commit-hooks
     rev: 3.0.0
     hooks:
@@ -106,6 +89,55 @@ repos:
         always_run: false
         files: ^ansible/(roles/|plugins/|playbooks/).*
         additional_dependencies: []
+
+      - id: go-fmt
+        name: Run gofmt
+        entry: bash -c 'cd cli && gofmt -l -w .'
+        language: system
+        files: '\.go$'
+        pass_filenames: false
+
+      - id: go-imports
+        name: Run goimports
+        entry: bash -c 'cd cli && goimports -l -w .'
+        language: system
+        files: '\.go$'
+        pass_filenames: false
+
+      - id: go-cyclo
+        name: Run gocyclo
+        entry: bash -c 'cd cli && gocyclo -over 15 .'
+        language: system
+        files: '\.go$'
+        pass_filenames: false
+
+      - id: golangci-lint
+        name: Run golangci-lint
+        entry: bash -c 'cd cli && golangci-lint run --timeout=5m --enable=unused ./...'
+        language: system
+        files: '\.go$'
+        pass_filenames: false
+
+      - id: go-critic
+        name: Run go-critic
+        entry: bash -c 'cd cli && gocritic check ./...'
+        language: system
+        files: '\.go$'
+        pass_filenames: false
+
+      - id: go-build
+        name: Run go build
+        entry: bash -c 'cd cli && go build ./...'
+        language: system
+        files: '\.go$'
+        pass_filenames: false
+
+      - id: go-mod-tidy
+        name: Run go mod tidy
+        entry: bash -c 'cd cli && go mod tidy'
+        language: system
+        files: '(go\.mod|go\.sum)$'
+        pass_filenames: false
 
       - id: go-no-replacement
         name: Avoid committing a go module replacement

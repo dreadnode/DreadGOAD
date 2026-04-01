@@ -9,14 +9,14 @@ import (
 type ErrorType string
 
 const (
-	ErrFactGathering      ErrorType = "fact_gathering"
-	ErrNetworkAdapter     ErrorType = "network_adapter"
-	ErrSSMTransfer        ErrorType = "ssm_transfer_error"
-	ErrSSMReconnection    ErrorType = "ssm_reconnection_needed"
-	ErrPowerShell         ErrorType = "powershell_interactive"
-	ErrSSMUserAccount     ErrorType = "ssm_user_account_issue"
-	ErrMSIInstaller       ErrorType = "msi_installer_error"
-	ErrUnclassified       ErrorType = "unclassified"
+	ErrFactGathering   ErrorType = "fact_gathering"
+	ErrNetworkAdapter  ErrorType = "network_adapter"
+	ErrSSMTransfer     ErrorType = "ssm_transfer_error"
+	ErrSSMReconnection ErrorType = "ssm_reconnection_needed"
+	ErrPowerShell      ErrorType = "powershell_interactive"
+	ErrSSMUserAccount  ErrorType = "ssm_user_account_issue"
+	ErrMSIInstaller    ErrorType = "msi_installer_error"
+	ErrUnclassified    ErrorType = "unclassified"
 )
 
 var fatalMsgRe = regexp.MustCompile(`(?m)msg:|rc:|stderr:`)

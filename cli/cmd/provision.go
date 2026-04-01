@@ -108,11 +108,11 @@ func runProvision(cmd *cobra.Command, args []string) error {
 	// Run each playbook
 	for _, playbook := range playbooks {
 		opts := ansible.RetryOptions{
-			Playbook:   playbook,
-			Env:        cfg.Env,
-			Limit:      limit,
-			Debug:      cfg.Debug,
-			LogFile:    logFile,
+			Playbook: playbook,
+			Env:      cfg.Env,
+			Limit:    limit,
+			Debug:    cfg.Debug,
+			LogFile:  logFile,
 		}
 		if maxRetries > 0 {
 			opts.MaxRetries = maxRetries

@@ -10,15 +10,15 @@ import (
 
 // Config holds all CLI configuration.
 type Config struct {
-	Env          string   `mapstructure:"env"`
-	Region       string   `mapstructure:"region"`
-	Debug        bool     `mapstructure:"debug"`
-	MaxRetries   int      `mapstructure:"max_retries"`
-	RetryDelay   int      `mapstructure:"retry_delay"`
-	IdleTimeout  int      `mapstructure:"idle_timeout"`
-	LogDir       string   `mapstructure:"log_dir"`
-	Playbooks    []string `mapstructure:"playbooks"`
-	ProjectRoot  string   `mapstructure:"project_root"`
+	Env         string   `mapstructure:"env"`
+	Region      string   `mapstructure:"region"`
+	Debug       bool     `mapstructure:"debug"`
+	MaxRetries  int      `mapstructure:"max_retries"`
+	RetryDelay  int      `mapstructure:"retry_delay"`
+	IdleTimeout int      `mapstructure:"idle_timeout"`
+	LogDir      string   `mapstructure:"log_dir"`
+	Playbooks   []string `mapstructure:"playbooks"`
+	ProjectRoot string   `mapstructure:"project_root"`
 }
 
 var (

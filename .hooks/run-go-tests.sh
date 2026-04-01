@@ -5,13 +5,13 @@ set -euo pipefail
 TESTS_TO_RUN=${1:-}
 RETURN_CODE=0
 GITHUB_ACTIONS=${GITHUB_ACTIONS:-}
-PROJECT_NAME=$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" || echo "dreadgoad")
+PROJECT_NAME=$(basename "$(git rev-parse --show-toplevel 2> /dev/null)" || echo "dreadgoad")
 
 TIMESTAMP=$(date +"%Y%m%d%H%M%S")
 LOGFILE="/tmp/${PROJECT_NAME}-unit-test-results-$TIMESTAMP.log"
 
 # Go code lives in the cli/ subdirectory
-REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+REPO_ROOT=$(git rev-parse --show-toplevel 2> /dev/null)
 GO_DIR="${REPO_ROOT}/cli"
 
 if [[ -z "${TESTS_TO_RUN}" ]]; then
@@ -25,7 +25,7 @@ fi
 
 run_tests() {
     local coverage_file=${1:-}
-    pushd "${GO_DIR}" >/dev/null || exit
+    pushd "${GO_DIR}" > /dev/null || exit
     echo "Logging output to ${LOGFILE}" | tee -a "$LOGFILE"
     echo "Running tests..." | tee -a "$LOGFILE"
 
@@ -57,7 +57,7 @@ run_tests() {
 
         if [[ ${#modified_files[@]} -eq 0 ]]; then
             echo "No modified Go files found to test" | tee -a "$LOGFILE"
-            popd >/dev/null
+            popd > /dev/null
             return 0
         fi
 
@@ -69,7 +69,7 @@ run_tests() {
         done
 
         # Remove duplicate package directories
-        IFS=$'\n' read -r -a pkg_dirs <<<"$(printf '%s\n' "${pkg_dirs[@]}" | sort -u)"
+        IFS=$'\n' read -r -a pkg_dirs <<< "$(printf '%s\n' "${pkg_dirs[@]}" | sort -u)"
         unset IFS
 
         for dir in "${pkg_dirs[@]}"; do
@@ -90,7 +90,7 @@ run_tests() {
     fi
 
     RETURN_CODE=$?
-    popd >/dev/null
+    popd > /dev/null
 }
 
 if [[ "${TESTS_TO_RUN}" == 'coverage' ]]; then

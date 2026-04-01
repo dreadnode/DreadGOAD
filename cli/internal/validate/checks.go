@@ -62,11 +62,12 @@ func (v *Validator) checkNetworkMisconfigs(ctx context.Context) {
 		lower := strings.ToLower(output)
 		hostLabel := map[string]string{"SRV02": "CASTELBLACK", "SRV03": "BRAAVOS"}[host]
 
-		if strings.Contains(lower, "false") && strings.Count(lower, "false") >= 2 {
+		switch {
+		case strings.Contains(lower, "false") && strings.Count(lower, "false") >= 2:
 			v.addResult("PASS", "Network", fmt.Sprintf("%s has SMB signing disabled", hostLabel), "")
-		} else if strings.Contains(lower, "false") {
+		case strings.Contains(lower, "false"):
 			v.addResult("WARN", "Network", fmt.Sprintf("%s has SMB signing enabled but not required", hostLabel), "")
-		} else {
+		default:
 			v.addResult("FAIL", "Network", fmt.Sprintf("%s has SMB signing enforced", hostLabel), "")
 		}
 	}
@@ -190,11 +191,12 @@ func (v *Validator) checkACLPermissions(ctx context.Context) {
 	fmt.Println("\n== 9. ACL Permissions ==")
 
 	output := v.runPS(ctx, "DC01", `$user = Get-ADUser jaime.lannister -Properties nTSecurityDescriptor; $acl = $user.nTSecurityDescriptor.Access | Where-Object { $_.IdentityReference -like '*tywin*' }; if ($acl) { Write-Output 'ACL_FOUND' } else { Write-Output 'ACL_NOT_FOUND' }`)
-	if strings.Contains(output, "ACL_FOUND") {
+	switch {
+	case strings.Contains(output, "ACL_FOUND"):
 		v.addResult("PASS", "ACL", "tywin.lannister has ACL rights on jaime.lannister", "")
-	} else if strings.Contains(output, "ACL_NOT_FOUND") {
+	case strings.Contains(output, "ACL_NOT_FOUND"):
 		v.addResult("FAIL", "ACL", "tywin.lannister does NOT have ACL rights on jaime.lannister", "")
-	} else {
+	default:
 		v.addResult("WARN", "ACL", "Could not verify ACL: tywin -> jaime", "")
 	}
 }

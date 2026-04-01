@@ -179,8 +179,8 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 		baseOpts.Forks = 1
 		baseOpts.ExtraVars = map[string]string{
 			"ansible_connection_timeout": "180",
-			"ansible_timeout":           "180",
-			"ansible_aws_ssm_timeout":   "300",
+			"ansible_timeout":            "180",
+			"ansible_aws_ssm_timeout":    "300",
 		}
 		baseOpts.ExtraEnv = map[string]string{"ANSIBLE_TIMEOUT": "180"}
 		return RunPlaybook(ctx, baseOpts)
@@ -198,7 +198,7 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 		baseOpts.Forks = 1
 		baseOpts.ExtraEnv = map[string]string{
 			"ANSIBLE_SSH_RETRIES": "5",
-			"ANSIBLE_TIMEOUT":    "120",
+			"ANSIBLE_TIMEOUT":     "120",
 		}
 		return RunPlaybook(ctx, baseOpts)
 	}
