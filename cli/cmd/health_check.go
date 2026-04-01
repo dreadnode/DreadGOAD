@@ -133,137 +133,69 @@ func buildChecks() []healthCheck {
 			name:    "DC01 AD Domain Controller",
 			host:    "DC01",
 			command: `(Get-ADDomainController -Filter *).Name -join ','`,
-			eval: func(stdout string) (bool, string) {
-				names := strings.TrimSpace(stdout)
-				if names == "" {
-					return false, "no domain controllers returned"
-				}
-				return true, names
-			},
+			eval:    nonEmptyEval("no domain controllers returned"),
 		},
 		// DC01 - Replication
 		{
 			name:    "DC01 AD Replication",
 			host:    "DC01",
 			command: `$r = repadmin /replsummary 2>&1 | Out-String; if ($r -match 'fails/total.*[1-9]\d*/') { Write-Output "REPL_ERRORS:$r" } else { Write-Output "REPL_OK" }`,
-			eval: func(stdout string) (bool, string) {
-				if strings.Contains(stdout, "REPL_OK") {
-					return true, "no replication failures"
-				}
-				return false, "replication errors detected"
-			},
+			eval:    replEval,
 		},
 		// DC01 - Trusts
 		{
 			name:    "DC01 Domain Trusts",
 			host:    "DC01",
 			command: `Get-ADTrust -Filter * | ForEach-Object { "$($_.Name)|$($_.Direction)|$($_.TrustType)" }`,
-			eval: func(stdout string) (bool, string) {
-				lower := strings.ToLower(stdout)
-				hasNorth := strings.Contains(lower, "north.sevenkingdoms.local")
-				hasEssos := strings.Contains(lower, "essos.local")
-				if hasNorth && hasEssos {
-					return true, "north.sevenkingdoms.local + essos.local"
-				}
-				var missing []string
-				if !hasNorth {
-					missing = append(missing, "north.sevenkingdoms.local")
-				}
-				if !hasEssos {
-					missing = append(missing, "essos.local")
-				}
-				return false, "missing: " + strings.Join(missing, ", ")
-			},
+			eval:    dc01TrustsEval,
 		},
 		// DC02 - AD responding
 		{
 			name:    "DC02 AD Domain Controller",
 			host:    "DC02",
 			command: `(Get-ADDomainController -Filter *).Name -join ','`,
-			eval: func(stdout string) (bool, string) {
-				names := strings.TrimSpace(stdout)
-				if names == "" {
-					return false, "no domain controllers returned"
-				}
-				return true, names
-			},
+			eval:    nonEmptyEval("no domain controllers returned"),
 		},
 		// DC02 - DNS cross-domain
 		{
 			name:    "DC02 DNS (sevenkingdoms.local)",
 			host:    "DC02",
 			command: `(Resolve-DnsName kingslanding.sevenkingdoms.local -ErrorAction Stop).IPAddress`,
-			eval: func(stdout string) (bool, string) {
-				ip := strings.TrimSpace(stdout)
-				if ip == "" {
-					return false, "DNS resolution failed"
-				}
-				return true, ip
-			},
+			eval:    nonEmptyEval("DNS resolution failed"),
 		},
 		{
 			name:    "DC02 DNS (essos.local)",
 			host:    "DC02",
 			command: `(Resolve-DnsName meereen.essos.local -ErrorAction Stop).IPAddress`,
-			eval: func(stdout string) (bool, string) {
-				ip := strings.TrimSpace(stdout)
-				if ip == "" {
-					return false, "DNS resolution failed"
-				}
-				return true, ip
-			},
+			eval:    nonEmptyEval("DNS resolution failed"),
 		},
 		// DC03 - AD responding
 		{
 			name:    "DC03 AD Domain Controller",
 			host:    "DC03",
 			command: `(Get-ADDomainController -Filter *).Name -join ','`,
-			eval: func(stdout string) (bool, string) {
-				names := strings.TrimSpace(stdout)
-				if names == "" {
-					return false, "no domain controllers returned"
-				}
-				return true, names
-			},
+			eval:    nonEmptyEval("no domain controllers returned"),
 		},
 		// DC03 - Forest trust
 		{
 			name:    "DC03 Forest Trust",
 			host:    "DC03",
 			command: `Get-ADTrust -Filter * | ForEach-Object { "$($_.Name)|$($_.ForestTransitive)" }`,
-			eval: func(stdout string) (bool, string) {
-				lower := strings.ToLower(stdout)
-				if strings.Contains(lower, "sevenkingdoms.local") && strings.Contains(lower, "true") {
-					return true, "sevenkingdoms.local (forest transitive)"
-				}
-				return false, "forest trust to sevenkingdoms.local not found"
-			},
+			eval:    forestTrustEval,
 		},
 		// SRV02 - Domain membership
 		{
 			name:    "SRV02 Domain Membership",
 			host:    "SRV02",
 			command: `(Get-WmiObject Win32_ComputerSystem).Domain`,
-			eval: func(stdout string) (bool, string) {
-				domain := strings.TrimSpace(stdout)
-				if domain == "" {
-					return false, "not domain-joined"
-				}
-				return true, domain
-			},
+			eval:    nonEmptyEval("not domain-joined"),
 		},
 		// SRV02 - DC reachable
 		{
 			name:    "SRV02 DC Locator",
 			host:    "SRV02",
 			command: `$r = nltest /dsgetdc: 2>&1 | Out-String; if ($r -match 'DC: \\\\(\S+)') { Write-Output $Matches[1] } else { Write-Output "FAIL" }`,
-			eval: func(stdout string) (bool, string) {
-				val := strings.TrimSpace(stdout)
-				if val == "FAIL" || val == "" {
-					return false, "cannot locate domain controller"
-				}
-				return true, val
-			},
+			eval:    dcLocatorEval,
 		},
 		// SRV02 - IIS
 		{
@@ -284,26 +216,14 @@ func buildChecks() []healthCheck {
 			name:    "SRV03 Domain Membership",
 			host:    "SRV03",
 			command: `(Get-WmiObject Win32_ComputerSystem).Domain`,
-			eval: func(stdout string) (bool, string) {
-				domain := strings.TrimSpace(stdout)
-				if domain == "" {
-					return false, "not domain-joined"
-				}
-				return true, domain
-			},
+			eval:    nonEmptyEval("not domain-joined"),
 		},
 		// SRV03 - DC reachable
 		{
 			name:    "SRV03 DC Locator",
 			host:    "SRV03",
 			command: `$r = nltest /dsgetdc: 2>&1 | Out-String; if ($r -match 'DC: \\\\(\S+)') { Write-Output $Matches[1] } else { Write-Output "FAIL" }`,
-			eval: func(stdout string) (bool, string) {
-				val := strings.TrimSpace(stdout)
-				if val == "FAIL" || val == "" {
-					return false, "cannot locate domain controller"
-				}
-				return true, val
-			},
+			eval:    dcLocatorEval,
 		},
 		// SRV03 - IIS
 		{
@@ -331,4 +251,55 @@ func serviceRunningEval(stdout string) (bool, string) {
 		return false, "service not found"
 	}
 	return false, val
+}
+
+// nonEmptyEval returns an eval func that passes when trimmed stdout is non-empty.
+func nonEmptyEval(failMsg string) func(string) (bool, string) {
+	return func(stdout string) (bool, string) {
+		val := strings.TrimSpace(stdout)
+		if val == "" {
+			return false, failMsg
+		}
+		return true, val
+	}
+}
+
+func replEval(stdout string) (bool, string) {
+	if strings.Contains(stdout, "REPL_OK") {
+		return true, "no replication failures"
+	}
+	return false, "replication errors detected"
+}
+
+func dc01TrustsEval(stdout string) (bool, string) {
+	lower := strings.ToLower(stdout)
+	hasNorth := strings.Contains(lower, "north.sevenkingdoms.local")
+	hasEssos := strings.Contains(lower, "essos.local")
+	if hasNorth && hasEssos {
+		return true, "north.sevenkingdoms.local + essos.local"
+	}
+	var missing []string
+	if !hasNorth {
+		missing = append(missing, "north.sevenkingdoms.local")
+	}
+	if !hasEssos {
+		missing = append(missing, "essos.local")
+	}
+	return false, "missing: " + strings.Join(missing, ", ")
+}
+
+func forestTrustEval(stdout string) (bool, string) {
+	lower := strings.ToLower(stdout)
+	if strings.Contains(lower, "sevenkingdoms.local") && strings.Contains(lower, "true") {
+		return true, "sevenkingdoms.local (forest transitive)"
+	}
+	return false, "forest trust to sevenkingdoms.local not found"
+}
+
+func dcLocatorEval(stdout string) (bool, string) {
+	val := strings.TrimSpace(stdout)
+	if val == "FAIL" || val == "" {
+		return false, "cannot locate domain controller"
+	}
+	return true, val
 }
