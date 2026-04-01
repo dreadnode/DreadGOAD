@@ -271,6 +271,13 @@ def render_svg(mmd_path, svg_path):
     finally:
         config_path.unlink(missing_ok=True)
         puppeteer_config_path.unlink(missing_ok=True)
+
+    # Ensure trailing newline so end-of-file-fixer has nothing to fix
+    svg = Path(svg_path)
+    content = svg.read_bytes()
+    if content and not content.endswith(b"\n"):
+        svg.write_bytes(content + b"\n")
+
     return True
 
 
