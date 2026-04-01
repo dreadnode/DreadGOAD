@@ -12,105 +12,60 @@ by Orange Cyberdefense.
 
 ```mermaid
 graph TD
-    Collection[Ansible Collection]
-    Collection --> Roles[⚙️ Roles]
-    Roles --> R0[vulns_credentials]
-    Roles --> R1[sccm_install_wsus]
-    Roles --> R2[sccm_pxe]
-    Roles --> R3[sccm_install_iis]
-    Roles --> R4[vulns_ntlmdowngrade]
-    Roles --> R5[trusts]
-    Roles --> R6[mssql_reporting]
-    Roles --> R7[domain_controller_slave]
-    Roles --> R8[disable_user]
-    Roles --> R9[settings_copy_files]
-    Roles --> R10[vulns_mssql]
-    Roles --> R11[laps_verify]
-    Roles --> R12[ad]
-    Roles --> R13[vulns_enable_credssp_server]
-    Roles --> R14[sccm_install_mecm]
-    Roles --> R15[dc_audit_sacl]
-    Roles --> R16[security_ensure_kb_not_installed]
-    Roles --> R17[vulns_openshares]
-    Roles --> R18[sync_domains]
-    Roles --> R19[sccm_config_client_push]
-    Roles --> R20[vulns_schedule]
-    Roles --> R21[sccm_config_pxe]
-    Roles --> R22[vulns_shares]
-    Roles --> R23[laps_dc]
-    Roles --> R24[settings_updates]
-    Roles --> R25[groups_domains]
-    Roles --> R26[vulns_anonymous_enum]
-    Roles --> R27[sccm_config_client_install]
-    Roles --> R28[mssql_audit]
-    Roles --> R29[vulns_enable_llmnr]
-    Roles --> R30[sccm_config_accounts]
-    Roles --> R31[settings_admin_password]
-    Roles --> R32[vulns_acls]
-    Roles --> R33[security_enable_run_as_ppl]
-    Roles --> R34[gmsa_hosts]
-    Roles --> R35[onlyusers]
-    Roles --> R36[child_domain]
-    Roles --> R37[sccm_install_adk]
-    Roles --> R38[mssql_link]
-    Roles --> R39[vulns_files]
-    Roles --> R40[parent_child_dns]
-    Roles --> R41[adcs_templates]
-    Roles --> R42[laps_server]
-    Roles --> R43[settings_enable_nat_adapter]
-    Roles --> R44[elk]
-    Roles --> R45[sccm_install_prerequisites]
-    Roles --> R46[vulns_permissions]
-    Roles --> R47[sccm_config_discovery]
-    Roles --> R48[settings_windows_defender]
-    Roles --> R49[member_server]
-    Roles --> R50[dc_dns_conditional_forwarder]
-    Roles --> R51[common]
-    Roles --> R52[sccm_config_boundary]
-    Roles --> R53[ps]
-    Roles --> R54[adcs]
-    Roles --> R55[enable_user]
-    Roles --> R56[laps_permissions]
-    Roles --> R57[dns_conditional_forwarder]
-    Roles --> R58[sccm_config_users]
-    Roles --> R59[vulns_smbv1]
-    Roles --> R60[ldap_diagnostic_logging]
-    Roles --> R61[vulns_enable_credssp_client]
-    Roles --> R62[dhcp]
-    Roles --> R63[localusers]
-    Roles --> R64[sccm_config_naa]
-    Roles --> R65[password_policy]
-    Roles --> R66[security_powershell_restrict]
-    Roles --> R67[settings_keyboard]
-    Roles --> R68[vulns_autologon]
-    Roles --> R69[settings_user_rights]
-    Roles --> R70[commonwkstn]
-    Roles --> R71[vulns_enable_nbt_ns]
-    Roles --> R72[mssql_ssms]
-    Roles --> R73[webdav]
-    Roles --> R74[settings_gpo_remove]
-    Roles --> R75[settings_adjust_rights]
-    Roles --> R76[vulns_disable_firewall]
-    Roles --> R77[vulns_adcs_templates]
-    Roles --> R78[gmsa]
-    Roles --> R79[settings_gpmc]
-    Roles --> R80[settings_disable_nat_adapter]
-    Roles --> R81[security_account_is_sensitive]
-    Roles --> R82[domain_controller]
-    Roles --> R83[fix_dns]
-    Roles --> R84[vulns_administrator_folder]
-    Roles --> R85[iis]
-    Roles --> R86[move_to_ou]
-    Roles --> R87[vulns_directory]
-    Roles --> R88[mssql]
-    Roles --> R89[acl]
-    Roles --> R90[settings_no_updates]
-    Roles --> R91[logs_windows]
-    Roles --> R92[security_audit_policy]
-    Roles --> R93[security_asr]
-    Roles --> R94[settings_hostname]
-    Collection --> Playbooks[📚 Playbooks]
-    Playbooks --> PB0[base]
+    Collection[dreadnode.goad]
+
+    Collection --> AD[Active Directory]
+    Collection --> Server[Server Roles]
+    Collection --> LAPS[LAPS]
+    Collection --> Vulns[Vulnerabilities]
+    Collection --> SCCM[SCCM]
+    Collection --> Security[Security]
+    Collection --> Settings[Settings]
+    Collection --> Playbooks[Playbooks]
+
+    AD --> ad & acl & adcs & adcs_templates
+    AD --> domain_controller & domain_controller_slave
+    AD --> child_domain & member_server & trusts
+    AD --> gmsa & gmsa_hosts & password_policy
+    AD --> move_to_ou & groups_domains & onlyusers
+    AD --> dns_conditional_forwarder & dc_dns_conditional_forwarder
+    AD --> parent_child_dns & sync_domains
+    AD --> disable_user & enable_user
+
+    Server --> common & commonwkstn & localusers
+    Server --> mssql & mssql_link & mssql_ssms & mssql_reporting & mssql_audit
+    Server --> iis & elk & webdav & dhcp
+    Server --> logs_windows & ldap_diagnostic_logging
+    Server --> fix_dns & ps
+
+    LAPS --> laps_dc & laps_server & laps_permissions & laps_verify
+
+    Vulns --> vulns_credentials & vulns_acls & vulns_permissions
+    Vulns --> vulns_shares & vulns_openshares & vulns_files & vulns_directory
+    Vulns --> vulns_smbv1 & vulns_disable_firewall & vulns_anonymous_enum
+    Vulns --> vulns_autologon & vulns_ntlmdowngrade & vulns_schedule
+    Vulns --> vulns_mssql & vulns_adcs_templates & vulns_administrator_folder
+    Vulns --> vulns_enable_llmnr & vulns_enable_nbt_ns
+    Vulns --> vulns_enable_credssp_server & vulns_enable_credssp_client
+
+    SCCM --> sccm_install_prerequisites & sccm_install_adk & sccm_install_mecm
+    SCCM --> sccm_install_wsus & sccm_install_iis & sccm_pxe
+    SCCM --> sccm_config_accounts & sccm_config_boundary & sccm_config_discovery
+    SCCM --> sccm_config_client_push & sccm_config_client_install
+    SCCM --> sccm_config_naa & sccm_config_pxe & sccm_config_users
+
+    Security --> security_audit_policy & security_asr
+    Security --> security_enable_run_as_ppl & security_account_is_sensitive
+    Security --> security_powershell_restrict & security_ensure_kb_not_installed
+    Security --> dc_audit_sacl
+
+    Settings --> settings_hostname & settings_keyboard & settings_admin_password
+    Settings --> settings_updates & settings_no_updates & settings_windows_defender
+    Settings --> settings_copy_files & settings_user_rights & settings_adjust_rights
+    Settings --> settings_enable_nat_adapter & settings_disable_nat_adapter
+    Settings --> settings_gpo_remove & settings_gpmc
+
+    Playbooks --> base
 ```
 
 ## Requirements
