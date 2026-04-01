@@ -46,7 +46,7 @@ jobs:
           bash .hooks/run-go-tests.sh coverage
 
       - name: Upload coverage artifact
-        uses: actions/upload-artifact@ea165f8d65b6db9a8b9c5c9c6224401c4c993de6 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage-report
           path: cli/coverage-all.out
