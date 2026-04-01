@@ -12,20 +12,6 @@ by Orange Cyberdefense.
 
 ![Architecture](docs/architecture.svg)
 
-<details>
-<summary>Diagram source</summary>
-
-The diagram is auto-generated from the collection structure by a pre-commit hook.
-Source: [`docs/architecture.mmd`](docs/architecture.mmd)
-
-To regenerate manually:
-
-```bash
-python .hooks/gen-arch-diagram.py
-```
-
-</details>
-
 ## Requirements
 
 - Ansible >= 2.15

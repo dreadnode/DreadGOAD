@@ -22,35 +22,35 @@ CATEGORIES = [
         "names": ["laps_dc"],
         "color": "#f39c12",
         "border": "#d68910",
-        "detail_bg": "#fef9f0",
+        "detail_bg": "#3d2e0a",
     }),
     ("SCCM", {
         "prefixes": ["sccm_"],
         "names": [],
         "color": "#1abc9c",
         "border": "#16a085",
-        "detail_bg": "#f0fcfa",
+        "detail_bg": "#0d2e28",
     }),
     ("Vulnerabilities", {
         "prefixes": ["vulns_"],
         "names": [],
         "color": "#9b59b6",
         "border": "#8e44ad",
-        "detail_bg": "#f8f2fc",
+        "detail_bg": "#2a1a33",
     }),
     ("Security", {
         "prefixes": ["security_"],
         "names": ["dc_audit_sacl", "ldap_diagnostic_logging"],
         "color": "#e67e22",
         "border": "#d35400",
-        "detail_bg": "#fef5ed",
+        "detail_bg": "#3a2210",
     }),
     ("Settings", {
         "prefixes": ["settings_"],
         "names": [],
         "color": "#3498db",
         "border": "#2980b9",
-        "detail_bg": "#f0f7fd",
+        "detail_bg": "#132a3d",
     }),
     ("Active Directory", {
         "prefixes": [],
@@ -66,7 +66,7 @@ CATEGORIES = [
         ],
         "color": "#e74c3c",
         "border": "#c0392b",
-        "detail_bg": "#fdf2f2",
+        "detail_bg": "#3a1515",
     }),
     ("Server Roles", {
         "prefixes": ["mssql_"],
@@ -77,7 +77,7 @@ CATEGORIES = [
         ],
         "color": "#2ecc71",
         "border": "#27ae60",
-        "detail_bg": "#f2fdf5",
+        "detail_bg": "#133320",
     }),
 ]
 
@@ -137,8 +137,8 @@ def discover_collection(collection_path):
     return sorted(roles), sorted(plugins), sorted(playbooks)
 
 
-def abbreviate_roles(roles, prefixes=None, max_shown=6):
-    """Return a string summarising roles for the detail box."""
+def abbreviate_roles(roles, prefixes=None):
+    """Return a string listing all roles for the detail box."""
     def strip_prefix(name):
         if prefixes:
             for p in prefixes:
@@ -146,13 +146,12 @@ def abbreviate_roles(roles, prefixes=None, max_shown=6):
                     return name[len(p):]
         return name
 
-    display = [strip_prefix(r) for r in roles[:max_shown]]
-    suffix = f" +{len(roles) - max_shown} more" if len(roles) > max_shown else ""
-    # Use bullet separator, ~3 per line via <br/>
+    display = [strip_prefix(r) for r in roles]
+    # 3 per line via <br/>
     chunks = []
     for i in range(0, len(display), 3):
         chunks.append(" &bull; ".join(display[i:i + 3]))
-    return "<br/>".join(chunks) + suffix
+    return "<br/>".join(chunks)
 
 
 def generate_mermaid(roles, plugins, playbooks):
@@ -225,7 +224,7 @@ def generate_mermaid(roles, plugins, playbooks):
         )
         lines.append(
             f"    style {nid}_detail fill:{cat_cfg['detail_bg']},"
-            f"stroke:{cat_cfg['border']},color:#333"
+            f"stroke:{cat_cfg['border']},color:#ccc"
         )
 
     return "\n".join(lines)
@@ -245,12 +244,22 @@ def render_svg(mmd_path, svg_path):
             return False
         cmd = [npx, "--yes", "@mermaid-js/mermaid-cli"]
 
-    cmd += ["-i", str(mmd_path), "-o", str(svg_path), "--theme", "default", "-w", "1600"]
+    # Use dark theme with dark background
+    config_path = mmd_path.parent / "mermaid-config.json"
+    config_path.write_text('{"theme":"dark","themeVariables":{"darkMode":true}}\n')
+    cmd += [
+        "-i", str(mmd_path), "-o", str(svg_path),
+        "-c", str(config_path),
+        "-b", "#1a1a2e",
+        "-w", "1600",
+    ]
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
     except subprocess.CalledProcessError as exc:
         print(f"Error rendering SVG: {exc.stderr}", file=sys.stderr)
         return False
+    finally:
+        config_path.unlink(missing_ok=True)
     return True
 
 
@@ -279,20 +288,6 @@ def update_readme(readme_path="README.md"):
     new_section = f"""{start_marker}
 
 ![Architecture](docs/architecture.svg)
-
-<details>
-<summary>Diagram source</summary>
-
-The diagram is auto-generated from the collection structure by a pre-commit hook.
-Source: [`docs/architecture.mmd`](docs/architecture.mmd)
-
-To regenerate manually:
-
-```bash
-python .hooks/gen-arch-diagram.py
-```
-
-</details>
 
 """
 

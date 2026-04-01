@@ -10,28 +10,28 @@ graph LR
     Collection --> ServerRoles["Server Roles<br/><i>15 roles</i>"]
 
     LAPS -.- LAPS_detail["dc &bull; permissions &bull; server<br/>verify"]
-    SCCM -.- SCCM_detail["config_accounts &bull; config_boundary &bull; config_client_install<br/>config_client_push &bull; config_discovery &bull; config_naa +8 more"]
-    Vulnerabilities -.- Vulnerabilities_detail["acls &bull; adcs_templates &bull; administrator_folder<br/>anonymous_enum &bull; autologon &bull; credentials +14 more"]
-    Security -.- Security_detail["dc_audit_sacl &bull; ldap_diagnostic_logging &bull; account_is_sensitive<br/>asr &bull; audit_policy &bull; enable_run_as_ppl +2 more"]
-    Settings -.- Settings_detail["adjust_rights &bull; admin_password &bull; copy_files<br/>disable_nat_adapter &bull; enable_nat_adapter &bull; gpmc +7 more"]
-    ActiveDirectory -.- ActiveDirectory_detail["acl &bull; ad &bull; adcs<br/>adcs_templates &bull; child_domain &bull; dc_dns_conditional_forwarder +15 more"]
-    ServerRoles -.- ServerRoles_detail["common &bull; commonwkstn &bull; dhcp<br/>elk &bull; fix_dns &bull; iis +9 more"]
+    SCCM -.- SCCM_detail["config_accounts &bull; config_boundary &bull; config_client_install<br/>config_client_push &bull; config_discovery &bull; config_naa<br/>config_pxe &bull; config_users &bull; install_adk<br/>install_iis &bull; install_mecm &bull; install_prerequisites<br/>install_wsus &bull; pxe"]
+    Vulnerabilities -.- Vulnerabilities_detail["acls &bull; adcs_templates &bull; administrator_folder<br/>anonymous_enum &bull; autologon &bull; credentials<br/>directory &bull; disable_firewall &bull; enable_credssp_client<br/>enable_credssp_server &bull; enable_llmnr &bull; enable_nbt_ns<br/>files &bull; mssql &bull; ntlmdowngrade<br/>openshares &bull; permissions &bull; schedule<br/>shares &bull; smbv1"]
+    Security -.- Security_detail["dc_audit_sacl &bull; ldap_diagnostic_logging &bull; account_is_sensitive<br/>asr &bull; audit_policy &bull; enable_run_as_ppl<br/>ensure_kb_not_installed &bull; powershell_restrict"]
+    Settings -.- Settings_detail["adjust_rights &bull; admin_password &bull; copy_files<br/>disable_nat_adapter &bull; enable_nat_adapter &bull; gpmc<br/>gpo_remove &bull; hostname &bull; keyboard<br/>no_updates &bull; updates &bull; user_rights<br/>windows_defender"]
+    ActiveDirectory -.- ActiveDirectory_detail["acl &bull; ad &bull; adcs<br/>adcs_templates &bull; child_domain &bull; dc_dns_conditional_forwarder<br/>disable_user &bull; dns_conditional_forwarder &bull; domain_controller<br/>domain_controller_slave &bull; enable_user &bull; gmsa<br/>gmsa_hosts &bull; groups_domains &bull; member_server<br/>move_to_ou &bull; onlyusers &bull; parent_child_dns<br/>password_policy &bull; sync_domains &bull; trusts"]
+    ServerRoles -.- ServerRoles_detail["common &bull; commonwkstn &bull; dhcp<br/>elk &bull; fix_dns &bull; iis<br/>localusers &bull; logs_windows &bull; mssql<br/>audit &bull; link &bull; reporting<br/>ssms &bull; ps &bull; webdav"]
 
     Collection --> Playbooks["Playbooks<br/><i>1 playbooks</i>"]
 
     style Collection fill:#4a9eff,stroke:#2d7cd4,color:#fff,font-weight:bold
     style Playbooks fill:#7f8c8d,stroke:#6c7a7d,color:#fff
     style LAPS fill:#f39c12,stroke:#d68910,color:#fff
-    style LAPS_detail fill:#fef9f0,stroke:#d68910,color:#333
+    style LAPS_detail fill:#3d2e0a,stroke:#d68910,color:#ccc
     style SCCM fill:#1abc9c,stroke:#16a085,color:#fff
-    style SCCM_detail fill:#f0fcfa,stroke:#16a085,color:#333
+    style SCCM_detail fill:#0d2e28,stroke:#16a085,color:#ccc
     style Vulnerabilities fill:#9b59b6,stroke:#8e44ad,color:#fff
-    style Vulnerabilities_detail fill:#f8f2fc,stroke:#8e44ad,color:#333
+    style Vulnerabilities_detail fill:#2a1a33,stroke:#8e44ad,color:#ccc
     style Security fill:#e67e22,stroke:#d35400,color:#fff
-    style Security_detail fill:#fef5ed,stroke:#d35400,color:#333
+    style Security_detail fill:#3a2210,stroke:#d35400,color:#ccc
     style Settings fill:#3498db,stroke:#2980b9,color:#fff
-    style Settings_detail fill:#f0f7fd,stroke:#2980b9,color:#333
+    style Settings_detail fill:#132a3d,stroke:#2980b9,color:#ccc
     style ActiveDirectory fill:#e74c3c,stroke:#c0392b,color:#fff
-    style ActiveDirectory_detail fill:#fdf2f2,stroke:#c0392b,color:#333
+    style ActiveDirectory_detail fill:#3a1515,stroke:#c0392b,color:#ccc
     style ServerRoles fill:#2ecc71,stroke:#27ae60,color:#fff
-    style ServerRoles_detail fill:#f2fdf5,stroke:#27ae60,color:#333
+    style ServerRoles_detail fill:#133320,stroke:#27ae60,color:#ccc
