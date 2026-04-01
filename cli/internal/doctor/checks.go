@@ -59,6 +59,18 @@ func PrintResults(results []CheckResult) {
 	fmt.Printf("Results: %d passed, %d failed, %d warnings\n", passed, failed, warned)
 }
 
+// CheckAnsibleCoreVersion verifies ansible-core is installed and within the
+// compatible version range (<2.19). Returns an error if the version is
+// incompatible or ansible-core is not found. This is used as a pre-flight
+// gate before running playbooks.
+func CheckAnsibleCoreVersion() error {
+	result := checkAnsibleVersion()
+	if result.Status == "fail" {
+		return fmt.Errorf("%s", result.Message)
+	}
+	return nil
+}
+
 func checkAnsibleVersion() CheckResult {
 	out, err := exec.Command("ansible", "--version").CombinedOutput()
 	if err != nil {

@@ -12,6 +12,7 @@ __pycache__/
 .task/
 
 # Build artifacts
+dreadgoad
 ansible/roles/adcs_templates/files/ADCSTemplate.zip
 ansible/roles/vulns_adcs_templates/files/ADCSTemplate.zip
 

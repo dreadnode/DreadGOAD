@@ -11,6 +11,7 @@ import (
 
 	"github.com/dreadnode/dreadgoad/internal/ansible"
 	"github.com/dreadnode/dreadgoad/internal/config"
+	"github.com/dreadnode/dreadgoad/internal/doctor"
 	"github.com/spf13/cobra"
 )
 
@@ -78,6 +79,11 @@ func runProvision(cmd *cobra.Command, args []string) error {
 	os.MkdirAll(cfg.LogDir, 0o755)
 	logFile := filepath.Join(cfg.LogDir, fmt.Sprintf("%s-dreadgoad-%s.log",
 		cfg.Env, time.Now().Format("20060102_150405")))
+
+	// Pre-flight: verify ansible-core version compatibility
+	if err := doctor.CheckAnsibleCoreVersion(); err != nil {
+		return fmt.Errorf("ansible-core version check failed: %w", err)
+	}
 
 	// Pre-flight: prepare ADCS zips
 	if err := ansible.PrepareADCSZips(cfg.ProjectRoot); err != nil {
