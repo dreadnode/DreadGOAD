@@ -33,6 +33,25 @@ var configShowCmd = &cobra.Command{
 		fmt.Printf("Ansible Config: %s\n", cfg.AnsibleCfgPath())
 		fmt.Printf("Playbooks:      %s\n", strings.Join(cfg.Playbooks, ", "))
 
+		fmt.Println("\nEnvironments:")
+		if len(cfg.Environments) == 0 {
+			fmt.Println("  (none configured, using defaults)")
+		} else {
+			for name, ec := range cfg.Environments {
+				marker := ""
+				if name == cfg.Env {
+					marker = " (active)"
+				}
+				fmt.Printf("  %s%s:\n", name, marker)
+				fmt.Printf("    variant: %v\n", ec.Variant)
+				if ec.Variant {
+					fmt.Printf("    variant_source: %s\n", valueOrDefault(ec.VariantSource, "ad/GOAD"))
+					fmt.Printf("    variant_target: %s\n", valueOrDefault(ec.VariantTarget, "ad/GOAD-variant-1"))
+					fmt.Printf("    variant_name:   %s\n", valueOrDefault(ec.VariantName, "variant-1"))
+				}
+			}
+		}
+
 		if cfgFile := viper.ConfigFileUsed(); cfgFile != "" {
 			fmt.Printf("\nConfig file:    %s\n", cfgFile)
 		} else {
@@ -56,7 +75,7 @@ var configInitCmd = &cobra.Command{
 		}
 
 		content := `# DreadGOAD CLI Configuration
-env: dev
+env: staging
 # region: us-west-2  # Override AWS region (default: from inventory)
 debug: false
 max_retries: 3
@@ -64,6 +83,16 @@ retry_delay: 30
 idle_timeout: 1200
 # log_dir: ~/.ansible/logs/goad
 # project_root: /path/to/DreadGOAD  # Auto-detected if omitted
+
+# Per-environment settings
+environments:
+  dev:
+    variant: true
+    variant_source: ad/GOAD
+    variant_target: ad/GOAD-variant-1
+    variant_name: variant-1
+  staging:
+    variant: false
 `
 		if err := os.WriteFile(cfgPath, []byte(content), 0o644); err != nil {
 			return err

@@ -6,8 +6,6 @@ import (
 	"log/slog"
 	"time"
 
-	daws "github.com/dreadnode/dreadgoad/internal/aws"
-	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/dreadnode/dreadgoad/internal/validate"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -23,7 +21,8 @@ Checks credentials, Kerberos, SMB, delegation, MSSQL, ADCS, ACLs, trusts, and se
 	Example: `  dreadgoad validate
   dreadgoad validate --env staging --verbose
   dreadgoad validate --format json --output /tmp/results.json
-  dreadgoad validate --no-fail`,
+  dreadgoad validate --no-fail
+  dreadgoad validate --quick`,
 	RunE: runValidate,
 }
 
@@ -34,40 +33,40 @@ func init() {
 	validateCmd.Flags().String("output", "", "JSON report output path")
 	validateCmd.Flags().Bool("verbose", false, "Enable verbose output")
 	validateCmd.Flags().Bool("no-fail", false, "Don't exit with error on failed checks")
+	validateCmd.Flags().Bool("quick", false, "Quick validation of critical vulnerabilities only")
 }
 
 func runValidate(cmd *cobra.Command, args []string) error {
-	cfg := config.Get()
 	ctx := context.Background()
 
 	verbose, _ := cmd.Flags().GetBool("verbose")
 	outputPath, _ := cmd.Flags().GetString("output")
 	noFail, _ := cmd.Flags().GetBool("no-fail")
-
-	// Determine region
-	region := cfg.Region
-	if region == "" {
-		region = "us-west-1" // validate default matches Taskfile
-	}
-
-	client, err := daws.NewClient(ctx, region)
-	if err != nil {
-		return fmt.Errorf("create AWS client: %w", err)
-	}
+	quick, _ := cmd.Flags().GetBool("quick")
 
 	fmt.Println("==========================================")
 	fmt.Println("GOAD Vulnerability Validation")
 	fmt.Println("==========================================")
-	fmt.Printf("Environment: %s\n", cfg.Env)
-	fmt.Printf("Region: %s\n", region)
 
-	v := validate.NewValidator(client, cfg.Env, verbose, slog.Default())
+	infra, err := requireInfra(ctx)
+	if err != nil {
+		return err
+	}
+
+	fmt.Printf("Environment: %s\n", infra.Env)
+	fmt.Printf("Region: %s\n", infra.Region)
+
+	v := validate.NewValidator(infra.Client, infra.Env, verbose, slog.Default())
 
 	if err := v.DiscoverHosts(ctx); err != nil {
 		return fmt.Errorf("discover hosts: %w", err)
 	}
 
-	v.RunAllChecks(ctx)
+	if quick {
+		v.RunQuickChecks(ctx)
+	} else {
+		v.RunAllChecks(ctx)
+	}
 
 	report := v.GetReport()
 

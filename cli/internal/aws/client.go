@@ -9,12 +9,14 @@ import (
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
+	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
 
-// Client wraps AWS SDK clients for EC2 and SSM.
+// Client wraps AWS SDK clients for EC2, SSM, and STS.
 type Client struct {
 	EC2    *ec2.Client
 	SSM    *ssm.Client
+	STS    *sts.Client
 	Region string
 }
 
@@ -40,6 +42,7 @@ func NewClient(ctx context.Context, region string) (*Client, error) {
 	c := &Client{
 		EC2:    ec2.NewFromConfig(cfg),
 		SSM:    ssm.NewFromConfig(cfg),
+		STS:    sts.NewFromConfig(cfg),
 		Region: region,
 	}
 	clients[region] = c

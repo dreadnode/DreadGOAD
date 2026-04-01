@@ -1,10 +1,9 @@
 # DreadGOAD
 
-Ansible collection for deploying and configuring vulnerable Active Directory
-lab environments for penetration testing and security research.
-
-Based on [GOAD (Game of Active Directory)](https://github.com/Orange-Cyberdefense/GOAD)
-by Orange Cyberdefense.
+Heavily modified fork of [GOAD (Game of Active Directory)](https://github.com/Orange-Cyberdefense/GOAD)
+by Orange Cyberdefense. Deploys vulnerable Active Directory lab environments
+for penetration testing and security research, with a Go CLI (`dreadgoad`),
+Ansible collection, Packer/Vagrant provisioning, and Docker support.
 
 ---
 
@@ -218,11 +217,29 @@ The GOAD lab provides:
     - role: dreadnode.goad.domain_controller
 ```
 
-For full orchestration, use the playbooks in the `ansible/playbooks/` directory with
-the Taskfile:
+For full orchestration, use the `dreadgoad` CLI:
 
 ```bash
-task provision ENV=dev
+# Build the CLI
+cd cli && go build -o dreadgoad .
+
+# Provision the lab
+dreadgoad provision --env staging
+
+# Health check all instances
+dreadgoad health-check --env staging
+
+# Verify domain trusts
+dreadgoad verify-trusts --env staging
+
+# Quick vulnerability validation
+dreadgoad validate --quick --env staging
+
+# Full vulnerability validation
+dreadgoad validate --env staging
+
+# See all commands
+dreadgoad --help
 ```
 
 ---
