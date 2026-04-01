@@ -40,7 +40,7 @@ type healthCheck struct {
 func runHealthCheck(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
-	title := fmt.Sprintf(" GOAD Health Check ")
+	title := " GOAD Health Check "
 	pad := 90 - len(title)
 	left := pad / 2
 	right := pad - left

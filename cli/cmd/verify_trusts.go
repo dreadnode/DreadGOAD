@@ -30,7 +30,7 @@ func init() {
 func runVerifyTrusts(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
-	title := fmt.Sprintf(" GOAD Trust Verification ")
+	title := " GOAD Trust Verification "
 	pad := 90 - len(title)
 	left := pad / 2
 	right := pad - left
