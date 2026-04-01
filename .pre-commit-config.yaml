@@ -31,6 +31,23 @@ repos:
         entry: codespell -q 3 -f -S ".git,.github,README.md"
         exclude: '(\.min\.css\.map|\.css\.map|\.min\.map|\.min\.js|sysmonconfig-export\.xml|jquery\.validate\.(min\.)?js|jquery-3\.4\.1(\.slim)?\.js|modernizr-[\d\.]+\.js)$'
 
+  - repo: https://github.com/dnephin/pre-commit-golang
+    rev: v0.5.1
+    hooks:
+      - id: go-fmt
+        args: [cli/]
+      - id: go-imports
+        args: [cli/]
+      - id: go-cyclo
+        args: [-over=15, cli/]
+      - id: golangci-lint
+        args: [--timeout=5m, --enable=unused, cli/...]
+      - id: go-critic
+        args: [cli/...]
+      - id: go-build
+        args: [cli/...]
+      - id: go-mod-tidy
+
   - repo: https://github.com/jumanjihouse/pre-commit-hooks
     rev: 3.0.0
     hooks:
@@ -89,3 +106,26 @@ repos:
         always_run: false
         files: ^ansible/(roles/|plugins/|playbooks/).*
         additional_dependencies: []
+
+      - id: go-no-replacement
+        name: Avoid committing a go module replacement
+        entry: .hooks/go-no-replacement.sh
+        language: script
+        files: go.mod
+
+      - id: go-unit-tests
+        name: Go unit tests
+        language: script
+        entry: .hooks/run-go-tests.sh modified
+        files: '\.go$'
+        pass_filenames: true
+
+      - id: go-vet
+        name: Run go vet
+        language: script
+        entry: .hooks/go-vet.sh
+        files: '\.go$'
+        always_run: true
+        pass_filenames: true
+        require_serial: true
+        log_file: /tmp/go-vet.log
