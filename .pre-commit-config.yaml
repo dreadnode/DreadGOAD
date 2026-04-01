@@ -89,3 +89,75 @@ repos:
         always_run: false
         files: ^ansible/(roles/|plugins/|playbooks/).*
         additional_dependencies: []
+
+      - id: go-fmt
+        name: Run gofmt
+        entry: bash -c 'cd cli && gofmt -l -w .'
+        language: system
+        files: '\.go$'
+        pass_filenames: false
+
+      - id: go-imports
+        name: Run goimports
+        entry: bash -c 'cd cli && goimports -l -w .'
+        language: system
+        files: '\.go$'
+        pass_filenames: false
+
+      - id: go-cyclo
+        name: Run gocyclo
+        entry: bash -c 'cd cli && gocyclo -over 15 .'
+        language: system
+        files: '\.go$'
+        pass_filenames: false
+
+      - id: golangci-lint
+        name: Run golangci-lint
+        entry: bash -c 'cd cli && golangci-lint run --timeout=5m --enable=unused ./...'
+        language: system
+        files: '\.go$'
+        pass_filenames: false
+
+      - id: go-critic
+        name: Run go-critic
+        entry: bash -c 'cd cli && gocritic check ./...'
+        language: system
+        files: '\.go$'
+        pass_filenames: false
+
+      - id: go-build
+        name: Run go build
+        entry: bash -c 'cd cli && go build ./...'
+        language: system
+        files: '\.go$'
+        pass_filenames: false
+
+      - id: go-mod-tidy
+        name: Run go mod tidy
+        entry: bash -c 'cd cli && go mod tidy'
+        language: system
+        files: '(go\.mod|go\.sum)$'
+        pass_filenames: false
+
+      - id: go-no-replacement
+        name: Avoid committing a go module replacement
+        entry: .hooks/go-no-replacement.sh
+        language: script
+        files: go.mod
+
+      - id: go-unit-tests
+        name: Go unit tests
+        language: script
+        entry: .hooks/run-go-tests.sh modified
+        files: '\.go$'
+        pass_filenames: true
+
+      - id: go-vet
+        name: Run go vet
+        language: script
+        entry: .hooks/go-vet.sh
+        files: '\.go$'
+        always_run: true
+        pass_filenames: true
+        require_serial: true
+        log_file: /tmp/go-vet.log
