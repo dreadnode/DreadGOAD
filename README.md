@@ -10,63 +10,21 @@ by Orange Cyberdefense.
 
 ## Architecture Diagram
 
-```mermaid
-graph TD
-    Collection[dreadnode.goad]
+![Architecture](docs/architecture.svg)
 
-    Collection --> AD[Active Directory]
-    Collection --> Server[Server Roles]
-    Collection --> LAPS[LAPS]
-    Collection --> Vulns[Vulnerabilities]
-    Collection --> SCCM[SCCM]
-    Collection --> Security[Security]
-    Collection --> Settings[Settings]
-    Collection --> Playbooks[Playbooks]
+<details>
+<summary>Diagram source</summary>
 
-    AD --> ad & acl & adcs & adcs_templates
-    AD --> domain_controller & domain_controller_slave
-    AD --> child_domain & member_server & trusts
-    AD --> gmsa & gmsa_hosts & password_policy
-    AD --> move_to_ou & groups_domains & onlyusers
-    AD --> dns_conditional_forwarder & dc_dns_conditional_forwarder
-    AD --> parent_child_dns & sync_domains
-    AD --> disable_user & enable_user
+The diagram is auto-generated from the collection structure by a pre-commit hook.
+Source: [`docs/architecture.mmd`](docs/architecture.mmd)
 
-    Server --> common & commonwkstn & localusers
-    Server --> mssql & mssql_link & mssql_ssms & mssql_reporting & mssql_audit
-    Server --> iis & elk & webdav & dhcp
-    Server --> logs_windows & ldap_diagnostic_logging
-    Server --> fix_dns & ps
+To regenerate manually:
 
-    LAPS --> laps_dc & laps_server & laps_permissions & laps_verify
-
-    Vulns --> vulns_credentials & vulns_acls & vulns_permissions
-    Vulns --> vulns_shares & vulns_openshares & vulns_files & vulns_directory
-    Vulns --> vulns_smbv1 & vulns_disable_firewall & vulns_anonymous_enum
-    Vulns --> vulns_autologon & vulns_ntlmdowngrade & vulns_schedule
-    Vulns --> vulns_mssql & vulns_adcs_templates & vulns_administrator_folder
-    Vulns --> vulns_enable_llmnr & vulns_enable_nbt_ns
-    Vulns --> vulns_enable_credssp_server & vulns_enable_credssp_client
-
-    SCCM --> sccm_install_prerequisites & sccm_install_adk & sccm_install_mecm
-    SCCM --> sccm_install_wsus & sccm_install_iis & sccm_pxe
-    SCCM --> sccm_config_accounts & sccm_config_boundary & sccm_config_discovery
-    SCCM --> sccm_config_client_push & sccm_config_client_install
-    SCCM --> sccm_config_naa & sccm_config_pxe & sccm_config_users
-
-    Security --> security_audit_policy & security_asr
-    Security --> security_enable_run_as_ppl & security_account_is_sensitive
-    Security --> security_powershell_restrict & security_ensure_kb_not_installed
-    Security --> dc_audit_sacl
-
-    Settings --> settings_hostname & settings_keyboard & settings_admin_password
-    Settings --> settings_updates & settings_no_updates & settings_windows_defender
-    Settings --> settings_copy_files & settings_user_rights & settings_adjust_rights
-    Settings --> settings_enable_nat_adapter & settings_disable_nat_adapter
-    Settings --> settings_gpo_remove & settings_gpmc
-
-    Playbooks --> base
+```bash
+python .hooks/gen-arch-diagram.py
 ```
+
+</details>
 
 ## Requirements
 

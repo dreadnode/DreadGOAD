@@ -1,0 +1,37 @@
+graph LR
+    Collection["dreadnode.goad<br/>Ansible Collection"]
+
+    Collection --> LAPS["LAPS<br/><i>4 roles</i>"]
+    Collection --> SCCM["SCCM<br/><i>14 roles</i>"]
+    Collection --> Vulnerabilities["Vulnerabilities<br/><i>20 roles</i>"]
+    Collection --> Security["Security<br/><i>8 roles</i>"]
+    Collection --> Settings["Settings<br/><i>13 roles</i>"]
+    Collection --> ActiveDirectory["Active Directory<br/><i>21 roles</i>"]
+    Collection --> ServerRoles["Server Roles<br/><i>15 roles</i>"]
+
+    LAPS -.- LAPS_detail["dc &bull; permissions &bull; server<br/>verify"]
+    SCCM -.- SCCM_detail["config_accounts &bull; config_boundary &bull; config_client_install<br/>config_client_push &bull; config_discovery &bull; config_naa +8 more"]
+    Vulnerabilities -.- Vulnerabilities_detail["acls &bull; adcs_templates &bull; administrator_folder<br/>anonymous_enum &bull; autologon &bull; credentials +14 more"]
+    Security -.- Security_detail["dc_audit_sacl &bull; ldap_diagnostic_logging &bull; account_is_sensitive<br/>asr &bull; audit_policy &bull; enable_run_as_ppl +2 more"]
+    Settings -.- Settings_detail["adjust_rights &bull; admin_password &bull; copy_files<br/>disable_nat_adapter &bull; enable_nat_adapter &bull; gpmc +7 more"]
+    ActiveDirectory -.- ActiveDirectory_detail["acl &bull; ad &bull; adcs<br/>adcs_templates &bull; child_domain &bull; dc_dns_conditional_forwarder +15 more"]
+    ServerRoles -.- ServerRoles_detail["common &bull; commonwkstn &bull; dhcp<br/>elk &bull; fix_dns &bull; iis +9 more"]
+
+    Collection --> Playbooks["Playbooks<br/><i>1 playbooks</i>"]
+
+    style Collection fill:#4a9eff,stroke:#2d7cd4,color:#fff,font-weight:bold
+    style Playbooks fill:#7f8c8d,stroke:#6c7a7d,color:#fff
+    style LAPS fill:#f39c12,stroke:#d68910,color:#fff
+    style LAPS_detail fill:#fef9f0,stroke:#d68910,color:#333
+    style SCCM fill:#1abc9c,stroke:#16a085,color:#fff
+    style SCCM_detail fill:#f0fcfa,stroke:#16a085,color:#333
+    style Vulnerabilities fill:#9b59b6,stroke:#8e44ad,color:#fff
+    style Vulnerabilities_detail fill:#f8f2fc,stroke:#8e44ad,color:#333
+    style Security fill:#e67e22,stroke:#d35400,color:#fff
+    style Security_detail fill:#fef5ed,stroke:#d35400,color:#333
+    style Settings fill:#3498db,stroke:#2980b9,color:#fff
+    style Settings_detail fill:#f0f7fd,stroke:#2980b9,color:#333
+    style ActiveDirectory fill:#e74c3c,stroke:#c0392b,color:#fff
+    style ActiveDirectory_detail fill:#fdf2f2,stroke:#c0392b,color:#333
+    style ServerRoles fill:#2ecc71,stroke:#27ae60,color:#fff
+    style ServerRoles_detail fill:#f2fdf5,stroke:#27ae60,color:#333

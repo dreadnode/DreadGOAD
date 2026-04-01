@@ -84,11 +84,10 @@ repos:
       - id: update-architecture-diagram
         name: Update Architecture Diagram
         entry: python .hooks/gen-arch-diagram.py
-        language: python
+        language: system
         pass_filenames: false
         always_run: false
         files: ^ansible/(roles/|plugins/|playbooks/).*
-        additional_dependencies: []
 
       - id: go-fmt
         name: Run gofmt

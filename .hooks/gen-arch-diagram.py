@@ -1,150 +1,344 @@
 #!/usr/bin/env python3
 """
-Ansible Collection Mermaid Diagram Generator Pre-commit Hook
+Ansible Collection Architecture Diagram Generator (Pre-commit Hook)
 
-Generates a Mermaid diagram from an Ansible collection structure
-and updates repo README.
+Analyzes the collection structure, generates a categorized Mermaid diagram,
+renders it to SVG via mermaid-cli (mmdc), and updates the README to reference
+the SVG image.
 """
 
 from pathlib import Path
-import sys
 import re
+import shutil
+import subprocess
+import sys
 
-class AnsibleCollectionAnalyzer:
-    def __init__(self, collection_path: str):
-        self.collection_path = Path(collection_path)
-        self.structure = {
-            'roles': [],
-            'plugins': [],
-            'playbooks': []
-        }
+# ── Role categories ──────────────────────────────────────────────────────────
+# Roles are matched top-down; first match wins.  Prefix-based entries cover
+# most roles, explicit names handle the exceptions.
+CATEGORIES = [
+    ("LAPS", {
+        "prefixes": ["laps_"],
+        "names": ["laps_dc"],
+        "color": "#f39c12",
+        "border": "#d68910",
+        "detail_bg": "#fef9f0",
+    }),
+    ("SCCM", {
+        "prefixes": ["sccm_"],
+        "names": [],
+        "color": "#1abc9c",
+        "border": "#16a085",
+        "detail_bg": "#f0fcfa",
+    }),
+    ("Vulnerabilities", {
+        "prefixes": ["vulns_"],
+        "names": [],
+        "color": "#9b59b6",
+        "border": "#8e44ad",
+        "detail_bg": "#f8f2fc",
+    }),
+    ("Security", {
+        "prefixes": ["security_"],
+        "names": ["dc_audit_sacl", "ldap_diagnostic_logging"],
+        "color": "#e67e22",
+        "border": "#d35400",
+        "detail_bg": "#fef5ed",
+    }),
+    ("Settings", {
+        "prefixes": ["settings_"],
+        "names": [],
+        "color": "#3498db",
+        "border": "#2980b9",
+        "detail_bg": "#f0f7fd",
+    }),
+    ("Active Directory", {
+        "prefixes": [],
+        "names": [
+            "ad", "acl", "adcs", "adcs_templates",
+            "child_domain", "domain_controller", "domain_controller_slave",
+            "member_server", "trusts",
+            "gmsa", "gmsa_hosts", "password_policy",
+            "move_to_ou", "groups_domains", "onlyusers",
+            "dns_conditional_forwarder", "dc_dns_conditional_forwarder",
+            "parent_child_dns", "sync_domains",
+            "disable_user", "enable_user",
+        ],
+        "color": "#e74c3c",
+        "border": "#c0392b",
+        "detail_bg": "#fdf2f2",
+    }),
+    ("Server Roles", {
+        "prefixes": ["mssql_"],
+        "names": [
+            "common", "commonwkstn", "localusers",
+            "mssql", "iis", "elk", "webdav", "dhcp",
+            "logs_windows", "fix_dns", "ps",
+        ],
+        "color": "#2ecc71",
+        "border": "#27ae60",
+        "detail_bg": "#f2fdf5",
+    }),
+]
 
-    def analyze(self):
-        """Analyze the Ansible collection structure"""
-        # Analyze roles
-        roles_path = self.collection_path / 'roles'
-        if roles_path.exists():
-            for role_dir in roles_path.iterdir():
-                if role_dir.is_dir() and not role_dir.name.startswith('.'):
-                    self.structure['roles'].append({
-                        'name': role_dir.name,
-                    })
 
-        # Analyze plugins
-        plugins_path = self.collection_path / 'plugins' / 'modules'
-        if plugins_path.exists():
-            for plugin_file in plugins_path.glob('*.py'):
-                if not plugin_file.name.startswith('__'):
-                    self.structure['plugins'].append(plugin_file.stem)
+def categorize_roles(roles):
+    """Assign each role to its category.  Returns {category: [role, ...]}."""
+    result = {name: [] for name, _ in CATEGORIES}
+    uncategorized = []
 
-        # Analyze playbooks
-        playbooks_path = self.collection_path / 'playbooks'
-        if playbooks_path.exists():
-            for item in playbooks_path.iterdir():
-                if item.is_dir() and not item.name.startswith('.'):
-                    self.structure['playbooks'].append({
-                        'name': item.name,
-                    })
+    for role in sorted(roles):
+        matched = False
+        for cat_name, cat_cfg in CATEGORIES:
+            if role in cat_cfg["names"]:
+                result[cat_name].append(role)
+                matched = True
+                break
+            for prefix in cat_cfg["prefixes"]:
+                if role.startswith(prefix):
+                    result[cat_name].append(role)
+                    matched = True
+                    break
+            if matched:
+                break
+        if not matched:
+            uncategorized.append(role)
 
-        return self.structure
+    if uncategorized:
+        print(f"  Warning: uncategorized roles: {uncategorized}", file=sys.stderr)
+        # Put them in Server Roles as a catch-all
+        result["Server Roles"].extend(uncategorized)
 
-def generate_mermaid(structure):
-    """Generate Mermaid diagram"""
-    lines = ["```mermaid", "graph TD"]
-    lines.append("    Collection[Ansible Collection]")
+    return result
 
-    # Add plugins
-    if structure['plugins']:
-        lines.append("    Collection --> Plugins[🔌 Plugins]")
-        for i, plugin in enumerate(structure['plugins']):
-            lines.append(f"    Plugins --> P{i}[{plugin}]")
 
-    # Add roles
-    if structure['roles']:
-        lines.append("    Collection --> Roles[⚙️ Roles]")
-        for i, role in enumerate(structure['roles']):
-            lines.append(f"    Roles --> R{i}[{role['name']}]")
+def discover_collection(collection_path):
+    """Return roles, plugins, and playbooks from the collection."""
+    base = Path(collection_path)
+    roles = []
+    plugins = []
+    playbooks = []
 
-    # Add playbooks
-    if structure['playbooks']:
-        lines.append("    Collection --> Playbooks[📚 Playbooks]")
-        for i, playbook in enumerate(structure['playbooks']):
-            lines.append(f"    Playbooks --> PB{i}[{playbook['name']}]")
+    roles_dir = base / "roles"
+    if roles_dir.exists():
+        roles = [d.name for d in roles_dir.iterdir()
+                 if d.is_dir() and not d.name.startswith(".")]
 
-    lines.append("```")
-    return '\n'.join(lines)
+    plugins_dir = base / "plugins" / "modules"
+    if plugins_dir.exists():
+        plugins = [f.stem for f in plugins_dir.glob("*.py")
+                   if not f.name.startswith("__")]
 
-def update_readme(mermaid_content):
-    """Update README.md with the generated Mermaid diagram"""
-    readme_path = Path('README.md')
+    playbooks_dir = base / "playbooks"
+    if playbooks_dir.exists():
+        playbooks = [d.name for d in playbooks_dir.iterdir()
+                     if d.is_dir() and not d.name.startswith(".")]
 
-    if not readme_path.exists():
-        print("❌ README.md not found")
-        return False
+    return sorted(roles), sorted(plugins), sorted(playbooks)
 
-    readme_content = readme_path.read_text()
 
-    # Define markers for the architecture section
-    start_marker = "## Architecture Diagram"
-    end_marker = "## Requirements"  # The next section after Architecture Diagram
+def abbreviate_roles(roles, prefixes=None, max_shown=6):
+    """Return a string summarising roles for the detail box."""
+    def strip_prefix(name):
+        if prefixes:
+            for p in prefixes:
+                if name.startswith(p):
+                    return name[len(p):]
+        return name
 
-    # Find the start and end positions
-    start_pos = readme_content.find(start_marker)
-    if start_pos == -1:
-        print("❌ Could not find '## Architecture Diagram' section in README.md")
-        return False
+    display = [strip_prefix(r) for r in roles[:max_shown]]
+    suffix = f" +{len(roles) - max_shown} more" if len(roles) > max_shown else ""
+    # Use bullet separator, ~3 per line via <br/>
+    chunks = []
+    for i in range(0, len(display), 3):
+        chunks.append(" &bull; ".join(display[i:i + 3]))
+    return "<br/>".join(chunks) + suffix
 
-    end_pos = readme_content.find(end_marker, start_pos)
-    if end_pos == -1:
-        # If we can't find the next section, look for the next ## heading
-        next_section_pattern = re.compile(r'\n## (?!Architecture Diagram)')
-        match = next_section_pattern.search(readme_content, start_pos + len(start_marker))
-        if match:
-            end_pos = match.start() + 1  # +1 to keep the newline before the next section
-        else:
-            print("❌ Could not find the end of the Architecture Diagram section")
+
+def generate_mermaid(roles, plugins, playbooks):
+    """Build a categorized Mermaid diagram string."""
+    categorized = categorize_roles(roles)
+    lines = ["graph LR"]
+    lines.append('    Collection["dreadnode.goad<br/>Ansible Collection"]')
+    lines.append("")
+
+    # Category nodes
+    for cat_name, cat_cfg in CATEGORIES:
+        cat_roles = categorized.get(cat_name, [])
+        if not cat_roles:
+            continue
+        node_id = cat_name.replace(" ", "")
+        lines.append(
+            f'    Collection --> {node_id}'
+            f'["{cat_name}<br/><i>{len(cat_roles)} roles</i>"]'
+        )
+
+    lines.append("")
+
+    # Detail nodes (dashed links)
+    for cat_name, cat_cfg in CATEGORIES:
+        cat_roles = categorized.get(cat_name, [])
+        if not cat_roles:
+            continue
+        node_id = cat_name.replace(" ", "")
+        detail_id = f"{node_id}_detail"
+        summary = abbreviate_roles(cat_roles, prefixes=cat_cfg["prefixes"])
+        lines.append(f'    {node_id} -.- {detail_id}["{summary}"]')
+
+    # Plugins node
+    if plugins:
+        lines.append("")
+        lines.append(
+            f'    Collection --> Plugins'
+            f'["Plugins<br/><i>{len(plugins)} modules</i>"]'
+        )
+        plugin_summary = "<br/>".join(
+            " &bull; ".join(plugins[i:i + 3])
+            for i in range(0, len(plugins), 3)
+        )
+        lines.append(f'    Plugins -.- Plugins_detail["{plugin_summary}"]')
+
+    # Playbooks node
+    if playbooks:
+        lines.append("")
+        lines.append(
+            f'    Collection --> Playbooks'
+            f'["Playbooks<br/><i>{len(playbooks)} playbooks</i>"]'
+        )
+
+    # Styles
+    lines.append("")
+    lines.append("    style Collection fill:#4a9eff,stroke:#2d7cd4,color:#fff,font-weight:bold")
+    if plugins:
+        lines.append("    style Plugins fill:#34495e,stroke:#2c3e50,color:#fff")
+        lines.append("    style Plugins_detail fill:#ebedef,stroke:#34495e,color:#333")
+    if playbooks:
+        lines.append("    style Playbooks fill:#7f8c8d,stroke:#6c7a7d,color:#fff")
+    for cat_name, cat_cfg in CATEGORIES:
+        cat_roles = categorized.get(cat_name, [])
+        if not cat_roles:
+            continue
+        nid = cat_name.replace(" ", "")
+        lines.append(
+            f"    style {nid} fill:{cat_cfg['color']},"
+            f"stroke:{cat_cfg['border']},color:#fff"
+        )
+        lines.append(
+            f"    style {nid}_detail fill:{cat_cfg['detail_bg']},"
+            f"stroke:{cat_cfg['border']},color:#333"
+        )
+
+    return "\n".join(lines)
+
+
+def render_svg(mmd_path, svg_path):
+    """Render .mmd to .svg via mermaid-cli (mmdc)."""
+    # Try mmdc directly, then npx fallback
+    mmdc = shutil.which("mmdc")
+    if mmdc:
+        cmd = [mmdc]
+    else:
+        npx = shutil.which("npx")
+        if not npx:
+            print("Error: neither mmdc nor npx found - install @mermaid-js/mermaid-cli",
+                  file=sys.stderr)
             return False
+        cmd = [npx, "--yes", "@mermaid-js/mermaid-cli"]
 
-    # Build the new architecture section
-    new_section = f"{start_marker}\n\n{mermaid_content}\n\n"
-
-    # Replace the section
-    new_readme = readme_content[:start_pos] + new_section + readme_content[end_pos:]
-
-    # Write back to README
-    readme_path.write_text(new_readme)
-
+    cmd += ["-i", str(mmd_path), "-o", str(svg_path), "--theme", "default", "-w", "1600"]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as exc:
+        print(f"Error rendering SVG: {exc.stderr}", file=sys.stderr)
+        return False
     return True
 
-def main():
-    """Main function for pre-commit hook"""
-    # Analyze collection from current directory
-    analyzer = AnsibleCollectionAnalyzer('ansible')
-    structure = analyzer.analyze()
 
-    # Generate Mermaid diagram
-    mermaid_content = generate_mermaid(structure)
+def update_readme(readme_path="README.md"):
+    """Ensure README references the SVG image instead of inline mermaid."""
+    path = Path(readme_path)
+    if not path.exists():
+        print("README.md not found", file=sys.stderr)
+        return False
 
-    # Update README.md
-    if update_readme(mermaid_content):
-        print("✅ Architecture diagram updated in README.md")
-        print(f"\nCollection summary:")
-        print(f"  • Roles: {len(structure['roles'])}")
-        print(f"  • Plugins: {len(structure['plugins'])}")
-        print(f"  • Playbooks: {len(structure['playbooks'])}")
+    content = path.read_text()
 
-        # Stage the README.md file for commit
-        import subprocess
-        try:
-            subprocess.run(['git', 'add', 'README.md'], check=True)
-            print("✅ README.md staged for commit")
-        except subprocess.CalledProcessError:
-            print("⚠️ Could not stage README.md - you may need to add it manually")
+    start_marker = "## Architecture Diagram"
+    start_pos = content.find(start_marker)
+    if start_pos == -1:
+        print("Could not find '## Architecture Diagram' section", file=sys.stderr)
+        return False
 
-        return 0
+    # Find the next ## heading
+    next_heading = re.search(r"\n## (?!Architecture Diagram)", content[start_pos + len(start_marker):])
+    if next_heading:
+        end_pos = start_pos + len(start_marker) + next_heading.start() + 1
     else:
-        print("❌ Failed to update README.md")
+        end_pos = len(content)
+
+    new_section = f"""{start_marker}
+
+![Architecture](docs/architecture.svg)
+
+<details>
+<summary>Diagram source</summary>
+
+The diagram is auto-generated from the collection structure by a pre-commit hook.
+Source: [`docs/architecture.mmd`](docs/architecture.mmd)
+
+To regenerate manually:
+
+```bash
+python .hooks/gen-arch-diagram.py
+```
+
+</details>
+
+"""
+
+    new_content = content[:start_pos] + new_section + content[end_pos:]
+
+    if new_content != content:
+        path.write_text(new_content)
+        return True
+
+    return True  # No change needed
+
+
+def main():
+    """Main entry point for pre-commit hook."""
+    roles, plugins, playbooks = discover_collection("ansible")
+
+    print(f"  Collection: {len(roles)} roles, {len(plugins)} plugins, {len(playbooks)} playbooks")
+
+    # Generate mermaid source
+    mermaid_content = generate_mermaid(roles, plugins, playbooks)
+    mmd_path = Path("docs/architecture.mmd")
+    mmd_path.parent.mkdir(parents=True, exist_ok=True)
+    mmd_path.write_text(mermaid_content + "\n")
+
+    # Render to SVG
+    svg_path = Path("docs/architecture.svg")
+    if not render_svg(mmd_path, svg_path):
+        print("Failed to render SVG - is @mermaid-js/mermaid-cli installed?",
+              file=sys.stderr)
         return 1
+
+    # Update README
+    update_readme()
+
+    # Stage generated files
+    try:
+        subprocess.run(
+            ["git", "add", "README.md", str(mmd_path), str(svg_path)],
+            check=True,
+        )
+    except subprocess.CalledProcessError:
+        print("Warning: could not stage files", file=sys.stderr)
+
+    print("  Architecture diagram updated (docs/architecture.svg)")
+    return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())
