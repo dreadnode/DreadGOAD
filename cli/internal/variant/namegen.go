@@ -220,6 +220,71 @@ func (ng *NameGenerator) GenerateGMSAName() string {
 	return ng.ensureUnique("gmsa" + secureChoice(ng.animals))
 }
 
+const (
+	lowerChars   = "abcdefghijklmnopqrstuvwxyz"
+	upperChars   = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	digitChars   = "0123456789"
+	specialChars = "!@#$%^&*()-_=+[]{}|;:,.<>?"
+)
+
+type charClasses struct {
+	upper, lower, digit, special bool
+}
+
+func analyzeCharClasses(s string) charClasses {
+	var cc charClasses
+	for _, c := range s {
+		switch {
+		case unicode.IsUpper(c):
+			cc.upper = true
+		case unicode.IsLower(c):
+			cc.lower = true
+		case unicode.IsDigit(c):
+			cc.digit = true
+		case !unicode.IsLetter(c) && !unicode.IsDigit(c):
+			cc.special = true
+		}
+	}
+	return cc
+}
+
+func (cc charClasses) charPool() string {
+	var chars string
+	if cc.lower {
+		chars += lowerChars
+	}
+	if cc.upper {
+		chars += upperChars
+	}
+	if cc.digit {
+		chars += digitChars
+	}
+	if cc.special {
+		chars += specialChars
+	}
+	if chars == "" {
+		chars = lowerChars
+	}
+	return chars
+}
+
+func (cc charClasses) seedRequired() []byte {
+	var seed []byte
+	if cc.upper {
+		seed = append(seed, secureChoiceByte(upperChars))
+	}
+	if cc.lower {
+		seed = append(seed, secureChoiceByte(lowerChars))
+	}
+	if cc.digit {
+		seed = append(seed, secureChoiceByte(digitChars))
+	}
+	if cc.special {
+		seed = append(seed, secureChoiceByte("!@#$%^&*()-_=+"))
+	}
+	return seed
+}
+
 // GeneratePassword generates a password matching the complexity of the original.
 func (ng *NameGenerator) GeneratePassword(original string) string {
 	length := len(original)
@@ -227,69 +292,14 @@ func (ng *NameGenerator) GeneratePassword(original string) string {
 		length = 16
 	}
 
-	hasUpper := false
-	hasLower := false
-	hasDigit := false
-	hasSpecial := false
+	cc := analyzeCharClasses(original)
+	chars := cc.charPool()
+	password := cc.seedRequired()
 
-	for _, c := range original {
-		switch {
-		case unicode.IsUpper(c):
-			hasUpper = true
-		case unicode.IsLower(c):
-			hasLower = true
-		case unicode.IsDigit(c):
-			hasDigit = true
-		case !unicode.IsLetter(c) && !unicode.IsDigit(c):
-			hasSpecial = true
-		}
-	}
-
-	const (
-		lowerChars   = "abcdefghijklmnopqrstuvwxyz"
-		upperChars   = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-		digitChars   = "0123456789"
-		specialChars = "!@#$%^&*()-_=+[]{}|;:,.<>?"
-	)
-
-	var chars string
-	if hasLower {
-		chars += lowerChars
-	}
-	if hasUpper {
-		chars += upperChars
-	}
-	if hasDigit {
-		chars += digitChars
-	}
-	if hasSpecial {
-		chars += specialChars
-	}
-	if chars == "" {
-		chars = lowerChars
-	}
-
-	// Ensure at least one of each required type
-	var password []byte
-	if hasUpper {
-		password = append(password, secureChoiceByte(upperChars))
-	}
-	if hasLower {
-		password = append(password, secureChoiceByte(lowerChars))
-	}
-	if hasDigit {
-		password = append(password, secureChoiceByte(digitChars))
-	}
-	if hasSpecial {
-		password = append(password, secureChoiceByte("!@#$%^&*()-_=+"))
-	}
-
-	// Fill remaining
 	for len(password) < length {
 		password = append(password, secureChoiceByte(chars))
 	}
 
-	// Shuffle
 	secureShuffle(password)
 	return string(password)
 }

@@ -13,15 +13,15 @@ import (
 
 // Mappings holds all entity-to-entity name mappings.
 type Mappings struct {
-	Domains   map[string]string `json:"domains"`
-	NetBIOS   map[string]string `json:"netbios"`
+	Domains   map[string]string      `json:"domains"`
+	NetBIOS   map[string]string      `json:"netbios"`
 	Hosts     map[string]HostMapping `json:"hosts"`
-	Users     map[string]string `json:"users"`
-	Passwords map[string]string `json:"passwords"`
-	Groups    map[string]string `json:"groups"`
-	OUs       map[string]string `json:"ous"`
-	ACLs      map[string]string `json:"acls"`
-	Misc      map[string]string `json:"misc"`
+	Users     map[string]string      `json:"users"`
+	Passwords map[string]string      `json:"passwords"`
+	Groups    map[string]string      `json:"groups"`
+	OUs       map[string]string      `json:"ous"`
+	ACLs      map[string]string      `json:"acls"`
+	Misc      map[string]string      `json:"misc"`
 }
 
 // HostMapping holds old/new hostname info for a single host.
@@ -268,31 +268,35 @@ func (g *Generator) mapUsers(config map[string]any) {
 
 			userInfo, _ := userData.(map[string]any)
 			if userInfo != nil {
-				if firstname, ok := userInfo["firstname"].(string); ok {
-					newFirst := strings.Split(newUsername, ".")[0]
-					g.mappings.Misc[firstname] = newFirst
-					if !isAllLower(firstname) && firstname != "sql" {
-						g.mappings.Misc[strings.ToLower(firstname)] = strings.ToLower(newFirst)
-					}
-					if isAllLower(firstname) && firstname != "sql" {
-						g.mappings.Misc[capitalize(firstname)] = capitalize(newFirst)
-					}
-				}
-
-				if surname, ok := userInfo["surname"].(string); ok && surname != "-" {
-					parts := strings.SplitN(newUsername, ".", 2)
-					newSurname := parts[0]
-					if len(parts) > 1 {
-						newSurname = parts[1]
-					}
-					g.mappings.Misc[surname] = newSurname
-					if isAllLower(surname) {
-						g.mappings.Misc[capitalize(surname)] = capitalize(newSurname)
-					}
-				}
+				g.mapUserNameComponents(userInfo, newUsername)
 			}
 
 			fmt.Printf("  %s -> %s\n", username, newUsername)
+		}
+	}
+}
+
+func (g *Generator) mapUserNameComponents(userInfo map[string]any, newUsername string) {
+	if firstname, ok := userInfo["firstname"].(string); ok {
+		newFirst := strings.Split(newUsername, ".")[0]
+		g.mappings.Misc[firstname] = newFirst
+		if !isAllLower(firstname) && firstname != "sql" {
+			g.mappings.Misc[strings.ToLower(firstname)] = strings.ToLower(newFirst)
+		}
+		if isAllLower(firstname) && firstname != "sql" {
+			g.mappings.Misc[capitalize(firstname)] = capitalize(newFirst)
+		}
+	}
+
+	if surname, ok := userInfo["surname"].(string); ok && surname != "-" {
+		parts := strings.SplitN(newUsername, ".", 2)
+		newSurname := parts[0]
+		if len(parts) > 1 {
+			newSurname = parts[1]
+		}
+		g.mappings.Misc[surname] = newSurname
+		if isAllLower(surname) {
+			g.mappings.Misc[capitalize(surname)] = capitalize(newSurname)
 		}
 	}
 }
@@ -362,95 +366,9 @@ func (g *Generator) mapPasswords(config map[string]any) {
 	domains := jsonPath[map[string]any](config, "lab", "domains")
 	hosts := jsonPath[map[string]any](config, "lab", "hosts")
 
-	// Domain passwords
-	for _, domainData := range domains {
-		info, _ := domainData.(map[string]any)
-		if info == nil {
-			continue
-		}
-		if pw, ok := info["domain_password"].(string); ok {
-			passwords[pw] = true
-		}
+	collectDomainPasswords(domains, passwords)
+	collectHostPasswords(hosts, passwords)
 
-		// User passwords
-		users := jsonPath[map[string]any](info, "users")
-		for _, userData := range users {
-			userInfo, _ := userData.(map[string]any)
-			if userInfo == nil {
-				continue
-			}
-			if pw, ok := userInfo["password"].(string); ok {
-				passwords[pw] = true
-			}
-		}
-	}
-
-	// Host local admin passwords
-	for _, hostData := range hosts {
-		info, _ := hostData.(map[string]any)
-		if info == nil {
-			continue
-		}
-		if pw, ok := info["local_admin_password"].(string); ok {
-			passwords[pw] = true
-		}
-
-		// MSSQL passwords
-		mssql := jsonPath[map[string]any](info, "mssql")
-		if mssql != nil {
-			if pw, ok := mssql["sa_password"].(string); ok {
-				passwords[pw] = true
-			}
-			linkedServers := jsonPath[map[string]any](mssql, "linked_servers")
-			for _, lsData := range linkedServers {
-				lsInfo, _ := lsData.(map[string]any)
-				if lsInfo == nil {
-					continue
-				}
-				if mappingsArr, ok := lsInfo["users_mapping"].([]any); ok {
-					for _, m := range mappingsArr {
-						mapping, _ := m.(map[string]any)
-						if mapping == nil {
-							continue
-						}
-						if pw, ok := mapping["remote_password"].(string); ok {
-							passwords[pw] = true
-						}
-					}
-				}
-			}
-		}
-
-		// Vulnerability passwords
-		vulnsVars := jsonPath[map[string]any](info, "vulns_vars")
-		if vulnsVars != nil {
-			creds := jsonPath[map[string]any](vulnsVars, "credentials")
-			for _, credData := range creds {
-				credInfo, _ := credData.(map[string]any)
-				if credInfo == nil {
-					continue
-				}
-				if pw, ok := credInfo["secret"].(string); ok {
-					passwords[pw] = true
-				}
-				if pw, ok := credInfo["runas_password"].(string); ok {
-					passwords[pw] = true
-				}
-			}
-			autologon := jsonPath[map[string]any](vulnsVars, "autologon")
-			for _, autoData := range autologon {
-				autoInfo, _ := autoData.(map[string]any)
-				if autoInfo == nil {
-					continue
-				}
-				if pw, ok := autoInfo["password"].(string); ok {
-					passwords[pw] = true
-				}
-			}
-		}
-	}
-
-	// Generate new passwords
 	for pw := range passwords {
 		newPW := g.nameGen.GeneratePassword(pw)
 		g.mappings.Passwords[pw] = newPW
@@ -465,7 +383,104 @@ func (g *Generator) mapPasswords(config map[string]any) {
 		fmt.Printf("  %s... -> %s...\n", truncOld, truncNew)
 	}
 
-	// Build user->password lookup for collision fixing
+	g.buildUserPasswordMap(domains)
+}
+
+func collectDomainPasswords(domains map[string]any, passwords map[string]bool) {
+	for _, domainData := range domains {
+		info, _ := domainData.(map[string]any)
+		if info == nil {
+			continue
+		}
+		if pw, ok := info["domain_password"].(string); ok {
+			passwords[pw] = true
+		}
+		users := jsonPath[map[string]any](info, "users")
+		for _, userData := range users {
+			userInfo, _ := userData.(map[string]any)
+			if userInfo == nil {
+				continue
+			}
+			if pw, ok := userInfo["password"].(string); ok {
+				passwords[pw] = true
+			}
+		}
+	}
+}
+
+func collectHostPasswords(hosts map[string]any, passwords map[string]bool) {
+	for _, hostData := range hosts {
+		info, _ := hostData.(map[string]any)
+		if info == nil {
+			continue
+		}
+		if pw, ok := info["local_admin_password"].(string); ok {
+			passwords[pw] = true
+		}
+		collectMSSQLPasswords(info, passwords)
+		collectVulnPasswords(info, passwords)
+	}
+}
+
+func collectMSSQLPasswords(hostInfo map[string]any, passwords map[string]bool) {
+	mssql := jsonPath[map[string]any](hostInfo, "mssql")
+	if mssql == nil {
+		return
+	}
+	if pw, ok := mssql["sa_password"].(string); ok {
+		passwords[pw] = true
+	}
+	linkedServers := jsonPath[map[string]any](mssql, "linked_servers")
+	for _, lsData := range linkedServers {
+		lsInfo, _ := lsData.(map[string]any)
+		if lsInfo == nil {
+			continue
+		}
+		if mappingsArr, ok := lsInfo["users_mapping"].([]any); ok {
+			for _, m := range mappingsArr {
+				mapping, _ := m.(map[string]any)
+				if mapping == nil {
+					continue
+				}
+				if pw, ok := mapping["remote_password"].(string); ok {
+					passwords[pw] = true
+				}
+			}
+		}
+	}
+}
+
+func collectVulnPasswords(hostInfo map[string]any, passwords map[string]bool) {
+	vulnsVars := jsonPath[map[string]any](hostInfo, "vulns_vars")
+	if vulnsVars == nil {
+		return
+	}
+	creds := jsonPath[map[string]any](vulnsVars, "credentials")
+	for _, credData := range creds {
+		credInfo, _ := credData.(map[string]any)
+		if credInfo == nil {
+			continue
+		}
+		if pw, ok := credInfo["secret"].(string); ok {
+			passwords[pw] = true
+		}
+		if pw, ok := credInfo["runas_password"].(string); ok {
+			passwords[pw] = true
+		}
+	}
+	autologon := jsonPath[map[string]any](vulnsVars, "autologon")
+	for _, autoData := range autologon {
+		autoInfo, _ := autoData.(map[string]any)
+		if autoInfo == nil {
+			continue
+		}
+		if pw, ok := autoInfo["password"].(string); ok {
+			passwords[pw] = true
+		}
+	}
+}
+
+func (g *Generator) buildUserPasswordMap(domains map[string]any) {
 	for _, domainData := range domains {
 		info, _ := domainData.(map[string]any)
 		if info == nil {
@@ -556,17 +571,65 @@ func (g *Generator) buildOrderedReplacements() {
 
 	var repls []replacement
 
-	// 1. Host FQDNs
+	repls = g.appendHostReplacements(repls)
+	repls = g.appendQualifiedUserReplacements(repls)
+	repls = g.appendDNReplacements(repls)
+	repls = appendMapReplacements(repls, g.mappings.Misc, withSuffix("$"))
+	repls = g.appendDomainReplacements(repls)
+	repls = appendMapReplacements(repls, g.mappings.Users, nil)
+	repls = appendMapReplacements(repls, g.mappings.Groups, nil)
+	repls = appendMapReplacements(repls, g.mappings.OUs, nil)
+	repls = appendMapReplacements(repls, g.mappings.Passwords, nil)
+	repls = appendMapReplacements(repls, g.mappings.NetBIOS, nil)
+	repls = appendMapReplacements(repls, g.mappings.Misc, withoutSuffix("$"))
+
+	sort.Slice(repls, func(i, j int) bool {
+		return len(repls[i].Old) > len(repls[j].Old)
+	})
+
+	seen := make(map[string]bool)
+	var unique []replacement
+	for _, r := range repls {
+		key := r.Old + "\x00" + r.New
+		if !seen[key] {
+			seen[key] = true
+			unique = append(unique, r)
+		}
+	}
+
+	g.replacements = unique
+	fmt.Printf("Built %d ordered replacements\n", len(g.replacements))
+}
+
+func withSuffix(s string) func(string) bool {
+	return func(key string) bool { return strings.HasSuffix(key, s) }
+}
+
+func withoutSuffix(s string) func(string) bool {
+	return func(key string) bool { return !strings.HasSuffix(key, s) }
+}
+
+func appendMapReplacements(repls []replacement, m map[string]string, filter func(string) bool) []replacement {
+	for old, new := range m {
+		if filter != nil && !filter(old) {
+			continue
+		}
+		repls = append(repls, replacement{old, new})
+	}
+	return repls
+}
+
+func (g *Generator) appendHostReplacements(repls []replacement) []replacement {
 	for _, hm := range g.mappings.Hosts {
 		repls = append(repls, replacement{hm.OldFQDN, hm.NewFQDN})
 	}
-
-	// 1b. Bare hostnames
 	for _, hm := range g.mappings.Hosts {
 		repls = append(repls, replacement{hm.OldHostname, hm.NewHostname})
 	}
+	return repls
+}
 
-	// 2. Domain-qualified usernames
+func (g *Generator) appendQualifiedUserReplacements(repls []replacement) []replacement {
 	netbiosUpperMap := make(map[string]string)
 	for old, new := range g.mappings.NetBIOS {
 		if strings.ToUpper(old) == old {
@@ -580,7 +643,6 @@ func (g *Generator) buildOrderedReplacements() {
 		if newNB == "" {
 			newNB = strings.ToUpper(strings.Split(newDomain, ".")[0])
 		}
-
 		for oldUser, newUser := range g.mappings.Users {
 			repls = append(repls,
 				replacement{oldNB + "\\\\" + oldUser, newNB + "\\\\" + newUser},
@@ -588,8 +650,10 @@ func (g *Generator) buildOrderedReplacements() {
 			)
 		}
 	}
+	return repls
+}
 
-	// 3. DN paths
+func (g *Generator) appendDNReplacements(repls []replacement) []replacement {
 	for oldDomain, newDomain := range g.mappings.Domains {
 		oldParts := strings.Split(strings.TrimSuffix(oldDomain, ".local"), ".")
 		newParts := strings.Split(strings.TrimSuffix(newDomain, ".local"), ".")
@@ -601,81 +665,27 @@ func (g *Generator) buildOrderedReplacements() {
 		for _, p := range newParts {
 			newDCs = append(newDCs, "DC="+p)
 		}
-		oldDN := strings.Join(oldDCs, ",") + ",DC=local"
-		newDN := strings.Join(newDCs, ",") + ",DC=local"
-		repls = append(repls, replacement{oldDN, newDN})
+		repls = append(repls, replacement{
+			strings.Join(oldDCs, ",") + ",DC=local",
+			strings.Join(newDCs, ",") + ",DC=local",
+		})
 	}
+	return repls
+}
 
-	// 5. Computer accounts
-	for old, new := range g.mappings.Misc {
-		if strings.HasSuffix(old, "$") {
-			repls = append(repls, replacement{old, new})
-		}
-	}
-
-	// 6. Domain names (child before parent = longest first)
+func (g *Generator) appendDomainReplacements(repls []replacement) []replacement {
 	type domainPair struct{ old, new string }
-	var domainPairs []domainPair
+	var pairs []domainPair
 	for old, new := range g.mappings.Domains {
-		domainPairs = append(domainPairs, domainPair{old, new})
+		pairs = append(pairs, domainPair{old, new})
 	}
-	sort.Slice(domainPairs, func(i, j int) bool {
-		return len(domainPairs[i].old) > len(domainPairs[j].old)
+	sort.Slice(pairs, func(i, j int) bool {
+		return len(pairs[i].old) > len(pairs[j].old)
 	})
-	for _, dp := range domainPairs {
+	for _, dp := range pairs {
 		repls = append(repls, replacement{dp.old, dp.new})
 	}
-
-	// 7. Usernames
-	for old, new := range g.mappings.Users {
-		repls = append(repls, replacement{old, new})
-	}
-
-	// 8. Groups
-	for old, new := range g.mappings.Groups {
-		repls = append(repls, replacement{old, new})
-	}
-
-	// 9. OUs
-	for old, new := range g.mappings.OUs {
-		repls = append(repls, replacement{old, new})
-	}
-
-	// 10. Passwords
-	for old, new := range g.mappings.Passwords {
-		repls = append(repls, replacement{old, new})
-	}
-
-	// 11. NetBIOS names
-	for old, new := range g.mappings.NetBIOS {
-		repls = append(repls, replacement{old, new})
-	}
-
-	// 12. Misc (non-computer-account)
-	for old, new := range g.mappings.Misc {
-		if !strings.HasSuffix(old, "$") {
-			repls = append(repls, replacement{old, new})
-		}
-	}
-
-	// Sort longest first
-	sort.Slice(repls, func(i, j int) bool {
-		return len(repls[i].Old) > len(repls[j].Old)
-	})
-
-	// Deduplicate
-	seen := make(map[string]bool)
-	var unique []replacement
-	for _, r := range repls {
-		key := r.Old + "\x00" + r.New
-		if !seen[key] {
-			seen[key] = true
-			unique = append(unique, r)
-		}
-	}
-
-	g.replacements = unique
-	fmt.Printf("Built %d ordered replacements\n", len(g.replacements))
+	return repls
 }
 
 // applyReplacements applies all replacements to content.
@@ -955,26 +965,37 @@ func (g *Generator) saveMappings() error {
 	return os.WriteFile(outPath, data, 0o644)
 }
 
+var originalNames = []string{
+	"sevenkingdoms", "essos",
+	"kingslanding", "winterfell", "meereen", "castelblack", "braavos",
+	"stark", "lannister", "baratheon", "targaryen", "drogo", "snow",
+	"tywin", "jaime", "cersei", "tyron", "robert", "joffrey",
+	"arya", "eddard", "catelyn", "robb", "sansa", "brandon",
+	"daenerys", "viserys", "khal", "jorah", "mormont",
+}
+
+type violation struct {
+	file string
+	name string
+}
+
 // validate checks that no original GOAD names appear in variant files.
 func (g *Generator) validate() bool {
 	fmt.Println("\n=== Validating Variant ===")
 
-	originalNames := []string{
-		"sevenkingdoms", "essos",
-		"kingslanding", "winterfell", "meereen", "castelblack", "braavos",
-		"stark", "lannister", "baratheon", "targaryen", "drogo", "snow",
-		"tywin", "jaime", "cersei", "tyron", "robert", "joffrey",
-		"arya", "eddard", "catelyn", "robb", "sansa", "brandon",
-		"daenerys", "viserys", "khal", "jorah", "mormont",
-	}
+	violations, filesChecked := g.findNameViolations()
+	fmt.Printf("Checked %d text files\n", filesChecked)
+	printViolations(violations)
 
-	type violation struct {
-		file string
-		name string
-	}
+	fmt.Println("\nValidating structure...")
+	g.validateStructureCounts()
+
+	return len(violations) == 0
+}
+
+func (g *Generator) findNameViolations() ([]violation, int) {
 	var violations []violation
 	filesChecked := 0
-
 	skipFiles := map[string]bool{"mapping.json": true, "README.md": true}
 
 	_ = filepath.WalkDir(g.TargetPath, func(path string, d fs.DirEntry, err error) error {
@@ -984,12 +1005,10 @@ func (g *Generator) validate() bool {
 		if skipFiles[d.Name()] {
 			return nil
 		}
-
 		ext := filepath.Ext(path)
 		if !textExtensions[ext] && !textFilenames[d.Name()] {
 			return nil
 		}
-
 		filesChecked++
 		content, err := os.ReadFile(path)
 		if err != nil {
@@ -997,7 +1016,6 @@ func (g *Generator) validate() bool {
 		}
 		lower := strings.ToLower(string(content))
 		rel, _ := filepath.Rel(g.TargetPath, path)
-
 		for _, name := range originalNames {
 			if strings.Contains(lower, name) {
 				re, err := regexp.Compile(`\b` + regexp.QuoteMeta(name) + `\b`)
@@ -1008,51 +1026,53 @@ func (g *Generator) validate() bool {
 		}
 		return nil
 	})
+	return violations, filesChecked
+}
 
-	fmt.Printf("Checked %d text files\n", filesChecked)
-
-	if len(violations) > 0 {
-		fmt.Printf("\nFound %d potential issues:\n", len(violations))
-		limit := len(violations)
-		if limit > 20 {
-			limit = 20
-		}
-		for _, v := range violations[:limit] {
-			fmt.Printf("  %s: contains '%s'\n", v.file, v.name)
-		}
-		if len(violations) > 20 {
-			fmt.Printf("  ... and %d more\n", len(violations)-20)
-		}
-	} else {
+func printViolations(violations []violation) {
+	if len(violations) == 0 {
 		fmt.Println("No original names found in variant files")
+		return
 	}
+	fmt.Printf("\nFound %d potential issues:\n", len(violations))
+	limit := len(violations)
+	if limit > 20 {
+		limit = 20
+	}
+	for _, v := range violations[:limit] {
+		fmt.Printf("  %s: contains '%s'\n", v.file, v.name)
+	}
+	if len(violations) > 20 {
+		fmt.Printf("  ... and %d more\n", len(violations)-20)
+	}
+}
 
-	// Validate structure counts
-	fmt.Println("\nValidating structure...")
+func (g *Generator) validateStructureCounts() {
 	origConfig, err := g.loadConfig()
-	if err == nil {
-		varData, err := os.ReadFile(filepath.Join(g.TargetPath, "data", "config.json"))
-		if err == nil {
-			var varConfig map[string]any
-			if json.Unmarshal(varData, &varConfig) == nil {
-				origHosts := len(jsonPath[map[string]any](origConfig, "lab", "hosts"))
-				varHosts := len(jsonPath[map[string]any](varConfig, "lab", "hosts"))
-				origDomains := len(jsonPath[map[string]any](origConfig, "lab", "domains"))
-				varDomains := len(jsonPath[map[string]any](varConfig, "lab", "domains"))
-
-				checkMark := func(a, b int) string {
-					if a == b {
-						return "OK"
-					}
-					return "MISMATCH"
-				}
-				fmt.Printf("  Hosts: %d -> %d %s\n", origHosts, varHosts, checkMark(origHosts, varHosts))
-				fmt.Printf("  Domains: %d -> %d %s\n", origDomains, varDomains, checkMark(origDomains, varDomains))
-			}
-		}
+	if err != nil {
+		return
 	}
+	varData, err := os.ReadFile(filepath.Join(g.TargetPath, "data", "config.json"))
+	if err != nil {
+		return
+	}
+	var varConfig map[string]any
+	if json.Unmarshal(varData, &varConfig) != nil {
+		return
+	}
+	origHosts := len(jsonPath[map[string]any](origConfig, "lab", "hosts"))
+	varHosts := len(jsonPath[map[string]any](varConfig, "lab", "hosts"))
+	origDomains := len(jsonPath[map[string]any](origConfig, "lab", "domains"))
+	varDomains := len(jsonPath[map[string]any](varConfig, "lab", "domains"))
 
-	return len(violations) == 0
+	checkMark := func(a, b int) string {
+		if a == b {
+			return "OK"
+		}
+		return "MISMATCH"
+	}
+	fmt.Printf("  Hosts: %d -> %d %s\n", origHosts, varHosts, checkMark(origHosts, varHosts))
+	fmt.Printf("  Domains: %d -> %d %s\n", origDomains, varDomains, checkMark(origDomains, varDomains))
 }
 
 // createDocumentation generates a README for the variant.

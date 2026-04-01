@@ -8,19 +8,37 @@ import (
 	"testing"
 )
 
-func TestGeneratorEndToEnd(t *testing.T) {
-	// Create a minimal GOAD source structure
+func setupTestSource(t *testing.T) (sourceDir, targetDir string) {
+	t.Helper()
 	tmpDir := t.TempDir()
-	sourceDir := filepath.Join(tmpDir, "source")
-	targetDir := filepath.Join(tmpDir, "target")
+	sourceDir = filepath.Join(tmpDir, "source")
+	targetDir = filepath.Join(tmpDir, "target")
 
-	// Create source data directory
 	if err := os.MkdirAll(filepath.Join(sourceDir, "data"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	// Minimal config.json matching GOAD structure
-	config := map[string]any{
+	config := testConfig()
+	configData, _ := json.MarshalIndent(config, "", "  ")
+	if err := os.WriteFile(filepath.Join(sourceDir, "data", "config.json"), configData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.MkdirAll(filepath.Join(sourceDir, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(sourceDir, "scripts", "test.ps1"),
+		[]byte("# Connect to kingslanding.sevenkingdoms.local\n$dc = 'SEVENKINGDOMS\\arya.stark'\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	return sourceDir, targetDir
+}
+
+func testConfig() map[string]any {
+	return map[string]any{
 		"lab": map[string]any{
 			"hosts": map[string]any{
 				"dc01": map[string]any{
@@ -82,61 +100,38 @@ func TestGeneratorEndToEnd(t *testing.T) {
 			},
 		},
 	}
+}
 
-	configData, _ := json.MarshalIndent(config, "", "  ")
-	if err := os.WriteFile(filepath.Join(sourceDir, "data", "config.json"), configData, 0o644); err != nil {
-		t.Fatal(err)
-	}
+func TestGeneratorEndToEnd(t *testing.T) {
+	sourceDir, targetDir := setupTestSource(t)
 
-	// Create a test script file
-	if err := os.MkdirAll(filepath.Join(sourceDir, "scripts"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(sourceDir, "scripts", "test.ps1"),
-		[]byte("# Connect to kingslanding.sevenkingdoms.local\n$dc = 'SEVENKINGDOMS\\arya.stark'\n"),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-
-	// Run generator
 	gen := NewGenerator(sourceDir, targetDir, "test-variant")
 	if err := gen.Run(); err != nil {
 		t.Fatalf("generator failed: %v", err)
 	}
 
-	// Verify target exists
 	if _, err := os.Stat(filepath.Join(targetDir, "data", "config.json")); err != nil {
 		t.Fatal("config.json not created in target")
 	}
-
-	// Verify mapping.json exists
 	if _, err := os.Stat(filepath.Join(targetDir, "mapping.json")); err != nil {
 		t.Fatal("mapping.json not created")
 	}
 
-	// Read transformed config
 	transformedData, err := os.ReadFile(filepath.Join(targetDir, "data", "config.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	content := string(transformedData)
 
-	// Verify original names are gone
 	for _, name := range []string{"sevenkingdoms", "essos", "kingslanding", "meereen", "arya", "stark"} {
 		if strings.Contains(strings.ToLower(content), name) {
 			t.Errorf("original name %q still found in transformed config", name)
 		}
 	}
-
-	// Verify sql_svc is preserved
 	if !strings.Contains(content, "sql_svc") {
 		t.Error("sql_svc should be preserved")
 	}
 
-	// Verify script was transformed
 	scriptData, err := os.ReadFile(filepath.Join(targetDir, "scripts", "test.ps1"))
 	if err != nil {
 		t.Fatal(err)
