@@ -1,4 +1,4 @@
-# dreadnode.goad
+# DreadGOAD
 
 Ansible collection for deploying and configuring vulnerable Active Directory
 lab environments for penetration testing and security research.

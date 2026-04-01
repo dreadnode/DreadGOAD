@@ -253,9 +253,13 @@ def render_svg(mmd_path, svg_path):
     # Use dark theme with dark background
     config_path = mmd_path.parent / "mermaid-config.json"
     config_path.write_text('{"theme":"dark","themeVariables":{"darkMode":true}}\n')
+    # Puppeteer config for CI (no-sandbox required on GitHub Actions)
+    puppeteer_config_path = mmd_path.parent / "puppeteer-config.json"
+    puppeteer_config_path.write_text('{"args":["--no-sandbox","--disable-setuid-sandbox"]}\n')
     cmd += [
         "-i", str(mmd_path), "-o", str(svg_path),
         "-c", str(config_path),
+        "-p", str(puppeteer_config_path),
         "-b", "#1a1a2e",
         "-w", "1600",
     ]
@@ -266,6 +270,7 @@ def render_svg(mmd_path, svg_path):
         return False
     finally:
         config_path.unlink(missing_ok=True)
+        puppeteer_config_path.unlink(missing_ok=True)
     return True
 
 
