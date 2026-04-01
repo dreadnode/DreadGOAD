@@ -87,6 +87,16 @@ func (v *Validator) DiscoverHosts(ctx context.Context) error {
 	return nil
 }
 
+// RunQuickChecks runs a subset of critical checks: credentials, services, SMB signing, and trusts.
+func (v *Validator) RunQuickChecks(ctx context.Context) {
+	v.checkCredentialDiscovery(ctx)
+	v.checkNetworkMisconfigs(ctx)
+	v.checkMSSQL(ctx)
+	v.checkADCS(ctx)
+	v.checkDomainTrusts(ctx)
+	v.checkServices(ctx)
+}
+
 // RunAllChecks executes all vulnerability validation checks.
 func (v *Validator) RunAllChecks(ctx context.Context) {
 	v.checkCredentialDiscovery(ctx)

@@ -39,7 +39,7 @@ func Execute() error {
 func init() {
 	cobra.OnInitialize(config.Init)
 
-	rootCmd.PersistentFlags().StringP("env", "e", "dev", "Target environment (dev, staging, prod)")
+	rootCmd.PersistentFlags().StringP("env", "e", "staging", "Target environment (dev, staging, prod)")
 	rootCmd.PersistentFlags().String("region", "", "AWS region (default: from inventory)")
 	rootCmd.PersistentFlags().Bool("debug", false, "Enable debug/verbose output")
 	rootCmd.PersistentFlags().String("config", "", "Config file path")

@@ -12,6 +12,7 @@ import (
 	"github.com/dreadnode/dreadgoad/internal/ansible"
 	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/dreadnode/dreadgoad/internal/doctor"
+	"github.com/dreadnode/dreadgoad/internal/variant"
 	"github.com/spf13/cobra"
 )
 
@@ -88,6 +89,26 @@ func runProvision(cmd *cobra.Command, args []string) error {
 	// Pre-flight: prepare ADCS zips
 	if err := ansible.PrepareADCSZips(cfg.ProjectRoot); err != nil {
 		slog.Warn("ADCS zip preparation failed", "error", err)
+	}
+
+	// Pre-flight: auto-generate variant if environment requires it
+	envCfg := cfg.ActiveEnvironment()
+	if envCfg.Variant {
+		source, target := cfg.ResolvedVariantPaths()
+		variantName := envCfg.VariantName
+		if variantName == "" {
+			variantName = "variant-1"
+		}
+		if _, err := os.Stat(target); os.IsNotExist(err) {
+			fmt.Printf("Environment %q has variant=true, generating variant...\n", cfg.Env)
+			gen := variant.NewGenerator(source, target, variantName)
+			if err := gen.Run(); err != nil {
+				return fmt.Errorf("auto variant generation failed: %w", err)
+			}
+			fmt.Printf("Variant generated: %s\n", target)
+		} else {
+			slog.Info("Variant directory already exists, skipping generation", "target", target)
+		}
 	}
 
 	// Log header

@@ -23,7 +23,8 @@ Checks credentials, Kerberos, SMB, delegation, MSSQL, ADCS, ACLs, trusts, and se
 	Example: `  dreadgoad validate
   dreadgoad validate --env staging --verbose
   dreadgoad validate --format json --output /tmp/results.json
-  dreadgoad validate --no-fail`,
+  dreadgoad validate --no-fail
+  dreadgoad validate --quick`,
 	RunE: runValidate,
 }
 
@@ -34,6 +35,7 @@ func init() {
 	validateCmd.Flags().String("output", "", "JSON report output path")
 	validateCmd.Flags().Bool("verbose", false, "Enable verbose output")
 	validateCmd.Flags().Bool("no-fail", false, "Don't exit with error on failed checks")
+	validateCmd.Flags().Bool("quick", false, "Quick validation of critical vulnerabilities only")
 }
 
 func runValidate(cmd *cobra.Command, args []string) error {
@@ -43,11 +45,12 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	verbose, _ := cmd.Flags().GetBool("verbose")
 	outputPath, _ := cmd.Flags().GetString("output")
 	noFail, _ := cmd.Flags().GetBool("no-fail")
+	quick, _ := cmd.Flags().GetBool("quick")
 
 	// Determine region
 	region := cfg.Region
 	if region == "" {
-		region = "us-west-1" // validate default matches Taskfile
+		region = "us-west-1"
 	}
 
 	client, err := daws.NewClient(ctx, region)
@@ -67,7 +70,11 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("discover hosts: %w", err)
 	}
 
-	v.RunAllChecks(ctx)
+	if quick {
+		v.RunQuickChecks(ctx)
+	} else {
+		v.RunAllChecks(ctx)
+	}
 
 	report := v.GetReport()
 

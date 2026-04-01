@@ -39,10 +39,22 @@ func init() {
 
 func runVariantGenerate(cmd *cobra.Command, args []string) error {
 	cfg := config.Get()
+	envCfg := cfg.ActiveEnvironment()
 
 	source, _ := cmd.Flags().GetString("source")
 	target, _ := cmd.Flags().GetString("target")
 	name, _ := cmd.Flags().GetString("name")
+
+	// Use environment config as defaults when flags weren't explicitly set
+	if !cmd.Flags().Changed("source") && envCfg.VariantSource != "" {
+		source = envCfg.VariantSource
+	}
+	if !cmd.Flags().Changed("target") && envCfg.VariantTarget != "" {
+		target = envCfg.VariantTarget
+	}
+	if !cmd.Flags().Changed("name") && envCfg.VariantName != "" {
+		name = envCfg.VariantName
+	}
 
 	// Resolve paths relative to project root
 	if !filepath.IsAbs(source) {

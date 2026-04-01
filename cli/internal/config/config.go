@@ -8,17 +8,26 @@ import (
 	"github.com/spf13/viper"
 )
 
+// EnvironmentConfig holds per-environment settings.
+type EnvironmentConfig struct {
+	Variant       bool   `mapstructure:"variant"`
+	VariantSource string `mapstructure:"variant_source"`
+	VariantTarget string `mapstructure:"variant_target"`
+	VariantName   string `mapstructure:"variant_name"`
+}
+
 // Config holds all CLI configuration.
 type Config struct {
-	Env         string   `mapstructure:"env"`
-	Region      string   `mapstructure:"region"`
-	Debug       bool     `mapstructure:"debug"`
-	MaxRetries  int      `mapstructure:"max_retries"`
-	RetryDelay  int      `mapstructure:"retry_delay"`
-	IdleTimeout int      `mapstructure:"idle_timeout"`
-	LogDir      string   `mapstructure:"log_dir"`
-	Playbooks   []string `mapstructure:"playbooks"`
-	ProjectRoot string   `mapstructure:"project_root"`
+	Env          string                       `mapstructure:"env"`
+	Region       string                       `mapstructure:"region"`
+	Debug        bool                         `mapstructure:"debug"`
+	MaxRetries   int                          `mapstructure:"max_retries"`
+	RetryDelay   int                          `mapstructure:"retry_delay"`
+	IdleTimeout  int                          `mapstructure:"idle_timeout"`
+	LogDir       string                       `mapstructure:"log_dir"`
+	Playbooks    []string                     `mapstructure:"playbooks"`
+	ProjectRoot  string                       `mapstructure:"project_root"`
+	Environments map[string]EnvironmentConfig `mapstructure:"environments"`
 }
 
 var (
@@ -93,6 +102,39 @@ func (c *Config) AnsibleEnv() map[string]string {
 		"ANSIBLE_RETRY_FILES_ENABLED":     "True",
 		"ANSIBLE_GATHER_TIMEOUT":          "60",
 	}
+}
+
+// ActiveEnvironment returns the EnvironmentConfig for the currently selected env.
+// Returns a zero-value EnvironmentConfig if not defined (variant: false).
+func (c *Config) ActiveEnvironment() EnvironmentConfig {
+	if c.Environments == nil {
+		return EnvironmentConfig{}
+	}
+	return c.Environments[c.Env]
+}
+
+// ResolvedVariantPaths returns absolute source/target paths for the active
+// environment's variant config. Returns empty strings if variant is false.
+func (c *Config) ResolvedVariantPaths() (source, target string) {
+	ec := c.ActiveEnvironment()
+	if !ec.Variant {
+		return "", ""
+	}
+	src := ec.VariantSource
+	if src == "" {
+		src = "ad/GOAD"
+	}
+	tgt := ec.VariantTarget
+	if tgt == "" {
+		tgt = "ad/GOAD-variant-1"
+	}
+	if !filepath.IsAbs(src) {
+		src = filepath.Join(c.ProjectRoot, src)
+	}
+	if !filepath.IsAbs(tgt) {
+		tgt = filepath.Join(c.ProjectRoot, tgt)
+	}
+	return src, tgt
 }
 
 func findProjectRoot() string {
