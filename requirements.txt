@@ -14,7 +14,7 @@ botocore==1.42.79
 # bootstrap_wrapper receives null input and all Windows modules fail with:
 #   "ConvertFrom-Json: Cannot bind argument to parameter 'InputObject' because it is null"
 # Pin to 2.17.x until the amazon.aws SSM plugin properly handles pipelined in_data.
-ansible-core>=2.17.0,<2.18.0
+ansible-core>=2.20.4,<2.21.0
 ansible_runner
 pywinrm
 # AZURE
