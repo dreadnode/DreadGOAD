@@ -44,14 +44,14 @@ func Init() {
 	setDefaults()
 
 	// Config file is optional
-	viper.ReadInConfig()
+	_ = viper.ReadInConfig()
 }
 
 // Get returns the current configuration, loading it once.
 func Get() *Config {
 	once.Do(func() {
 		cfg = &Config{}
-		viper.Unmarshal(cfg)
+		_ = viper.Unmarshal(cfg)
 
 		// Resolve project root (directory containing ansible/)
 		if cfg.ProjectRoot == "" {

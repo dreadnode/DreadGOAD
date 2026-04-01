@@ -37,74 +37,80 @@ func writeTestInventory(t *testing.T, content string) string {
 	return path
 }
 
-func TestParse(t *testing.T) {
+func parseTestInventory(t *testing.T) *Inventory {
+	t.Helper()
 	path := writeTestInventory(t, testInventory)
-
 	inv, err := Parse(path)
 	if err != nil {
 		t.Fatalf("Parse() error = %v", err)
 	}
+	return inv
+}
 
-	t.Run("hosts parsed", func(t *testing.T) {
-		if len(inv.Hosts) != 3 {
-			t.Errorf("got %d hosts, want 3", len(inv.Hosts))
-		}
-	})
+func TestParse_HostCount(t *testing.T) {
+	inv := parseTestInventory(t)
+	if len(inv.Hosts) != 3 {
+		t.Errorf("got %d hosts, want 3", len(inv.Hosts))
+	}
+}
 
-	t.Run("host attributes", func(t *testing.T) {
-		dc01 := inv.Hosts["DC01"]
-		if dc01 == nil {
-			t.Fatal("DC01 not found")
-		}
-		if dc01.InstanceID != "i-0e428dfc02f5007dd" {
-			t.Errorf("InstanceID = %q, want %q", dc01.InstanceID, "i-0e428dfc02f5007dd")
-		}
-		if dc01.DictKey != "dc01" {
-			t.Errorf("DictKey = %q, want %q", dc01.DictKey, "dc01")
-		}
-		if dc01.DNSDomain != "sevenkingdoms.local" {
-			t.Errorf("DNSDomain = %q, want %q", dc01.DNSDomain, "sevenkingdoms.local")
-		}
-		if dc01.User != "vagrant" {
-			t.Errorf("User = %q, want %q", dc01.User, "vagrant")
-		}
-	})
+func TestParse_HostAttributes(t *testing.T) {
+	inv := parseTestInventory(t)
+	dc01 := inv.Hosts["DC01"]
+	if dc01 == nil {
+		t.Fatal("DC01 not found")
+	}
+	if dc01.InstanceID != "i-0e428dfc02f5007dd" {
+		t.Errorf("InstanceID = %q, want %q", dc01.InstanceID, "i-0e428dfc02f5007dd")
+	}
+	if dc01.DictKey != "dc01" {
+		t.Errorf("DictKey = %q, want %q", dc01.DictKey, "dc01")
+	}
+	if dc01.DNSDomain != "sevenkingdoms.local" {
+		t.Errorf("DNSDomain = %q, want %q", dc01.DNSDomain, "sevenkingdoms.local")
+	}
+	if dc01.User != "vagrant" {
+		t.Errorf("User = %q, want %q", dc01.User, "vagrant")
+	}
+}
 
-	t.Run("vars parsed", func(t *testing.T) {
-		if inv.Vars["ansible_aws_ssm_region"] != "us-east-1" {
-			t.Errorf("region = %q, want %q", inv.Vars["ansible_aws_ssm_region"], "us-east-1")
-		}
-		if inv.Vars["ansible_connection"] != "aws_ssm" {
-			t.Errorf("connection = %q, want %q", inv.Vars["ansible_connection"], "aws_ssm")
-		}
-	})
+func TestParse_Vars(t *testing.T) {
+	inv := parseTestInventory(t)
+	if inv.Vars["ansible_aws_ssm_region"] != "us-east-1" {
+		t.Errorf("region = %q, want %q", inv.Vars["ansible_aws_ssm_region"], "us-east-1")
+	}
+	if inv.Vars["ansible_connection"] != "aws_ssm" {
+		t.Errorf("connection = %q, want %q", inv.Vars["ansible_connection"], "aws_ssm")
+	}
+}
 
-	t.Run("groups parsed", func(t *testing.T) {
-		if len(inv.Groups["dc"]) != 2 {
-			t.Errorf("dc group has %d members, want 2", len(inv.Groups["dc"]))
-		}
-		if len(inv.Groups["server"]) != 1 {
-			t.Errorf("server group has %d members, want 1", len(inv.Groups["server"]))
-		}
-	})
+func TestParse_Groups(t *testing.T) {
+	inv := parseTestInventory(t)
+	if len(inv.Groups["dc"]) != 2 {
+		t.Errorf("dc group has %d members, want 2", len(inv.Groups["dc"]))
+	}
+	if len(inv.Groups["server"]) != 1 {
+		t.Errorf("server group has %d members, want 1", len(inv.Groups["server"]))
+	}
+}
 
-	t.Run("host group membership", func(t *testing.T) {
-		dc02 := inv.Hosts["DC02"]
-		if dc02 == nil {
-			t.Fatal("DC02 not found")
+func TestParse_GroupMembership(t *testing.T) {
+	inv := parseTestInventory(t)
+	dc02 := inv.Hosts["DC02"]
+	if dc02 == nil {
+		t.Fatal("DC02 not found")
+	}
+	wantGroups := map[string]bool{"dc": false, "north": false}
+	for _, g := range dc02.Groups {
+		if _, ok := wantGroups[g]; ok {
+			wantGroups[g] = true
 		}
-		wantGroups := map[string]bool{"dc": false, "north": false}
-		for _, g := range dc02.Groups {
-			if _, ok := wantGroups[g]; ok {
-				wantGroups[g] = true
-			}
+	}
+	for g, found := range wantGroups {
+		if !found {
+			t.Errorf("DC02 missing group %q", g)
 		}
-		for g, found := range wantGroups {
-			if !found {
-				t.Errorf("DC02 missing group %q", g)
-			}
-		}
-	})
+	}
 }
 
 func TestParse_FileNotFound(t *testing.T) {

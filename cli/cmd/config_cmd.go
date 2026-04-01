@@ -48,7 +48,7 @@ var configInitCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		home, _ := os.UserHomeDir()
 		dir := filepath.Join(home, ".config", "dreadgoad")
-		os.MkdirAll(dir, 0o755)
+		_ = os.MkdirAll(dir, 0o755)
 		cfgPath := filepath.Join(dir, "dreadgoad.yaml")
 
 		if _, err := os.Stat(cfgPath); err == nil {

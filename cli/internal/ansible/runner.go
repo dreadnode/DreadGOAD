@@ -66,7 +66,7 @@ func RunPlaybook(ctx context.Context, opts RunOptions) *RunResult {
 	if opts.LogFile != "" {
 		if f, err := os.OpenFile(opts.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
 			writers = append(writers, f)
-			defer f.Close()
+			defer func() { _ = f.Close() }()
 		}
 	}
 
@@ -101,49 +101,21 @@ func RunPlaybook(ctx context.Context, opts RunOptions) *RunResult {
 		scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
 		for scanner.Scan() {
 			line := scanner.Text()
-			fmt.Fprintln(multiW, line)
+			_, _ = fmt.Fprintln(multiW, line)
 			bytesWritten.Add(int64(len(line)))
 		}
 	}()
 
-	// Idle timeout monitor
-	timedOut := false
-	go func() {
-		lastBytes := bytesWritten.Load()
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-		lastActivity := time.Now()
-
-		for {
-			select {
-			case <-doneCh:
-				return
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				current := bytesWritten.Load()
-				if current > lastBytes {
-					lastBytes = current
-					lastActivity = time.Now()
-				} else if time.Since(lastActivity) > idleTimeout {
-					slog.Error("idle timeout reached, killing playbook",
-						"timeout", idleTimeout, "pid", cmd.Process.Pid)
-					timedOut = true
-					killProcessGroup(cmd.Process.Pid)
-					return
-				}
-			}
-		}
-	}()
+	timedOut := monitorIdleTimeout(ctx, &bytesWritten, idleTimeout, cmd.Process.Pid, doneCh)
 
 	<-doneCh
 	err = cmd.Wait()
 
 	output := outputBuf.String()
 	result.Output = output
-	result.TimedOut = timedOut
+	result.TimedOut = *timedOut
 
-	if timedOut {
+	if *timedOut {
 		result.ExitCode = 124
 		return result
 	}
@@ -165,6 +137,40 @@ func RunPlaybook(ctx context.Context, opts RunOptions) *RunResult {
 	}
 
 	return result
+}
+
+// monitorIdleTimeout watches for output stalls and kills the process if idle too long.
+// Returns a pointer to a bool that is set to true if the process was killed.
+func monitorIdleTimeout(ctx context.Context, bytesWritten *atomic.Int64, timeout time.Duration, pid int, doneCh <-chan struct{}) *bool {
+	timedOut := new(bool)
+	go func() {
+		lastBytes := bytesWritten.Load()
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		lastActivity := time.Now()
+
+		for {
+			select {
+			case <-doneCh:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				current := bytesWritten.Load()
+				if current > lastBytes {
+					lastBytes = current
+					lastActivity = time.Now()
+				} else if time.Since(lastActivity) > timeout {
+					slog.Error("idle timeout reached, killing playbook",
+						"timeout", timeout, "pid", pid)
+					*timedOut = true
+					killProcessGroup(pid)
+					return
+				}
+			}
+		}
+	}()
+	return timedOut
 }
 
 func buildArgs(opts RunOptions, cfg *config.Config) []string {
@@ -213,10 +219,10 @@ func buildEnv(opts RunOptions, cfg *config.Config) []string {
 func killProcessGroup(pid int) {
 	pgid, err := syscall.Getpgid(pid)
 	if err == nil {
-		syscall.Kill(-pgid, syscall.SIGTERM)
+		_ = syscall.Kill(-pgid, syscall.SIGTERM)
 		time.Sleep(2 * time.Second)
-		syscall.Kill(-pgid, syscall.SIGKILL)
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
 	} else {
-		syscall.Kill(pid, syscall.SIGKILL)
+		_ = syscall.Kill(pid, syscall.SIGKILL)
 	}
 }

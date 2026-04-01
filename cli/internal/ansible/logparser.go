@@ -8,7 +8,6 @@ import (
 var (
 	failedRe      = regexp.MustCompile(`failed=[1-9][0-9]*`)
 	unreachableRe = regexp.MustCompile(`unreachable=[1-9][0-9]*`)
-	fatalLineRe   = regexp.MustCompile(`(?m)^fatal:`)
 	failedHostRe  = regexp.MustCompile(`(?m)^([a-zA-Z0-9_-]+)\s+:.*failed=[1-9]`)
 )
 

@@ -57,7 +57,7 @@ func init() {
 
 	ssmRunCmd.Flags().String("hosts", "all", "Comma-separated host names or 'all'")
 	ssmRunCmd.Flags().StringP("cmd", "c", "", "PowerShell command to execute")
-	ssmRunCmd.MarkFlagRequired("cmd")
+	_ = ssmRunCmd.MarkFlagRequired("cmd")
 }
 
 func runSSMStatus(cmd *cobra.Command, args []string) error {
@@ -186,33 +186,7 @@ func runSSMRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no running GOAD instances found for env=%s", cfg.Env)
 	}
 
-	// Filter by hosts
-	var targetIDs []string
-	var targetNames []string
-
-	if hostsFlag == "all" {
-		for _, inst := range instances {
-			targetIDs = append(targetIDs, inst.InstanceID)
-			targetNames = append(targetNames, inst.Name)
-		}
-	} else {
-		for _, hostName := range strings.Split(hostsFlag, ",") {
-			hostName = strings.TrimSpace(hostName)
-			found := false
-			for _, inst := range instances {
-				if strings.Contains(strings.ToUpper(inst.Name), strings.ToUpper(hostName)) {
-					targetIDs = append(targetIDs, inst.InstanceID)
-					targetNames = append(targetNames, inst.Name)
-					found = true
-					break
-				}
-			}
-			if !found {
-				fmt.Printf("WARNING: Host %q not found\n", hostName)
-			}
-		}
-	}
-
+	targetIDs, targetNames := filterInstances(instances, hostsFlag)
 	if len(targetIDs) == 0 {
 		return fmt.Errorf("no matching instances found")
 	}
@@ -241,4 +215,31 @@ func runSSMRun(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 	}
 	return nil
+}
+
+func filterInstances(instances []daws.Instance, hostsFlag string) ([]string, []string) {
+	var ids, names []string
+	if hostsFlag == "all" {
+		for _, inst := range instances {
+			ids = append(ids, inst.InstanceID)
+			names = append(names, inst.Name)
+		}
+		return ids, names
+	}
+	for _, hostName := range strings.Split(hostsFlag, ",") {
+		hostName = strings.TrimSpace(hostName)
+		found := false
+		for _, inst := range instances {
+			if strings.Contains(strings.ToUpper(inst.Name), strings.ToUpper(hostName)) {
+				ids = append(ids, inst.InstanceID)
+				names = append(names, inst.Name)
+				found = true
+				break
+			}
+		}
+		if !found {
+			fmt.Printf("WARNING: Host %q not found\n", hostName)
+		}
+	}
+	return ids, names
 }

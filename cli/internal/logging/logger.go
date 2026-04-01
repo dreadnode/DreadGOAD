@@ -22,7 +22,7 @@ func Init(debug bool, logDir, env string) {
 	writers = append(writers, os.Stdout)
 
 	if logDir != "" {
-		os.MkdirAll(logDir, 0o755)
+		_ = os.MkdirAll(logDir, 0o755)
 		logFile := filepath.Join(logDir, fmt.Sprintf("%s-dreadgoad-%s.log",
 			env, time.Now().Format("20060102_150405")))
 		if f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {

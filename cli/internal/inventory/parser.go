@@ -30,7 +30,6 @@ var (
 	sectionRe  = regexp.MustCompile(`^\[([^\]]+)\]`)
 	hostLineRe = regexp.MustCompile(`^(\w[\w.-]+)\s+(.+)`)
 	varRe      = regexp.MustCompile(`(\w+)=(\S+)`)
-	instanceRe = regexp.MustCompile(`ansible_host=(i-[a-f0-9]+)`)
 )
 
 // Parse reads and parses an Ansible INI-style inventory file.
@@ -39,7 +38,7 @@ func Parse(path string) (*Inventory, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open inventory %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	inv := &Inventory{
 		Hosts:    make(map[string]*Host),
@@ -54,61 +53,64 @@ func Parse(path string) (*Inventory, error) {
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 
-		// Skip comments and empty lines
 		if line == "" || strings.HasPrefix(line, ";") || strings.HasPrefix(line, "#") {
 			continue
 		}
 
-		// Section header
 		if m := sectionRe.FindStringSubmatch(line); m != nil {
 			currentSection = m[1]
 			continue
 		}
 
-		// [all:vars] section
-		if currentSection == "all:vars" {
-			if parts := strings.SplitN(line, "=", 2); len(parts) == 2 {
-				inv.Vars[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
-			}
-			continue
-		}
-
-		// Host definition line (in [default] section)
-		if currentSection == "default" {
-			if m := hostLineRe.FindStringSubmatch(line); m != nil {
-				host := &Host{Name: m[1]}
-				attrs := m[2]
-
-				for _, vm := range varRe.FindAllStringSubmatch(attrs, -1) {
-					switch vm[1] {
-					case "ansible_host":
-						host.InstanceID = vm[2]
-					case "dict_key":
-						host.DictKey = vm[2]
-					case "dns_domain":
-						host.DNSDomain = vm[2]
-					case "ansible_user":
-						host.User = vm[2]
-					}
-				}
-
-				inv.Hosts[host.Name] = host
-				inv.Groups["default"] = append(inv.Groups["default"], host.Name)
-				continue
-			}
-		}
-
-		// Group membership lines (hostname only)
-		if currentSection != "" && currentSection != "all:vars" {
-			name := strings.Fields(line)[0]
-			if _, exists := inv.Hosts[name]; exists {
-				inv.Groups[currentSection] = append(inv.Groups[currentSection], name)
-				inv.Hosts[name].Groups = append(inv.Hosts[name].Groups, currentSection)
-			}
-		}
+		inv.parseLine(line, currentSection)
 	}
 
 	return inv, scanner.Err()
+}
+
+func (inv *Inventory) parseLine(line, section string) {
+	switch section {
+	case "all:vars":
+		if parts := strings.SplitN(line, "=", 2); len(parts) == 2 {
+			inv.Vars[strings.TrimSpace(parts[0])] = strings.TrimSpace(parts[1])
+		}
+	case "default":
+		inv.parseHostDef(line)
+	case "":
+		// no section yet
+	default:
+		inv.parseGroupMembership(line, section)
+	}
+}
+
+func (inv *Inventory) parseHostDef(line string) {
+	m := hostLineRe.FindStringSubmatch(line)
+	if m == nil {
+		return
+	}
+	host := &Host{Name: m[1]}
+	for _, vm := range varRe.FindAllStringSubmatch(m[2], -1) {
+		switch vm[1] {
+		case "ansible_host":
+			host.InstanceID = vm[2]
+		case "dict_key":
+			host.DictKey = vm[2]
+		case "dns_domain":
+			host.DNSDomain = vm[2]
+		case "ansible_user":
+			host.User = vm[2]
+		}
+	}
+	inv.Hosts[host.Name] = host
+	inv.Groups["default"] = append(inv.Groups["default"], host.Name)
+}
+
+func (inv *Inventory) parseGroupMembership(line, section string) {
+	name := strings.Fields(line)[0]
+	if _, exists := inv.Hosts[name]; exists {
+		inv.Groups[section] = append(inv.Groups[section], name)
+		inv.Hosts[name].Groups = append(inv.Hosts[name].Groups, section)
+	}
 }
 
 // InstanceIDs returns all unique instance IDs from the inventory.

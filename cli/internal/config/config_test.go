@@ -137,8 +137,10 @@ func TestFindProjectRoot(t *testing.T) {
 		}
 
 		origDir, _ := os.Getwd()
-		os.Chdir(subDir)
-		t.Cleanup(func() { os.Chdir(origDir) })
+		if err := os.Chdir(subDir); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chdir(origDir) })
 
 		got := findProjectRoot()
 		if got != dir {
@@ -149,8 +151,10 @@ func TestFindProjectRoot(t *testing.T) {
 	t.Run("falls back to cwd when no ansible dir", func(t *testing.T) {
 		dir := resolveSymlinks(t, t.TempDir())
 		origDir, _ := os.Getwd()
-		os.Chdir(dir)
-		t.Cleanup(func() { os.Chdir(origDir) })
+		if err := os.Chdir(dir); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chdir(origDir) })
 
 		got := findProjectRoot()
 		if got != dir {

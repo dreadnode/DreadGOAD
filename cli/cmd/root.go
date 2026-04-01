@@ -44,7 +44,7 @@ func init() {
 	rootCmd.PersistentFlags().Bool("debug", false, "Enable debug/verbose output")
 	rootCmd.PersistentFlags().String("config", "", "Config file path")
 
-	viper.BindPFlag("env", rootCmd.PersistentFlags().Lookup("env"))
-	viper.BindPFlag("region", rootCmd.PersistentFlags().Lookup("region"))
-	viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug"))
+	_ = viper.BindPFlag("env", rootCmd.PersistentFlags().Lookup("env"))
+	_ = viper.BindPFlag("region", rootCmd.PersistentFlags().Lookup("region"))
+	_ = viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug"))
 }

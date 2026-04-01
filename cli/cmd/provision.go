@@ -36,7 +36,7 @@ var adUsersCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		plays, _ := cmd.Flags().GetString("plays")
 		if plays == "" {
-			cmd.Flags().Set("plays", "ad-data.yml")
+			_ = cmd.Flags().Set("plays", "ad-data.yml")
 		}
 		return runProvision(cmd, args)
 	},
@@ -76,7 +76,7 @@ func runProvision(cmd *cobra.Command, args []string) error {
 	retryDelay, _ := cmd.Flags().GetInt("retry-delay")
 
 	// Ensure log directory
-	os.MkdirAll(cfg.LogDir, 0o755)
+	_ = os.MkdirAll(cfg.LogDir, 0o755)
 	logFile := filepath.Join(cfg.LogDir, fmt.Sprintf("%s-dreadgoad-%s.log",
 		cfg.Env, time.Now().Format("20060102_150405")))
 

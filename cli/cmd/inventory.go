@@ -50,9 +50,13 @@ func init() {
 	inventoryMappingCmd.Flags().StringP("output", "o", "", "Output file path")
 }
 
+type instanceInfo struct {
+	InstanceID string `json:"InstanceId"`
+	Name       string `json:"Name"`
+}
+
 func runInventorySync(cmd *cobra.Command, args []string) error {
 	cfg := config.Get()
-	ctx := context.Background()
 	invPath := cfg.InventoryPath()
 
 	if _, err := os.Stat(invPath); os.IsNotExist(err) {
@@ -60,64 +64,88 @@ func runInventorySync(cmd *cobra.Command, args []string) error {
 	}
 
 	backup, _ := cmd.Flags().GetBool("backup")
-	jsonFile, _ := cmd.Flags().GetString("json")
-
-	// Create backup if requested
 	if backup {
-		backupPath := invPath + ".bak." + time.Now().Format("20060102150405")
-		data, _ := os.ReadFile(invPath)
-		os.WriteFile(backupPath, data, 0o644)
-		fmt.Printf("Created backup: %s\n", backupPath)
+		if err := backupInventory(invPath); err != nil {
+			return err
+		}
 	}
 
-	// Update env= field
+	if err := updateEnvField(invPath, cfg.Env); err != nil {
+		return err
+	}
+
+	jsonFile, _ := cmd.Flags().GetString("json")
+	instances, err := loadInstances(context.Background(), jsonFile, invPath, cfg.Env)
+	if err != nil {
+		return err
+	}
+
+	return applyInstanceUpdates(invPath, instances)
+}
+
+func backupInventory(invPath string) error {
+	backupPath := invPath + ".bak." + time.Now().Format("20060102150405")
+	data, err := os.ReadFile(invPath)
+	if err != nil {
+		return fmt.Errorf("read inventory for backup: %w", err)
+	}
+	if err := os.WriteFile(backupPath, data, 0o644); err != nil {
+		return fmt.Errorf("write backup: %w", err)
+	}
+	fmt.Printf("Created backup: %s\n", backupPath)
+	return nil
+}
+
+func updateEnvField(invPath, env string) error {
 	data, err := os.ReadFile(invPath)
 	if err != nil {
 		return err
 	}
 	re := regexp.MustCompile(`(?m)^(\s*env=).*$`)
-	updated := re.ReplaceAllString(string(data), "${1}"+cfg.Env)
-	os.WriteFile(invPath, []byte(updated), 0o644)
-
-	// Get instance data
-	type instanceInfo struct {
-		InstanceID string `json:"InstanceId"`
-		Name       string `json:"Name"`
+	updated := re.ReplaceAllString(string(data), "${1}"+env)
+	if err := os.WriteFile(invPath, []byte(updated), 0o644); err != nil {
+		return fmt.Errorf("write inventory: %w", err)
 	}
+	return nil
+}
 
-	var instances []instanceInfo
-
+func loadInstances(ctx context.Context, jsonFile, invPath, env string) ([]instanceInfo, error) {
 	if jsonFile != "" {
 		raw, err := os.ReadFile(jsonFile)
 		if err != nil {
-			return fmt.Errorf("read JSON: %w", err)
+			return nil, fmt.Errorf("read JSON: %w", err)
 		}
-		json.Unmarshal(raw, &instances)
-	} else {
-		// Fetch from AWS
-		parsed, err := inv.Parse(invPath)
-		if err != nil {
-			return err
+		var instances []instanceInfo
+		if err := json.Unmarshal(raw, &instances); err != nil {
+			return nil, fmt.Errorf("parse instance JSON: %w", err)
 		}
-		region := parsed.Region()
-
-		client, err := daws.NewClient(ctx, region)
-		if err != nil {
-			return err
-		}
-
-		awsInstances, err := client.DiscoverInstances(ctx, cfg.Env)
-		if err != nil {
-			return fmt.Errorf("discover instances: %w", err)
-		}
-
-		for _, i := range awsInstances {
-			instances = append(instances, instanceInfo{InstanceID: i.InstanceID, Name: i.Name})
-		}
+		return instances, nil
 	}
 
-	// Update inventory file
-	content, _ := os.ReadFile(invPath)
+	parsed, err := inv.Parse(invPath)
+	if err != nil {
+		return nil, err
+	}
+	client, err := daws.NewClient(ctx, parsed.Region())
+	if err != nil {
+		return nil, err
+	}
+	awsInstances, err := client.DiscoverInstances(ctx, env)
+	if err != nil {
+		return nil, fmt.Errorf("discover instances: %w", err)
+	}
+	var instances []instanceInfo
+	for _, i := range awsInstances {
+		instances = append(instances, instanceInfo{InstanceID: i.InstanceID, Name: i.Name})
+	}
+	return instances, nil
+}
+
+func applyInstanceUpdates(invPath string, instances []instanceInfo) error {
+	content, err := os.ReadFile(invPath)
+	if err != nil {
+		return fmt.Errorf("read inventory: %w", err)
+	}
 	lines := string(content)
 	updates := 0
 
@@ -125,14 +153,11 @@ func runInventorySync(cmd *cobra.Command, args []string) error {
 		if !strings.Contains(inst.Name, "dreadgoad-") {
 			continue
 		}
-		// Extract hostname from name (after "dreadgoad-")
 		parts := strings.SplitN(inst.Name, "dreadgoad-", 2)
 		if len(parts) < 2 {
 			continue
 		}
 		hostname := strings.ToLower(parts[1])
-
-		// Replace ansible_host= for this server
 		re := regexp.MustCompile(`(?mi)^(` + regexp.QuoteMeta(hostname) + `\s+ansible_host=)\S+`)
 		if re.MatchString(lines) {
 			newLines := re.ReplaceAllString(lines, "${1}"+inst.InstanceID)
@@ -144,7 +169,9 @@ func runInventorySync(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	os.WriteFile(invPath, []byte(lines), 0o644)
+	if err := os.WriteFile(invPath, []byte(lines), 0o644); err != nil {
+		return fmt.Errorf("write updated inventory: %w", err)
+	}
 
 	if updates == 0 {
 		fmt.Println("No instance ID updates needed. All IDs are current.")
@@ -204,8 +231,13 @@ func runInventoryMapping(cmd *cobra.Command, args []string) error {
 	output := map[string]interface{}{
 		"instance_to_ip": mapping,
 	}
-	data, _ := json.MarshalIndent(output, "", "  ")
-	os.WriteFile(outputPath, data, 0o644)
+	data, err := json.MarshalIndent(output, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal mapping: %w", err)
+	}
+	if err := os.WriteFile(outputPath, data, 0o644); err != nil {
+		return fmt.Errorf("write mapping: %w", err)
+	}
 
 	fmt.Printf("Mapping generated: %s\n", outputPath)
 	fmt.Printf("Mapped %d instances\n", len(mapping))
