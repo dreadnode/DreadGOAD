@@ -24,22 +24,22 @@
 
 - name: Install logstash
   ansible.builtin.apt:
-    name: Logstash
+    name: logstash
     state: present
 
 - name: Install java
   ansible.builtin.apt:
-    name: Openjdk-11-jre
+    name: openjdk-11-jre
     state: present
 
 - name: Install elasticsearch
   ansible.builtin.apt:
-    name: Elasticsearch
+    name: elasticsearch
     state: present
 
 - name: Install kibana
   ansible.builtin.apt:
-    name: Kibana
+    name: kibana
     state: present
 
 - name: Copy kibana config
@@ -66,30 +66,30 @@
 
 - name: Enable logstash
   ansible.builtin.service:
-    name: Logstash
+    name: logstash
     enabled: yes
 
 - name: Enable elasticsearch
   ansible.builtin.service:
-    name: Elasticsearch
+    name: elasticsearch
     enabled: yes
 
 - name: Enable kibana
   ansible.builtin.service:
-    name: Kibana
+    name: kibana
     enabled: yes
 
 - name: Start logstash
   ansible.builtin.service:
-    name: Logstash
+    name: logstash
     state: started
 
 - name: Start elasticsearch
   ansible.builtin.service:
-    name: Elasticsearch
+    name: elasticsearch
     state: started
 
 - name: Start kibana
   ansible.builtin.service:
-    name: Kibana
+    name: kibana
     state: started

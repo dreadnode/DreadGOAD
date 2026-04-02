@@ -20,12 +20,23 @@ It manages the full lifecycle: infrastructure provisioning via Terraform,
 configuration via Ansible, validation of vulnerability configurations,
 and operational tasks like SSM session management.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		cfg := config.Get()
+		if err := config.Init(); err != nil {
+			return err
+		}
+		cfg, err := config.Get()
+		if err != nil {
+			return err
+		}
 		logging.Init(cfg.Debug, cfg.LogDir, cfg.Env)
 		return nil
 	},
 	SilenceUsage:  true,
 	SilenceErrors: true,
+}
+
+// SetVersionInfo sets the root command version from build-time ldflags.
+func SetVersionInfo(version, commit, date string) {
+	rootCmd.Version = fmt.Sprintf("%s (commit: %s, built: %s)", version, commit, date)
 }
 
 func Execute() error {
@@ -37,14 +48,22 @@ func Execute() error {
 }
 
 func init() {
-	cobra.OnInitialize(config.Init)
-
 	rootCmd.PersistentFlags().StringP("env", "e", "staging", "Target environment (dev, staging, prod)")
 	rootCmd.PersistentFlags().String("region", "", "AWS region (default: from inventory)")
 	rootCmd.PersistentFlags().Bool("debug", false, "Enable debug/verbose output")
 	rootCmd.PersistentFlags().String("config", "", "Config file path")
 
-	_ = viper.BindPFlag("env", rootCmd.PersistentFlags().Lookup("env"))
-	_ = viper.BindPFlag("region", rootCmd.PersistentFlags().Lookup("region"))
-	_ = viper.BindPFlag("debug", rootCmd.PersistentFlags().Lookup("debug"))
+	for _, bind := range []struct {
+		key  string
+		flag string
+	}{
+		{"env", "env"},
+		{"region", "region"},
+		{"debug", "debug"},
+		{"config", "config"},
+	} {
+		if err := viper.BindPFlag(bind.key, rootCmd.PersistentFlags().Lookup(bind.flag)); err != nil {
+			panic(fmt.Sprintf("failed to bind flag %q: %v", bind.flag, err))
+		}
+	}
 }

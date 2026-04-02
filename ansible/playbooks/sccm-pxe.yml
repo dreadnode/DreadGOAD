@@ -1,7 +1,4 @@
 ---
-- name: Import Data
-  ansible.builtin.import_playbook: data.yml
-  tags: 'data'
 
 - name: Setup SCCM PXE
   hosts: sccm

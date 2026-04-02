@@ -38,7 +38,10 @@ func init() {
 }
 
 func runVariantGenerate(cmd *cobra.Command, args []string) error {
-	cfg := config.Get()
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
 	envCfg := cfg.ActiveEnvironment()
 
 	source, _ := cmd.Flags().GetString("source")

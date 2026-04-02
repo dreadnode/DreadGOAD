@@ -1,6 +1,8 @@
 package config
 
 import (
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -8,12 +10,23 @@ import (
 	"github.com/spf13/viper"
 )
 
+// ExtensionConfig holds metadata for a lab extension.
+type ExtensionConfig struct {
+	Description   string   `mapstructure:"description"`
+	Machines      []string `mapstructure:"machines"`
+	Compatibility []string `mapstructure:"compatibility"`
+	Impact        string   `mapstructure:"impact"`
+	Playbook      string   `mapstructure:"playbook"`
+	DataDir       string   `mapstructure:"data_dir"`
+}
+
 // EnvironmentConfig holds per-environment settings.
 type EnvironmentConfig struct {
-	Variant       bool   `mapstructure:"variant"`
-	VariantSource string `mapstructure:"variant_source"`
-	VariantTarget string `mapstructure:"variant_target"`
-	VariantName   string `mapstructure:"variant_name"`
+	Variant           bool     `mapstructure:"variant"`
+	VariantSource     string   `mapstructure:"variant_source"`
+	VariantTarget     string   `mapstructure:"variant_target"`
+	VariantName       string   `mapstructure:"variant_name"`
+	EnabledExtensions []string `mapstructure:"enabled_extensions"`
 }
 
 // Config holds all CLI configuration.
@@ -28,6 +41,7 @@ type Config struct {
 	Playbooks    []string                     `mapstructure:"playbooks"`
 	ProjectRoot  string                       `mapstructure:"project_root"`
 	Environments map[string]EnvironmentConfig `mapstructure:"environments"`
+	Extensions   map[string]ExtensionConfig   `mapstructure:"extensions"`
 }
 
 var (
@@ -35,12 +49,15 @@ var (
 	once sync.Once
 )
 
-// Init initializes Viper configuration. Called by cobra.OnInitialize.
-func Init() {
+// Init initializes Viper configuration. Called from PersistentPreRunE.
+func Init() error {
 	if cfgFile := viper.GetString("config"); cfgFile != "" {
 		viper.SetConfigFile(cfgFile)
 	} else {
-		home, _ := os.UserHomeDir()
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("resolving home directory: %w", err)
+		}
 		viper.AddConfigPath(filepath.Join(home, ".config", "dreadgoad"))
 		viper.AddConfigPath(".")
 		viper.SetConfigName("dreadgoad")
@@ -52,28 +69,44 @@ func Init() {
 
 	setDefaults()
 
-	// Config file is optional
-	_ = viper.ReadInConfig()
+	if err := viper.ReadInConfig(); err != nil {
+		var notFound viper.ConfigFileNotFoundError
+		if !errors.As(err, &notFound) {
+			return fmt.Errorf("reading config: %w", err)
+		}
+	}
+	return nil
 }
 
 // Get returns the current configuration, loading it once.
-func Get() *Config {
+func Get() (*Config, error) {
+	var initErr error
 	once.Do(func() {
 		cfg = &Config{}
-		_ = viper.Unmarshal(cfg)
-
-		// Resolve project root (directory containing ansible/)
-		if cfg.ProjectRoot == "" {
-			cfg.ProjectRoot = findProjectRoot()
+		if err := viper.Unmarshal(cfg); err != nil {
+			initErr = fmt.Errorf("unmarshaling config: %w", err)
+			return
 		}
 
-		// Expand log dir
+		if cfg.ProjectRoot == "" {
+			root, err := findProjectRoot()
+			if err != nil {
+				initErr = fmt.Errorf("finding project root: %w", err)
+				return
+			}
+			cfg.ProjectRoot = root
+		}
+
 		if cfg.LogDir == "" {
-			home, _ := os.UserHomeDir()
+			home, err := os.UserHomeDir()
+			if err != nil {
+				initErr = fmt.Errorf("resolving home directory: %w", err)
+				return
+			}
 			cfg.LogDir = filepath.Join(home, ".ansible", "logs", "goad")
 		}
 	})
-	return cfg
+	return cfg, initErr
 }
 
 // Reset clears the cached config (for testing).
@@ -93,15 +126,18 @@ func (c *Config) AnsibleCfgPath() string {
 }
 
 // AnsibleEnv returns environment variables needed for ansible-playbook execution.
-func (c *Config) AnsibleEnv() map[string]string {
-	home, _ := os.UserHomeDir()
+func (c *Config) AnsibleEnv() (map[string]string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("resolving home directory: %w", err)
+	}
 	return map[string]string{
 		"ANSIBLE_CONFIG":                  c.AnsibleCfgPath(),
 		"ANSIBLE_CACHE_PLUGIN_CONNECTION": filepath.Join(home, ".ansible", "cache", c.Env+"_dreadgoad_facts"),
 		"ANSIBLE_HOST_KEY_CHECKING":       "False",
 		"ANSIBLE_RETRY_FILES_ENABLED":     "True",
 		"ANSIBLE_GATHER_TIMEOUT":          "60",
-	}
+	}, nil
 }
 
 // ActiveEnvironment returns the EnvironmentConfig for the currently selected env.
@@ -137,12 +173,53 @@ func (c *Config) ResolvedVariantPaths() (source, target string) {
 	return src, tgt
 }
 
-func findProjectRoot() string {
+// ExtensionInventoryTemplate returns the path to an extension's inventory template
+// within the Ansible collection (ansible/playbooks/templates/extensions/<name>/).
+func (c *Config) ExtensionInventoryTemplate(name string) string {
+	return filepath.Join(c.ProjectRoot, "ansible", "playbooks", "templates", "extensions", name, "inventory.j2")
+}
+
+// ExtensionDataDir returns the path to an extension's data directory
+// within the Ansible collection (ansible/playbooks/files/extensions/<name>/).
+func (c *Config) ExtensionDataDir(name string) string {
+	return filepath.Join(c.ProjectRoot, "ansible", "playbooks", "files", "extensions", name)
+}
+
+// ExtensionProviderPath returns the path to an extension's provider-specific config
+// at the repository root (providers/<name>/<provider>/).
+func (c *Config) ExtensionProviderPath(name, provider string) string {
+	return filepath.Join(c.ProjectRoot, "providers", name, provider)
+}
+
+// IsExtensionCompatible checks if an extension is compatible with the given lab.
+func (c *Config) IsExtensionCompatible(name, lab string) bool {
+	ext, ok := c.Extensions[name]
+	if !ok {
+		return false
+	}
+	for _, compat := range ext.Compatibility {
+		if compat == "*" || compat == lab {
+			return true
+		}
+	}
+	return false
+}
+
+// EnabledExtensionsForEnv returns the enabled extensions for the active environment.
+func (c *Config) EnabledExtensionsForEnv() []string {
+	return c.ActiveEnvironment().EnabledExtensions
+}
+
+func findProjectRoot() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("getting working directory: %w", err)
+	}
 	// Walk up from cwd looking for ansible/ directory
-	dir, _ := os.Getwd()
+	dir := cwd
 	for {
 		if _, err := os.Stat(filepath.Join(dir, "ansible")); err == nil {
-			return dir
+			return dir, nil
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
@@ -151,6 +228,5 @@ func findProjectRoot() string {
 		dir = parent
 	}
 	// Fallback to cwd
-	cwd, _ := os.Getwd()
-	return cwd
+	return cwd, nil
 }

@@ -41,7 +41,10 @@ func init() {
 }
 
 func runLabStatus(cmd *cobra.Command, args []string) error {
-	cfg := config.Get()
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
 
 	region := cfg.Region
@@ -77,7 +80,10 @@ func runLabStatus(cmd *cobra.Command, args []string) error {
 
 func runLabAction(action string) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
-		cfg := config.Get()
+		cfg, err := config.Get()
+		if err != nil {
+			return err
+		}
 		ctx := context.Background()
 
 		region := cfg.Region

@@ -24,7 +24,10 @@ type infraContext struct {
 // requireInfra validates that AWS credentials work, GOAD instances are discoverable,
 // and SSM agents are online. Returns the ready-to-use infrastructure context.
 func requireInfra(ctx context.Context) (*infraContext, error) {
-	cfg := config.Get()
+	cfg, err := config.Get()
+	if err != nil {
+		return nil, err
+	}
 
 	region := cfg.Region
 	if region == "" {

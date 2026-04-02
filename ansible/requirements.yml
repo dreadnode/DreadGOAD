@@ -11,3 +11,6 @@ collections:
     version: 1.10.0
   - name: amazon.aws
     version: 11.2.0
+
+roles:
+  - name: geerlingguy.mysql

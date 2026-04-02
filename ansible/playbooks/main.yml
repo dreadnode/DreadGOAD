@@ -1,9 +1,9 @@
 ---
 
-# Load data
-- name: Import Data
-  ansible.builtin.import_playbook: data.yml
-  tags: 'data'
+# Network discovery (lab config loaded automatically by vars plugin)
+- name: Import Network Setup
+  ansible.builtin.import_playbook: network_setup.yml
+  tags: 'network_setup'
 
 # Prepare servers
 - name: Import Build

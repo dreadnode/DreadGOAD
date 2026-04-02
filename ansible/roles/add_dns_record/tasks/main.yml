@@ -1,0 +1,4 @@
+---
+- name: "TODO: implement {{ role_name }}"
+  ansible.builtin.debug:
+    msg: "Role {{ role_name }} is a stub — implementation required"

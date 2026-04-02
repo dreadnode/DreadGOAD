@@ -16,14 +16,16 @@ import (
 
 // RetryOptions configures the retry behavior for playbook execution.
 type RetryOptions struct {
-	Playbook   string
-	Env        string
-	Limit      string
-	Debug      bool
-	MaxRetries int
-	RetryDelay time.Duration
-	LogFile    string
-	Log        *slog.Logger // optional; falls back to slog.Default()
+	Playbook    string
+	Env         string
+	Inventories []string          // additional inventory paths
+	ExtraVars   map[string]string // extra variables passed to ansible-playbook
+	Limit       string
+	Debug       bool
+	MaxRetries  int
+	RetryDelay  time.Duration
+	LogFile     string
+	Log         *slog.Logger // optional; falls back to slog.Default()
 }
 
 func (o *RetryOptions) logger() *slog.Logger {
@@ -35,7 +37,10 @@ func (o *RetryOptions) logger() *slog.Logger {
 
 // RunPlaybookWithRetry runs a playbook with error-specific retry logic.
 func RunPlaybookWithRetry(ctx context.Context, opts RetryOptions) error {
-	cfg := config.Get()
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
 	log := opts.logger()
 
 	if opts.MaxRetries == 0 {
@@ -60,11 +65,13 @@ func RunPlaybookWithRetry(ctx context.Context, opts RetryOptions) error {
 		log.Info("starting playbook", "playbook", opts.Playbook, "attempt", attempt+1, "max", opts.MaxRetries)
 
 		result := RunPlaybook(ctx, RunOptions{
-			Playbook: opts.Playbook,
-			Env:      opts.Env,
-			Limit:    opts.Limit,
-			Debug:    opts.Debug,
-			LogFile:  opts.LogFile,
+			Playbook:    opts.Playbook,
+			Env:         opts.Env,
+			Inventories: opts.Inventories,
+			Limit:       opts.Limit,
+			Debug:       opts.Debug,
+			LogFile:     opts.LogFile,
+			ExtraVars:   opts.ExtraVars,
 		})
 
 		if result.TimedOut {
@@ -97,11 +104,13 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 	limit := buildRetryLimit(opts.Limit, failedHostsStr)
 
 	baseOpts := RunOptions{
-		Playbook: opts.Playbook,
-		Env:      opts.Env,
-		Limit:    limit,
-		Debug:    opts.Debug,
-		LogFile:  opts.LogFile,
+		Playbook:    opts.Playbook,
+		Env:         opts.Env,
+		Inventories: opts.Inventories,
+		Limit:       limit,
+		Debug:       opts.Debug,
+		LogFile:     opts.LogFile,
+		ExtraVars:   opts.ExtraVars,
 	}
 
 	switch failResult.ErrorType {
@@ -216,7 +225,11 @@ func buildRetryLimit(userLimit, failedHosts string) string {
 }
 
 func cleanupSSMSessions(ctx context.Context, env string, log *slog.Logger) {
-	cfg := config.Get()
+	cfg, err := config.Get()
+	if err != nil {
+		log.Warn("could not get config for SSM cleanup", "error", err)
+		return
+	}
 	inv, err := inventory.Parse(cfg.InventoryPath())
 	if err != nil {
 		log.Warn("could not parse inventory for SSM cleanup", "error", err)
@@ -244,7 +257,11 @@ func fixSSMUsers(ctx context.Context, env string, failedHosts []string, log *slo
 		return
 	}
 
-	cfg := config.Get()
+	cfg, err := config.Get()
+	if err != nil {
+		log.Warn("could not get config for ssm-user fix", "error", err)
+		return
+	}
 	inv, err := inventory.Parse(cfg.InventoryPath())
 	if err != nil {
 		log.Warn("could not parse inventory for ssm-user fix", "error", err)
@@ -276,7 +293,11 @@ func fixSSMUsers(ctx context.Context, env string, failedHosts []string, log *slo
 }
 
 func rebootFailedHosts(ctx context.Context, opts RetryOptions, log *slog.Logger) {
-	cfg := config.Get()
+	cfg, err := config.Get()
+	if err != nil {
+		log.Warn("could not get config for reboot", "error", err)
+		return
+	}
 	for _, host := range strings.Split(opts.Limit, ",") {
 		if host == "" {
 			continue
@@ -289,7 +310,12 @@ func rebootFailedHosts(ctx context.Context, opts RetryOptions, log *slog.Logger)
 		}
 		rebootCmd := execCommand(ctx, "ansible", args...)
 		rebootCmd.Dir = cfg.ProjectRoot
-		rebootCmd.Env = buildEnv(RunOptions{Env: opts.Env}, cfg)
+		env, envErr := buildEnv(RunOptions{Env: opts.Env}, cfg)
+		if envErr != nil {
+			log.Warn("could not build env for reboot", "host", host, "error", envErr)
+			continue
+		}
+		rebootCmd.Env = env
 		if output, err := rebootCmd.CombinedOutput(); err != nil {
 			log.Warn("reboot failed", "host", host, "error", err, "output", string(output))
 		}

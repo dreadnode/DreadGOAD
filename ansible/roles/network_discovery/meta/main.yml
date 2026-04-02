@@ -1,0 +1,12 @@
+---
+galaxy_info:
+  role_name: network_discovery
+  author: Dreadnode
+  description: Discover network adapters, IPs, and AWS instance mappings on lab hosts
+  company: Dreadnode
+  min_ansible_version: "2.15"
+  license: MIT
+  platforms:
+    - name: Windows
+      versions: [all]
+dependencies: []
