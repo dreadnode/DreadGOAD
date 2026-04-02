@@ -1,3 +1,0 @@
----
-- name: Restart-winlogbeat
-  ansible.windows.win_shell: Restart-Service winlogbeat

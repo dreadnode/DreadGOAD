@@ -7,7 +7,7 @@ graph LR
     Collection --> Security["Security<br/><i>8 roles</i>"]
     Collection --> Settings["Settings<br/><i>13 roles</i>"]
     Collection --> ActiveDirectory["Active Directory<br/><i>21 roles</i>"]
-    Collection --> ServerRoles["Server Roles<br/><i>15 roles</i>"]
+    Collection --> ServerRoles["Server Roles<br/><i>26 roles</i>"]
 
     LAPS -.- LAPS_detail["dc &bull; permissions &bull; server<br/>verify"]
     SCCM -.- SCCM_detail["config_accounts &bull; config_boundary &bull; config_client_install<br/>config_client_push &bull; config_discovery &bull; config_naa<br/>config_pxe &bull; config_users &bull; install_adk<br/>install_iis &bull; install_mecm &bull; install_prerequisites<br/>install_wsus &bull; pxe"]
@@ -15,10 +15,10 @@ graph LR
     Security -.- Security_detail["dc_audit_sacl &bull; ldap_diagnostic_logging &bull; account_is_sensitive<br/>asr &bull; audit_policy &bull; enable_run_as_ppl<br/>ensure_kb_not_installed &bull; powershell_restrict"]
     Settings -.- Settings_detail["adjust_rights &bull; admin_password &bull; copy_files<br/>disable_nat_adapter &bull; enable_nat_adapter &bull; gpmc<br/>gpo_remove &bull; hostname &bull; keyboard<br/>no_updates &bull; updates &bull; user_rights<br/>windows_defender"]
     ActiveDirectory -.- ActiveDirectory_detail["acl &bull; ad &bull; adcs<br/>adcs_templates &bull; child_domain &bull; dc_dns_conditional_forwarder<br/>disable_user &bull; dns_conditional_forwarder &bull; domain_controller<br/>domain_controller_slave &bull; enable_user &bull; gmsa<br/>gmsa_hosts &bull; groups_domains &bull; member_server<br/>move_to_ou &bull; onlyusers &bull; parent_child_dns<br/>password_policy &bull; sync_domains &bull; trusts"]
-    ServerRoles -.- ServerRoles_detail["common &bull; commonwkstn &bull; dhcp<br/>elk &bull; fix_dns &bull; iis<br/>localusers &bull; logs_windows &bull; mssql<br/>audit &bull; link &bull; reporting<br/>ssms &bull; ps &bull; webdav"]
+    ServerRoles -.- ServerRoles_detail["common &bull; commonwkstn &bull; dhcp<br/>elk &bull; fix_dns &bull; iis<br/>localusers &bull; logs_windows &bull; mssql<br/>audit &bull; link &bull; reporting<br/>ssms &bull; ps &bull; webdav<br/>add_dns_record &bull; exchange_bot &bull; linux_add_linux_to_domain<br/>linux_guacamole &bull; linux_guacamole_create_connections &bull; linux_tomcat<br/>ludus_exchange &bull; network_discovery &bull; wazuh_agent<br/>wazuh_agent_linux &bull; wazuh_manager"]
 
-    Collection --> Playbooks["Playbooks<br/><i>35 playbooks</i>"]
-    Playbooks -.- Playbooks_detail["ad &bull; ad-acl &bull; ad-child_domain<br/>ad-data &bull; ad-gmsa &bull; ad-members<br/>ad-parent_domain &bull; ad-relations &bull; ad-servers<br/>ad-trusts &bull; adcs &bull; build<br/>data &bull; dhcp &bull; diagnose-dc01<br/>disable_vagrant &bull; elk &bull; enable_vagrant<br/>fix_dns &bull; fix_trust &bull; interfaces<br/>laps &bull; localusers &bull; main<br/>onlyusers &bull; reboot &bull; sccm-client<br/>sccm-config &bull; sccm-install &bull; sccm-pxe<br/>security &bull; security_logging &bull; servers<br/>vulnerabilities &bull; wait5m"]
+    Collection --> Playbooks["Playbooks<br/><i>40 playbooks</i>"]
+    Playbooks -.- Playbooks_detail["ad &bull; ad-acl &bull; ad-child_domain<br/>ad-data &bull; ad-gmsa &bull; ad-members<br/>ad-parent_domain &bull; ad-relations &bull; ad-servers<br/>ad-trusts &bull; adcs &bull; build<br/>dhcp &bull; diagnose-dc01 &bull; disable_vagrant<br/>enable_vagrant &bull; ext-elk &bull; ext-exchange<br/>ext-guacamole &bull; ext-lx01 &bull; ext-wazuh<br/>ext-ws01 &bull; fix_dns &bull; fix_trust<br/>interfaces &bull; laps &bull; localusers<br/>main &bull; network_setup &bull; onlyusers<br/>reboot &bull; sccm-client &bull; sccm-config<br/>sccm-install &bull; sccm-pxe &bull; security<br/>security_logging &bull; servers &bull; vulnerabilities<br/>wait5m"]
 
     style Collection fill:#4a9eff,stroke:#2d7cd4,color:#fff,font-weight:bold
     style Playbooks fill:#7f8c8d,stroke:#6c7a7d,color:#fff

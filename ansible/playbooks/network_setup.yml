@@ -1,0 +1,50 @@
+---
+# Network discovery — run once before provisioning playbooks.
+# The lab config (the `lab` variable) is loaded automatically by the
+# dreadnode.goad.lab_config vars plugin. This playbook only handles
+# runtime network detection that requires connecting to Windows hosts.
+
+- name: Discover network configuration
+  hosts: domain:extensions
+  gather_facts: true
+  serial: 5
+  roles:
+    - { role: 'dreadnode.goad.network_discovery', tags: 'network_discovery' }
+
+- name: Create global network mappings
+  hosts: all
+  gather_facts: false
+  serial: 10
+  tasks:
+    - name: Build and distribute DC and instance IP mappings
+      ansible.builtin.set_fact:
+        dc_hostname_to_ip: >-
+          {%- set mapping = {} -%}
+          {%- for host in groups['dc'] -%}
+            {%- if hostvars[host]['dc_ipv4'] is defined and hostvars[host]['dc_ipv4'] != '' -%}
+              {%- set _ = mapping.update({host: hostvars[host]['dc_ipv4']}) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ mapping }}
+        instance_to_ip: >-
+          {%- set mapping = {} -%}
+          {%- for host in groups['all'] -%}
+            {%- if hostvars[host]['host_ipv4'] is defined and hostvars[host]['ansible_host'] is defined and hostvars[host]['host_ipv4'] != '' -%}
+              {%- set _ = mapping.update({hostvars[host]['ansible_host']: hostvars[host]['host_ipv4']}) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ mapping }}
+        cacheable: true
+      run_once: true
+      delegate_facts: true
+      delegate_to: "{{ item }}"
+      loop: "{{ groups['all'] }}"
+      throttle: 5
+
+    - name: Debug the mappings
+      ansible.builtin.debug:
+        msg:
+          - "DC Hostname to IP mapping: {{ dc_hostname_to_ip | default({}) }}"
+          - "Instance to IP mapping: {{ instance_to_ip | default({}) }}"
+        verbosity: 2
+      run_once: true

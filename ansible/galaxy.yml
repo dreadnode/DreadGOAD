@@ -40,3 +40,4 @@ build_ignore:
   - scripts
   - docs
   - "roles/*/molecule"
+  - extensions

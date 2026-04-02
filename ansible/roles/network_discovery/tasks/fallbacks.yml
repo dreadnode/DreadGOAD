@@ -1,0 +1,22 @@
+---
+- name: Set fallback network facts
+  ansible.builtin.set_fact:
+    domain_adapter: "{{ domain_adapter | default('Ethernet') }}"
+    nat_adapter: "{{ nat_adapter | default(domain_adapter | default('Ethernet')) }}"
+    number_of_interfaces: "{{ number_of_interfaces | default('1') }}"
+    two_adapters: "{{ two_adapters | default(false) }}"
+    host_ipv4: "{{ host_ipv4 | default(ansible_default_ipv4.address | default('')) }}"
+    cacheable: true
+  when: domain_adapter is not defined
+
+- name: Show host network configuration
+  ansible.builtin.debug:
+    msg:
+      - "hostname: {{ inventory_hostname }}"
+      - "instance_id: {{ ansible_host }}"
+      - "resolved_ip: {{ host_ipv4 | default('NOT RESOLVED') }}"
+      - "domain interface: {{ domain_adapter }}"
+      - "number_of_interfaces: {{ number_of_interfaces }}"
+      - "two_adapters: {{ two_adapters }}"
+      - "nat interface: {{ nat_adapter }}"
+    verbosity: 1

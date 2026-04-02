@@ -16,14 +16,16 @@ import (
 
 // RetryOptions configures the retry behavior for playbook execution.
 type RetryOptions struct {
-	Playbook   string
-	Env        string
-	Limit      string
-	Debug      bool
-	MaxRetries int
-	RetryDelay time.Duration
-	LogFile    string
-	Log        *slog.Logger // optional; falls back to slog.Default()
+	Playbook    string
+	Env         string
+	Inventories []string          // additional inventory paths
+	ExtraVars   map[string]string // extra variables passed to ansible-playbook
+	Limit       string
+	Debug       bool
+	MaxRetries  int
+	RetryDelay  time.Duration
+	LogFile     string
+	Log         *slog.Logger // optional; falls back to slog.Default()
 }
 
 func (o *RetryOptions) logger() *slog.Logger {
@@ -60,11 +62,13 @@ func RunPlaybookWithRetry(ctx context.Context, opts RetryOptions) error {
 		log.Info("starting playbook", "playbook", opts.Playbook, "attempt", attempt+1, "max", opts.MaxRetries)
 
 		result := RunPlaybook(ctx, RunOptions{
-			Playbook: opts.Playbook,
-			Env:      opts.Env,
-			Limit:    opts.Limit,
-			Debug:    opts.Debug,
-			LogFile:  opts.LogFile,
+			Playbook:    opts.Playbook,
+			Env:         opts.Env,
+			Inventories: opts.Inventories,
+			Limit:       opts.Limit,
+			Debug:       opts.Debug,
+			LogFile:     opts.LogFile,
+			ExtraVars:   opts.ExtraVars,
 		})
 
 		if result.TimedOut {
@@ -97,11 +101,13 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 	limit := buildRetryLimit(opts.Limit, failedHostsStr)
 
 	baseOpts := RunOptions{
-		Playbook: opts.Playbook,
-		Env:      opts.Env,
-		Limit:    limit,
-		Debug:    opts.Debug,
-		LogFile:  opts.LogFile,
+		Playbook:    opts.Playbook,
+		Env:         opts.Env,
+		Inventories: opts.Inventories,
+		Limit:       limit,
+		Debug:       opts.Debug,
+		LogFile:     opts.LogFile,
+		ExtraVars:   opts.ExtraVars,
 	}
 
 	switch failResult.ErrorType {

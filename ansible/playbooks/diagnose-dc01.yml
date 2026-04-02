@@ -4,7 +4,7 @@
 #
 # Usage:
 #   # First, ensure the AWS mapping file exists:
-#   ansible-playbook -i dev-inventory ansible/data.yml --limit dc03
+#   ansible-playbook -i dev-inventory ansible/playbooks/network_setup.yml --limit dc03
 #
 #   # Then run diagnostics:
 #   ansible-playbook -i dev-inventory ansible/diagnose-dc01.yml --limit dc03
@@ -52,8 +52,8 @@
           The instance_to_ip mapping doesn't have an entry for {{ target_dc }}.
 
           Options:
-          1. Run data.yml first to populate the mapping:
-             ansible-playbook -i dev-inventory ansible/data.yml --limit dc03
+          1. Run network_setup.yml first to populate the mapping:
+             ansible-playbook -i dev-inventory ansible/playbooks/network_setup.yml --limit dc03
 
           2. Pass the IP directly:
              ansible-playbook -i dev-inventory ansible/diagnose-dc01.yml --limit dc03 -e dc01_ip_override=10.x.x.x

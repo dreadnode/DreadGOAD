@@ -1,6 +1,4 @@
 ---
-- name: Import Data
-  ansible.builtin.import_playbook: data.yml
 
 # use this to change machine password if the trust between the dc and the computer is broken
 - name: Fix trust relationship between this workstation and the primary domain failed

@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  role_name: exchange_bot
+  author: Dreadnode
+  description: Deploy Exchange mailbox bot for automated mail reading
+  min_ansible_version: "2.15"
+  license: MIT
+dependencies: []

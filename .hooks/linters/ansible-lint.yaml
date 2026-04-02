@@ -14,8 +14,12 @@ exclude_paths:
   - ansible/requirements_311.yml
   - template/provider/ludus/
   - playbooks.yml
-  - ansible/extensions/exchange/ansible/install.yml
-  - ansible/extensions/ws01/ansible/install.yml
+  # Extension playbooks reference roles/deps not resolvable in the linter sandbox
+  - ansible/playbooks/ext-exchange.yml
+  - ansible/playbooks/ext-guacamole.yml
+  - ansible/playbooks/ext-lx01.yml
+  - ansible/playbooks/ext-wazuh.yml
+  - ansible/playbooks/network_setup.yml
   - ansible/roles/onlyusers/
 
 skip_list:

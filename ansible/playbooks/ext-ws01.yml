@@ -1,0 +1,52 @@
+---
+# Extension: ws01 — Add hardened workstation
+
+- name: Read extension config file
+  hosts: domain:extensions
+  connection: local
+  vars_files:
+    - "{{ extension_data_dir }}/config.json"
+  tasks:
+    - name: Merge lab variable with extension config
+      ansible.builtin.set_fact:
+        lab: "{{ lab | combine(lab_extension, recursive=True) }}"
+
+- name: Set execution policy unrestricted (in case of re-run)
+  hosts: ws01
+  tasks:
+    - name: Change execution policy before running
+      ansible.windows.win_shell: |
+        Set-ExecutionPolicy -ExecutionPolicy Unrestricted -Force
+
+- name: Prepare workstation
+  hosts: ws01
+  roles:
+    - { role: 'dreadnode.goad.common', tags: 'common', http_proxy: "{{enable_http_proxy}}" }
+    - { role: 'dreadnode.goad.settings_keyboard', tags: 'keyboard', layouts: "{{keyboard_layouts}}" }
+    - { role: 'dreadnode.goad.settings_admin_password', tags: 'admin_password' }
+    - { role: 'dreadnode.goad.settings_hostname', tags: 'hostname' }
+    - { role: 'dreadnode.goad.commonwkstn', tags: 'workstation' }
+    - { role: 'dreadnode.goad.settings_adjust_rights', tags: 'adjust_rights' }
+    - { role: 'dreadnode.goad.settings_user_rights', tags: 'adjust_rights' }
+  vars:
+    local_admin_password: "{{lab.hosts[dict_key].local_admin_password}}"
+    hostname: "{{lab.hosts[dict_key].hostname}}"
+    member_domain: "{{lab.hosts[dict_key].domain}}"
+    domain_username: "{{member_domain}}\\{{admin_user}}"
+    domain_password: "{{lab.domains[member_domain].domain_password}}"
+    local_groups: "{{lab.hosts[dict_key].local_groups  | default({}) }}"
+
+- name: Setup security with tasks
+  hosts: ws01
+  tasks:
+    - name: Include security role
+      ansible.builtin.include_role:
+        name: "dreadnode.goad.security_{{ secu }}"
+      vars:
+        security_vars: "{{ lab.hosts[dict_key].security_vars[secu] | default({}) }}"
+        domain: "{{ lab.hosts[dict_key].domain }}"
+        domain_username: "{{ member_domain }}\\{{ admin_user }}"
+        domain_password: "{{ lab.domains[member_domain].domain_password }}"
+      loop: "{{ lab.hosts[dict_key].security | default([]) }}"
+      loop_control:
+        loop_var: secu

@@ -23,6 +23,7 @@ import (
 type RunOptions struct {
 	Playbook    string
 	Env         string
+	Inventories []string // additional inventory paths (appended after the default env inventory)
 	Limit       string
 	Forks       int
 	ExtraVars   map[string]string
@@ -179,9 +180,17 @@ func buildArgs(opts RunOptions, cfg *config.Config) []string {
 
 	args := []string{
 		"-i", inventoryPath,
-		"-e", "ansible_facts_gathering_timeout=60",
-		playbookPath,
 	}
+
+	// Append additional inventories (e.g. extension inventories)
+	for _, inv := range opts.Inventories {
+		if !filepath.IsAbs(inv) {
+			inv = filepath.Join(cfg.ProjectRoot, inv)
+		}
+		args = append(args, "-i", inv)
+	}
+
+	args = append(args, "-e", "ansible_facts_gathering_timeout=60", playbookPath)
 
 	if opts.Debug {
 		args = append([]string{"-vvv"}, args...)

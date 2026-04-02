@@ -1,0 +1,9 @@
+---
+- name: Store IP as host fact for DCs
+  ansible.builtin.set_fact:
+    dc_ipv4: "{{ host_ipv4 }}"
+    cacheable: true
+  when:
+    - host_ipv4 is defined
+    - host_ipv4 != ''
+    - inventory_hostname in groups['dc']

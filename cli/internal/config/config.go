@@ -8,12 +8,23 @@ import (
 	"github.com/spf13/viper"
 )
 
+// ExtensionConfig holds metadata for a lab extension.
+type ExtensionConfig struct {
+	Description   string   `mapstructure:"description"`
+	Machines      []string `mapstructure:"machines"`
+	Compatibility []string `mapstructure:"compatibility"`
+	Impact        string   `mapstructure:"impact"`
+	Playbook      string   `mapstructure:"playbook"`
+	DataDir       string   `mapstructure:"data_dir"`
+}
+
 // EnvironmentConfig holds per-environment settings.
 type EnvironmentConfig struct {
-	Variant       bool   `mapstructure:"variant"`
-	VariantSource string `mapstructure:"variant_source"`
-	VariantTarget string `mapstructure:"variant_target"`
-	VariantName   string `mapstructure:"variant_name"`
+	Variant           bool     `mapstructure:"variant"`
+	VariantSource     string   `mapstructure:"variant_source"`
+	VariantTarget     string   `mapstructure:"variant_target"`
+	VariantName       string   `mapstructure:"variant_name"`
+	EnabledExtensions []string `mapstructure:"enabled_extensions"`
 }
 
 // Config holds all CLI configuration.
@@ -28,6 +39,7 @@ type Config struct {
 	Playbooks    []string                     `mapstructure:"playbooks"`
 	ProjectRoot  string                       `mapstructure:"project_root"`
 	Environments map[string]EnvironmentConfig `mapstructure:"environments"`
+	Extensions   map[string]ExtensionConfig   `mapstructure:"extensions"`
 }
 
 var (
@@ -135,6 +147,45 @@ func (c *Config) ResolvedVariantPaths() (source, target string) {
 		tgt = filepath.Join(c.ProjectRoot, tgt)
 	}
 	return src, tgt
+}
+
+// ExtensionPath returns the base path for an extension's infra content.
+func (c *Config) ExtensionPath(name string) string {
+	return filepath.Join(c.ProjectRoot, "extensions", name)
+}
+
+// ExtensionInventoryTemplate returns the path to an extension's inventory template.
+func (c *Config) ExtensionInventoryTemplate(name string) string {
+	return filepath.Join(c.ExtensionPath(name), "inventory.j2")
+}
+
+// ExtensionProviderPath returns the path to an extension's provider-specific config.
+func (c *Config) ExtensionProviderPath(name, provider string) string {
+	return filepath.Join(c.ExtensionPath(name), "providers", provider)
+}
+
+// ExtensionDataDir returns the path to an extension's data directory.
+func (c *Config) ExtensionDataDir(name string) string {
+	return filepath.Join(c.ExtensionPath(name), "data")
+}
+
+// IsExtensionCompatible checks if an extension is compatible with the given lab.
+func (c *Config) IsExtensionCompatible(name, lab string) bool {
+	ext, ok := c.Extensions[name]
+	if !ok {
+		return false
+	}
+	for _, compat := range ext.Compatibility {
+		if compat == "*" || compat == lab {
+			return true
+		}
+	}
+	return false
+}
+
+// EnabledExtensionsForEnv returns the enabled extensions for the active environment.
+func (c *Config) EnabledExtensionsForEnv() []string {
+	return c.ActiveEnvironment().EnabledExtensions
 }
 
 func findProjectRoot() string {

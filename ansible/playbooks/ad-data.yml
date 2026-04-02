@@ -1,8 +1,4 @@
 ---
-# Load data
-- name: Import Data
-  ansible.builtin.import_playbook: data.yml
-  tags: data
 
 # set AD data ==================================================================================================
 - name: DCs AD data configuration
