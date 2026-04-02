@@ -221,5 +221,5 @@ func outputWriter(logFile string) (io.Writer, func(), error) {
 	}
 
 	mw := io.MultiWriter(os.Stdout, f)
-	return mw, func() { f.Close() }, nil
+	return mw, func() { _ = f.Close() }, nil
 }
