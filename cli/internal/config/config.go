@@ -173,24 +173,22 @@ func (c *Config) ResolvedVariantPaths() (source, target string) {
 	return src, tgt
 }
 
-// ExtensionPath returns the base path for an extension's infra content.
-func (c *Config) ExtensionPath(name string) string {
-	return filepath.Join(c.ProjectRoot, "extensions", name)
-}
-
-// ExtensionInventoryTemplate returns the path to an extension's inventory template.
+// ExtensionInventoryTemplate returns the path to an extension's inventory template
+// within the Ansible collection (ansible/playbooks/templates/extensions/<name>/).
 func (c *Config) ExtensionInventoryTemplate(name string) string {
-	return filepath.Join(c.ExtensionPath(name), "inventory.j2")
+	return filepath.Join(c.ProjectRoot, "ansible", "playbooks", "templates", "extensions", name, "inventory.j2")
 }
 
-// ExtensionProviderPath returns the path to an extension's provider-specific config.
-func (c *Config) ExtensionProviderPath(name, provider string) string {
-	return filepath.Join(c.ExtensionPath(name), "providers", provider)
-}
-
-// ExtensionDataDir returns the path to an extension's data directory.
+// ExtensionDataDir returns the path to an extension's data directory
+// within the Ansible collection (ansible/playbooks/files/extensions/<name>/).
 func (c *Config) ExtensionDataDir(name string) string {
-	return filepath.Join(c.ExtensionPath(name), "data")
+	return filepath.Join(c.ProjectRoot, "ansible", "playbooks", "files", "extensions", name)
+}
+
+// ExtensionProviderPath returns the path to an extension's provider-specific config
+// at the repository root (providers/<name>/<provider>/).
+func (c *Config) ExtensionProviderPath(name, provider string) string {
+	return filepath.Join(c.ProjectRoot, "providers", name, provider)
 }
 
 // IsExtensionCompatible checks if an extension is compatible with the given lab.

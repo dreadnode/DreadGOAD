@@ -171,7 +171,7 @@ func provisionExtension(cfg *config.Config, name string, ext config.ExtensionCon
 	// Guacamole needs special vars
 	if name == "guacamole" {
 		extraVars["lab_data_file"] = filepath.Join(cfg.ProjectRoot, "ad", "GOAD", "data", "inventory.yml")
-		extraVars["guacamole_vars_file"] = filepath.Join(cfg.ExtensionPath(name), "data", "guacamole.yml")
+		extraVars["guacamole_vars_file"] = filepath.Join(cfg.ExtensionDataDir(name), "guacamole.yml")
 
 		// Collect extension data files for merging
 		var dataFiles []string

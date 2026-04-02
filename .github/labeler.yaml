@@ -51,7 +51,9 @@ area/scripts:
 
 area/extensions:
   - changed-files:
-      - any-glob-to-any-file: "extensions/**/*"
+      - any-glob-to-any-file: "ansible/playbooks/templates/extensions/**/*"
+      - any-glob-to-any-file: "ansible/playbooks/files/extensions/**/*"
+      - any-glob-to-any-file: "providers/**/*"
 
 area/python:
   - changed-files:
