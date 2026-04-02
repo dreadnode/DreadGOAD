@@ -1,0 +1,111 @@
+---
+# DreadGOAD Host Registry
+# Single source of truth for GOAD host metadata.
+#
+# This file defines all hosts in the GOAD deployment and serves as the
+# authoritative source for infrastructure inventory and Terragrunt configuration.
+
+version: "1.0"
+deployment: "goad"
+environments: ["dev", "staging"]
+default_region: "us-west-1"
+
+hosts:
+  # ============================================================================
+  # GOAD (Game of Active Directory) Hosts
+  # Provisioned via DreadGOAD and configured with AD vulnerabilities
+  # ============================================================================
+
+  kingslanding:
+    hostname: "kingslanding"
+    computer_name: "DC01"
+    goad_id: "dc01"
+    friendly_name: "GOAD DC01"
+    role: "Domain Controller"
+    os: "windows"
+    os_version: "2019"
+    domain: "sevenkingdoms.local"
+    tier: "critical"
+    terragrunt_path: "goad/dc01"
+    description: "Primary domain controller for Seven Kingdoms domain"
+    groups: ["goad", "domain_controllers", "windows"]
+
+  winterfell:
+    hostname: "winterfell"
+    computer_name: "DC02"
+    goad_id: "dc02"
+    friendly_name: "GOAD DC02"
+    role: "Domain Controller"
+    os: "windows"
+    os_version: "2019"
+    domain: "north.sevenkingdoms.local"
+    tier: "critical"
+    terragrunt_path: "goad/dc02"
+    description: "Domain controller for North subdomain"
+    groups: ["goad", "domain_controllers", "windows"]
+
+  meereen:
+    hostname: "meereen"
+    computer_name: "DC03"
+    goad_id: "dc03"
+    friendly_name: "GOAD DC03"
+    role: "Domain Controller"
+    os: "windows"
+    os_version: "2016"
+    domain: "essos.local"
+    tier: "critical"
+    terragrunt_path: "goad/dc03"
+    description: "Domain controller for Essos domain"
+    groups: ["goad", "domain_controllers", "windows"]
+
+  castelblack:
+    hostname: "castelblack"
+    computer_name: "SRV02"
+    goad_id: "srv02"
+    friendly_name: "GOAD SRV02"
+    role: "Server"
+    os: "windows"
+    os_version: "2019"
+    domain: "north.sevenkingdoms.local"
+    tier: "high"
+    terragrunt_path: "goad/srv02"
+    description: "Member server in North subdomain (MSSQL)"
+    groups: ["goad", "servers", "windows"]
+
+  braavos:
+    hostname: "braavos"
+    computer_name: "SRV03"
+    goad_id: "srv03"
+    friendly_name: "GOAD SRV03"
+    role: "Server"
+    os: "windows"
+    os_version: "2016"
+    domain: "essos.local"
+    tier: "high"
+    terragrunt_path: "goad/srv03"
+    description: "Member server in Essos domain"
+    groups: ["goad", "servers", "windows"]
+
+# Host groups for logical organization
+groups:
+  goad:
+    description: "Game of Active Directory lab hosts"
+    type: "ad-lab"
+    provisioner: "dreadgoad"
+
+  domain_controllers:
+    description: "Active Directory domain controllers"
+    type: "role-based"
+
+  servers:
+    description: "Member servers (non-DC)"
+    type: "role-based"
+
+  windows:
+    description: "Windows-based systems"
+    type: "os-based"
+
+metadata:
+  created: "2026-04-02"
+  last_updated: "2026-04-02"
+  maintainers: ["dreadgoad-community"]

@@ -29,6 +29,8 @@ func RunChecks(inventoryPath, projectRoot string) []CheckResult {
 	results = append(results, checkCommand("zip", "zip"))
 	results = append(results, checkAWSCredentials())
 	results = append(results, checkInventoryFile(inventoryPath))
+	results = append(results, checkTerragrunt())
+	results = append(results, checkTerraformOrTofu())
 	results = append(results, checkAnsibleCollections()...)
 
 	return results
@@ -148,6 +150,41 @@ func checkInventoryFile(path string) CheckResult {
 		}
 	}
 	return CheckResult{Name: "Inventory", Status: "pass", Message: path}
+}
+
+func checkTerragrunt() CheckResult {
+	out, err := exec.Command("terragrunt", "--version").CombinedOutput()
+	if err != nil {
+		return CheckResult{
+			Name:    "Terragrunt",
+			Status:  "warn",
+			Message: "not found in PATH (required for infra commands)",
+		}
+	}
+	version := strings.TrimSpace(string(out))
+	// Extract just the version line
+	for _, line := range strings.Split(version, "\n") {
+		if strings.Contains(line, "terragrunt version") || strings.HasPrefix(line, "v") {
+			version = strings.TrimSpace(line)
+			break
+		}
+	}
+	return CheckResult{Name: "Terragrunt", Status: "pass", Message: version}
+}
+
+func checkTerraformOrTofu() CheckResult {
+	// Check for tofu first (preferred), then terraform
+	if path, err := exec.LookPath("tofu"); err == nil {
+		return CheckResult{Name: "Terraform/Tofu", Status: "pass", Message: fmt.Sprintf("tofu: %s", path)}
+	}
+	if path, err := exec.LookPath("terraform"); err == nil {
+		return CheckResult{Name: "Terraform/Tofu", Status: "pass", Message: fmt.Sprintf("terraform: %s", path)}
+	}
+	return CheckResult{
+		Name:    "Terraform/Tofu",
+		Status:  "warn",
+		Message: "neither tofu nor terraform found in PATH (required for infra commands)",
+	}
 }
 
 func checkAnsibleCollections() []CheckResult {

@@ -29,6 +29,13 @@ type EnvironmentConfig struct {
 	EnabledExtensions []string `mapstructure:"enabled_extensions"`
 }
 
+// InfraConfig holds infrastructure/terragrunt settings.
+type InfraConfig struct {
+	Deployment       string `mapstructure:"deployment"`
+	TerragruntBinary string `mapstructure:"terragrunt_binary"`
+	TerraformBinary  string `mapstructure:"terraform_binary"`
+}
+
 // Config holds all CLI configuration.
 type Config struct {
 	Env          string                       `mapstructure:"env"`
@@ -42,6 +49,7 @@ type Config struct {
 	ProjectRoot  string                       `mapstructure:"project_root"`
 	Environments map[string]EnvironmentConfig `mapstructure:"environments"`
 	Extensions   map[string]ExtensionConfig   `mapstructure:"extensions"`
+	Infra        InfraConfig                  `mapstructure:"infra"`
 }
 
 var (
@@ -186,9 +194,9 @@ func (c *Config) ExtensionDataDir(name string) string {
 }
 
 // ExtensionProviderPath returns the path to an extension's provider-specific config
-// at the repository root (providers/<name>/<provider>/).
+// at the repository root (extensions/<name>/<provider>/).
 func (c *Config) ExtensionProviderPath(name, provider string) string {
-	return filepath.Join(c.ProjectRoot, "providers", name, provider)
+	return filepath.Join(c.ProjectRoot, "extensions", name, provider)
 }
 
 // IsExtensionCompatible checks if an extension is compatible with the given lab.
@@ -208,6 +216,26 @@ func (c *Config) IsExtensionCompatible(name, lab string) bool {
 // EnabledExtensionsForEnv returns the enabled extensions for the active environment.
 func (c *Config) EnabledExtensionsForEnv() []string {
 	return c.ActiveEnvironment().EnabledExtensions
+}
+
+// InfraBasePath returns the base path for a deployment's infra directory.
+func (c *Config) InfraBasePath() string {
+	return filepath.Join(c.ProjectRoot, "infra", c.Infra.Deployment)
+}
+
+// InfraWorkDir returns the working directory for terragrunt operations
+// at the region level: infra/{deployment}/{env}/{region}/
+func (c *Config) InfraWorkDir() string {
+	region := c.Region
+	if region == "" {
+		region = "us-west-1"
+	}
+	return filepath.Join(c.InfraBasePath(), c.Env, region)
+}
+
+// InfraModulePath returns the path for a specific module within the infra working directory.
+func (c *Config) InfraModulePath(module string) string {
+	return filepath.Join(c.InfraWorkDir(), module)
 }
 
 func findProjectRoot() (string, error) {

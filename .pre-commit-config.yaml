@@ -67,6 +67,20 @@ repos:
         # version of Ansible you want to install as a dependency.
         additional_dependencies: [".[community]"]
 
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.99.2
+    hooks:
+      - id: terraform_fmt
+        files: ^(modules|infra)/
+      - id: terraform_validate
+        files: ^modules/
+        args:
+          - --hook-config=--retry-once-with-cleanup=true
+      - id: terraform_tflint
+        files: ^(modules|infra)/
+        args:
+          - --args=--config=__GIT_WORKING_DIR__/.hooks/linters/.tflint.hcl
+
   - repo: local
     hooks:
       - id: prettier

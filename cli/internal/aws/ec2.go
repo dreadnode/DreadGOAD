@@ -83,6 +83,64 @@ func (c *Client) StopInstances(ctx context.Context, instanceIDs []string) error 
 	return err
 }
 
+// DiscoverAllInstances finds GOAD instances in any state (including stopped).
+func (c *Client) DiscoverAllInstances(ctx context.Context, env string) ([]Instance, error) {
+	pattern := fmt.Sprintf("*%s*dreadgoad*", env)
+	out, err := c.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		Filters: []types.Filter{
+			{Name: Ptr("tag:Name"), Values: []string{pattern}},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("describe instances: %w", err)
+	}
+
+	var instances []Instance
+	for _, r := range out.Reservations {
+		for _, i := range r.Instances {
+			// Skip terminated instances
+			if i.State.Name == types.InstanceStateNameTerminated {
+				continue
+			}
+			inst := Instance{
+				InstanceID: deref(i.InstanceId),
+				PrivateIP:  deref(i.PrivateIpAddress),
+				State:      string(i.State.Name),
+			}
+			for _, t := range i.Tags {
+				if deref(t.Key) == "Name" {
+					inst.Name = deref(t.Value)
+				}
+			}
+			instances = append(instances, inst)
+		}
+	}
+	return instances, nil
+}
+
+// FindInstanceByHostnameAll finds an instance (any state except terminated) whose Name tag contains the hostname.
+func (c *Client) FindInstanceByHostnameAll(ctx context.Context, env, hostname string) (*Instance, error) {
+	instances, err := c.DiscoverAllInstances(ctx, env)
+	if err != nil {
+		return nil, err
+	}
+	hostname = strings.ToUpper(hostname)
+	for _, inst := range instances {
+		if strings.Contains(strings.ToUpper(inst.Name), hostname) {
+			return &inst, nil
+		}
+	}
+	return nil, fmt.Errorf("instance not found for hostname %s", hostname)
+}
+
+// TerminateInstances terminates the given EC2 instances.
+func (c *Client) TerminateInstances(ctx context.Context, instanceIDs []string) error {
+	_, err := c.EC2.TerminateInstances(ctx, &ec2.TerminateInstancesInput{
+		InstanceIds: instanceIDs,
+	})
+	return err
+}
+
 // FindInstanceByHostname finds an instance whose Name tag contains the hostname.
 func (c *Client) FindInstanceByHostname(ctx context.Context, env, hostname string) (*Instance, error) {
 	instances, err := c.DiscoverInstances(ctx, env)

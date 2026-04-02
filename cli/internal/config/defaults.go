@@ -79,6 +79,11 @@ func setDefaults() {
 	viper.SetDefault("extensions.ws01.playbook", "ext-ws01.yml")
 	viper.SetDefault("extensions.ws01.data_dir", "ws01/data")
 
+	// Infrastructure defaults
+	viper.SetDefault("infra.deployment", "goad-deployment")
+	viper.SetDefault("infra.terragrunt_binary", "terragrunt")
+	viper.SetDefault("infra.terraform_binary", "tofu")
+
 	viper.SetDefault("environments", map[string]interface{}{
 		"dev": map[string]interface{}{
 			"variant":        true,
