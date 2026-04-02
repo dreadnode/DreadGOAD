@@ -1,7 +1,7 @@
-site_name: Game Of Active Directory
-site_url: https://orange-cyberdefense.github.io/GOAD/
-repo_url: https://github.com/Orange-Cyberdefense/GOAD
-site_author: mayfly
+site_name: DreadGOAD
+site_url: https://github.com/dreadnode/DreadGOAD
+repo_url: https://github.com/dreadnode/DreadGOAD
+site_author: Dreadnode
 nav:
   - GOAD: index.md
   - 🚀 Installation:
@@ -12,6 +12,7 @@ nav:
     - index: providers/index.md
     - Virtualbox: providers/virtualbox.md
     - Vmware Workstation: providers/vmware.md
+    - Vmware on Windows: providers/vmware_windows.md
     - Vmware Esxi: providers/vmware_esxi.md
     - Aws: providers/aws.md
     - Azure: providers/azure.md
@@ -83,13 +84,10 @@ extra:
       make our documentation better.
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/Orange-Cyberdefense/GOAD
-    - icon: fontawesome/brands/x-twitter
-      link: https://x.com/M4yFly
-    - icon: fontawesome/brands/discord
-      link: https://discord.gg/NYy7rsMf3u
+      link: https://github.com/dreadnode/DreadGOAD
     - icon: fontawesome/solid/heart
       link: https://github.com/sponsors/Mayfly277
+      name: Sponsor the original GOAD creator
 markdown_extensions:
   - attr_list
   - md_in_html

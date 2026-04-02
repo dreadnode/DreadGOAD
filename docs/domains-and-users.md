@@ -19,13 +19,13 @@ Trust: sevenkingdoms.local <──bidirectional──> essos.local
 
 ## Hosts & IP Addresses
 
-| Host | Hostname | Domain | Private IP | Role | Instance ID |
-| ------ | ---------- | -------- | ------------ | ------ | ------------- |
-| DC01 | kingslanding | sevenkingdoms.local | 10.1.2.238 | Domain Controller (parent) | i-014ce68c3bdbf888e |
-| DC02 | winterfell | north.sevenkingdoms.local | 10.1.2.121 | Domain Controller (child) | i-01ef190a91a23eab1 |
-| DC03 | meereen | essos.local | 10.1.2.211 | Domain Controller | i-0f03ae2e9dd3332d7 |
-| SRV02 | castelblack | north.sevenkingdoms.local | 10.1.2.17 | Member Server (IIS, MSSQL, WebDAV) | i-0bd336a4bd9090496 |
-| SRV03 | braavos | essos.local | 10.1.2.210 | Member Server (MSSQL, WebDAV, ADCS) | i-0692242788b6cb839 |
+| Host | Hostname | Domain | Role |
+| ------ | ---------- | -------- | ------ |
+| DC01 | kingslanding | sevenkingdoms.local | Domain Controller (parent) |
+| DC02 | winterfell | north.sevenkingdoms.local | Domain Controller (child) |
+| DC03 | meereen | essos.local | Domain Controller |
+| SRV02 | castelblack | north.sevenkingdoms.local | Member Server (IIS, MSSQL, WebDAV) |
+| SRV03 | braavos | essos.local | Member Server (MSSQL, WebDAV, ADCS) |
 
 ### Services per Host
 
@@ -44,7 +44,7 @@ Trust: sevenkingdoms.local <──bidirectional──> essos.local
 **Forest:** sevenkingdoms.local
 **NetBIOS:** SEVENKINGDOMS
 **DC:** kingslanding (DC01)
-**Domain Admin Password:** `ykRXQ@rWNV4znesz-h!c` (staging)
+**Domain Admin Password:** Set during provisioning
 
 ### Users (sevenkingdoms)
 
@@ -98,7 +98,7 @@ renly.baratheon ──WriteDACL──> OU=Crownlands
 **NetBIOS:** NORTH
 **DC:** winterfell (DC02)
 **Parent Domain:** sevenkingdoms.local
-**Domain Admin Password:** `moydNed_wEKuP8KN6rUx` (staging)
+**Domain Admin Password:** Set during provisioning
 
 ### Users (north)
 
@@ -140,7 +140,7 @@ NT AUTHORITY\ANONYMOUS LOGON ──ReadProperty + GenericExecute──> DC=North
 **NetBIOS:** ESSOS
 **DC:** meereen (DC03)
 **Trust:** Bidirectional with sevenkingdoms.local
-**Domain Admin Password:** `M!BbXzL48D9mH9dQzp*e` (staging)
+**Domain Admin Password:** Set during provisioning
 
 ### Users (essos)
 

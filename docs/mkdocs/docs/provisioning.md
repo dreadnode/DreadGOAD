@@ -67,7 +67,84 @@ The order is important as it determine the override order. hosts declarations ar
 roles_path = ./roles:../../../ansible/roles
 ```
 
-## labs build
+## Running Ansible from Docker
+
+If you prefer not to install Ansible locally, you can provision from a Docker container:
+
+```bash
+# Build the container
+docker build -t goadansible .
+
+# Run provisioning
+docker run -ti --rm --network host -h goadansible \
+  -v $(pwd):/goad -w /goad/ansible goadansible \
+  ansible-playbook \
+    -i ../ad/<LAB>/data/inventory \
+    -i ../ad/<LAB>/providers/<PROVIDER>/inventory \
+    main.yml
+```
+
+`--network host` is required so the container can reach the lab VMs on the host-only network (e.g. `192.168.56.0/24`).
+
+## Individual Playbooks
+
+The `main.yml` playbook runs all steps in sequence. For debugging or partial re-provisioning, you can run each playbook individually. The order matters:
+
+```bash
+ANSIBLE_CMD="ansible-playbook -i ../ad/GOAD/data/inventory -i ../ad/GOAD/providers/virtualbox/inventory"
+$ANSIBLE_CMD build.yml            # Install prerequisites and prepare VMs
+$ANSIBLE_CMD ad-servers.yml       # Create main domains, child domain, enroll servers
+$ANSIBLE_CMD ad-parent_domain.yml # Create parent domain
+$ANSIBLE_CMD ad-child_domain.yml  # Create child domain
+sleep 5m                          # Allow replication to settle
+$ANSIBLE_CMD ad-members.yml       # Add child domain members
+$ANSIBLE_CMD ad-trusts.yml        # Create trust relationships
+$ANSIBLE_CMD ad-data.yml          # Import AD data (users, groups, OUs)
+$ANSIBLE_CMD ad-gmsa.yml          # Configure gMSA
+$ANSIBLE_CMD laps.yml             # Configure LAPS
+$ANSIBLE_CMD ad-relations.yml     # Set ACE/ACL and cross-domain group relations
+$ANSIBLE_CMD adcs.yml             # Install ADCS
+$ANSIBLE_CMD ad-acl.yml           # Configure ACL attack paths
+$ANSIBLE_CMD servers.yml          # Install IIS and MSSQL
+$ANSIBLE_CMD security.yml         # Configure security settings (Defender, etc.)
+$ANSIBLE_CMD vulnerabilities.yml  # Configure intentional vulnerabilities
+$ANSIBLE_CMD reboot.yml           # Reboot all VMs
+```
+
+!!! tip
+    If a playbook fails, you can usually just re-run it. Most transient failures are caused by Windows latency during installation. Wait a few minutes and retry.
+
+## Vagrant VM Management
+
+Common Vagrant commands for managing lab VMs:
+
+```bash
+vagrant up              # Start all VMs (or create if first run)
+vagrant up <vmname>     # Start a specific VM
+vagrant halt            # Stop all VMs
+vagrant destroy         # Delete all VMs (irreversible)
+vagrant snapshot push   # Save a snapshot of all VMs
+vagrant snapshot pop    # Restore the last snapshot
+```
+
+!!! warning
+    `vagrant snapshot pop` can break domain trust relationships between servers. After restoring a snapshot, run the `fix_trust.yml` playbook to re-establish trusts.
+
+## Disabling the Vagrant User
+
+All VMs are deployed with default credentials `vagrant:vagrant` from the base templates. To remove this backdoor after provisioning:
+
+```bash
+ansible-playbook -i ../ad/<LAB>/data/inventory -i ../ad/<LAB>/providers/<PROVIDER>/inventory disable_vagrant.yml
+```
+
+To re-enable (e.g. for maintenance):
+
+```bash
+ansible-playbook -i ../ad/<LAB>/data/inventory -i ../ad/<LAB>/providers/<PROVIDER>/inventory enable_vagrant.yml
+```
+
+## Labs build
 
 - Instead of call a global main.yml playbook with all the different tasks to do the goad script call each playbook one by one.
 - In this way, there is a fallback mechanism to retry each playbook 3 times before consider it as failed.
