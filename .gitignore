@@ -30,6 +30,13 @@ ad/*/providers/*/ssh_keys/*id_rsa*
 ad/*/providers/*/ssh_keys/*.pub
 ad/*/providers/*/extensions/*.rb
 
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+*.tfplan
+
 # IDE / OS
 .vscode
 temp/
