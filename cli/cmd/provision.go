@@ -12,6 +12,7 @@ import (
 	"github.com/dreadnode/dreadgoad/internal/ansible"
 	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/dreadnode/dreadgoad/internal/doctor"
+	"github.com/dreadnode/dreadgoad/internal/lab"
 	"github.com/dreadnode/dreadgoad/internal/variant"
 	"github.com/spf13/cobra"
 )
@@ -25,6 +26,7 @@ Executes the full playbook sequence (or a subset) with error-specific
 retry strategies, SSM session management, and idle timeout monitoring.`,
 	Example: `  dreadgoad provision
   dreadgoad provision --plays build.yml,ad-servers.yml
+  dreadgoad provision --from ad-data.yml
   dreadgoad provision --env staging --debug
   dreadgoad provision --plays ad-data.yml --limit dc01
   dreadgoad provision --max-retries 5 --retry-delay 60`,
@@ -48,6 +50,7 @@ func init() {
 	rootCmd.AddCommand(adUsersCmd)
 
 	provisionCmd.Flags().String("plays", "", "Comma-separated playbooks to run (default: all)")
+	provisionCmd.Flags().String("from", "", "Resume provisioning from this playbook onward")
 	provisionCmd.Flags().String("limit", "", "Limit execution to specific hosts")
 	provisionCmd.Flags().Int("max-retries", 0, "Max retry attempts (default: from config)")
 	provisionCmd.Flags().Int("retry-delay", 0, "Delay between retries in seconds (default: from config)")
@@ -59,6 +62,53 @@ func init() {
 	adUsersCmd.Flags().Int("retry-delay", 0, "Delay between retries in seconds")
 }
 
+func resolvePlaybooks(cfg *config.Config, playsFlag, fromFlag string) ([]string, error) {
+	if playsFlag != "" && fromFlag != "" {
+		return nil, fmt.Errorf("--plays and --from are mutually exclusive")
+	}
+
+	var playbooks []string
+	if playsFlag != "" {
+		playbooks = strings.Split(playsFlag, ",")
+	} else {
+		playbooks = lab.PlaybooksForLab(cfg.ProjectRoot, "", cfg.Playbooks)
+	}
+
+	if fromFlag == "" {
+		return playbooks, nil
+	}
+
+	for i, p := range playbooks {
+		if p == fromFlag {
+			return playbooks[i:], nil
+		}
+	}
+	return nil, fmt.Errorf("playbook %q not found in playbook list: %v", fromFlag, playbooks)
+}
+
+func ensureVariant(cfg *config.Config) error {
+	envCfg := cfg.ActiveEnvironment()
+	if !envCfg.Variant {
+		return nil
+	}
+	source, target := cfg.ResolvedVariantPaths()
+	variantName := envCfg.VariantName
+	if variantName == "" {
+		variantName = "variant-1"
+	}
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		slog.Info("Variant directory already exists, skipping generation", "target", target)
+		return nil
+	}
+	fmt.Printf("Environment %q has variant=true, generating variant...\n", cfg.Env)
+	gen := variant.NewGenerator(source, target, variantName)
+	if err := gen.Run(); err != nil {
+		return fmt.Errorf("auto variant generation failed: %w", err)
+	}
+	fmt.Printf("Variant generated: %s\n", target)
+	return nil
+}
+
 func runProvision(cmd *cobra.Command, args []string) error {
 	cfg, err := config.Get()
 	if err != nil {
@@ -66,55 +116,31 @@ func runProvision(cmd *cobra.Command, args []string) error {
 	}
 	ctx := context.Background()
 
-	// Determine playbooks
 	playsFlag, _ := cmd.Flags().GetString("plays")
-	var playbooks []string
-	if playsFlag != "" {
-		playbooks = strings.Split(playsFlag, ",")
-	} else {
-		playbooks = cfg.Playbooks
+	fromFlag, _ := cmd.Flags().GetString("from")
+	playbooks, err := resolvePlaybooks(cfg, playsFlag, fromFlag)
+	if err != nil {
+		return err
 	}
 
 	limit, _ := cmd.Flags().GetString("limit")
 	maxRetries, _ := cmd.Flags().GetInt("max-retries")
 	retryDelay, _ := cmd.Flags().GetInt("retry-delay")
 
-	// Ensure log directory
 	_ = os.MkdirAll(cfg.LogDir, 0o755)
 	logFile := filepath.Join(cfg.LogDir, fmt.Sprintf("%s-dreadgoad-%s.log",
 		cfg.Env, time.Now().Format("20060102_150405")))
 
-	// Pre-flight: verify ansible-core version compatibility
 	if err := doctor.CheckAnsibleCoreVersion(); err != nil {
 		return fmt.Errorf("ansible-core version check failed: %w", err)
 	}
-
-	// Pre-flight: prepare ADCS zips
 	if err := ansible.PrepareADCSZips(cfg.ProjectRoot); err != nil {
 		slog.Warn("ADCS zip preparation failed", "error", err)
 	}
-
-	// Pre-flight: auto-generate variant if environment requires it
-	envCfg := cfg.ActiveEnvironment()
-	if envCfg.Variant {
-		source, target := cfg.ResolvedVariantPaths()
-		variantName := envCfg.VariantName
-		if variantName == "" {
-			variantName = "variant-1"
-		}
-		if _, err := os.Stat(target); os.IsNotExist(err) {
-			fmt.Printf("Environment %q has variant=true, generating variant...\n", cfg.Env)
-			gen := variant.NewGenerator(source, target, variantName)
-			if err := gen.Run(); err != nil {
-				return fmt.Errorf("auto variant generation failed: %w", err)
-			}
-			fmt.Printf("Variant generated: %s\n", target)
-		} else {
-			slog.Info("Variant directory already exists, skipping generation", "target", target)
-		}
+	if err := ensureVariant(cfg); err != nil {
+		return err
 	}
 
-	// Log header
 	fmt.Println("===============================================")
 	fmt.Printf("DreadGOAD provisioning started at %s\n", time.Now().Format(time.RFC3339))
 	fmt.Printf("Environment: %s\n", cfg.Env)
@@ -129,7 +155,6 @@ func runProvision(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println("-----------------------------------------------")
 
-	// Run each playbook
 	for _, playbook := range playbooks {
 		opts := ansible.RetryOptions{
 			Playbook: playbook,

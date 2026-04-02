@@ -194,9 +194,9 @@ func (c *Config) ExtensionDataDir(name string) string {
 }
 
 // ExtensionProviderPath returns the path to an extension's provider-specific config
-// at the repository root (providers/<name>/<provider>/).
+// at the repository root (extensions/<name>/<provider>/).
 func (c *Config) ExtensionProviderPath(name, provider string) string {
-	return filepath.Join(c.ProjectRoot, "providers", name, provider)
+	return filepath.Join(c.ProjectRoot, "extensions", name, provider)
 }
 
 // IsExtensionCompatible checks if an extension is compatible with the given lab.
