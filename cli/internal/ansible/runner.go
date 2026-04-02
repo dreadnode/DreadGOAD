@@ -46,11 +46,19 @@ type RunResult struct {
 
 // RunPlaybook executes ansible-playbook with idle timeout monitoring.
 func RunPlaybook(ctx context.Context, opts RunOptions) *RunResult {
-	cfg := config.Get()
+	cfg, err := config.Get()
+	if err != nil {
+		return &RunResult{ExitCode: 1, Output: fmt.Sprintf("config error: %v", err)}
+	}
 	result := &RunResult{}
 
 	args := buildArgs(opts, cfg)
-	env := buildEnv(opts, cfg)
+	env, err := buildEnv(opts, cfg)
+	if err != nil {
+		result.ErrorType = ErrUnclassified
+		result.ErrorDetail = err.Error()
+		return result
+	}
 
 	slog.Info("running playbook", "playbook", opts.Playbook, "args", strings.Join(args, " "))
 
@@ -211,10 +219,15 @@ func buildArgs(opts RunOptions, cfg *config.Config) []string {
 	return args
 }
 
-func buildEnv(opts RunOptions, cfg *config.Config) []string {
+func buildEnv(opts RunOptions, cfg *config.Config) ([]string, error) {
 	env := os.Environ()
 
-	for k, v := range cfg.AnsibleEnv() {
+	ansibleEnv, err := cfg.AnsibleEnv()
+	if err != nil {
+		return nil, fmt.Errorf("ansible env: %w", err)
+	}
+
+	for k, v := range ansibleEnv {
 		env = append(env, k+"="+v)
 	}
 
@@ -222,7 +235,7 @@ func buildEnv(opts RunOptions, cfg *config.Config) []string {
 		env = append(env, k+"="+v)
 	}
 
-	return env
+	return env, nil
 }
 
 func killProcessGroup(pid int) {

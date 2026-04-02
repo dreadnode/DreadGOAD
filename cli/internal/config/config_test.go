@@ -28,7 +28,10 @@ func TestConfigAnsibleCfgPath(t *testing.T) {
 func TestConfigAnsibleEnv(t *testing.T) {
 	c := &Config{ProjectRoot: "/opt/goad", Env: "staging"}
 
-	env := c.AnsibleEnv()
+	env, err := c.AnsibleEnv()
+	if err != nil {
+		t.Fatalf("AnsibleEnv() returned unexpected error: %v", err)
+	}
 
 	if env["ANSIBLE_CONFIG"] != c.AnsibleCfgPath() {
 		t.Errorf("ANSIBLE_CONFIG = %q, want %q", env["ANSIBLE_CONFIG"], c.AnsibleCfgPath())
@@ -75,9 +78,9 @@ func TestDefaultPlaybooks(t *testing.T) {
 		t.Fatal("DefaultPlaybooks is empty")
 	}
 
-	// First playbook should be build.yml
-	if DefaultPlaybooks[0] != "build.yml" {
-		t.Errorf("first playbook = %q, want %q", DefaultPlaybooks[0], "build.yml")
+	// First playbook should be network_setup.yml
+	if DefaultPlaybooks[0] != "network_setup.yml" {
+		t.Errorf("first playbook = %q, want %q", DefaultPlaybooks[0], "network_setup.yml")
 	}
 
 	// Last playbook should be vulnerabilities.yml
@@ -142,7 +145,10 @@ func TestFindProjectRoot(t *testing.T) {
 		}
 		t.Cleanup(func() { _ = os.Chdir(origDir) })
 
-		got := findProjectRoot()
+		got, err := findProjectRoot()
+		if err != nil {
+			t.Fatalf("findProjectRoot() returned unexpected error: %v", err)
+		}
 		if got != dir {
 			t.Errorf("findProjectRoot() = %q, want %q", got, dir)
 		}
@@ -156,7 +162,10 @@ func TestFindProjectRoot(t *testing.T) {
 		}
 		t.Cleanup(func() { _ = os.Chdir(origDir) })
 
-		got := findProjectRoot()
+		got, err := findProjectRoot()
+		if err != nil {
+			t.Fatalf("findProjectRoot() returned unexpected error: %v", err)
+		}
 		if got != dir {
 			t.Errorf("findProjectRoot() = %q, want %q", got, dir)
 		}

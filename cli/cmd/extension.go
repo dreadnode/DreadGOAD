@@ -54,7 +54,10 @@ func init() {
 }
 
 func runExtensionList(cmd *cobra.Command, args []string) error {
-	cfg := config.Get()
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
 	labFilter, _ := cmd.Flags().GetString("lab")
 
 	// Sort extension names for stable output
@@ -97,7 +100,10 @@ func runExtensionList(cmd *cobra.Command, args []string) error {
 }
 
 func runExtensionProvision(cmd *cobra.Command, args []string) error {
-	cfg := config.Get()
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
 	name := args[0]
 
 	ext, ok := cfg.Extensions[name]
@@ -113,7 +119,10 @@ func runExtensionProvision(cmd *cobra.Command, args []string) error {
 }
 
 func runExtensionProvisionAll(cmd *cobra.Command, args []string) error {
-	cfg := config.Get()
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
 	enabled := cfg.EnabledExtensionsForEnv()
 
 	if len(enabled) == 0 {

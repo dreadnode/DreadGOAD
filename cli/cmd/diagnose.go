@@ -33,7 +33,10 @@ func init() {
 }
 
 func runDiagnose(cmd *cobra.Command, args []string) error {
-	cfg := config.Get()
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
 
 	dc01IP, _ := cmd.Flags().GetString("dc01-ip")

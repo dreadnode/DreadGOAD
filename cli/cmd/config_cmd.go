@@ -20,7 +20,10 @@ var configShowCmd = &cobra.Command{
 	Use:   "show",
 	Short: "Display current effective configuration",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg := config.Get()
+		cfg, err := config.Get()
+		if err != nil {
+			return err
+		}
 		fmt.Printf("Environment:    %s\n", cfg.Env)
 		fmt.Printf("Region:         %s\n", valueOrDefault(cfg.Region, "(from inventory)"))
 		fmt.Printf("Debug:          %v\n", cfg.Debug)
@@ -65,9 +68,14 @@ var configInitCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Create default configuration file",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		home, _ := os.UserHomeDir()
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("resolving home directory: %w", err)
+		}
 		dir := filepath.Join(home, ".config", "dreadgoad")
-		_ = os.MkdirAll(dir, 0o755)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("creating config directory: %w", err)
+		}
 		cfgPath := filepath.Join(dir, "dreadgoad.yaml")
 
 		if _, err := os.Stat(cfgPath); err == nil {

@@ -61,7 +61,10 @@ func init() {
 }
 
 func runSSMStatus(cmd *cobra.Command, args []string) error {
-	cfg := config.Get()
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
 
 	inv, err := inventory.Parse(cfg.InventoryPath())
@@ -100,7 +103,10 @@ func runSSMStatus(cmd *cobra.Command, args []string) error {
 }
 
 func runSSMCleanup(cmd *cobra.Command, args []string) error {
-	cfg := config.Get()
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
 
 	maxAge, _ := cmd.Flags().GetInt("max-age")
@@ -133,7 +139,10 @@ func runSSMCleanup(cmd *cobra.Command, args []string) error {
 }
 
 func runSSMConnect(cmd *cobra.Command, args []string) error {
-	cfg := config.Get()
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
 
 	inv, err := inventory.Parse(cfg.InventoryPath())
 	if err != nil {
@@ -159,7 +168,10 @@ func runSSMConnect(cmd *cobra.Command, args []string) error {
 }
 
 func runSSMRun(cmd *cobra.Command, args []string) error {
-	cfg := config.Get()
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
 
 	hostsFlag, _ := cmd.Flags().GetString("hosts")

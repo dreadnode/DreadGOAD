@@ -60,7 +60,10 @@ func init() {
 }
 
 func runProvision(cmd *cobra.Command, args []string) error {
-	cfg := config.Get()
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
 
 	// Determine playbooks

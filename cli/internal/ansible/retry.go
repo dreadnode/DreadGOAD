@@ -37,7 +37,10 @@ func (o *RetryOptions) logger() *slog.Logger {
 
 // RunPlaybookWithRetry runs a playbook with error-specific retry logic.
 func RunPlaybookWithRetry(ctx context.Context, opts RetryOptions) error {
-	cfg := config.Get()
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
 	log := opts.logger()
 
 	if opts.MaxRetries == 0 {
@@ -222,7 +225,11 @@ func buildRetryLimit(userLimit, failedHosts string) string {
 }
 
 func cleanupSSMSessions(ctx context.Context, env string, log *slog.Logger) {
-	cfg := config.Get()
+	cfg, err := config.Get()
+	if err != nil {
+		log.Warn("could not get config for SSM cleanup", "error", err)
+		return
+	}
 	inv, err := inventory.Parse(cfg.InventoryPath())
 	if err != nil {
 		log.Warn("could not parse inventory for SSM cleanup", "error", err)
@@ -250,7 +257,11 @@ func fixSSMUsers(ctx context.Context, env string, failedHosts []string, log *slo
 		return
 	}
 
-	cfg := config.Get()
+	cfg, err := config.Get()
+	if err != nil {
+		log.Warn("could not get config for ssm-user fix", "error", err)
+		return
+	}
 	inv, err := inventory.Parse(cfg.InventoryPath())
 	if err != nil {
 		log.Warn("could not parse inventory for ssm-user fix", "error", err)
@@ -282,7 +293,11 @@ func fixSSMUsers(ctx context.Context, env string, failedHosts []string, log *slo
 }
 
 func rebootFailedHosts(ctx context.Context, opts RetryOptions, log *slog.Logger) {
-	cfg := config.Get()
+	cfg, err := config.Get()
+	if err != nil {
+		log.Warn("could not get config for reboot", "error", err)
+		return
+	}
 	for _, host := range strings.Split(opts.Limit, ",") {
 		if host == "" {
 			continue
@@ -295,7 +310,12 @@ func rebootFailedHosts(ctx context.Context, opts RetryOptions, log *slog.Logger)
 		}
 		rebootCmd := execCommand(ctx, "ansible", args...)
 		rebootCmd.Dir = cfg.ProjectRoot
-		rebootCmd.Env = buildEnv(RunOptions{Env: opts.Env}, cfg)
+		env, envErr := buildEnv(RunOptions{Env: opts.Env}, cfg)
+		if envErr != nil {
+			log.Warn("could not build env for reboot", "host", host, "error", envErr)
+			continue
+		}
+		rebootCmd.Env = env
 		if output, err := rebootCmd.CombinedOutput(); err != nil {
 			log.Warn("reboot failed", "host", host, "error", err, "output", string(output))
 		}

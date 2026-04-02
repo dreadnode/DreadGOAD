@@ -56,7 +56,10 @@ type instanceInfo struct {
 }
 
 func runInventorySync(cmd *cobra.Command, args []string) error {
-	cfg := config.Get()
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
 	invPath := cfg.InventoryPath()
 
 	if _, err := os.Stat(invPath); os.IsNotExist(err) {
@@ -182,7 +185,10 @@ func applyInstanceUpdates(invPath string, instances []instanceInfo) error {
 }
 
 func runInventoryShow(cmd *cobra.Command, args []string) error {
-	cfg := config.Get()
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
 
 	parsed, err := inv.Parse(cfg.InventoryPath())
 	if err != nil {
@@ -202,7 +208,10 @@ func runInventoryShow(cmd *cobra.Command, args []string) error {
 }
 
 func runInventoryMapping(cmd *cobra.Command, args []string) error {
-	cfg := config.Get()
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
 	ctx := context.Background()
 
 	parsed, err := inv.Parse(cfg.InventoryPath())

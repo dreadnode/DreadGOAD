@@ -12,7 +12,10 @@ var doctorCmd = &cobra.Command{
 	Long: `Verifies that all required tools and configurations are in place:
 ansible-core version, AWS CLI, Python, Ansible collections, credentials, and inventory.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		cfg := config.Get()
+		cfg, err := config.Get()
+		if err != nil {
+			return err
+		}
 		results := doctor.RunChecks(cfg.InventoryPath(), cfg.ProjectRoot)
 		doctor.PrintResults(results)
 
