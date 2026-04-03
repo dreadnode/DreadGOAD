@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"slices"
+
 	"github.com/dreadnode/dreadgoad/internal/ansible"
 	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/dreadnode/dreadgoad/internal/doctor"
@@ -55,7 +57,6 @@ func init() {
 	provisionCmd.Flags().Int("max-retries", 0, "Max retry attempts (default: from config)")
 	provisionCmd.Flags().Int("retry-delay", 0, "Delay between retries in seconds (default: from config)")
 
-	// ad-users inherits provision flags
 	adUsersCmd.Flags().String("plays", "ad-data.yml", "Playbooks to run")
 	adUsersCmd.Flags().String("limit", "", "Limit execution to specific hosts")
 	adUsersCmd.Flags().Int("max-retries", 0, "Max retry attempts")
@@ -141,6 +142,12 @@ func runProvision(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Generate instance-to-IP mapping so Ansible can resolve host IPs
+	// without slow runtime network detection over SSM.
+	if err := generateInstanceMapping(ctx, ""); err != nil {
+		slog.Warn("instance mapping generation failed, playbooks will use runtime detection", "error", err)
+	}
+
 	fmt.Println("===============================================")
 	fmt.Printf("DreadGOAD provisioning started at %s\n", time.Now().Format(time.RFC3339))
 	fmt.Printf("Environment: %s\n", cfg.Env)
@@ -155,7 +162,13 @@ func runProvision(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println("-----------------------------------------------")
 
-	for _, playbook := range playbooks {
+	// Clean up stale SSM sessions before starting provisioning to prevent
+	// connection saturation from orphaned sessions of previous runs.
+	log := slog.Default()
+	log.Info("cleaning up stale SSM sessions before provisioning")
+	ansible.CleanupSSMSessions(ctx, cfg.Env, log)
+
+	for i, playbook := range playbooks {
 		opts := ansible.RetryOptions{
 			Playbook: playbook,
 			Env:      cfg.Env,
@@ -172,6 +185,18 @@ func runProvision(cmd *cobra.Command, args []string) error {
 
 		if err := ansible.RunPlaybookWithRetry(ctx, opts); err != nil {
 			return fmt.Errorf("provisioning failed at %s: %w", playbook, err)
+		}
+
+		// Between playbooks: clean up accumulated SSM sessions and wait
+		// after reboot-inducing playbooks for SSM agents to reconnect.
+		if i < len(playbooks)-1 {
+			ansible.CleanupSSMSessions(ctx, cfg.Env, log)
+
+			if slices.Contains(config.RebootPlaybooks, playbook) {
+				log.Info("playbook may have caused reboots, waiting for SSM reconnection",
+					"playbook", playbook, "delay", "120s")
+				time.Sleep(120 * time.Second)
+			}
 		}
 	}
 

@@ -114,6 +114,78 @@ $ANSIBLE_CMD reboot.yml           # Reboot all VMs
 !!! tip
     If a playbook fails, you can usually just re-run it. Most transient failures are caused by Windows latency during installation. Wait a few minutes and retry.
 
+## Stopping, Fixing, and Resuming Provisioning
+
+Provisioning rarely succeeds on the first try without intervention. You'll often need to stop the process, fix an issue (inventory typo, playbook bug, missing variable), and resume from where you left off. This is a normal workflow — distinct from rebuilding the CLI itself.
+
+### The workflow
+
+1. **Stop provisioning** — press `Ctrl+C`. The CLI handles the signal gracefully and terminates the running Ansible process.
+
+2. **Make your fix** — edit inventory files, playbooks, `config.json`, or whatever caused the failure. Changes are picked up on the next run since the CLI re-reads configuration each time.
+
+3. **Resume with `--from`** — restart provisioning from the playbook that failed (or the one after the last that succeeded):
+
+    ```bash
+    dreadgoad provision --from ad-trusts.yml
+    ```
+
+    This runs `ad-trusts.yml` and everything after it, skipping playbooks that already completed.
+
+### Choosing where to resume
+
+Use `--from` with the name of any playbook in the sequence. The CLI runs that playbook and all subsequent ones:
+
+```bash
+# Failed during ad-members.yml — fix and resume from there
+dreadgoad provision --from ad-members.yml
+
+# Or re-run just a single playbook to test a fix
+dreadgoad provision --plays ad-trusts.yml
+
+# Re-run a single playbook against a specific host
+dreadgoad provision --plays ad-data.yml --limit dc01
+```
+
+`--from` and `--plays` are mutually exclusive. Use `--from` to resume a sequence, `--plays` to cherry-pick specific playbooks.
+
+### What the CLI handles automatically
+
+You don't need to manually retry most transient failures. The CLI has built-in retry logic (default: 3 attempts) with error-specific strategies:
+
+| Error Type | Automatic Fix |
+|-----------|--------------|
+| Fact gathering timeout | Reduces forks to 1, extends timeout |
+| SSM transfer errors | Cleans up stale sessions, recreates ssm-user accounts |
+| SSM reconnection | Waits for Windows reboot (2 min), then reconnects |
+| PowerShell errors | Forces PowerShell interactive mode |
+| MSI installer errors | Reboots failed hosts before retry |
+| Network adapter issues | Applies adapter workaround flags |
+
+Configure retry behavior with:
+
+```bash
+dreadgoad provision --max-retries 5 --retry-delay 60
+```
+
+### When to stop and fix manually
+
+Stop and fix manually when:
+
+- **The same error repeats across retries** — the automatic strategy isn't resolving it. Check the playbook logic or inventory.
+- **You spot a configuration mistake** — wrong IP, missing host, typo in a variable. Fix it and resume with `--from`.
+- **A playbook needs code changes** — e.g., a role has a bug. Fix the role, then resume from the affected playbook.
+
+### Logs
+
+Each provisioning run writes a timestamped log to the logs directory:
+
+```text
+logs/<env>-dreadgoad-<timestamp>.log
+```
+
+Check the log to identify which playbook failed and why before deciding where to resume from.
+
 ## Vagrant VM Management
 
 Common Vagrant commands for managing lab VMs:

@@ -352,3 +352,11 @@ When you need to update the golden AMIs (e.g., for new Windows patches):
 **Ansible timeouts**: Windows instances can take 5-10 minutes to fully boot and initialize SSM. If provisioning fails on first attempt, wait and retry.
 
 **Terragrunt dependency errors**: Always deploy the `network` module before host modules. Use `terragrunt run-all` from the `goad/` directory to handle ordering automatically.
+
+**Provisioning fails mid-run**: This is normal — stop with `Ctrl+C`, fix the issue (inventory, playbook, etc.), and resume with `--from`:
+
+```bash
+dreadgoad provision --env staging --region us-west-1 --from ad-trusts.yml
+```
+
+The CLI re-reads all configuration on each run, so your fixes are picked up immediately. See the [Stopping, Fixing, and Resuming](../provisioning.md#stopping-fixing-and-resuming-provisioning) section for the full workflow.

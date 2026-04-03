@@ -57,6 +57,7 @@ GOAD-Mini:
   - vulnerabilities.yml
 
 default:
+  - network_setup.yml
   - build.yml
   - ad-servers.yml
   - ad-parent_domain.yml
