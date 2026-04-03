@@ -25,6 +25,59 @@ Building pre-baked AMIs saves approximately **170 minutes** per deployment by pr
 - [Ansible](https://docs.ansible.com/) >= 2.15
 - Go 1.21+ (for the `dreadgoad` CLI)
 
+## Environment and Region
+
+The `--env` and `--region` flags thread through the entire stack -- they determine which Terragrunt directory tree is used and which Ansible inventory the CLI targets. Understanding this mapping is important before you start.
+
+### How env and region map to infrastructure
+
+The `dreadgoad` CLI uses `--env` and `--region` to locate your Terragrunt configuration and Ansible inventory:
+
+```text
+infra/goad-deployment/{env}/{region}/
+                       │       │
+                       │       └── region.hcl + network/ + goad/{dc01,dc02,...}
+                       └── env.hcl (account ID, VPC CIDR, deployment name)
+```
+
+For example, `--env staging --region us-west-1` maps to `infra/goad-deployment/staging/us-west-1/`. The Ansible inventory is resolved as `{env}-inventory` (e.g., `staging-inventory`).
+
+!!! warning "Keep these consistent"
+    The `--env` and `--region` you pass to `dreadgoad` CLI commands must match the Terragrunt directory structure you deployed into. If you ran `terragrunt apply` under `staging/us-west-1/`, then use `--env staging --region us-west-1` for provisioning and health checks.
+
+### Setting env and region
+
+You have three options (highest priority wins):
+
+| Method | Example | Notes |
+|--------|---------|-------|
+| CLI flags | `dreadgoad provision --env staging --region us-west-1` | Highest priority, overrides everything |
+| Environment variables | `export DREADGOAD_ENV=staging` | Useful for CI or shell sessions |
+| Config file | `dreadgoad config set env staging` | Persistent defaults at `~/.config/dreadgoad/dreadgoad.yaml` |
+
+The config file is **optional** -- the CLI works with just flags or environment variables. If nothing is set, the defaults are `env=staging` and `region` is resolved from your Ansible inventory.
+
+To initialize a config file with defaults:
+
+```bash
+dreadgoad config init    # Creates ~/.config/dreadgoad/dreadgoad.yaml
+dreadgoad config show    # View the effective configuration
+```
+
+For full details on all config options, see [CLI configuration](../../cli.md).
+
+### Choosing an environment
+
+The repo ships with a `staging` directory tree. To use a different environment (e.g., `dev`), duplicate the directory structure:
+
+```bash
+cp -r infra/goad-deployment/staging infra/goad-deployment/dev
+```
+
+Then edit `dev/env.hcl` to set `env = "dev"` and adjust the account ID, VPC CIDR, or other settings as needed. Each environment gets its own Terraform state, so you can run multiple labs in parallel.
+
+Throughout this guide, examples use `staging` and `us-west-1` to match the defaults. Replace with your chosen env and region as needed.
+
 ## Step 1: Build Golden AMIs with Warpgate
 
 DreadGOAD provides three warpgate templates under `warpgate-templates/`:
@@ -207,7 +260,7 @@ aws ssm start-session --target <instance-id>
 Or use the DreadGOAD CLI:
 
 ```bash
-./cli/dreadgoad health-check
+dreadgoad health-check --env staging --region us-west-1
 ```
 
 ## Step 4: Provision with Ansible
@@ -215,10 +268,25 @@ Or use the DreadGOAD CLI:
 Once all instances are running, provision the Active Directory environment:
 
 ```bash
-# Full provisioning
-./cli/dreadgoad provision
+# Full provisioning (env and region from config defaults or flags)
+dreadgoad provision --env staging --region us-west-1
 
-# Or run Ansible directly for more control
+# Resume from a specific playbook (useful after a failure)
+dreadgoad provision --env staging --region us-west-1 --from ad-data.yml
+
+# Run only specific playbooks
+dreadgoad provision --env staging --plays build.yml,ad-servers.yml
+
+# Limit to specific hosts
+dreadgoad provision --env staging --plays ad-data.yml --limit dc01
+```
+
+!!! tip
+    If you set defaults via config file (`dreadgoad config set env staging`), you can omit the flags: `dreadgoad provision`
+
+Or run Ansible directly for more control:
+
+```bash
 cd ansible
 ansible-playbook -i ../ad/GOAD/data/inventory -i ../ad/GOAD/providers/aws/inventory main.yml
 ```
@@ -250,10 +318,10 @@ $ANSIBLE_CMD reboot.yml           # Final reboot
 
 ```bash
 # Quick validation of key vulnerabilities
-./cli/dreadgoad validate --quick
+dreadgoad validate --quick --env staging --region us-west-1
 
 # Full validation
-./cli/dreadgoad validate
+dreadgoad validate --env staging --region us-west-1
 ```
 
 ## Host Mapping Reference
