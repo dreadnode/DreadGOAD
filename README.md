@@ -90,6 +90,7 @@ See [tools/variant_generator/](tools/variant_generator/) for details.
 - [Vulnerability catalog](docs/GOAD-vulnerabilities-comprehensive.md) -- all 50+ vulnerabilities with exploitation techniques
 - [Validation guide](docs/validation.md) -- automated vulnerability validation
 - [Provider guides](docs/mkdocs/docs/providers/) -- VirtualBox, VMware, Proxmox, AWS, Azure, Ludus
+- [AWS AMI build & deploy workflow](docs/mkdocs/docs/providers/aws-ami-workflow.md) -- end-to-end warpgate + Terragrunt + Ansible
 - [Extension guides](docs/mkdocs/docs/extensions/) -- ELK, Exchange, Wazuh, hardened workstation
 - [Architecture diagram](docs/architecture.svg)
 - [Upstream GOAD docs](https://orange-cyberdefense.github.io/GOAD/) -- original project documentation

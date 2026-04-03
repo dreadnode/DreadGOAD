@@ -15,6 +15,7 @@ nav:
     - Vmware on Windows: providers/vmware_windows.md
     - Vmware Esxi: providers/vmware_esxi.md
     - Aws: providers/aws.md
+    - AWS AMI Workflow: providers/aws-ami-workflow.md
     - Azure: providers/azure.md
     - Proxmox: providers/proxmox.md
     - Ludus: providers/ludus.md
