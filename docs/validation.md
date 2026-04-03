@@ -117,11 +117,11 @@ Inventory: ./dev-inventory
 Output: /tmp/goad-validation-20241215-134500.json
 
 ℹ Discovering instances...
-✓ Found DC01: i-028f18fd2e04f3ecc
-✓ Found DC02: i-01fa0b5af9fef7c4c
-✓ Found DC03: i-0045ac57f8e3d3a65
-✓ Found SRV02: i-05e32c1deb99b7aa7
-✓ Found SRV03: i-0dc7ce34249756c31
+✓ Found DC01: i-0123456789abcdef0
+✓ Found DC02: i-0123456789abcdef1
+✓ Found DC03: i-0123456789abcdef2
+✓ Found SRV02: i-0123456789abcdef3
+✓ Found SRV03: i-0123456789abcdef4
 
 ==========================================
 1. Credential Discovery Vulnerabilities
@@ -241,7 +241,7 @@ Use this checklist to track validation progress:
 dreadgoad lab status
 
 # Verify SSM agent is running
-aws ssm describe-instance-information --filters "Key=tag:Name,Values=*dreadgoad*"
+aws ssm describe-instance-information --filters "Key=tag:Name,Values=*goad*"
 ```
 
 #### 2. "Permission denied" errors
@@ -269,7 +269,7 @@ aws sts get-caller-identity
 dreadgoad validate --env staging --no-fail --verbose
 
 # Option 2: Test AWS CLI connectivity first
-time aws ec2 describe-instances --region us-west-1 --max-results 5
+time aws ec2 describe-instances --region <your-region> --max-results 5
 ```
 
 **Note**: The script may take 1-2 minutes to complete due to multiple AWS API calls. This is normal.
@@ -323,7 +323,6 @@ Use the validation script in your CI/CD pipeline:
 # Example GitHub Actions workflow
 - name: Validate GOAD Deployment
   run: |
-    cd apps/DreadGOAD
     dreadgoad validate --env staging
   continue-on-error: false
 ```
@@ -343,7 +342,7 @@ If automated validation fails, you can manually verify vulnerabilities:
 ### 1. SSM into a Domain Controller
 
 ```bash
-aws ssm start-session --target i-028f18fd2e04f3ecc --region us-west-1
+aws ssm start-session --target <instance-id> --region <your-region>
 ```
 
 ### 2. Run PowerShell Checks
@@ -398,4 +397,4 @@ For issues with validation:
 
 ---
 
-**Last Updated**: December 15, 2024
+**Last Updated**: April 2026
