@@ -10,12 +10,13 @@ import (
 	"time"
 
 	daws "github.com/dreadnode/dreadgoad/internal/aws"
+	"github.com/dreadnode/dreadgoad/internal/labmap"
 	"github.com/fatih/color"
 )
 
 // Result represents a single check result.
 type Result struct {
-	Status   string `json:"status"` // PASS, FAIL, WARN
+	Status   string `json:"status"` // PASS, FAIL, WARN, SKIP, INFO
 	Category string `json:"category"`
 	Name     string `json:"name"`
 	Detail   string `json:"detail,omitzero"`
@@ -40,10 +41,11 @@ type Validator struct {
 	verbose bool
 	report  Report
 	hosts   map[string]string // hostname -> instance ID
+	lab     *labmap.LabMap
 }
 
 // NewValidator creates a new Validator.
-func NewValidator(client *daws.Client, env string, verbose bool, log *slog.Logger) *Validator {
+func NewValidator(client *daws.Client, env string, verbose bool, log *slog.Logger, lab *labmap.LabMap) *Validator {
 	if log == nil {
 		log = slog.Default()
 	}
@@ -53,6 +55,7 @@ func NewValidator(client *daws.Client, env string, verbose bool, log *slog.Logge
 		env:     env,
 		verbose: verbose,
 		hosts:   make(map[string]string),
+		lab:     lab,
 		report: Report{
 			Date: time.Now().UTC().Format(time.RFC3339),
 			Env:  env,
@@ -61,15 +64,18 @@ func NewValidator(client *daws.Client, env string, verbose bool, log *slog.Logge
 }
 
 // DiscoverHosts finds GOAD instances and maps hostnames to instance IDs.
+// Host roles are derived from the lab config, not hardcoded.
 func (v *Validator) DiscoverHosts(ctx context.Context) error {
 	instances, err := v.client.DiscoverInstances(ctx, v.env)
 	if err != nil {
 		return fmt.Errorf("discover instances: %w", err)
 	}
 
+	// Match instances to host roles from config
 	for _, inst := range instances {
 		name := strings.ToUpper(inst.Name)
-		for _, host := range []string{"DC01", "DC02", "DC03", "SRV02", "SRV03"} {
+		for _, role := range v.lab.HostRoles() {
+			host := strings.ToUpper(role)
 			if strings.Contains(name, host) {
 				v.hosts[host] = inst.InstanceID
 				v.addResult("PASS", "Discovery", fmt.Sprintf("Found %s", host), inst.InstanceID)
@@ -77,17 +83,18 @@ func (v *Validator) DiscoverHosts(ctx context.Context) error {
 		}
 	}
 
-	// Verify required hosts
-	for _, required := range []string{"DC01", "DC02", "DC03"} {
-		if _, ok := v.hosts[required]; !ok {
-			v.addResult("FAIL", "Discovery", fmt.Sprintf("Missing %s", required), "not found")
-			return fmt.Errorf("required host %s not found", required)
+	// Verify DCs are found (DCs are required, servers are optional)
+	for _, role := range v.lab.DCs() {
+		host := strings.ToUpper(role)
+		if _, ok := v.hosts[host]; !ok {
+			v.addResult("FAIL", "Discovery", fmt.Sprintf("Missing %s", host), "not found")
+			return fmt.Errorf("required host %s not found", host)
 		}
 	}
 	return nil
 }
 
-// RunQuickChecks runs a subset of critical checks: credentials, services, SMB signing, and trusts.
+// RunQuickChecks runs a subset of critical checks.
 func (v *Validator) RunQuickChecks(ctx context.Context) {
 	v.checkCredentialDiscovery(ctx)
 	v.checkNetworkMisconfigs(ctx)
@@ -158,6 +165,10 @@ func (v *Validator) addResult(status, category, name, detail string) {
 	case "WARN":
 		v.report.Warnings++
 		color.Yellow("  ⚠ %s", name)
+	case "SKIP":
+		color.Cyan("  ⊘ %s", name)
+	case "INFO":
+		fmt.Printf("  ℹ %s\n", name)
 	}
 }
 
