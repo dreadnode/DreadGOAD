@@ -208,18 +208,25 @@ func runInventoryShow(cmd *cobra.Command, args []string) error {
 }
 
 func runInventoryMapping(cmd *cobra.Command, args []string) error {
+	outputPath, _ := cmd.Flags().GetString("output")
+	return generateInstanceMapping(context.Background(), outputPath)
+}
+
+// generateInstanceMapping queries AWS for instance private IPs and writes the
+// mapping to a JSON file that Ansible's network_discovery role uses to avoid
+// slow runtime detection over SSM. If outputPath is empty, it defaults to
+// /tmp/aws_instance_mapping_<env>.json.
+func generateInstanceMapping(ctx context.Context, outputPath string) error {
 	cfg, err := config.Get()
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
 
 	parsed, err := inv.Parse(cfg.InventoryPath())
 	if err != nil {
 		return err
 	}
 
-	outputPath, _ := cmd.Flags().GetString("output")
 	if outputPath == "" {
 		outputPath = filepath.Join(os.TempDir(), fmt.Sprintf("aws_instance_mapping_%s.json", cfg.Env))
 	}

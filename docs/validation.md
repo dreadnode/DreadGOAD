@@ -369,32 +369,9 @@ Get-ADObject $dn -Properties ms-DS-MachineAccountQuota |
   Select-Object -ExpandProperty ms-DS-MachineAccountQuota
 ```
 
-## Next Steps
-
-After validation:
-
-1. **Fix Failed Checks**: Use Ansible to reconfigure any failed vulnerabilities
-2. **Document Findings**: Update deployment notes with validation results
-3. **Test Exploitation**: Verify vulnerabilities are exploitable with actual attack tools
-4. **Regular Validation**: Run validation after any infrastructure changes
-
 ## Related Documentation
 
 - [`GOAD-vulnerabilities-comprehensive.md`](./GOAD-vulnerabilities-comprehensive.md) - Complete vulnerability catalog
 - [`cli.md`](./cli.md) - CLI usage and configuration reference
 - [GOAD Official Docs](https://github.com/Orange-Cyberdefense/GOAD) - Upstream documentation
 - [Mayfly's Walkthrough Series](https://mayfly277.github.io/categories/goad/) - Attack technique guides
-
-## Support
-
-For issues with validation:
-
-1. Check the validation script logs
-2. Verify AWS credentials and permissions
-3. Ensure all instances are running
-4. Review Ansible provisioning logs
-5. Check the comprehensive vulnerability documentation
-
----
-
-**Last Updated**: April 2026

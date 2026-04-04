@@ -49,7 +49,6 @@
     domain_password: "{{ lab.domains[domain].domain_password }}"
     parent_domain: "{{ '.'.join(domain.split('.')[1:]) | default('') }}"
     trust: "{{ lab.domains[domain].trust | default('') }}"
-    lab: "{{ lab }}"
     domains: "{{ lab.domains.keys() }}"
     replication: forest
     dc_hostname_to_ip: "{{ hostvars[groups['dc'][0]]['dc_hostname_to_ip'] | default({}) }}"

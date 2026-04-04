@@ -1,6 +1,6 @@
-# Comprehensive GOAD (Game of Active Directory) Vulnerabilities Writeup
+# GOAD Vulnerability Catalog
 
-**GOAD** is a vulnerable Active Directory penetration testing lab environment created by Mayfly (Orange Cyberdefense) designed to help security professionals practice realistic Active Directory attack techniques in a safe, controlled environment.
+**GOAD** is a vulnerable Active Directory penetration testing lab by Mayfly (Orange Cyberdefense). This document catalogs all known vulnerabilities and attack paths in the lab.
 
 **Lab Architecture:**
 
@@ -1344,7 +1344,7 @@ Tywin
 
 **Vulnerability:** Database trust relationships span forest boundaries
 
-- **Attack:** Leverage linked servers to execute commands across forests
+- **Attack:** Use linked servers to execute commands across forests
 - **Impact:** Cross-forest pivoting and command execution
 
 ---
@@ -1419,9 +1419,9 @@ Tywin
 
 ### Token Impersonation
 
-**Vulnerability:** Available tokens on compromised systems can be leveraged
+**Vulnerability:** Available tokens on compromised systems can be stolen
 
-- **Method:** Leverage user tokens to execute commands as other users without credentials
+- **Method:** Use stolen tokens to execute commands as other users without credentials
 - **Token Types:**
   - **Delegation tokens:** Created for interactive logins (RDP, console)
   - **Impersonation tokens:** Created for non-interactive sessions
@@ -1583,7 +1583,7 @@ Tywin
 
 ### ADCS Attacks
 
-- **Certipy** - Comprehensive ADCS exploitation
+- **Certipy** - ADCS enumeration and exploitation
 - **Certify** - Certificate template enumeration
 - **Coercer** - Authentication coercion
 - **Pywhisker / Whisker** - Shadow credentials
@@ -1677,7 +1677,7 @@ Based on the vulnerabilities in GOAD, here are key defensive measures:
 - **Official Documentation:** https://orange-cyberdefense.github.io/GOAD/
 - **Creator's Blog (Mayfly):** https://mayfly277.github.io/
 
-### Comprehensive Walkthrough Series (Mayfly)
+### Walkthrough Series (Mayfly)
 
 1. Part 1 - Reconnaissance and scan: https://mayfly277.github.io/posts/GOADv2-pwning_part1/
 2. Part 2 - Find users: https://mayfly277.github.io/posts/GOADv2-pwning-part2/
@@ -1708,25 +1708,9 @@ Based on the vulnerabilities in GOAD, here are key defensive measures:
 
 ---
 
-## Conclusion
+## Coverage
 
-GOAD (Game of Active Directory) is an exceptionally comprehensive vulnerable Active Directory lab that covers virtually all major Active Directory attack vectors, from initial reconnaissance through complete domain and forest compromise. It includes:
-
-- **50+ distinct vulnerabilities and attack techniques**
-- **15+ CVEs and exploitation methods**
-- **All major ADCS attacks (ESC1-15)**
-- **Complete Kerberos attack surface**
-- **ACL abuse chains**
-- **Delegation exploitation**
-- **Cross-domain and cross-forest attacks**
-- **Privilege escalation techniques**
-- **Lateral movement methods**
-
-The lab is actively maintained and updated with new attack techniques as they are discovered. It provides an excellent training environment for security professionals to practice Active Directory penetration testing in a safe, legal, and comprehensive manner.
-
-This document represents the most thorough compilation of GOAD vulnerabilities available, synthesized from official writeups (Parts 1-14 by Mayfly277), community contributions, and detailed exploitation guides.
-
-**Coverage Summary:**
+Compiled from Mayfly277's official writeups (Parts 1-14) and community contributions.
 
 - Part 1: Reconnaissance and scanning
 - Part 2: User discovery (ASREPRoast, password spraying)
@@ -1742,5 +1726,3 @@ This document represents the most thorough compilation of GOAD vulnerabilities a
 - Part 12: Trust exploitation (child-to-parent, forest trusts, golden ticket + ExtraSid)
 - Part 13: Post-exploitation (token impersonation, RDP hijacking, file coercion)
 - Part 14: Advanced ADCS (ESC5/7/9/10/11/13/14/15)
-
-**Last Updated:** March 2026

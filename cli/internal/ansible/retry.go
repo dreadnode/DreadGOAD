@@ -76,7 +76,7 @@ func RunPlaybookWithRetry(ctx context.Context, opts RetryOptions) error {
 
 		if result.TimedOut {
 			log.Error("playbook timed out (idle timeout)", "playbook", opts.Playbook)
-			cleanupSSMSessions(ctx, opts.Env, log)
+			CleanupSSMSessions(ctx, opts.Env, log)
 			continue
 		}
 
@@ -136,7 +136,7 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 
 	case ErrSSMTransfer:
 		log.Info("SSM transfer error - fixing ssm-user accounts")
-		cleanupSSMSessions(ctx, opts.Env, log)
+		CleanupSSMSessions(ctx, opts.Env, log)
 		fixSSMUsers(ctx, opts.Env, failResult.FailedHosts, log)
 		log.Info("waiting for SSM Agent to stabilize", "delay", "30s")
 		time.Sleep(30 * time.Second)
@@ -154,7 +154,7 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 
 	case ErrSSMReconnection:
 		log.Info("SSM reconnection needed - waiting for systems to reboot")
-		cleanupSSMSessions(ctx, opts.Env, log)
+		CleanupSSMSessions(ctx, opts.Env, log)
 		log.Info("waiting for Windows reboot and SSM reconnection", "delay", "120s")
 		time.Sleep(120 * time.Second)
 
@@ -224,7 +224,8 @@ func buildRetryLimit(userLimit, failedHosts string) string {
 	}
 }
 
-func cleanupSSMSessions(ctx context.Context, env string, log *slog.Logger) {
+// CleanupSSMSessions terminates stale SSM sessions to prevent connection saturation.
+func CleanupSSMSessions(ctx context.Context, env string, log *slog.Logger) {
 	cfg, err := config.Get()
 	if err != nil {
 		log.Warn("could not get config for SSM cleanup", "error", err)
@@ -322,5 +323,4 @@ func rebootFailedHosts(ctx context.Context, opts RetryOptions, log *slog.Logger)
 	}
 }
 
-// execCommand is a variable for testability.
 var execCommand = exec.CommandContext

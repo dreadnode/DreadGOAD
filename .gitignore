@@ -10,6 +10,7 @@ __pycache__/
 # Ansible artifacts
 .ansible/
 .task/
+*AnsiballZ*
 
 # Build artifacts
 dreadgoad
