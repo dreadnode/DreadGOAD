@@ -1,5 +1,5 @@
 locals {
-  registry_path = "${get_terragrunt_dir()}/../host-registry.yaml"
+  registry_path = find_in_parent_folders("host-registry.yaml")
   host_registry = yamldecode(file(local.registry_path))
 
   terragrunt_dir       = get_terragrunt_dir()

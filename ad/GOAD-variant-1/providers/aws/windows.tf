@@ -1,6 +1,11 @@
 # t2.medium = 2cpu / 4GB
 # t2.large  = 2cpu / 8GB
 # t2.xlarge = 4cpu / 16GB
+
+# NOTE: AMI IDs below are region-specific (originally eu-west-1).
+# Replace with AMI IDs for your target AWS region.
+# See: https://aws.amazon.com/marketplace for Windows Server base AMIs
+
 "dc01" = {
   name               = "dc01"
   domain             = "deltasystems.local"

@@ -1,3 +1,7 @@
+# NOTE: AMI IDs below are region-specific (originally eu-west-1).
+# Replace with AMI IDs for your target AWS region.
+# See: https://aws.amazon.com/marketplace for Windows Server base AMIs
+
 "dc01" = {
   name               = "dc01"
   domain             = "sevenkingdoms.local"
