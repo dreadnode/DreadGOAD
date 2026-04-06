@@ -7,60 +7,98 @@ import (
 )
 
 func (v *Validator) checkCredentialDiscovery(ctx context.Context) {
-	fmt.Println("\n== 1. Credential Discovery Vulnerabilities ==")
+	fmt.Println("\n== Credential Discovery Vulnerabilities ==")
 
-	output := v.runPS(ctx, "DC02", `Get-ADUser -Filter * -Properties Description | Where-Object {$_.Description -match 'password|heartsbane'} | Select-Object SamAccountName,Description | Format-Table -AutoSize | Out-String -Width 200`)
-	if strings.Contains(strings.ToLower(output), "samwell.tarly") {
-		v.addResult("PASS", "Credentials", "samwell.tarly has password in description", "")
-	} else {
-		v.addResult("FAIL", "Credentials", "samwell.tarly does NOT have password in description", "")
+	users := v.lab.UsersWithPasswordInDescription()
+	if len(users) == 0 {
+		v.addResult("SKIP", "Credentials", "No users with password-in-description configured", "")
+		return
+	}
+
+	for _, uf := range users {
+		dcRole := strings.ToUpper(uf.DCRole)
+		output := v.runPS(ctx, dcRole, fmt.Sprintf(
+			`Get-ADUser -Identity '%s' -Properties Description | Select-Object -ExpandProperty Description`,
+			uf.Username))
+		if strings.Contains(strings.ToLower(output), strings.ToLower(uf.User.Password)) {
+			v.addResult("PASS", "Credentials", fmt.Sprintf("%s has password in description", uf.Username), "")
+		} else {
+			v.addResult("FAIL", "Credentials", fmt.Sprintf("%s does NOT have password in description", uf.Username), "")
+		}
 	}
 }
 
 func (v *Validator) checkKerberosAttacks(ctx context.Context) {
-	fmt.Println("\n== 2. Kerberos Attack Vectors ==")
+	fmt.Println("\n== Kerberos Attack Vectors ==")
 
-	// AS-REP Roasting
-	output := v.runPS(ctx, "DC02", `Get-ADUser brandon.stark -Properties DoesNotRequirePreAuth | Select-Object SamAccountName,DoesNotRequirePreAuth | Format-Table -AutoSize | Out-String`)
-	if strings.Contains(strings.ToLower(output), "true") {
-		v.addResult("PASS", "Kerberos", "brandon.stark has DoesNotRequirePreAuth (AS-REP roastable)", "")
-	} else {
-		v.addResult("FAIL", "Kerberos", "brandon.stark does NOT have PreAuth disabled", "")
+	v.checkASREPRoasting(ctx)
+	v.checkKerberoasting(ctx)
+}
+
+func (v *Validator) checkASREPRoasting(ctx context.Context) {
+	// Find DCs that run AS-REP roasting scripts
+	asrepHosts := v.lab.HostsWithScript("asrep_roasting")
+	if len(asrepHosts) == 0 {
+		v.addResult("SKIP", "Kerberos", "No AS-REP roasting scripts configured", "")
+		return
 	}
 
-	output = v.runPS(ctx, "DC03", `Get-ADUser missandei -Properties DoesNotRequirePreAuth | Select-Object SamAccountName,DoesNotRequirePreAuth | Format-Table -AutoSize | Out-String`)
-	if strings.Contains(strings.ToLower(output), "true") {
-		v.addResult("PASS", "Kerberos", "missandei has DoesNotRequirePreAuth (AS-REP roastable)", "")
-	} else {
-		v.addResult("FAIL", "Kerberos", "missandei does NOT have PreAuth disabled", "")
+	for _, role := range asrepHosts {
+		dcRole := strings.ToUpper(role)
+		output := v.runPS(ctx, dcRole,
+			`Get-ADUser -Filter {DoesNotRequirePreAuth -eq $true} -Properties DoesNotRequirePreAuth | Select-Object -ExpandProperty SamAccountName`)
+		users := parseOutputLines(output)
+		if len(users) > 0 {
+			v.addResult("PASS", "Kerberos",
+				fmt.Sprintf("AS-REP roastable users on %s: %s", dcRole, strings.Join(users, ", ")), "")
+		} else {
+			v.addResult("FAIL", "Kerberos",
+				fmt.Sprintf("No AS-REP roastable users found on %s", dcRole), "")
+		}
+	}
+}
+
+func (v *Validator) checkKerberoasting(ctx context.Context) {
+	spnUsers := v.lab.UsersWithSPNs()
+	if len(spnUsers) == 0 {
+		v.addResult("SKIP", "Kerberos", "No users with SPNs configured", "")
+		return
 	}
 
-	// Kerberoasting
-	output = v.runPS(ctx, "DC02", `Get-ADUser jon.snow -Properties ServicePrincipalName | Select-Object SamAccountName,ServicePrincipalName | Format-List | Out-String`)
-	if strings.Contains(strings.ToLower(output), "serviceprincipalname") {
-		v.addResult("PASS", "Kerberos", "jon.snow has SPNs configured (Kerberoastable)", "")
-	} else {
-		v.addResult("FAIL", "Kerberos", "jon.snow does NOT have SPNs configured", "")
-	}
-
-	output = v.runPS(ctx, "DC02", `Get-ADUser sql_svc -Properties ServicePrincipalName | Select-Object SamAccountName,ServicePrincipalName | Format-List | Out-String`)
-	if strings.Contains(strings.ToLower(output), "serviceprincipalname") {
-		v.addResult("PASS", "Kerberos", "sql_svc has SPNs configured (Kerberoastable)", "")
-	} else {
-		v.addResult("FAIL", "Kerberos", "sql_svc does NOT have SPNs configured", "")
+	for _, uf := range spnUsers {
+		dcRole := strings.ToUpper(uf.DCRole)
+		output := v.runPS(ctx, dcRole, fmt.Sprintf(
+			`Get-ADUser -Identity '%s' -Properties ServicePrincipalName | Select-Object -ExpandProperty ServicePrincipalName`,
+			uf.Username))
+		if strings.TrimSpace(output) != "" {
+			v.addResult("PASS", "Kerberos",
+				fmt.Sprintf("%s has SPNs configured (Kerberoastable)", uf.Username), "")
+		} else {
+			v.addResult("FAIL", "Kerberos",
+				fmt.Sprintf("%s does NOT have SPNs configured", uf.Username), "")
+		}
 	}
 }
 
 func (v *Validator) checkNetworkMisconfigs(ctx context.Context) {
-	fmt.Println("\n== 3. Network-Level Misconfigurations ==")
+	fmt.Println("\n== Network-Level Misconfigurations ==")
 
-	for _, host := range []string{"SRV02", "SRV03"} {
+	// Check SMB signing on all Windows servers
+	servers := v.lab.WindowsServers()
+	if len(servers) == 0 {
+		v.addResult("SKIP", "Network", "No Windows servers configured", "")
+		return
+	}
+
+	for _, role := range servers {
+		host := strings.ToUpper(role)
 		if !v.hasHost(host) {
 			continue
 		}
-		output := v.runPS(ctx, host, `Get-SmbServerConfiguration | Select-Object RequireSecuritySignature,EnableSecuritySignature | Format-Table -AutoSize | Out-String`)
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+		output := v.runPS(ctx, host,
+			`Get-SmbServerConfiguration | Select-Object RequireSecuritySignature,EnableSecuritySignature | Format-Table -AutoSize | Out-String`)
 		lower := strings.ToLower(output)
-		hostLabel := map[string]string{"SRV02": "CASTELBLACK", "SRV03": "BRAAVOS"}[host]
 
 		switch {
 		case strings.Contains(lower, "false") && strings.Count(lower, "false") >= 2:
@@ -74,33 +112,44 @@ func (v *Validator) checkNetworkMisconfigs(ctx context.Context) {
 }
 
 func (v *Validator) checkAnonymousSMB(ctx context.Context) {
-	fmt.Println("\n== 4. Anonymous/Guest SMB Enumeration ==")
+	fmt.Println("\n== Anonymous/Guest SMB Enumeration ==")
 
-	// RestrictAnonymous on DC02
-	output := v.runPS(ctx, "DC02", `Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Lsa' -Name RestrictAnonymous -ErrorAction SilentlyContinue | Select-Object -ExpandProperty RestrictAnonymous`)
-	val := strings.TrimSpace(output)
-	if val == "0" {
-		v.addResult("PASS", "SMB", "RestrictAnonymous is 0 on WINTERFELL (NULL sessions enabled)", "")
-	} else {
-		v.addResult("FAIL", "SMB", fmt.Sprintf("RestrictAnonymous is %s on WINTERFELL (expected 0)", val), "")
-	}
-
-	// RestrictAnonymousSAM
-	output = v.runPS(ctx, "DC02", `Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Lsa' -Name RestrictAnonymousSAM -ErrorAction SilentlyContinue | Select-Object -ExpandProperty RestrictAnonymousSAM`)
-	val = strings.TrimSpace(output)
-	if val == "0" {
-		v.addResult("PASS", "SMB", "RestrictAnonymousSAM is 0 on WINTERFELL (SAM enum enabled)", "")
-	} else {
-		v.addResult("FAIL", "SMB", fmt.Sprintf("RestrictAnonymousSAM is %s on WINTERFELL (expected 0)", val), "")
-	}
-
-	// Guest accounts on member servers
-	for _, host := range []string{"SRV02", "SRV03"} {
+	// Check RestrictAnonymous on each DC
+	for _, role := range v.lab.DCs() {
+		host := strings.ToUpper(role)
 		if !v.hasHost(host) {
 			continue
 		}
-		hostLabel := map[string]string{"SRV02": "CASTELBLACK", "SRV03": "BRAAVOS"}[host]
-		output = v.runPS(ctx, host, `Get-LocalUser -Name Guest | Select-Object Name,Enabled | Format-Table -AutoSize | Out-String`)
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+
+		output := v.runPS(ctx, host,
+			`Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Lsa' -Name RestrictAnonymous -ErrorAction SilentlyContinue | Select-Object -ExpandProperty RestrictAnonymous`)
+		val := strings.TrimSpace(output)
+		if val == "0" {
+			v.addResult("PASS", "SMB", fmt.Sprintf("RestrictAnonymous is 0 on %s (NULL sessions enabled)", hostLabel), "")
+		} else {
+			v.addResult("INFO", "SMB", fmt.Sprintf("RestrictAnonymous is %s on %s", val, hostLabel), "")
+		}
+
+		output = v.runPS(ctx, host,
+			`Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Lsa' -Name RestrictAnonymousSAM -ErrorAction SilentlyContinue | Select-Object -ExpandProperty RestrictAnonymousSAM`)
+		val = strings.TrimSpace(output)
+		if val == "0" {
+			v.addResult("PASS", "SMB", fmt.Sprintf("RestrictAnonymousSAM is 0 on %s (SAM enum enabled)", hostLabel), "")
+		} else {
+			v.addResult("INFO", "SMB", fmt.Sprintf("RestrictAnonymousSAM is %s on %s", val, hostLabel), "")
+		}
+	}
+
+	// Check Guest accounts on servers
+	for _, role := range v.lab.WindowsServers() {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+		output := v.runPS(ctx, host,
+			`Get-LocalUser -Name Guest | Select-Object Name,Enabled | Format-Table -AutoSize | Out-String`)
 		if strings.Contains(strings.ToLower(output), "true") {
 			v.addResult("PASS", "SMB", fmt.Sprintf("Guest account enabled on %s", hostLabel), "")
 		} else {
@@ -108,56 +157,105 @@ func (v *Validator) checkAnonymousSMB(ctx context.Context) {
 		}
 	}
 
-	// LmCompatibilityLevel on DC03
-	output = v.runPS(ctx, "DC03", `Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Lsa' -Name LmCompatibilityLevel -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LmCompatibilityLevel`)
-	val = strings.TrimSpace(output)
-	if val == "0" || val == "1" || val == "2" {
-		v.addResult("PASS", "SMB", fmt.Sprintf("LmCompatibilityLevel is %s on MEEREEN (NTLM downgrade vulnerable)", val), "")
-	} else {
-		v.addResult("FAIL", "SMB", fmt.Sprintf("LmCompatibilityLevel is %s on MEEREEN (expected 0-2)", val), "")
+	// Check NTLM downgrade on hosts with that vuln
+	for _, role := range v.lab.HostsWithVuln("ntlmdowngrade") {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+		output := v.runPS(ctx, host,
+			`Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Lsa' -Name LmCompatibilityLevel -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LmCompatibilityLevel`)
+		val := strings.TrimSpace(output)
+		if val == "0" || val == "1" || val == "2" {
+			v.addResult("PASS", "SMB", fmt.Sprintf("LmCompatibilityLevel is %s on %s (NTLM downgrade vulnerable)", val, hostLabel), "")
+		} else {
+			v.addResult("FAIL", "SMB", fmt.Sprintf("LmCompatibilityLevel is %s on %s (expected 0-2)", val, hostLabel), "")
+		}
 	}
 }
 
 func (v *Validator) checkDelegation(ctx context.Context) {
-	fmt.Println("\n== 5. Delegation Configurations ==")
+	fmt.Println("\n== Delegation Configurations ==")
 
-	output := v.runPS(ctx, "DC02", `Get-ADUser sansa.stark -Properties TrustedForDelegation | Select-Object SamAccountName,TrustedForDelegation | Format-Table -AutoSize | Out-String`)
-	if strings.Contains(strings.ToLower(output), "true") {
-		v.addResult("PASS", "Delegation", "sansa.stark has unconstrained delegation", "")
-	} else {
-		v.addResult("FAIL", "Delegation", "sansa.stark does NOT have unconstrained delegation", "")
+	// Find DCs with delegation scripts
+	allHosts := v.lab.HostsWithScript("constrained_delegation")
+	allHosts = append(allHosts, v.lab.HostsWithScript("unconstrained_delegation")...)
+	if len(allHosts) == 0 {
+		// Fall back to checking all DCs
+		allHosts = v.lab.DCs()
+	}
+	if len(allHosts) == 0 {
+		v.addResult("SKIP", "Delegation", "No domain controllers configured", "")
+		return
 	}
 
-	output = v.runPS(ctx, "DC02", `Get-ADUser jon.snow -Properties msDS-AllowedToDelegateTo | Select-Object SamAccountName,msDS-AllowedToDelegateTo | Format-List | Out-String`)
-	if strings.Contains(strings.ToLower(output), "msds-allowedtodelegateto") {
-		v.addResult("PASS", "Delegation", "jon.snow has constrained delegation configured", "")
-	} else {
-		v.addResult("FAIL", "Delegation", "jon.snow does NOT have constrained delegation", "")
+	checked := make(map[string]bool)
+	for _, role := range allHosts {
+		host := strings.ToUpper(role)
+		if checked[host] || !v.hasHost(host) {
+			continue
+		}
+		checked[host] = true
+
+		// Unconstrained delegation
+		output := v.runPS(ctx, host,
+			`Get-ADUser -Filter {TrustedForDelegation -eq $true} -Properties TrustedForDelegation | Select-Object -ExpandProperty SamAccountName`)
+		users := parseOutputLines(output)
+		if len(users) > 0 {
+			v.addResult("PASS", "Delegation",
+				fmt.Sprintf("Unconstrained delegation users on %s: %s", host, strings.Join(users, ", ")), "")
+		}
+
+		// Constrained delegation
+		output = v.runPS(ctx, host,
+			`Get-ADUser -Filter 'msDS-AllowedToDelegateTo -like "*"' -Properties msDS-AllowedToDelegateTo | Select-Object -ExpandProperty SamAccountName`)
+		users = parseOutputLines(output)
+		if len(users) > 0 {
+			v.addResult("PASS", "Delegation",
+				fmt.Sprintf("Constrained delegation users on %s: %s", host, strings.Join(users, ", ")), "")
+		}
 	}
 }
 
 func (v *Validator) checkMachineAccountQuota(ctx context.Context) {
-	fmt.Println("\n== 6. Machine Account Quota ==")
+	fmt.Println("\n== Machine Account Quota ==")
 
-	output := v.runPS(ctx, "DC01", `Get-ADObject -Identity ((Get-ADDomain).distinguishedname) -Properties ms-DS-MachineAccountQuota | Select-Object -ExpandProperty ms-DS-MachineAccountQuota`)
-	val := strings.TrimSpace(output)
-	if val == "10" {
-		v.addResult("PASS", "MachineQuota", "Machine Account Quota is 10 (allows RBCD)", "")
-	} else {
-		v.addResult("WARN", "MachineQuota", fmt.Sprintf("Machine Account Quota is %s (expected 10)", val), "")
+	for _, role := range v.lab.DCs() {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		output := v.runPS(ctx, host,
+			`Get-ADObject -Identity ((Get-ADDomain).distinguishedname) -Properties ms-DS-MachineAccountQuota | Select-Object -ExpandProperty ms-DS-MachineAccountQuota`)
+		val := strings.TrimSpace(output)
+		if val == "10" {
+			v.addResult("PASS", "MachineQuota", "Machine Account Quota is 10 (allows RBCD)", "")
+		} else {
+			v.addResult("WARN", "MachineQuota", fmt.Sprintf("Machine Account Quota is %s (default is 10)", val), "")
+		}
+		return // Only check first available DC
 	}
 }
 
 func (v *Validator) checkMSSQL(ctx context.Context) {
-	fmt.Println("\n== 7. MSSQL Configurations ==")
+	fmt.Println("\n== MSSQL Configurations ==")
 
-	for _, host := range []string{"SRV02", "SRV03"} {
+	mssqlHosts := v.lab.HostsWithMSSQL()
+	if len(mssqlHosts) == 0 {
+		v.addResult("SKIP", "MSSQL", "No MSSQL configured for this lab", "")
+		return
+	}
+
+	for _, role := range mssqlHosts {
+		host := strings.ToUpper(role)
 		if !v.hasHost(host) {
 			continue
 		}
-		hostLabel := map[string]string{"SRV02": "CASTELBLACK", "SRV03": "BRAAVOS"}[host]
-		output := v.runPS(ctx, host, `Get-Service 'MSSQL$SQLEXPRESS' -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | Format-Table -AutoSize | Out-String`)
-		if strings.Contains(strings.ToLower(output), "running") {
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+		output := v.runPS(ctx, host,
+			`Get-Service 'MSSQL$SQLEXPRESS','MSSQLSERVER' -ErrorAction SilentlyContinue | Where-Object {$_.Status -eq 'Running'} | Select-Object -ExpandProperty Name`)
+		if strings.TrimSpace(output) != "" {
 			v.addResult("PASS", "MSSQL", fmt.Sprintf("MSSQL running on %s", hostLabel), "")
 		} else {
 			v.addResult("FAIL", "MSSQL", fmt.Sprintf("MSSQL NOT running on %s", hostLabel), "")
@@ -166,65 +264,137 @@ func (v *Validator) checkMSSQL(ctx context.Context) {
 }
 
 func (v *Validator) checkADCS(ctx context.Context) {
-	fmt.Println("\n== 8. ADCS Configuration ==")
+	fmt.Println("\n== ADCS Configuration ==")
 
-	if !v.hasHost("SRV03") {
+	adcsHosts := v.lab.ADCSHosts()
+	if len(adcsHosts) == 0 {
+		v.addResult("SKIP", "ADCS", "No ADCS configured for this lab", "")
 		return
 	}
 
-	output := v.runPS(ctx, "SRV03", `Get-WindowsFeature ADCS-Cert-Authority | Select-Object Name,InstallState | Format-Table -AutoSize | Out-String`)
-	if strings.Contains(strings.ToLower(output), "installed") {
-		v.addResult("PASS", "ADCS", "ADCS installed on BRAAVOS", "")
-	} else {
-		v.addResult("FAIL", "ADCS", "ADCS NOT installed on BRAAVOS", "")
-	}
+	for _, role := range adcsHosts {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
 
-	output = v.runPS(ctx, "SRV03", `Get-WindowsFeature ADCS-Web-Enrollment | Select-Object Name,InstallState | Format-Table -AutoSize | Out-String`)
-	if strings.Contains(strings.ToLower(output), "installed") {
-		v.addResult("PASS", "ADCS", "ADCS Web Enrollment installed (ESC8 possible)", "")
-	} else {
-		v.addResult("WARN", "ADCS", "ADCS Web Enrollment not installed", "")
+		output := v.runPS(ctx, host,
+			`Get-WindowsFeature ADCS-Cert-Authority | Select-Object Name,InstallState | Format-Table -AutoSize | Out-String`)
+		if strings.Contains(strings.ToLower(output), "installed") {
+			v.addResult("PASS", "ADCS", fmt.Sprintf("ADCS installed on %s", hostLabel), "")
+		} else {
+			v.addResult("FAIL", "ADCS", fmt.Sprintf("ADCS NOT installed on %s", hostLabel), "")
+		}
+
+		if v.lab.CAWebEnrollment() {
+			output = v.runPS(ctx, host,
+				`Get-WindowsFeature ADCS-Web-Enrollment | Select-Object Name,InstallState | Format-Table -AutoSize | Out-String`)
+			if strings.Contains(strings.ToLower(output), "installed") {
+				v.addResult("PASS", "ADCS", "ADCS Web Enrollment installed (ESC8 possible)", "")
+			} else {
+				v.addResult("WARN", "ADCS", "ADCS Web Enrollment not installed", "")
+			}
+		}
 	}
 }
 
 func (v *Validator) checkACLPermissions(ctx context.Context) {
-	fmt.Println("\n== 9. ACL Permissions ==")
+	fmt.Println("\n== ACL Permissions ==")
 
-	output := v.runPS(ctx, "DC01", `$user = Get-ADUser jaime.lannister -Properties nTSecurityDescriptor; $acl = $user.nTSecurityDescriptor.Access | Where-Object { $_.IdentityReference -like '*tywin*' }; if ($acl) { Write-Output 'ACL_FOUND' } else { Write-Output 'ACL_NOT_FOUND' }`)
-	switch {
-	case strings.Contains(output, "ACL_FOUND"):
-		v.addResult("PASS", "ACL", "tywin.lannister has ACL rights on jaime.lannister", "")
-	case strings.Contains(output, "ACL_NOT_FOUND"):
-		v.addResult("FAIL", "ACL", "tywin.lannister does NOT have ACL rights on jaime.lannister", "")
-	default:
-		v.addResult("WARN", "ACL", "Could not verify ACL: tywin -> jaime", "")
+	acls := v.lab.AllACLs()
+	if len(acls) == 0 {
+		v.addResult("SKIP", "ACL", "No ACLs configured for this lab", "")
+		return
+	}
+
+	for _, af := range acls {
+		// Skip ACLs targeting full DN paths (complex to verify generically)
+		if strings.Contains(af.ACL.To, "CN=") && strings.Contains(af.ACL.To, "DC=") {
+			continue
+		}
+		// Skip ACLs targeting computer accounts
+		if strings.HasSuffix(af.ACL.To, "$") {
+			continue
+		}
+
+		dcRole := strings.ToUpper(af.DCRole)
+		if !v.hasHost(dcRole) {
+			continue
+		}
+
+		source := v.lab.User(af.ACL.For)
+		target := v.lab.User(af.ACL.To)
+
+		sourceFirst := strings.SplitN(source, ".", 2)[0]
+		output := v.runPS(ctx, dcRole, fmt.Sprintf(
+			`$user = Get-ADUser '%s' -Properties nTSecurityDescriptor -ErrorAction SilentlyContinue; if ($user) { $acl = $user.nTSecurityDescriptor.Access | Where-Object { $_.IdentityReference -like '*%s*' }; if ($acl) { Write-Output 'ACL_FOUND' } else { Write-Output 'ACL_NOT_FOUND' } } else { Write-Output 'USER_NOT_FOUND' }`,
+			target, sourceFirst))
+
+		switch {
+		case strings.Contains(output, "ACL_FOUND"):
+			v.addResult("PASS", "ACL", fmt.Sprintf("%s has %s on %s", source, af.ACL.Right, target), "")
+		case strings.Contains(output, "ACL_NOT_FOUND"):
+			v.addResult("FAIL", "ACL", fmt.Sprintf("%s does NOT have %s on %s", source, af.ACL.Right, target), "")
+		default:
+			v.addResult("WARN", "ACL", fmt.Sprintf("Could not verify ACL: %s -> %s (%s)", source, target, af.ACL.Right), "")
+		}
 	}
 }
 
 func (v *Validator) checkDomainTrusts(ctx context.Context) {
-	fmt.Println("\n== 10. Domain Trusts ==")
+	fmt.Println("\n== Domain Trusts ==")
 
-	output := v.runPS(ctx, "DC02", `Get-ADTrust -Filter * | Select-Object Name,Direction,TrustType | Format-Table -AutoSize | Out-String`)
-	if strings.Contains(strings.ToLower(output), "sevenkingdoms") {
-		v.addResult("PASS", "Trusts", "Parent-child trust configured (north -> sevenkingdoms)", "")
-	} else {
-		v.addResult("FAIL", "Trusts", "Parent-child trust NOT found", "")
+	trusts := v.lab.DomainTrusts()
+	if len(trusts) == 0 {
+		v.addResult("SKIP", "Trusts", "No domain trusts configured for this lab", "")
+		return
 	}
 
-	output = v.runPS(ctx, "DC01", `Get-ADTrust -Filter * | Select-Object Name,Direction,TrustType | Format-Table -AutoSize | Out-String`)
-	if strings.Contains(strings.ToLower(output), "essos") {
-		v.addResult("PASS", "Trusts", "Forest trust configured (sevenkingdoms <-> essos)", "")
-	} else {
-		v.addResult("FAIL", "Trusts", "Forest trust NOT found", "")
+	for _, tf := range trusts {
+		if tf.SourceDCRole != "" {
+			srcHost := strings.ToUpper(tf.SourceDCRole)
+			if v.hasHost(srcHost) {
+				output := v.runPS(ctx, srcHost,
+					`Get-ADTrust -Filter * | Select-Object Name,Direction,TrustType | Format-Table -AutoSize | Out-String`)
+				if strings.Contains(strings.ToLower(output), strings.ToLower(tf.TargetDomain)) {
+					v.addResult("PASS", "Trusts",
+						fmt.Sprintf("Trust configured: %s -> %s", tf.SourceDomain, tf.TargetDomain), "")
+				} else {
+					v.addResult("FAIL", "Trusts",
+						fmt.Sprintf("Trust NOT found: %s -> %s", tf.SourceDomain, tf.TargetDomain), "")
+				}
+			}
+		}
+
+		if tf.TargetDCRole != "" {
+			tgtHost := strings.ToUpper(tf.TargetDCRole)
+			if v.hasHost(tgtHost) {
+				output := v.runPS(ctx, tgtHost,
+					`Get-ADTrust -Filter * | Select-Object Name,Direction,TrustType | Format-Table -AutoSize | Out-String`)
+				if strings.Contains(strings.ToLower(output), strings.ToLower(tf.SourceDomain)) {
+					v.addResult("PASS", "Trusts",
+						fmt.Sprintf("Trust configured: %s -> %s", tf.TargetDomain, tf.SourceDomain), "")
+				} else {
+					v.addResult("FAIL", "Trusts",
+						fmt.Sprintf("Trust NOT found: %s -> %s", tf.TargetDomain, tf.SourceDomain), "")
+				}
+			}
+		}
 	}
 }
 
 func (v *Validator) checkServices(ctx context.Context) {
-	fmt.Println("\n== 11. Additional Services ==")
+	fmt.Println("\n== Additional Services ==")
 
 	// Print Spooler on all DCs
-	for _, host := range []string{"DC01", "DC02", "DC03"} {
-		output := v.runPS(ctx, host, `Get-Service Spooler | Select-Object Status | Format-Table -AutoSize | Out-String`)
+	for _, role := range v.lab.DCs() {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		output := v.runPS(ctx, host,
+			`Get-Service Spooler | Select-Object Status | Format-Table -AutoSize | Out-String`)
 		if strings.Contains(strings.ToLower(output), "running") {
 			v.addResult("PASS", "Services", fmt.Sprintf("Print Spooler running on %s (coercion possible)", host), "")
 		} else {
@@ -232,13 +402,31 @@ func (v *Validator) checkServices(ctx context.Context) {
 		}
 	}
 
-	// IIS on SRV02
-	if v.hasHost("SRV02") {
-		output := v.runPS(ctx, "SRV02", `Get-Service W3SVC -ErrorAction SilentlyContinue | Select-Object Name,Status | Format-Table -AutoSize | Out-String`)
+	// IIS on Windows servers (only report if found or expected)
+	for _, role := range v.lab.WindowsServers() {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+		output := v.runPS(ctx, host,
+			`Get-Service W3SVC -ErrorAction SilentlyContinue | Select-Object Name,Status | Format-Table -AutoSize | Out-String`)
 		if strings.Contains(strings.ToLower(output), "running") {
-			v.addResult("PASS", "Services", "IIS running on CASTELBLACK", "")
-		} else {
-			v.addResult("FAIL", "Services", "IIS NOT running on CASTELBLACK", "")
+			v.addResult("PASS", "Services", fmt.Sprintf("IIS running on %s", hostLabel), "")
+		} else if strings.TrimSpace(output) != "" {
+			v.addResult("WARN", "Services", fmt.Sprintf("IIS not running on %s", hostLabel), "")
 		}
 	}
+}
+
+// parseOutputLines splits PowerShell output into non-empty trimmed lines.
+func parseOutputLines(output string) []string {
+	var lines []string
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
 }
