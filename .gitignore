@@ -31,9 +31,10 @@ ad/*/providers/*/ssh_keys/*id_rsa*
 ad/*/providers/*/ssh_keys/*.pub
 ad/*/providers/*/extensions/*.rb
 
-# Terraform
+# Terraform / Terragrunt
 .terraform/
 .terraform.lock.hcl
+.terragrunt-cache/
 *.tfstate
 *.tfstate.backup
 *.tfplan
