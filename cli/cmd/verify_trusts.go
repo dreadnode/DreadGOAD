@@ -12,12 +12,13 @@ import (
 
 var verifyTrustsCmd = &cobra.Command{
 	Use:   "verify-trusts",
-	Short: "Verify domain trust relationships between all GOAD domains",
+	Short: "Verify domain trust relationships between all lab domains",
 	Long: `Validates that all domain trusts are properly configured:
-  - sevenkingdoms.local <-> north.sevenkingdoms.local (parent-child)
-  - sevenkingdoms.local <-> essos.local (forest trust)
+  - Parent-child trusts
+  - Forest trusts
+  - Cross-domain authentication
 
-Also tests cross-domain authentication by querying users across trusts.`,
+Domain names and trust relationships are resolved from the lab config.`,
 	Example: `  dreadgoad verify-trusts
   dreadgoad verify-trusts --env staging`,
 	RunE: runVerifyTrusts,
@@ -30,7 +31,7 @@ func init() {
 func runVerifyTrusts(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
-	title := " GOAD Trust Verification "
+	title := " Trust Verification "
 	pad := 90 - len(title)
 	left := pad / 2
 	right := pad - left
@@ -41,74 +42,86 @@ func runVerifyTrusts(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	dc01ID, ok := infra.HostMap["DC01"]
-	if !ok {
-		return fmt.Errorf("DC01 not found in discovered instances")
-	}
-
-	fmt.Printf("Using DC01 (%s) as trust verification source...\n\n", dc01ID)
-
-	trustScript := `Write-Host "=== Domain Trusts from sevenkingdoms.local ==="
-Get-ADTrust -Filter * | Format-Table Name, Direction, TrustType, ForestTransitive, TrustAttributes -AutoSize
-
-Write-Host ""
-Write-Host "=== Trust Validation ==="
-nltest /domain_trusts /all_trusts
-
-Write-Host ""
-Write-Host "=== Cross-Domain Query Test ==="
-Write-Host "Querying north.sevenkingdoms.local:"
-Get-ADUser -Filter * -Server winterfell.north.sevenkingdoms.local | Select -First 3 Name | Format-Table -AutoSize
-Write-Host "Querying essos.local:"
-Get-ADUser -Filter * -Server meereen.essos.local | Select -First 3 Name | Format-Table -AutoSize
-
-Write-Host ""
-Write-Host "=== Trust Status ==="
-$trusts = Get-ADTrust -Filter *
-foreach ($t in $trusts) {
-    Write-Host "$($t.Name): $(if (Test-ComputerSecureChannel -Server $t.Name -ErrorAction SilentlyContinue) { 'HEALTHY' } else { 'Check manually' })"
-}`
-
-	result, err := infra.Client.RunPowerShellCommand(ctx, dc01ID, trustScript, 2*time.Minute)
-	if err != nil {
-		return fmt.Errorf("run trust verification: %w", err)
-	}
-
-	fmt.Printf("Status: %s\n\n", result.Status)
-
-	if result.Stdout != "" {
-		fmt.Println(result.Stdout)
-	}
-	if result.Stderr != "" {
-		color.Yellow("STDERR: %s", result.Stderr)
-	}
-
-	if result.Status == "Success" {
-		// Verify expected trusts are present in output
-		output := strings.ToLower(result.Stdout)
-		allGood := true
-
-		if strings.Contains(output, "north.sevenkingdoms.local") {
-			color.Green("  ✓ Parent-child trust: north.sevenkingdoms.local")
-		} else {
-			color.Red("  ✗ Parent-child trust: north.sevenkingdoms.local NOT found")
-			allGood = false
-		}
-
-		if strings.Contains(output, "essos.local") {
-			color.Green("  ✓ Forest trust: essos.local")
-		} else {
-			color.Red("  ✗ Forest trust: essos.local NOT found")
-			allGood = false
-		}
-
-		fmt.Println("\n=== Trust Verification Complete ===")
-
-		if !allGood {
-			return fmt.Errorf("one or more trust verifications failed")
-		}
+	lab := infra.Lab
+	trusts := lab.DomainTrusts()
+	if len(trusts) == 0 {
+		color.Yellow("No domain trusts configured for this lab")
 		return nil
 	}
 
-	return fmt.Errorf("trust verification returned status: %s", result.Status)
+	allGood := true
+
+	for _, tf := range trusts {
+		// Verify from the source DC
+		if tf.SourceDCRole == "" {
+			continue
+		}
+		srcHost := strings.ToUpper(tf.SourceDCRole)
+		srcID, ok := infra.HostMap[srcHost]
+		if !ok {
+			color.Red("  ✗ %s not found for trust verification", srcHost)
+			allGood = false
+			continue
+		}
+
+		fmt.Printf("\nVerifying trusts from %s (%s)...\n", srcHost, tf.SourceDomain)
+
+		// Build a verification script that checks trusts and cross-domain queries
+		var script strings.Builder
+		fmt.Fprintf(&script, "Write-Host '=== Domain Trusts from %s ==='\n", tf.SourceDomain)
+		script.WriteString("Get-ADTrust -Filter * | Format-Table Name, Direction, TrustType, ForestTransitive, TrustAttributes -AutoSize\n")
+		script.WriteString("\nWrite-Host ''\nWrite-Host '=== Trust Validation ==='\n")
+		script.WriteString("nltest /domain_trusts /all_trusts\n")
+
+		// Cross-domain query if we have the target DC FQDN
+		if tf.TargetDCRole != "" {
+			tgtFQDN := lab.FQDN(tf.TargetDCRole)
+			if tgtFQDN != "" {
+				fmt.Fprintf(&script, "\nWrite-Host ''\nWrite-Host '=== Cross-Domain Query Test ==='\n")
+				fmt.Fprintf(&script, "Write-Host 'Querying %s:'\n", tf.TargetDomain)
+				fmt.Fprintf(&script, "Get-ADUser -Filter * -Server %s | Select -First 3 Name | Format-Table -AutoSize\n", tgtFQDN)
+			}
+		}
+
+		script.WriteString("\nWrite-Host ''\nWrite-Host '=== Trust Status ==='\n")
+		script.WriteString("$trusts = Get-ADTrust -Filter *\n")
+		script.WriteString("foreach ($t in $trusts) {\n")
+		script.WriteString("    Write-Host \"$($t.Name): $(if (Test-ComputerSecureChannel -Server $t.Name -ErrorAction SilentlyContinue) { 'HEALTHY' } else { 'Check manually' })\"\n")
+		script.WriteString("}\n")
+
+		result, err := infra.Client.RunPowerShellCommand(ctx, srcID, script.String(), 2*time.Minute)
+		if err != nil {
+			color.Red("  ✗ Trust verification failed: %v", err)
+			allGood = false
+			continue
+		}
+
+		fmt.Printf("Status: %s\n\n", result.Status)
+
+		if result.Stdout != "" {
+			fmt.Println(result.Stdout)
+		}
+		if result.Stderr != "" {
+			color.Yellow("STDERR: %s", result.Stderr)
+		}
+
+		if result.Status == "Success" {
+			output := strings.ToLower(result.Stdout)
+			if strings.Contains(output, strings.ToLower(tf.TargetDomain)) {
+				color.Green("  ✓ Trust: %s -> %s", tf.SourceDomain, tf.TargetDomain)
+			} else {
+				color.Red("  ✗ Trust: %s -> %s NOT found", tf.SourceDomain, tf.TargetDomain)
+				allGood = false
+			}
+		} else {
+			allGood = false
+		}
+	}
+
+	fmt.Println("\n=== Trust Verification Complete ===")
+
+	if !allGood {
+		return fmt.Errorf("one or more trust verifications failed")
+	}
+	return nil
 }

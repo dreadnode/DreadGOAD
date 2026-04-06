@@ -3,15 +3,14 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	daws "github.com/dreadnode/dreadgoad/internal/aws"
 	"github.com/dreadnode/dreadgoad/internal/config"
+	"github.com/dreadnode/dreadgoad/internal/labmap"
 	"github.com/fatih/color"
 )
-
-// goadHosts is the set of expected GOAD hostnames.
-var goadHosts = []string{"DC01", "DC02", "DC03", "SRV02", "SRV03"}
 
 // infraContext holds the validated infrastructure state needed by commands.
 type infraContext struct {
@@ -19,6 +18,7 @@ type infraContext struct {
 	HostMap map[string]string // hostname -> instance ID
 	Env     string
 	Region  string
+	Lab     *labmap.LabMap
 }
 
 // requireInfra validates that AWS credentials work, GOAD instances are discoverable,
@@ -45,7 +45,34 @@ func requireInfra(ctx context.Context) (*infraContext, error) {
 	}
 	color.Green("  AWS credentials OK (account %s)", identity.Account)
 
-	hostMap, err := discoverHostMap(ctx, client, cfg.Env)
+	// Load lab config first so we know which hosts to look for.
+	var lab *labmap.LabMap
+	ec := cfg.ActiveEnvironment()
+	if ec.Variant {
+		_, target := cfg.ResolvedVariantPaths()
+		var loadErr error
+		lab, loadErr = labmap.LoadFromVariant(target)
+		if loadErr != nil {
+			return nil, fmt.Errorf("load variant mapping: %w", loadErr)
+		}
+	} else {
+		src := ec.VariantSource
+		if src == "" {
+			src = "ad/GOAD"
+		}
+		if !filepath.IsAbs(src) {
+			src = filepath.Join(cfg.ProjectRoot, src)
+		}
+		var loadErr error
+		lab, loadErr = labmap.LoadFromSource(src)
+		if loadErr != nil {
+			return nil, fmt.Errorf("load lab config: %w", loadErr)
+		}
+	}
+
+	// Derive expected hosts from the lab config instead of hardcoding.
+	expectedHosts := lab.HostRoles()
+	hostMap, err := discoverHostMap(ctx, client, cfg.Env, expectedHosts)
 	if err != nil {
 		return nil, err
 	}
@@ -60,35 +87,38 @@ func requireInfra(ctx context.Context) (*infraContext, error) {
 		HostMap: hostMap,
 		Env:     cfg.Env,
 		Region:  region,
+		Lab:     lab,
 	}, nil
 }
 
-// discoverHostMap finds running GOAD instances and maps hostnames to instance IDs.
-func discoverHostMap(ctx context.Context, client *daws.Client, env string) (map[string]string, error) {
+// discoverHostMap finds running instances and maps host roles to instance IDs.
+func discoverHostMap(ctx context.Context, client *daws.Client, env string, expectedHosts []string) (map[string]string, error) {
 	instances, err := client.DiscoverInstances(ctx, env)
 	if err != nil {
 		return nil, fmt.Errorf("discover instances: %w", err)
 	}
 	if len(instances) == 0 {
-		return nil, fmt.Errorf("no running GOAD instances found for env=%s", env)
+		return nil, fmt.Errorf("no running instances found for env=%s", env)
 	}
 
 	hostMap := make(map[string]string)
 	for _, inst := range instances {
 		name := strings.ToUpper(inst.Name)
-		for _, h := range goadHosts {
-			if strings.Contains(name, h) {
-				hostMap[h] = inst.InstanceID
+		for _, h := range expectedHosts {
+			upper := strings.ToUpper(h)
+			if strings.Contains(name, upper) {
+				hostMap[upper] = inst.InstanceID
 			}
 		}
 	}
 
 	var found, missing []string
-	for _, h := range goadHosts {
-		if _, ok := hostMap[h]; ok {
-			found = append(found, h)
+	for _, h := range expectedHosts {
+		upper := strings.ToUpper(h)
+		if _, ok := hostMap[upper]; ok {
+			found = append(found, upper)
 		} else {
-			missing = append(missing, h)
+			missing = append(missing, upper)
 		}
 	}
 	color.Green("  Instances discovered: %s", strings.Join(found, ", "))
