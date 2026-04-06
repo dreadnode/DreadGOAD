@@ -35,7 +35,7 @@ With 2 member servers in GOAD running MSSQL, this saves approximately **96 minut
 warpgate build goad-mssql-base --target ami
 
 # Or with custom region
-warpgate build goad-mssql-base --target ami --vars aws_region=us-east-1
+warpgate build goad-mssql-base --target ami --region us-east-1
 ```
 
 ### Use in Terragrunt

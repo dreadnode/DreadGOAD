@@ -99,15 +99,17 @@ See [tools/variant_generator/](tools/variant_generator/) for details.
 
 ```text
 DreadGOAD/
-├── ad/              # Lab definitions (GOAD, GOAD-Light, MINILAB, SCCM, NHA, ...)
-├── ansible/         # Ansible collection with 80+ roles and custom modules
-├── cli/             # Go CLI source (dreadgoad)
-├── docs/            # Documentation and architecture diagrams
-├── extensions/      # Pluggable lab extensions (ELK, Exchange, Wazuh, ...)
-├── modules/         # Terraform modules (AWS networking, instance factory)
-├── packer/          # VM templating (Vagrant, Proxmox)
-├── tools/           # Variant generator and utilities
-└── template/        # Provider templates
+├── ad/                    # Lab definitions (GOAD, GOAD-Light, MINILAB, SCCM, NHA, ...)
+├── ansible/               # Ansible collection with 80+ roles and custom modules
+├── cli/                   # Go CLI source (dreadgoad)
+├── docs/                  # Documentation and architecture diagrams
+├── extensions/            # Pluggable lab extensions (ELK, Exchange, Wazuh, ...)
+├── infra/                 # Terragrunt configurations for AWS deployments
+├── modules/               # Terraform modules (AWS networking, instance factory)
+├── packer/                # VM templating (Vagrant, Proxmox)
+├── tools/                 # Variant generator and utilities
+├── warpgate-templates/    # Golden AMI build templates (warpgate)
+└── template/              # Provider templates
 ```
 
 ## Contributing

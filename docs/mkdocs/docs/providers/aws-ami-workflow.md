@@ -18,7 +18,7 @@ Building pre-baked AMIs saves approximately **170 minutes** per deployment by pr
 
 ## Prerequisites
 
-- [warpgate](https://github.com/dreadnode/warpgate) CLI installed
+- [warpgate](https://github.com/cowdogmoo/warpgate) CLI installed (v4.3+)
 - [Terraform](https://www.terraform.io/downloads.html) >= 1.7
 - [Terragrunt](https://terragrunt.gruntwork.io/) installed
 - [AWS CLI](https://aws.amazon.com/cli/) configured with appropriate credentials
@@ -80,13 +80,14 @@ Throughout this guide, examples use `staging` and `us-west-1` to match the defau
 
 ## Step 1: Build Golden AMIs with Warpgate
 
-DreadGOAD provides three warpgate templates under `warpgate-templates/`:
+DreadGOAD provides four warpgate templates under `warpgate-templates/`:
 
 | Template | Target Hosts | OS | Saves |
 |----------|-------------|-----|-------|
 | `goad-dc-base` | DC01, DC02 | Windows Server 2019 | ~25 min/host |
 | `goad-dc-base-2016` | DC03 | Windows Server 2016 | ~25 min/host |
 | `goad-mssql-base` | SRV02 | Windows Server 2019 | ~48 min/host |
+| `goad-member-base-2016` | SRV03 (optional) | Windows Server 2016 | ~20 min/host |
 
 ### Build all AMIs
 
@@ -99,12 +100,15 @@ warpgate build goad-dc-base-2016 --target ami
 
 # Member Server with MSSQL (Windows 2019, for SRV02/castelblack)
 warpgate build goad-mssql-base --target ami
+
+# Member Server (Windows 2016, for SRV03/braavos -- optional)
+warpgate build goad-member-base-2016 --target ami
 ```
 
 To build for a specific region:
 
 ```bash
-warpgate build goad-dc-base --target ami --vars aws_region=us-west-1
+warpgate build goad-dc-base --target ami --region us-west-1
 ```
 
 ### Record the AMI IDs
@@ -116,9 +120,10 @@ Each build outputs an AMI ID (e.g., `ami-0abc1234def56789`). Record these -- you
 | `goad-dc-base` | `ami-xxxxxxxxx` | DC01 (kingslanding), DC02 (winterfell) |
 | `goad-dc-base-2016` | `ami-xxxxxxxxx` | DC03 (meereen) |
 | `goad-mssql-base` | `ami-xxxxxxxxx` | SRV02 (castelblack) |
+| `goad-member-base-2016` | `ami-xxxxxxxxx` | SRV03 (braavos) -- optional |
 
 !!! note "SRV03 (braavos)"
-    SRV03 runs Windows Server 2016 as a member server. If you don't have a dedicated `goad-member-base-2016` AMI, you can use `goad-dc-base-2016` (the extra AD DS role won't interfere) or a vanilla Windows Server 2016 AMI.
+    SRV03 runs Windows Server 2016 as a member server. You can use the dedicated `goad-member-base-2016` AMI, or alternatively `goad-dc-base-2016` (the extra AD DS role won't interfere) or a vanilla Windows Server 2016 AMI.
 
 ### What's pre-baked vs. runtime
 
@@ -205,6 +210,21 @@ additional_windows_ami_filters = [
 
 windows_os         = "Windows_Server"
 windows_os_version = "2019-English-Full-Base"
+windows_ami_owners = ["self"]
+```
+
+**SRV03** (`srv03/terragrunt.hcl`) -- use `goad-member-base-2016` AMI (optional):
+
+```hcl
+additional_windows_ami_filters = [
+  {
+    name   = "image-id"
+    values = ["ami-xxxxxxxxx"]  # goad-member-base-2016 AMI ID
+  }
+]
+
+windows_os         = "Windows_Server"
+windows_os_version = "2016-English-Full-Base"
 windows_ami_owners = ["self"]
 ```
 
@@ -332,7 +352,7 @@ dreadgoad validate --env staging --region us-west-1
 | winterfell | DC02 | dc02 | north.sevenkingdoms.local | 2019 | goad-dc-base |
 | meereen | DC03 | dc03 | essos.local | 2016 | goad-dc-base-2016 |
 | castelblack | SRV02 | srv02 | north.sevenkingdoms.local | 2019 | goad-mssql-base |
-| braavos | SRV03 | srv03 | essos.local | 2016 | (see note above) |
+| braavos | SRV03 | srv03 | essos.local | 2016 | goad-member-base-2016 (optional) |
 
 ## Rebuilding AMIs
 
