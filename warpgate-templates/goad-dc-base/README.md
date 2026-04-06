@@ -37,7 +37,7 @@ With 3 domain controllers in GOAD, this saves approximately **75 minutes** per d
 warpgate build goad-dc-base --target ami
 
 # Or with custom region
-warpgate build goad-dc-base --target ami --vars aws_region=us-east-1
+warpgate build goad-dc-base --target ami --region us-east-1
 ```
 
 ### Use in Terragrunt
