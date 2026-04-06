@@ -18,6 +18,11 @@ Install Windows updates on managed hosts
 - **Enable update service** (ansible.windows.win_service)
 - **Install all updates and reboot as many times as needed** (ansible.windows.win_updates)
 
+### main.yml
+
+- **Enable update service** (ansible.windows.win_service)
+- **Install all updates and reboot as many times as needed** (ansible.windows.win_updates)
+
 ## Example Playbook
 
 ```yaml
