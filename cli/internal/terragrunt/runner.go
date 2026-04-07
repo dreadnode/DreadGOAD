@@ -12,36 +12,24 @@ import (
 	"strings"
 )
 
-// Options configures a terragrunt execution.
 type Options struct {
-	// Action is the terraform action: init, plan, apply, destroy, output.
-	Action string
-	// WorkDir is the directory to run terragrunt in.
-	WorkDir string
-	// TerragruntBinary is the path to the terragrunt binary.
+	Action           string
+	WorkDir          string
 	TerragruntBinary string
-	// TerraformBinary is the path to the terraform/tofu binary.
-	TerraformBinary string
-	// AutoApprove skips confirmation prompts (apply/destroy).
-	AutoApprove bool
-	// NonInteractive disables interactive prompts.
-	NonInteractive bool
-	// ExcludeDirs is a comma-separated list of dirs to exclude from run-all.
-	ExcludeDirs string
-	// LogFile is an optional path to write output to.
-	LogFile string
-	// Debug enables verbose output.
-	Debug bool
+	TerraformBinary  string
+	AutoApprove      bool
+	NonInteractive   bool
+	ExcludeDirs      string
+	LogFile          string
+	Debug            bool
 }
 
-// Result holds the outcome of a terragrunt execution.
 type Result struct {
 	Module  string
 	Success bool
 	Error   error
 }
 
-// Run executes a single terragrunt command in the given working directory.
 func Run(ctx context.Context, opts Options) error {
 	args := buildArgs(opts)
 
@@ -70,9 +58,8 @@ func Run(ctx context.Context, opts Options) error {
 	return nil
 }
 
-// RunAll executes `terragrunt run-all <action>` across all modules in the working directory.
 func RunAll(ctx context.Context, opts Options) error {
-	args := []string{"run-all", opts.Action}
+	args := []string{"run", "--all", opts.Action}
 	if opts.AutoApprove && (opts.Action == "apply" || opts.Action == "destroy") {
 		args = append(args, "-auto-approve")
 	}
@@ -80,7 +67,7 @@ func RunAll(ctx context.Context, opts Options) error {
 		args = append(args, "--non-interactive")
 	}
 
-	slog.Info("running terragrunt run-all",
+	slog.Info("running terragrunt run --all",
 		"action", opts.Action,
 		"dir", opts.WorkDir,
 	)
@@ -103,13 +90,11 @@ func RunAll(ctx context.Context, opts Options) error {
 	cmd.Stderr = writer
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("terragrunt run-all %s failed: %w", opts.Action, err)
+		return fmt.Errorf("terragrunt run --all %s failed: %w", opts.Action, err)
 	}
 	return nil
 }
 
-// RunIndividual iterates subdirectories of modulePath and runs terragrunt
-// in each one individually. Returns results for each subdirectory.
 func RunIndividual(ctx context.Context, opts Options, modulePath string, exclude []string) ([]Result, error) {
 	entries, err := os.ReadDir(modulePath)
 	if err != nil {
@@ -172,7 +157,6 @@ func RunIndividual(ctx context.Context, opts Options, modulePath string, exclude
 	return results, nil
 }
 
-// Output runs `terragrunt output -json` and returns the raw JSON bytes.
 func Output(ctx context.Context, opts Options) ([]byte, error) {
 	args := []string{"output", "-json"}
 
@@ -201,7 +185,7 @@ func buildArgs(opts Options) []string {
 func buildEnv(opts Options) []string {
 	env := os.Environ()
 	if opts.TerraformBinary != "" {
-		env = append(env, "TERRAGRUNT_TFPATH="+opts.TerraformBinary)
+		env = append(env, "TG_TF_PATH="+opts.TerraformBinary)
 	}
 	return env
 }
