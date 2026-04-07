@@ -26,8 +26,8 @@ func CheckAnsibleSuccess(output string) bool {
 	lines := strings.Split(output, "\n")
 	for i, line := range lines {
 		if strings.HasPrefix(line, "fatal:") {
-			// Check next 10 lines for "...ignoring"
-			end := i + 11
+			// Check next 20 lines for "...ignoring" (multi-line YAML output can be long)
+			end := i + 21
 			if end > len(lines) {
 				end = len(lines)
 			}
