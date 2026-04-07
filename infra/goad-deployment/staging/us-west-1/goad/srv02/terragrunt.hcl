@@ -69,8 +69,8 @@ inputs = {
 
   additional_windows_ami_filters = [
     {
-      name   = "name"
-      values = ["goad-mssql-base-*"]  # warpgate-templates/goad-mssql-base
+      name   = "tag:Name"
+      values = ["goad-mssql-base"]
     }
   ]
 

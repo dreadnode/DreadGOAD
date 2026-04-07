@@ -12,7 +12,7 @@ import (
 
 var labCmd = &cobra.Command{
 	Use:   "lab",
-	Short: "Manage GOAD lab lifecycle",
+	Short: "Manage DreadGOAD lab lifecycle",
 }
 
 var labStatusCmd = &cobra.Command{

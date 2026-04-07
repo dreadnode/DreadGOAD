@@ -69,8 +69,8 @@ inputs = {
 
   additional_windows_ami_filters = [
     {
-      name   = "name"
-      values = ["goad-dc-base-*"]  # warpgate-templates/goad-dc-base
+      name   = "tag:Name"
+      values = ["goad-dc-base"]
     }
   ]
 

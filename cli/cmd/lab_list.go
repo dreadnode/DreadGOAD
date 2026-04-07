@@ -12,7 +12,7 @@ import (
 
 var labListCmd = &cobra.Command{
 	Use:   "list",
-	Short: "List available GOAD labs and their providers",
+	Short: "List available DreadGOAD labs and their providers",
 	RunE:  runLabList,
 }
 

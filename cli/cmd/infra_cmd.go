@@ -16,11 +16,11 @@ import (
 
 var infraCmd = &cobra.Command{
 	Use:   "infra",
-	Short: "Manage GOAD infrastructure via Terragrunt",
-	Long: `Manage the GOAD lab infrastructure lifecycle using Terragrunt.
+	Short: "Manage DreadGOAD infrastructure via Terragrunt",
+	Long: `Manage the DreadGOAD lab infrastructure lifecycle using Terragrunt.
 
 Operates on the infra/ directory which contains Terragrunt configurations
-for deploying the GOAD lab (VPC, EC2 instances, security groups, etc.).
+for deploying the DreadGOAD lab (VPC, EC2 instances, security groups, etc.).
 
 By default, commands operate on all modules (run-all). Use --module to
 target a specific module (e.g. network, goad/dc01).`,

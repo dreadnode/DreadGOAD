@@ -5,6 +5,7 @@
 exclude_paths:
   - .claude/
   - .github/
+  - infra/
   # Files with unskippable load-failure (unicode/runtime) or syntax-check issues
   - ad/GOAD-Light/files/dc01/templates/
   - ad/GOAD-Mini/files/dc01/templates/
