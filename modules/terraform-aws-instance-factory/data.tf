@@ -28,9 +28,9 @@ data "aws_ami" "linux" {
     }
   }
 
-  # Only apply default name filter if no name filter exists in additional_linux_ami_filters
+  # Only apply default name filter if no name/tag:Name/image-id filter exists in additional_linux_ami_filters
   dynamic "filter" {
-    for_each = length([for f in var.additional_linux_ami_filters : f if f.name == "name" || f.name == "image-id"]) > 0 ? [] : [1]
+    for_each = length([for f in var.additional_linux_ami_filters : f if f.name == "name" || f.name == "image-id" || f.name == "tag:Name"]) > 0 ? [] : [1]
     content {
       name   = "name"
       values = ["${var.linux_os}*${var.linux_os_version}*"]
@@ -77,9 +77,9 @@ data "aws_ami" "windows" {
     }
   }
 
-  # Only apply default name filter if no name filter exists in additional_windows_ami_filters
+  # Only apply default name filter if no name/tag:Name/image-id filter exists in additional_windows_ami_filters
   dynamic "filter" {
-    for_each = length([for f in var.additional_windows_ami_filters : f if f.name == "name" || f.name == "image-id"]) > 0 ? [] : [1]
+    for_each = length([for f in var.additional_windows_ami_filters : f if f.name == "name" || f.name == "image-id" || f.name == "tag:Name"]) > 0 ? [] : [1]
     content {
       name   = "name"
       values = ["${var.windows_os}-${var.windows_os_version}*"]
@@ -128,7 +128,7 @@ data "aws_ami" "macos" {
 
   # Only apply default name filter if no name filter exists in additional_macos_ami_filters
   dynamic "filter" {
-    for_each = length([for f in var.additional_macos_ami_filters : f if f.name == "name" || f.name == "image-id"]) > 0 ? [] : [1]
+    for_each = length([for f in var.additional_macos_ami_filters : f if f.name == "name" || f.name == "image-id" || f.name == "tag:Name"]) > 0 ? [] : [1]
     content {
       name   = "name"
       values = ["${var.macos_os}*${var.macos_os_version}*"]

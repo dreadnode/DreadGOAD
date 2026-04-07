@@ -46,7 +46,7 @@ func setDefaults() {
 	viper.SetDefault("extensions.elk.impact", "add a linux machine and add a logbeat agent on all windows machines")
 	viper.SetDefault("extensions.elk.playbook", "ext-elk.yml")
 
-	viper.SetDefault("extensions.exchange.description", "Add an Exchange server to the GOAD lab")
+	viper.SetDefault("extensions.exchange.description", "Add an Exchange server to the DreadGOAD lab")
 	viper.SetDefault("extensions.exchange.machines", []string{"srv01"})
 	viper.SetDefault("extensions.exchange.compatibility", []string{"GOAD", "GOAD-Light", "GOAD-Mini"})
 	viper.SetDefault("extensions.exchange.impact", "modifies AD schema and adds a server (heavy)")

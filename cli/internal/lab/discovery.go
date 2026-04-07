@@ -11,7 +11,7 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-// Lab represents a discovered GOAD lab definition.
+// Lab represents a discovered DreadGOAD lab definition.
 type Lab struct {
 	Name      string   `json:"name"`
 	Path      string   `json:"path"`

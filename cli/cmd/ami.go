@@ -22,6 +22,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+var envVarPattern = regexp.MustCompile(`\$\{([^}]+)\}`)
+
 var amiCmd = &cobra.Command{
 	Use:   "ami",
 	Short: "AMI image management",
@@ -463,11 +465,12 @@ func loadWarpgateTemplate(path, projectRoot string) (*builder.Config, error) {
 	}
 
 	if _, ok := os.LookupEnv("PROVISION_REPO_PATH"); !ok && projectRoot != "" {
-		_ = os.Setenv("PROVISION_REPO_PATH", projectRoot)
+		if err := os.Setenv("PROVISION_REPO_PATH", projectRoot); err != nil {
+			return nil, fmt.Errorf("set PROVISION_REPO_PATH: %w", err)
+		}
 	}
 
-	varPattern := regexp.MustCompile(`\$\{([^}]+)\}`)
-	content = varPattern.ReplaceAllStringFunc(content, func(match string) string {
+	content = envVarPattern.ReplaceAllStringFunc(content, func(match string) string {
 		varName := match[2 : len(match)-1]
 		if val, ok := os.LookupEnv(varName); ok {
 			return val
