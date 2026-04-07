@@ -309,10 +309,6 @@ func (v *Validator) checkACLPermissions(ctx context.Context) {
 	}
 
 	for _, af := range acls {
-		// Skip ACLs targeting full DN paths (complex to verify generically)
-		if strings.Contains(af.ACL.To, "CN=") && strings.Contains(af.ACL.To, "DC=") {
-			continue
-		}
 		// Skip ACLs targeting computer accounts
 		if strings.HasSuffix(af.ACL.To, "$") {
 			continue
@@ -327,9 +323,35 @@ func (v *Validator) checkACLPermissions(ctx context.Context) {
 		target := v.lab.User(af.ACL.To)
 
 		sourceFirst := strings.SplitN(source, ".", 2)[0]
-		output := v.runPS(ctx, dcRole, fmt.Sprintf(
-			`$user = Get-ADUser '%s' -Properties nTSecurityDescriptor -ErrorAction SilentlyContinue; if ($user) { $acl = $user.nTSecurityDescriptor.Access | Where-Object { $_.IdentityReference -like '*%s*' }; if ($acl) { Write-Output 'ACL_FOUND' } else { Write-Output 'ACL_NOT_FOUND' } } else { Write-Output 'USER_NOT_FOUND' }`,
-			target, sourceFirst))
+		// Strip trailing $ for gMSA accounts to match the identity reference
+		sourceFirst = strings.TrimSuffix(sourceFirst, "$")
+
+		// Build the PowerShell lookup for the target object.
+		// DN paths (containing = signs) are resolved directly via Get-Acl;
+		// SamAccountNames are looked up with Get-ADObject which finds
+		// users, groups, and service accounts alike.
+		script := fmt.Sprintf(`
+$ErrorActionPreference = 'Stop'
+Import-Module ActiveDirectory
+Set-Location AD:
+$target = '%s'
+$sourceMatch = '*%s*'
+try {
+  if ($target -match '=') {
+    $objDN = $target
+    $objAcl = Get-Acl -Path $objDN -ErrorAction Stop
+  } else {
+    $obj = Get-ADObject -Filter "SamAccountName -eq '$target'" -Properties nTSecurityDescriptor -ErrorAction Stop
+    if (-not $obj) { Write-Output 'TARGET_NOT_FOUND'; exit }
+    $objAcl = $obj.nTSecurityDescriptor
+  }
+  $ace = $objAcl.Access | Where-Object { $_.IdentityReference -like $sourceMatch }
+  if ($ace) { Write-Output 'ACL_FOUND' } else { Write-Output 'ACL_NOT_FOUND' }
+} catch {
+  Write-Output "CHECK_ERROR: $_"
+}`, target, sourceFirst)
+
+		output := v.runPS(ctx, dcRole, script)
 
 		switch {
 		case strings.Contains(output, "ACL_FOUND"):

@@ -6,7 +6,9 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	daws "github.com/dreadnode/dreadgoad/internal/aws"
@@ -157,7 +159,13 @@ func runSSMConnect(cmd *cobra.Command, args []string) error {
 	region := inv.Region()
 	fmt.Printf("Starting SSM session to %s (%s) in %s...\n", host.Name, host.InstanceID, region)
 
-	// Exec into aws ssm start-session
+	// Ignore SIGINT in the parent so Ctrl+C is forwarded to the SSM
+	// session process (which handles it as a remote command interrupt)
+	// rather than killing dreadgoad and tearing down the session.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT)
+	defer signal.Stop(sigCh)
+
 	ssmCmd := exec.Command("aws", "ssm", "start-session",
 		"--target", host.InstanceID,
 		"--region", region)
