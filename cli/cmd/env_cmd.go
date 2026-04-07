@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/dreadnode/dreadgoad/internal/config"
@@ -31,6 +32,7 @@ Creates:
   - infra/goad-deployment/{env}/{region}/network/terragrunt.hcl
   - infra/goad-deployment/{env}/{region}/goad/{host}/terragrunt.hcl + templates
   - ad/GOAD/data/{env}-config.json
+  - {env}-inventory (Ansible inventory with PENDING instance IDs)
 
 Use --variant to generate randomized entity names for the environment config.
 Without --variant, the base config (dev-config.json) is copied as-is.`,
@@ -145,15 +147,23 @@ func runEnvCreate(cmd *cobra.Command, args []string) error {
 		color.Green("  Created config: %s-config.json", envName)
 	}
 
+	invPath := filepath.Join(cfg.ProjectRoot, envName+"-inventory")
+	if err := generateInventory(cfg.ProjectRoot, envName, region, reference); err != nil {
+		return fmt.Errorf("generate inventory: %w", err)
+	}
+	color.Green("  Created inventory: %s", filepath.Base(invPath))
+
 	fmt.Println()
 	color.Green("Environment %q created successfully!", envName)
 	fmt.Println()
 	fmt.Println("Next steps:")
 	fmt.Printf("  1. Review: %s\n", envDir)
 	fmt.Printf("  2. Review: %s\n", configPath)
-	fmt.Printf("  3. Initialize: dreadgoad --env %s --region %s infra init\n", envName, region)
-	fmt.Printf("  4. Plan:       dreadgoad --env %s --region %s infra plan\n", envName, region)
-	fmt.Printf("  5. Apply:      dreadgoad --env %s --region %s infra apply --auto-approve\n", envName, region)
+	fmt.Printf("  3. Review: %s\n", invPath)
+	fmt.Printf("  4. Initialize: dreadgoad --env %s --region %s infra init\n", envName, region)
+	fmt.Printf("  5. Plan:       dreadgoad --env %s --region %s infra plan\n", envName, region)
+	fmt.Printf("  6. Apply:      dreadgoad --env %s --region %s infra apply --auto-approve\n", envName, region)
+	fmt.Printf("  7. Sync IDs:   dreadgoad --env %s --region %s inventory sync\n", envName, region)
 
 	return nil
 }
@@ -313,6 +323,56 @@ func copyBaseConfig(projectRoot, envName string) error {
 	}
 
 	return os.WriteFile(dstPath, data, 0o644)
+}
+
+func generateInventory(projectRoot, envName, region, reference string) error {
+	refInvPath := filepath.Join(projectRoot, reference+"-inventory")
+	dstInvPath := filepath.Join(projectRoot, envName+"-inventory")
+
+	data, err := os.ReadFile(refInvPath)
+	if err != nil {
+		return fmt.Errorf("read reference inventory %s: %w", filepath.Base(refInvPath), err)
+	}
+	content := string(data)
+
+	// Extract reference env and region from the inventory vars
+	envRe := regexp.MustCompile(`(?m)^(\s*env=)(.+)$`)
+	regionRe := regexp.MustCompile(`(?m)^(\s*ansible_aws_ssm_region=)(.+)$`)
+	bucketRe := regexp.MustCompile(`(?m)^(\s*ansible_aws_ssm_bucket_name=)(.+)$`)
+	instanceRe := regexp.MustCompile(`(ansible_host=)i-[0-9a-f]+`)
+	ipFieldRe := regexp.MustCompile(`\s+(?:dc_ipv4|host_ipv4)=\S+`)
+
+	refEnv := reference
+	if m := envRe.FindStringSubmatch(content); len(m) > 2 {
+		refEnv = strings.TrimSpace(m[2])
+	}
+	refRegion := ""
+	if m := regionRe.FindStringSubmatch(content); len(m) > 2 {
+		refRegion = strings.TrimSpace(m[2])
+	}
+
+	// Replace env
+	content = envRe.ReplaceAllString(content, "${1}"+envName)
+
+	// Replace region
+	content = regionRe.ReplaceAllString(content, "${1}"+region)
+
+	// Replace bucket name: swap ref env/region for new env/region
+	if refRegion != "" {
+		if m := bucketRe.FindStringSubmatch(content); len(m) > 2 {
+			oldBucket := strings.TrimSpace(m[2])
+			newBucket := strings.Replace(oldBucket, refEnv+"-"+refRegion, envName+"-"+region, 1)
+			content = bucketRe.ReplaceAllString(content, "${1}"+newBucket)
+		}
+	}
+
+	// Replace instance IDs with PENDING placeholder
+	content = instanceRe.ReplaceAllString(content, "${1}PENDING")
+
+	// Strip dc_ipv4/host_ipv4 fields (will be populated after infra apply)
+	content = ipFieldRe.ReplaceAllString(content, "")
+
+	return os.WriteFile(dstInvPath, []byte(content), 0o644)
 }
 
 func generateVariantConfig(projectRoot, envName string) error {
