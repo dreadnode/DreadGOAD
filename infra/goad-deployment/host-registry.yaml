@@ -7,7 +7,7 @@
 
 version: "1.0"
 deployment: "goad"
-environments: ["dev", "staging"]
+environments: ["dev", "staging", "test"]
 default_region: "us-west-1"
 
 hosts:

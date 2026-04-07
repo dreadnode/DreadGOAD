@@ -4,10 +4,34 @@
   gather_facts: true
 
   vars:
-    sql_download_url: "https://go.microsoft.com/fwlink/p/?linkid=866658"
     sql_instance_name: "SQLEXPRESS"
 
   tasks:
+    - name: Detect Windows Server version for SQL Server compatibility
+      ansible.windows.win_powershell:
+        script: |
+          $build = [System.Environment]::OSVersion.Version.Build
+          # Windows Server 2025 build >= 26100
+          if ($build -ge 26100) {
+            $Ansible.Result = "2025"
+          } else {
+            $Ansible.Result = "pre2025"
+          }
+      register: os_detect
+      changed_when: false
+
+    - name: Set SQL Server variables for Windows Server 2025+
+      ansible.builtin.set_fact:
+        sql_download_url: "https://download.microsoft.com/download/5/1/4/5145fe04-4d30-4b85-b0d1-39c332a9d2be/SQL2022-SSEI-Expr.exe"
+        sql_version_id: "MSSQL16"
+      when: os_detect.result == "2025"
+
+    - name: Set SQL Server variables for Windows Server 2016/2019
+      ansible.builtin.set_fact:
+        sql_download_url: "https://go.microsoft.com/fwlink/p/?linkid=866658"
+        sql_version_id: "MSSQL15"
+      when: os_detect.result != "2025"
+
     - name: Install PowerShellGet and NuGet provider
       ansible.windows.win_shell: |
         $ProgressPreference = 'SilentlyContinue'
@@ -130,7 +154,7 @@
       ansible.windows.win_copy:
         dest: C:\setup\mssql\sql_conf.ini
         content: |
-          ;SQL Server 2019 Express Configuration File
+          ;SQL Server Express Configuration File
           [OPTIONS]
           ACTION="Install"
           QUIET="True"
@@ -151,7 +175,7 @@
 
     - name: Check if SQL Server is already installed
       ansible.windows.win_reg_stat:
-        path: "HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL15.{{ sql_instance_name }}"
+        path: "HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\{{ sql_version_id }}.{{ sql_instance_name }}"
       register: mssql_installed
       failed_when: false
 
@@ -167,7 +191,7 @@
 
     - name: Configure SQL Server TCP port
       ansible.windows.win_regedit:
-        path: 'HKLM:\Software\Microsoft\Microsoft SQL Server\MSSQL15.{{ sql_instance_name }}\MSSQLServer\SuperSocketNetLib\Tcp\IPAll'
+        path: 'HKLM:\Software\Microsoft\Microsoft SQL Server\{{ sql_version_id }}.{{ sql_instance_name }}\MSSQLServer\SuperSocketNetLib\Tcp\IPAll'
         name: TcpPort
         data: "1433"
         type: string

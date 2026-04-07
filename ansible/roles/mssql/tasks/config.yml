@@ -2,6 +2,9 @@
 # MSSQL Configuration Tasks
 # These tasks configure SQL Server after installation
 # They should ALWAYS run to ensure proper configuration (idempotent)
+#
+# Note: SSM sessions run as ssm-user (not SYSTEM), so we must use
+# become to escalate to SYSTEM which has SQL sysadmin privileges.
 
 - name: Add MSSQL admin
   ansible.windows.win_shell: |
@@ -23,9 +26,7 @@
     Write-Output "Successfully configured sysadmin: {{ item }}"
   become: true
   become_method: ansible.builtin.runas
-  become_user: "{{ SQLSVCACCOUNT }}"
-  vars:
-    ansible_become_pass: "{{ SQLSVCPASSWORD }}"
+  become_user: SYSTEM
   loop: "{{ sql_sysadmins }}"
   register: admin_result
 
@@ -57,9 +58,7 @@
     Write-Output "Successfully granted IMPERSONATE ON LOGIN::[{{ item.value }}] TO [{{ item.key }}]"
   become: true
   become_method: ansible.builtin.runas
-  become_user: "{{ SQLSVCACCOUNT }}"
-  vars:
-    ansible_become_pass: "{{ SQLSVCPASSWORD }}"
+  become_user: SYSTEM
   with_dict: "{{ executeaslogin }}"
   register: impersonate_login_result
 
@@ -95,9 +94,7 @@
     Write-Output "Successfully granted IMPERSONATE ON USER::[{{ item.value.impersonate }}] TO [{{ item.value.user }}] in {{ item.value.db }}"
   become: true
   become_method: ansible.builtin.runas
-  become_user: "{{ SQLSVCACCOUNT }}"
-  vars:
-    ansible_become_pass: "{{ SQLSVCPASSWORD }}"
+  become_user: SYSTEM
   with_dict: "{{ executeasuser }}"
   register: impersonate_user_result
 
@@ -129,9 +126,7 @@
     Write-Output "Successfully enabled sa account"
   become: true
   become_method: ansible.builtin.runas
-  become_user: "{{ SQLSVCACCOUNT }}"
-  vars:
-    ansible_become_pass: "{{ SQLSVCPASSWORD }}"
+  become_user: SYSTEM
   register: sa_result
 
 - name: Log sa account errors
@@ -149,9 +144,7 @@
     Write-Output "Successfully enabled mixed mode authentication (LoginMode=2)"
   become: true
   become_method: ansible.builtin.runas
-  become_user: "{{ SQLSVCACCOUNT }}"
-  vars:
-    ansible_become_pass: "{{ SQLSVCPASSWORD }}"
+  become_user: SYSTEM
   register: auth_mode_result
 
 - name: Restart service MSSQL

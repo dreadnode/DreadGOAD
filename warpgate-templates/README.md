@@ -4,14 +4,23 @@ Pre-baked AMI templates for DreadGOAD, built with [warpgate](https://github.com/
 
 ## Templates
 
+### GOAD Lab
+
 | Template | OS | Pre-installed Software | Target Hosts | Time Saved |
 |----------|-----|----------------------|--------------|------------|
 | [goad-dc-base](goad-dc-base/) | Windows Server 2019 | AD DS, DNS, RSAT, DSC modules, SSM | DC01, DC02 | ~25 min/host |
 | [goad-dc-base-2016](goad-dc-base-2016/) | Windows Server 2016 | AD DS, DNS, RSAT, DSC modules, SSM | DC03 | ~25 min/host |
 | [goad-mssql-base](goad-mssql-base/) | Windows Server 2019 | MSSQL Express 2019, IIS/WebDAV, DSC modules | SRV02 | ~48 min/host |
-| [goad-member-base-2016](goad-member-base-2016/) | Windows Server 2016 | IIS/WebDAV, DSC modules | SRV03 (optional) | ~20 min/host |
+| [goad-mssql-base-2016](goad-mssql-base-2016/) | Windows Server 2016 | MSSQL Express 2019, IIS/WebDAV, DSC modules | SRV03 | ~48 min/host |
 
-Total time savings: **~170 minutes** per full GOAD deployment.
+### DRACARYS Lab
+
+| Template | OS | Pre-installed Software | Target Hosts | Time Saved |
+|----------|-----|----------------------|--------------|------------|
+| [goad-dc-base-2025](goad-dc-base-2025/) | Windows Server 2025 | AD DS, DNS, RSAT, DSC modules, SSM | DC01 | ~25 min/host |
+| [goad-mssql-base-2025](goad-mssql-base-2025/) | Windows Server 2025 | MSSQL Express 2022, IIS/WebDAV, DSC modules | SRV01 | ~48 min/host |
+
+Total time savings: **~171 minutes** per full GOAD deployment, **~73 minutes** per DRACARYS deployment.
 
 ## Prerequisites
 
@@ -25,11 +34,15 @@ Total time savings: **~170 minutes** per full GOAD deployment.
 # Set the repo path for Ansible playbook references
 export PROVISION_REPO_PATH=/path/to/DreadGOAD
 
-# Build all templates
+# Build GOAD templates
 warpgate build goad-dc-base --target ami
 warpgate build goad-dc-base-2016 --target ami
 warpgate build goad-mssql-base --target ami
-warpgate build goad-member-base-2016 --target ami
+warpgate build goad-mssql-base-2016 --target ami
+
+# Build DRACARYS templates
+warpgate build goad-dc-base-2025 --target ami
+warpgate build goad-mssql-base-2025 --target ami
 
 # Build for a specific region
 warpgate build goad-dc-base --target ami --region us-east-1
@@ -70,9 +83,8 @@ goad-{template-name}/
 
 The `warpgate.yaml` files reference Ansible playbooks under `ansible/playbooks/base/`:
 
-- `dc_base.yml` -- used by `goad-dc-base` and `goad-dc-base-2016`
-- `mssql_base.yml` -- used by `goad-mssql-base`
-- `member_base.yml` -- used by `goad-member-base-2016`
+- `dc_base.yml` -- used by `goad-dc-base`, `goad-dc-base-2016`, and `goad-dc-base-2025`
+- `mssql_base.yml` -- used by `goad-mssql-base`, `goad-mssql-base-2016`, and `goad-mssql-base-2025`
 
 ## Using Built AMIs
 
