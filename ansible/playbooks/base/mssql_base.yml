@@ -1,13 +1,4 @@
 ---
-# Base AMI playbook for GOAD MSSQL servers
-# This provisions a Windows Server base image with:
-# - PowerShell DSC modules
-# - IIS web server
-# - SQL Server Express 2019
-# - RDP enabled
-# - Windows Updates applied
-# - Cleanup for AMI creation
-
 - name: Provision GOAD MSSQL Server Base Image
   hosts: all
   gather_facts: true
@@ -146,7 +137,7 @@
           FEATURES=SQLENGINE
           INSTANCENAME="{{ sql_instance_name }}"
           SQLSVCACCOUNT="NT AUTHORITY\NETWORK SERVICE"
-          SQLSYSADMINACCOUNTS="BUILTIN\Administrators"
+          SQLSYSADMINACCOUNTS="BUILTIN\Administrators" "NT AUTHORITY\NETWORK SERVICE"
           AGTSVCACCOUNT="NT AUTHORITY\NETWORK SERVICE"
           TCPENABLED="1"
           NPENABLED="1"
@@ -256,14 +247,11 @@
       ansible.windows.win_powershell:
         script: |
           $ProgressPreference = 'SilentlyContinue'
-          Write-Host "Cleaning up for AMI creation..."
 
-          # Clear Windows Update download cache
           Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue
           Remove-Item -Path "C:\Windows\SoftwareDistribution\Download\*" -Recurse -Force -ErrorAction SilentlyContinue
           Start-Service -Name wuauserv
 
-          # Clear temp files
           Remove-Item -Path "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
           Remove-Item -Path "C:\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
 
@@ -272,10 +260,7 @@
           Remove-Item -Path "C:\setup\mssql\media\*" -Recurse -Force -ErrorAction SilentlyContinue
           Remove-Item -Path "C:\setup\mssql\extraction\*" -Recurse -Force -ErrorAction SilentlyContinue
 
-          # Clear event logs
           wevtutil cl Application
           wevtutil cl Security
           wevtutil cl System
-
-          Write-Host "Cleanup complete"
       register: cleanup_result

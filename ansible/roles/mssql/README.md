@@ -19,8 +19,8 @@ Install and configure Microsoft SQL Server Express
 | `sql_version` | str | `MSSQL_2019` | No description |
 | `download_url_2019` | str | `https://download.microsoft.com/download/7/f/8/7f8a9c43-8c8a-4f7c-9f92-83c18d96b681/SQL2019-SSEI-Expr.exe` | No description |
 | `download_url_2022` | str | `https://download.microsoft.com/download/5/1/4/5145fe04-4d30-4b85-b0d1-39533663a2f1/SQL2022-SSEI-Expr.exe` | No description |
-| `connection_type_2019` | str | `-E` | No description |
-| `connection_type_2022` | str | `-S 127.0.0.1,1433` | No description |
+| `connection_type_2019` | str | `-b -E -S localhost\SQLEXPRESS` | No description |
+| `connection_type_2022` | str | `-b -S 127.0.0.1,1433` | No description |
 
 ## Tasks
 

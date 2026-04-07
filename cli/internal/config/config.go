@@ -67,6 +67,11 @@ func Init() error {
 			return fmt.Errorf("resolving home directory: %w", err)
 		}
 		viper.AddConfigPath(filepath.Join(home, ".config", "dreadgoad"))
+		// Search project root (walk up from cwd looking for ansible/ dir)
+		// so the config is found regardless of which subdirectory we run from.
+		if root, err := findProjectRoot(); err == nil {
+			viper.AddConfigPath(root)
+		}
 		viper.AddConfigPath(".")
 		viper.SetConfigName("dreadgoad")
 		viper.SetConfigType("yaml")

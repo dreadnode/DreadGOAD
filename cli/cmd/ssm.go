@@ -37,6 +37,7 @@ var ssmCleanupCmd = &cobra.Command{
 var ssmConnectCmd = &cobra.Command{
 	Use:   "connect <host>",
 	Short: "Start interactive SSM session to a host",
+	Long:  `Opens an interactive SSM session. Type "exit" to disconnect. Ctrl+C interrupts the running remote command without closing the session.`,
 	Args:  cobra.ExactArgs(1),
 	RunE:  runSSMConnect,
 }
