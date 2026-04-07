@@ -22,6 +22,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+var envVarPattern = regexp.MustCompile(`\$\{([^}]+)\}`)
+
 var amiCmd = &cobra.Command{
 	Use:   "ami",
 	Short: "AMI image management",
@@ -252,7 +254,7 @@ func buildSingleAMI(ctx context.Context, cfg *config.Config, templatePath string
 		bar.Fail()
 		return nil, fmt.Errorf("create AMI builder for %s: %w", tmplName, err)
 	}
-	defer imgBuilder.Close()
+	defer func() { _ = imgBuilder.Close() }()
 
 	result, err := imgBuilder.Build(ctx, *buildCfg)
 	if err != nil {
@@ -463,11 +465,12 @@ func loadWarpgateTemplate(path, projectRoot string) (*builder.Config, error) {
 	}
 
 	if _, ok := os.LookupEnv("PROVISION_REPO_PATH"); !ok && projectRoot != "" {
-		os.Setenv("PROVISION_REPO_PATH", projectRoot)
+		if err := os.Setenv("PROVISION_REPO_PATH", projectRoot); err != nil {
+			return nil, fmt.Errorf("set PROVISION_REPO_PATH: %w", err)
+		}
 	}
 
-	varPattern := regexp.MustCompile(`\$\{([^}]+)\}`)
-	content = varPattern.ReplaceAllStringFunc(content, func(match string) string {
+	content = envVarPattern.ReplaceAllStringFunc(content, func(match string) string {
 		varName := match[2 : len(match)-1]
 		if val, ok := os.LookupEnv(varName); ok {
 			return val
@@ -487,9 +490,9 @@ func printBuildSummary(results []amiBuildResult) {
 	for _, r := range results {
 		name := filepath.Base(filepath.Dir(r.template))
 		if r.err != nil {
-			color.New(color.FgRed).Fprintf(os.Stderr, "  x %-25s FAILED: %s\n", name, r.err)
+			_, _ = color.New(color.FgRed).Fprintf(os.Stderr, "  x %-25s FAILED: %s\n", name, r.err)
 		} else {
-			color.New(color.FgGreen).Fprintf(os.Stderr, "  + %-25s %s (%s)\n", name, r.amiID, r.duration)
+			_, _ = color.New(color.FgGreen).Fprintf(os.Stderr, "  + %-25s %s (%s)\n", name, r.amiID, r.duration)
 		}
 	}
 }
