@@ -102,6 +102,7 @@ func (v *Validator) RunQuickChecks(ctx context.Context) {
 	v.checkADCS(ctx)
 	v.checkDomainTrusts(ctx)
 	v.checkServices(ctx)
+	v.checkScheduledTasks(ctx)
 }
 
 // RunAllChecks executes all vulnerability validation checks.
@@ -116,7 +117,16 @@ func (v *Validator) RunAllChecks(ctx context.Context) {
 	v.checkADCS(ctx)
 	v.checkACLPermissions(ctx)
 	v.checkDomainTrusts(ctx)
+	v.checkSIDFiltering(ctx)
 	v.checkServices(ctx)
+	v.checkScheduledTasks(ctx)
+	v.checkLLMNR(ctx)
+	v.checkGPOAbuse(ctx)
+	v.checkGMSA(ctx)
+	v.checkLAPS(ctx)
+	v.checkSMBShares(ctx)
+	v.checkFirewallDisabled(ctx)
+	v.checkPasswordPolicy(ctx)
 }
 
 // GetReport returns the current report.

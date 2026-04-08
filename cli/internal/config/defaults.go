@@ -90,9 +90,17 @@ func setDefaults() {
 			"variant_source": "ad/GOAD",
 			"variant_target": "ad/GOAD-variant-1",
 			"variant_name":   "variant-1",
+			"vpc_cidr":       "10.0.0.0/16",
 		},
 		"staging": map[string]interface{}{
-			"variant": false,
+			"variant":  false,
+			"vpc_cidr": "10.1.0.0/16",
+		},
+		"prod": map[string]interface{}{
+			"vpc_cidr": "10.2.0.0/16",
+		},
+		"test": map[string]interface{}{
+			"vpc_cidr": "10.8.0.0/16",
 		},
 	})
 }

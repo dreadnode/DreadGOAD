@@ -17,7 +17,9 @@ var validateCmd = &cobra.Command{
 	Long: `Validates that all GOAD vulnerabilities are properly configured by
 running checks via SSM PowerShell commands against live instances.
 
-Checks credentials, Kerberos, SMB, delegation, MSSQL, ADCS, ACLs, trusts, and services.`,
+Checks credentials, Kerberos, SMB, delegation, MSSQL (linked servers, impersonation,
+xp_cmdshell, sysadmins), ADCS (templates), ACLs, trusts, SID filtering, scheduled tasks,
+LLMNR/NBT-NS, GPO abuse, gMSA, LAPS, and services.`,
 	Example: `  dreadgoad validate
   dreadgoad validate --env staging --verbose
   dreadgoad validate --format json --output /tmp/results.json

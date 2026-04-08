@@ -23,16 +23,14 @@
         - winrm-elevated
 
 - Provisioning
-    - Python3 >=3.8
-    - goad requirements
-    - ansible-galaxy goad requirements
+    - Ansible (installed via the DreadGOAD CLI prerequisites)
+    - ansible-galaxy requirements (`ansible-galaxy collection install -r ansible/requirements.yml`)
 
 
 ## check dependencies
 
 ```bash
-./goad.sh -p vmware
-GOAD/vmware/local/192.168.56.X > check
+dreadgoad doctor
 ```
 
 ![vmware_check.png](./../img/vmware_check.png)
@@ -45,19 +43,10 @@ GOAD/vmware/local/192.168.56.X > check
 
 ## Install
 
-- To install run the goad script and launch install or use the goad script arguments
+- Once Vagrant has created the VMs, provision the lab using the DreadGOAD CLI:
 
 ```bash
-./goad.sh -p vmware
-GOAD/vmware/local/192.168.56.X > set_lab <lab>  # here choose the lab you want (GOAD/GOAD-Light/NHA/SCCM)
-GOAD/vmware/local/192.168.56.X > set_ip_range <ip_range>  # here choose the  ip range you want to use ex: 192.168.56 (only the first three digits)
-GOAD/vmware/local/192.168.56.X > install
+dreadgoad provision
 ```
 
 ![vmware_install](./../img/vmware_install.png)
-
-- or all in command line with arguments
-
-```bash
-./goad.sh -t install -p vmware -l <lab> -ip <ip_range_to_use>
-```

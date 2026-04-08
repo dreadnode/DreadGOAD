@@ -228,7 +228,11 @@ func generateInstanceMapping(ctx context.Context, outputPath string) error {
 	}
 
 	if outputPath == "" {
-		outputPath = filepath.Join(os.TempDir(), fmt.Sprintf("aws_instance_mapping_%s.json", cfg.Env))
+		// Use /tmp explicitly to match the hardcoded path in
+		// ansible/roles/network_discovery/tasks/aws_mapping.yml.
+		// os.TempDir() on macOS returns a per-user dir under /var/folders/
+		// which would not match Ansible's expectation.
+		outputPath = filepath.Join("/tmp", fmt.Sprintf("aws_instance_mapping_%s.json", cfg.Env))
 	}
 
 	client, err := daws.NewClient(ctx, parsed.Region())

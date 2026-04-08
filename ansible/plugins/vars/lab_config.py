@@ -98,21 +98,28 @@ class VarsModule(BaseVarsPlugin):
             else:
                 return {}
 
-            # Resolve from the inventory source path (project root)
-            # path is the inventory directory passed by Ansible
-            if path:
-                base = path if os.path.isdir(path) else os.path.dirname(path)
+            # Resolve from the project root.  Use the inventory source
+            # path (passed by Ansible) since the plugin may be installed
+            # in ~/.ansible/collections rather than the project tree.
+            # The inventory file sits at the project root, so its parent
+            # directory IS the project root.
+            if os.path.isfile(path):
+                project_root = os.path.dirname(os.path.abspath(path))
+            elif os.path.isdir(path):
+                project_root = os.path.abspath(path)
             else:
-                base = os.getcwd()
+                # Fallback: try __file__-based resolution (works when
+                # the plugin lives in the project's ansible/plugins/vars/)
+                plugin_dir = os.path.dirname(os.path.abspath(__file__))
+                project_root = os.path.normpath(
+                    os.path.join(plugin_dir, "..", "..", "..", "..")
+                )
 
-            # The playbook_dir points to ansible/playbooks/, so ../../ goes
-            # to the project root.  Since we're resolving from the project
-            # root (where the inventory lives), we need to adjust.
-            # "../../ad/GOAD/data" from ansible/playbooks/ == "ad/GOAD/data" from root
-            # Normalise by stripping leading "../" segments
+            # Strip leading "../" segments from the tail since we're
+            # resolving from the project root directly.
             while tail.startswith("../"):
                 tail = tail[3:]
-            data_path = os.path.join(base, tail)
+            data_path = os.path.join(project_root, tail)
 
         config_file = os.path.join(str(data_path), f"{env}-config.json")
 

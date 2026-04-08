@@ -94,7 +94,7 @@ func ValidateEnvironment(basePath, env, region string) *ValidationResult {
 		if content, err := os.ReadFile(hclPath); err == nil {
 			if strings.Contains(string(content), "CHANGE_ME") {
 				result.Warnings = append(result.Warnings,
-					fmt.Sprintf("goad/%s/terragrunt.hcl has CHANGE_ME placeholder(s) - update AMI IDs and passwords", host))
+					fmt.Sprintf("goad/%s/terragrunt.hcl has CHANGE_ME placeholder(s)", host))
 			}
 		}
 	}

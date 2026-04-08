@@ -30,7 +30,7 @@ You need to configure AWS cli. Use a key with enough privileges on the tenant.
 aws configure
 ```
 
-- Create an aws access key and secret for goad usage
+- Create an AWS access key and secret for DreadGOAD usage
     - Go to IAM > User > your user > Security credentials
     - Click the Create access key button
     - Create a group "[goad]" in credentials file ~/.aws/credentials
@@ -46,16 +46,16 @@ aws configure
     !!! warning "credentials in plain text"
         Storing credentials in plain text is always a bad idea, but aws cli work like that be sure to restrain the right access to this file
 
-## Goad configuration
+## DreadGOAD configuration
 
-- The goad configuration file as some options for aws:
+- Initialize the configuration file with `dreadgoad config init`
+- AWS-specific settings are configured in `dreadgoad.yaml`:
 
-```ini
-# ~/.goad/goad.ini
-...
-[aws]
-aws_region = eu-west-3
-aws_zone = eu-west-3c
+```yaml
+# dreadgoad.yaml
+aws:
+  region: eu-west-3
+  zone: eu-west-3c
 ```
 
 - If you want to use a different region and zone you can modify it.
@@ -65,26 +65,24 @@ aws_zone = eu-west-3c
 
 ```bash
 # check prerequisites
-./goad.sh -t check -l GOAD -p aws
-# Install
-./goad.sh -t install -l GOAD -p aws
-```
-
-or from the interactive console :
-
-```bash
-GOAD/aws/remote/192.168.56.X > install
+dreadgoad doctor
+# Create cloud infrastructure
+dreadgoad infra apply
+# Sync inventory
+dreadgoad inventory sync
+# Provision the lab
+dreadgoad provision
 ```
 
 ## start/stop/status
 
-- You can see the status of the lab with the command `status`
-- You can also start and stop the lab with the command `start` and `stop`
+- You can see the status of the lab with `dreadgoad lab status`
+- You can also start and stop the lab with `dreadgoad lab start` and `dreadgoad lab stop`
 
 
 ## VMs ami
 
-- The vm used for goad are defined in the lab terraform file : `ad/<lab>/providers/aws/windows.tf`
+- The VMs used for DreadGOAD are defined in the lab terraform file: `ad/<lab>/providers/aws/windows.tf`
 - This file is containing information about each vm in use
 
 ```hcl
@@ -101,28 +99,22 @@ GOAD/aws/remote/192.168.56.X > install
 
 ## How it works ?
 
-- On the installation goad script will create a folder into `goad/workspaces/<instance_folder>`
-- This folder will contain the terraform scripts and some of the ansible inventories
-- Goad will create the cloud infrastructure with terraform.
-- The lab is created (not provisioned yet) and a "jumpbox" vm is also created
+- The DreadGOAD CLI uses Terragrunt/Terraform to create the cloud infrastructure (`dreadgoad infra apply`)
+- The lab is created (not provisioned yet) and a "jumpbox" VM is also created
 - Next the needed sources will be pushed to the jumpbox using `ssh` and `rsync`
-- The jumpbox ssh_key is stored on `goad/workspaces/<instance_folder>/ssh_keys`
-- The jumpbox is prepared to run ansible
-- The provisioning is launch with ssh remotely on the jumpbox
+- The jumpbox is prepared to run Ansible
+- The provisioning is launched with SSH remotely on the jumpbox
 
 ## Install step by step
 
 ```bash
-GOAD/aws/remote/192.168.56.X > create_empty # create empty instance
-GOAD/aws/remote/192.168.56.X > load <instance_id>
-GOAD/aws/remote/192.168.56.X (<instance_id>) > provide # play terraform
-GOAD/aws/remote/192.168.56.X (<instance_id>) > sync_source_jumpbox # sync jumpbox source
-GOAD/aws/remote/192.168.56.X (<instance_id>) > prepare_jumpbox # install dependencies on jumpbox
-GOAD/aws/remote/192.168.56.X (<instance_id>) > provision_lab # run ansible
+dreadgoad doctor                # check prerequisites
+dreadgoad infra apply           # create cloud infrastructure with Terragrunt/Terraform
+dreadgoad inventory sync        # sync inventory and sources to jumpbox
+dreadgoad provision             # run Ansible provisioning via jumpbox
 ```
 
 ## Tips
 
-- To connect to the jumpbox VM you can use `ssh_jumpbox` in the goad interactive console
-- To setup a socks proxy you can use `ssh_jumpbox_proxy <proxy_port>` in the goad interactive console
-- All aws elements are tagged with `<lab_name>-<lab_instance_id>`
+- To connect to a host via SSM you can use `dreadgoad ssm connect <host>`
+- All AWS elements are tagged with `<lab_name>-<lab_instance_id>`

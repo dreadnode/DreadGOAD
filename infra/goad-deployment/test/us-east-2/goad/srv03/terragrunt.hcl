@@ -1,6 +1,6 @@
 # =============================================================================
 # SRV03 - Member Server in Essos Domain
-# AMI: Built from warpgate-templates/goad-member-base-2016 (Windows Server 2016)
+# AMI: Built from warpgate-templates/goad-mssql-base-2016 (Windows Server 2016)
 # =============================================================================
 
 include "host" {
@@ -70,7 +70,7 @@ inputs = {
   additional_windows_ami_filters = [
     {
       name   = "tag:Name"
-      values = ["goad-member-base-2016"]
+      values = ["goad-mssql-base-2016"]
     }
   ]
 
