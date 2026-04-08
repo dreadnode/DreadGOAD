@@ -127,9 +127,12 @@ func runAMIBuild(cmd *cobra.Command, args []string) error {
 
 	verbose := viper.GetBool("debug")
 
-	// For `ami build`, an empty region is OK: each warpgate template has its
-	// own embedded region in its targets, and we only override it if the
-	// caller explicitly provided one. Local --region flag wins over cfg.Region.
+	// Region precedence for `ami build`: --region flag > cfg.Region (from
+	// dreadgoad.yaml or DREADGOAD_REGION) > the template's own embedded region.
+	// The empty fallback (instead of a hardcoded default) is what allows the
+	// template's embedded region to win when neither --region nor cfg.Region
+	// is set; if either is set, it overrides the template even though the
+	// user didn't ask for this specific build.
 	bf := buildFlags{
 		region:          getFlagString(cmd, "region", cfg.Region, ""),
 		instanceType:    getFlagStringOpt(cmd, "instance-type"),
