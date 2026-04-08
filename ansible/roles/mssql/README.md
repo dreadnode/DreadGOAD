@@ -36,6 +36,8 @@ Install and configure Microsoft SQL Server Express
 - **Enable sa account** (ansible.windows.win_shell)
 - **Log sa account errors** (ansible.builtin.debug) - Conditional
 - **Enable MSSQL authentication and windows authent** (ansible.windows.win_shell)
+- **Enable xp_cmdshell** (ansible.windows.win_shell)
+- **Log xp_cmdshell errors** (ansible.builtin.debug) - Conditional
 - **Revoke ssm-user SQL sysadmin after config** (ansible.windows.win_shell)
 - **Restart service MSSQL** (ansible.windows.win_service) - Conditional
 

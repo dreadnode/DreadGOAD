@@ -172,6 +172,32 @@
   become_user: SYSTEM
   register: auth_mode_result
 
+- name: Enable xp_cmdshell
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = "Continue"
+    $errors = @()
+
+    $result1 = SqlCmd {{ connection_type }} -Q "EXEC sp_configure 'show advanced options', 1; RECONFIGURE" 2>&1
+    if ($LASTEXITCODE -ne 0) { $errors += "show advanced options failed: $result1" }
+
+    $result2 = SqlCmd {{ connection_type }} -Q "EXEC sp_configure 'xp_cmdshell', 1; RECONFIGURE" 2>&1
+    if ($LASTEXITCODE -ne 0) { $errors += "xp_cmdshell enable failed: $result2" }
+
+    if ($errors.Count -gt 0) {
+      Write-Error ($errors -join "`n")
+      exit 1
+    }
+    Write-Output "Successfully enabled xp_cmdshell"
+  become: true
+  become_method: ansible.builtin.runas
+  become_user: SYSTEM
+  register: xp_cmdshell_result
+
+- name: Log xp_cmdshell errors
+  ansible.builtin.debug:
+    msg: "WARNING: xp_cmdshell config had stderr: {{ xp_cmdshell_result.stderr }}"
+  when: xp_cmdshell_result.stderr is defined and xp_cmdshell_result.stderr | length > 0
+
 - name: Revoke ssm-user SQL sysadmin after config
   ansible.windows.win_shell: |
     $ErrorActionPreference = "Continue"

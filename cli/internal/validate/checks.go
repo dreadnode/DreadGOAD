@@ -306,7 +306,7 @@ func (v *Validator) checkMSSQL(ctx context.Context) {
 		if strings.TrimSpace(output) == "1" {
 			v.addResult("PASS", "MSSQL", fmt.Sprintf("xp_cmdshell enabled on %s", hostLabel), "")
 		} else {
-			v.addResult("WARN", "MSSQL", fmt.Sprintf("xp_cmdshell NOT enabled on %s", hostLabel), "")
+			v.addResult("FAIL", "MSSQL", fmt.Sprintf("xp_cmdshell NOT enabled on %s", hostLabel), "")
 		}
 	}
 }
