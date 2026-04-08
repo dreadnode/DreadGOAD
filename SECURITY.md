@@ -32,7 +32,7 @@ Examples of issues we consider in scope:
 
 - Command injection, path traversal, or unsafe deserialization in the CLI or
   Python tooling
-- Privilege escalation in deployment scripts that runs against the operator's
+- Privilege escalation in deployment scripts that run against the operator's
   workstation rather than the lab
 - Exposure of operator credentials (AWS keys, Azure tokens, etc.) by the
   tooling — for example, leaking them into world-readable logs or remote state
