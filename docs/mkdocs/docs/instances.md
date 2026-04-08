@@ -3,7 +3,7 @@
 When you create a lab, goad will create an instance folder.
 All the instances are stored in the workspace/ folder inside goad.
 
-```
+```text
 workspace/
     .
     ├── 6caf1a-goad-light-azure              # Instance ID
@@ -34,7 +34,7 @@ workspace/
 ## instance creation
 
 - On instance folder creation (when you run `install` or `create_empty`), the provider files inside the template/<provider> folder are copied into the instance.
-- These files are merged with the datas inside `ad/<lab>/providers/<provider>/` folder and the datas inside `extensions/<extension>/providers/<provider>/`
+- These files are merged with the data inside `ad/<lab>/providers/<provider>/` folder and the data inside `extensions/<extension>/providers/<provider>/`
 - The merged result is present in the `workspace/<instance_id>/provider/` folder and contain all the recipes to create the infrastructure
 
 - inventories files are also copied from `ad/<lab>/provider/<provider>/inventory` and `extensions/<extension>/inventory` (see [provisioning](provisioning.md) for more information in provisioning)

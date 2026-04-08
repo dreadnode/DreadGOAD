@@ -1,0 +1,24 @@
+---
+# DC Audit SACL Configuration
+# Enables auditing for DCSync and other AD attack detection
+
+# GUIDs for replication rights (DCSync detection)
+dc_audit_sacl_replication_guids:
+  - name: "DS-Replication-Get-Changes"
+    guid: "1131f6aa-9c07-11d1-f79f-00c04fc2dcd2"
+  - name: "DS-Replication-Get-Changes-All"
+    guid: "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2"
+  - name: "DS-Replication-Get-Changes-In-Filtered-Set"
+    guid: "89e95b76-444d-4c62-991a-0facbeda640c"
+
+# Principal to audit (Everyone by default for comprehensive coverage)
+dc_audit_sacl_principal: "S-1-1-0"  # Everyone SID
+
+# Audit flags
+dc_audit_sacl_flags: "Success"  # Success, Failure, or both
+
+# Also ensure auditpol is configured
+dc_audit_sacl_ensure_auditpol: true
+dc_audit_sacl_subcategories:
+  - "Directory Service Access"
+  - "Directory Service Changes"

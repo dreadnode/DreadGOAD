@@ -1,0 +1,40 @@
+---
+version: 2
+
+snapshot:
+  version_template: "{{ .Version }}-next"
+
+builds:
+  - id: "dreadgoad"
+
+    binary: dreadgoad
+
+    dir: ./cli
+
+    main: .
+
+    ldflags:
+      - -s -w
+      - -X main.version={{.Summary}}
+      - -X main.commit={{.ShortCommit}}
+      - -X main.date={{.Date}}
+
+    goos:
+      - linux
+      - darwin
+
+    goarch:
+      - amd64
+      - arm
+      - arm64
+
+    goarm:
+      - "6"
+      - "7"
+
+    goamd64:
+      - v2
+      - v3
+
+    hooks:
+      pre: go mod tidy

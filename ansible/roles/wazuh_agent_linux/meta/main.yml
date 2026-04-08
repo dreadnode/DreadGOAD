@@ -1,0 +1,8 @@
+---
+galaxy_info:
+  role_name: wazuh_agent_linux
+  author: Dreadnode
+  description: Install Wazuh agent on Linux hosts
+  min_ansible_version: "2.15"
+  license: MIT
+dependencies: []

@@ -8,37 +8,25 @@
 
 - Flags are disposed on each machine, try to grab all. Be careful all the machines are up to date with defender enabled.
 - Some exploits needs to modify path so this lab is not very multi-players compliant (unless you do it as a team ;))
-- Obviously do not cheat by looking at the passwords and flags in the recipe files, the lab must start without user to full compromise. 
+- Obviously do not cheat by looking at the passwords and flags in the recipe files, the lab must start without user to full compromise.
 
 - Install :
 
 ```bash
-./goad.sh -t install -l NHA -p virtualbox
-```
-
-or
-
-```bash
-./goad.sh
-> set_lab NHA
-> set_provider <your_provider>
-> set_iprange 192.168.56  # select the one you want and you can skip this with ludus
-> install
+dreadgoad provision
 ```
 
 - Once install finish disable vagrant user to avoid using it :
 
 ```bash
-./goad.sh
-> load <instance_id>
-> disable_vagrant
+dreadgoad provision --plays disable_vagrant.yml
 ```
 
-- Now do a reboot of all the machine to avoid unintended secrets stored : 
+- Now do a reboot of all the machine to avoid unintended secrets stored :
 
 ```bash
-> stop
-> start
+dreadgoad lab stop
+dreadgoad lab start
 ```
 
 And you are ready to play ! :)
@@ -46,8 +34,7 @@ And you are ready to play ! :)
 - If you need to re-enable vagrant
 
 ```bash
-> load <instance_id>
-> enable_vagrant
+dreadgoad provision --plays enable_vagrant.yml
 ```
 
 - If you want to create a write up of the chall, no problem, have fun. Please ping me on X (@M4yFly) or Discord, i will be happy to read it :)

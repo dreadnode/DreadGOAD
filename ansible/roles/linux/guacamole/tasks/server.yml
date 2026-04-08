@@ -1,6 +1,6 @@
 - name: Install Guacamole dependencies
   ansible.builtin.apt:
-    name: 
+    name:
       - freerdp2-x11
       - freerdp2-dev
       - build-essential
@@ -77,4 +77,3 @@
 - name: ldconfig
   ansible.builtin.command: ldconfig
   when: guacamole_make_install['changed']
-

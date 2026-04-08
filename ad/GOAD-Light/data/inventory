@@ -34,7 +34,7 @@ dc01
 dc02
 srv02
 
-; domain controler (mandatory)
+; domain controller (mandatory)
 ; usage : ad-acl.yml, ad-data.yml, ad-relations.yml, laps.yml
 [dc]
 dc01
@@ -49,12 +49,12 @@ srv02
 ; usage : ad-servers.yml, laps.yml
 [workstation]
 
-; parent domain controler (mandatory)
+; parent domain controller (mandatory)
 ; usage : ad-servers.yml
 [parent_dc]
 dc01
 
-; child domain controler (need a fqdn child_name.parent_name)
+; child domain controller (need a fqdn child_name.parent_name)
 ; usage : ad-servers.yml
 [child_dc]
 dc02
@@ -88,7 +88,7 @@ srv02
 [mssql_ssms]
 srv02
 
-; install webdav 
+; install webdav
 [webdav]
 srv02
 

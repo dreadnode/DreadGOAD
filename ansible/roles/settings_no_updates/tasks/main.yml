@@ -1,0 +1,22 @@
+---
+- name: Disable windows update
+  ansible.windows.win_shell: |
+    # set the Windows Update service to "disabled"
+    sc.exe config wuauserv start=disabled
+
+    # stop the service, if it is running
+    $ServiceName = 'wuauserv'
+    $arrService = Get-Service -Name $ServiceName
+    if ($arrService.Status -ne 'Stopped')
+    {
+        Stop-Service $ServiceName
+    }
+
+    # Disable autoupdate by creating registry keys
+    New-Item -Path 'HKLM:\Software\Policies\Microsoft\Windows' -Name 'WindowsUpdate' -Force
+    New-Item -Path 'HKLM:\Software\Policies\Microsoft\Windows\WindowsUpdate' -Name 'AU' -Force
+    New-ItemProperty 'HKLM:\Software\Policies\Microsoft\Windows\WindowsUpdate\AU' -name 'NoAutoUpdate' -value '1' -propertyType "DWord" -force
+  args:
+    executable: powershell.exe
+  register: disable_windows_update_result
+  failed_when: false

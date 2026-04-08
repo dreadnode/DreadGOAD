@@ -1,0 +1,88 @@
+---
+# Area
+area/github:
+  - changed-files:
+      - any-glob-to-any-file: ".github/**/*"
+
+area/pre-commit:
+  - changed-files:
+      - any-glob-to-any-file: ".pre-commit-config.yaml"
+      - any-glob-to-any-file: ".hooks/**/*"
+
+area/license:
+  - changed-files:
+      - any-glob-to-any-file: "LICENSE"
+
+area/readme:
+  - changed-files:
+      - any-glob-to-any-file: "README.md"
+
+area/roles:
+  - changed-files:
+      - any-glob-to-any-file: "ansible/roles/**/*"
+
+area/playbooks:
+  - changed-files:
+      - any-glob-to-any-file: "ansible/playbooks/**/*"
+
+area/taskfiles:
+  - changed-files:
+      - any-glob-to-any-file: "Taskfile.yaml"
+
+area/terraform:
+  - changed-files:
+      - any-glob-to-any-file: "ad/*/providers/terraform/**/*"
+
+area/packer:
+  - changed-files:
+      - any-glob-to-any-file: "packer/**/*"
+
+area/docker:
+  - changed-files:
+      - any-glob-to-any-file: "Dockerfile"
+
+area/docs:
+  - changed-files:
+      - any-glob-to-any-file: "docs/**/*"
+
+area/scripts:
+  - changed-files:
+      - any-glob-to-any-file: "scripts/**/*"
+
+area/extensions:
+  - changed-files:
+      - any-glob-to-any-file: "ansible/playbooks/templates/extensions/**/*"
+      - any-glob-to-any-file: "ansible/playbooks/files/extensions/**/*"
+      - any-glob-to-any-file: "providers/**/*"
+
+area/python:
+  - changed-files:
+      - any-glob-to-any-file: "goad/**/*"
+      - any-glob-to-any-file: "goad.py"
+      - any-glob-to-any-file: "pyproject.toml"
+      - any-glob-to-any-file: "poetry.lock"
+
+area/ad-labs:
+  - changed-files:
+      - any-glob-to-any-file: "ad/**/*"
+
+# Lab variants
+lab/GOAD:
+  - changed-files:
+      - any-glob-to-any-file: "ad/GOAD/**/*"
+
+lab/GOAD-Light:
+  - changed-files:
+      - any-glob-to-any-file: "ad/GOAD-Light/**/*"
+
+lab/GOAD-Mini:
+  - changed-files:
+      - any-glob-to-any-file: "ad/GOAD-Mini/**/*"
+
+lab/NHA:
+  - changed-files:
+      - any-glob-to-any-file: "ad/NHA/**/*"
+
+lab/SCCM:
+  - changed-files:
+      - any-glob-to-any-file: "ad/SCCM/**/*"

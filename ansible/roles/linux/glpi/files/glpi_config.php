@@ -34,7 +34,7 @@ if ($stmt->execute()) {
     if ($stmt->affected_rows > 0) {
         echo "Configuration updated successfully for config '{$config}'\n";
     } else {
-        echo "No configuration udpated.\n";
+        echo "No configuration updated.\n";
     }
 } else {
     echo "SQL error: " . $stmt->error . "\n";

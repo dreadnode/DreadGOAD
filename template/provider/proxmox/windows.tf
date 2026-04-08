@@ -80,7 +80,7 @@ resource "proxmox_virtual_environment_vm" "bgp" {
 # # "Telmate/proxmox" "3.0.1-rc1" template (change clone value to template name to use it and change the provider in main)
 # resource "proxmox_vm_qemu" "telmate-proxmox8" {
 #     for_each = var.vm_config
-# 
+#
 #     name = each.value.name
 #     desc = each.value.desc
 #     qemu_os = "win10"
@@ -115,13 +115,13 @@ resource "proxmox_virtual_environment_vm" "bgp" {
 #     nameserver = each.value.dns
 #     ipconfig0 = "ip=${each.value.ip},gw=${each.value.gateway}"
 # }
-# 
+#
 
 
 # # old telmate template (change clone value to template name to use it) and change the provider in main
 # resource "proxmox_vm_qemu" "telmate-proxmox7" {
 #     for_each = var.vm_config
-# 
+#
 #     name = each.value.name
 #     desc = each.value.desc
 #     qemu_os = "win10"
@@ -133,13 +133,13 @@ resource "proxmox_virtual_environment_vm" "bgp" {
 #     agent = 1
 #     clone = lookup(var.vm_template_name, each.value.clone, "")
 #     full_clone = var.pm_full_clone
-# 
+#
 #     network {
 #       bridge    = var.network_bridge
 #       model     = var.network_model
 #       tag       = var.network_vlan
 #     }
-#     
+#
 #     lifecycle {
 #       ignore_changes = [
 #         disk,

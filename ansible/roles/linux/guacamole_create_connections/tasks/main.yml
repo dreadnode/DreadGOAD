@@ -1,4 +1,4 @@
-- name: Create Local admin connections group 
+- name: Create Local admin connections group
   scicore.guacamole.guacamole_connections_group:
     base_url: "{{guac_url}}"
     auth_username: "{{guacadmin_username}}"
@@ -54,13 +54,13 @@
   with_dict: "{{hosts}}"
 
 # # VNC
-# - name: Create VNC connections group 
+# - name: Create VNC connections group
 #   scicore.guacamole.guacamole_connections_group:
 #     base_url: "{{guac_url}}"
 #     auth_username: "{{guacadmin_username}}"
 #     auth_password: "{{guacadmin_password}}"
 #     group_name: "{{domain_name}}-VNC"
-# 
+#
 # - name: Add VNC connection
 #   scicore.guacamole.guacamole_connection:
 #     base_url: "{{guac_url}}"
@@ -75,7 +75,7 @@
 #     group_name: "{{domain_name}}-VNC"
 #   when: item.value.os == "windows"
 #   with_dict: "{{hosts}}"
-# 
+#
 # - name: Add VNC  to list of connections
 #   set_fact:
 #     "connection_list": "{{ connection_list | default([]) + ['VNC-' + item.key + '-' + item.value.hostname ]}}"

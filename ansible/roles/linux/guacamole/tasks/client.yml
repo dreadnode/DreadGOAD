@@ -37,4 +37,3 @@
     - kill guacd
     - restart guacd
   when: not guacamole_client_deployed.stat.exists
-

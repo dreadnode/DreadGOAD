@@ -1,0 +1,49 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/cowdogmoo/warpgate/main/schema/warpgate-template.json
+metadata:
+  name: goad-dc-base
+  version: 1.0.0
+  description: Windows Server 2019 with updates and AD DS role pre-installed for GOAD domain controllers
+  author: Dreadnode <info@dreadnode.io>
+  license: MIT
+  tags:
+    - goad
+    - windows
+    - domain-controller
+    - active-directory
+  requires:
+    warpgate: ">=1.0.0"
+
+name: goad-dc-base
+version: latest
+
+base:
+  image: "arn:aws:ssm:us-west-1::parameter/aws/service/ami-windows-latest/Windows_Server-2019-English-Full-Base"
+
+variables:
+  aws_region: us-west-1
+  instance_type: t3.medium
+  ami_owner: "801119661308"
+  ami_name_filter: "Windows_Server-2019-English-Full-Base-*"
+
+provisioners:
+  # Provision with Ansible via AWS SSM
+  - type: ansible
+    playbook_path: ${PROVISION_REPO_PATH}/ansible/playbooks/base/dc_base.yml
+    galaxy_file: ${PROVISION_REPO_PATH}/ansible/requirements.yml
+    extra_vars:
+      ansible_connection: aws_ssm
+      ansible_shell_type: powershell
+      ansible_aws_ssm_bucket_name: ""
+      ansible_aws_ssm_region: "${aws_region}"
+targets:
+  - type: ami
+    region: "${aws_region}"
+    instance_type: "${instance_type}"
+    ami_name: "goad-dc-base-{{timestamp}}"
+    volume_size: 100
+    ami_tags:
+      Name: goad-dc-base
+      Lab: GOAD
+      Role: DomainController
+      ManagedBy: warpgate
+      BaseOS: WindowsServer2019

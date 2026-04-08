@@ -10,7 +10,7 @@
 ######################################
 # Generic tools
 ######################################
-- name: Install usefull system tools
+- name: Install useful system tools
   apt: name={{ item }} state=present
   with_items:
     - vim
@@ -29,14 +29,14 @@
 # - name: Set local timezone
 #   copy: content={{ timezone }}
 #         dest=/etc/timezone
-# 
+#
 # - name: Reconfigure tzdata
 #   command: dpkg-reconfigure -f noninteractive tzdata
-# 
+#
 # - name: Install NTP (and update apt cache for the first install)
 #   apt: name=ntp state=present
 #         update_cache=yes
-# 
+#
 # - name: Start the ntp service
 #   service: name=ntp state=started enabled=true
 

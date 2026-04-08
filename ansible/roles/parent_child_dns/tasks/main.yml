@@ -1,46 +1,59 @@
 ---
-#- name: Create A record for child domain in parent domain
-#  community.windows.win_dns_record:
-#    name: "{{lab.hosts[dc].hostname}}.{{item.split('.')[0]}}"
-#    type: "A"
-#    values:
-#      - "{{hostvars[dc].ansible_host}}"
-#    zone: "{{domain}}"
-#  vars:
-#    dc: "{{lab.domains[item].dc}}"
-#  loop: "{{ domains }}"
-#  when: domain == '.'.join(item.split('.')[1:])
-
-
-# set delegation to child domain
-# Add-DnsServerZoneDelegation -Name "sevenkingdoms.local" -ChildZoneName "north" -NameServer "winterfell.north.sevenkingdoms.local" -IPAddress 192.168.10.11 -PassThru -Verbose
-# domain == parent domain
-# item == child domain
-- name: add dns delegation to child domain
+- name: Add dns delegation to child domain
   ansible.windows.win_shell: |
-    Add-DnsServerZoneDelegation -Name "{{parent_domain}}" -ChildZoneName "{{zone}}" -NameServer "{{name_server}}" -IPAddress "{{name_server_ip}}" -PassThru -Verbose
+    Add-DnsServerZoneDelegation -Name "{{ parent_domain }}" -ChildZoneName "{{ zone }}" -NameServer "{{ name_server }}" -IPAddress "{{ name_server_ip }}" -PassThru -Verbose
   vars:
-    parent_domain: "{{domain}}"
-    child_dc: "{{lab.domains[item].dc}}"
-    name_server: "{{lab.hosts[child_dc].hostname}}.{{item}}"
-    name_server_ip: "{{hostvars[child_dc].ansible_host}}"
-    zone: "{{item.split('.')[0]}}"
+    parent_domain: "{{ domain }}"
+    child_dc: "{{ lab.domains[item].dc }}"
+    name_server: "{{ lab.hosts[child_dc].hostname }}.{{ item }}"
+    name_server_ip: >-
+      {{
+        hostvars[child_dc]['dc_ipv4'] |
+        default(dc_hostname_to_ip[child_dc] |
+        default(instance_to_ip[hostvars[child_dc]['ansible_host']] |
+        default('')))
+      }}
+    zone: "{{ item.split('.')[0] }}"
   loop: "{{ domains }}"
-  when: domain == '.'.join(item.split('.')[1:])
+  when:
+    - domain == '.'.join(item.split('.')[1:])
+    - name_server_ip != ''
+  register: dns_delegation_result
+  failed_when:
+    - dns_delegation_result.rc != 0
+    - "'already exists' not in dns_delegation_result.stderr"
 
-
-- name: create conditional forwarder to child domain
-  community.windows.win_dns_zone:
-    name: "{{item}}"
+- name: Create conditional forwarder to child domain
+  ansible.windows.win_dns_zone:
+    name: "{{ item }}"
     type: forwarder
-    replication: "none"
+    replication: "forest"
     dns_servers:
-      - "{{name_server_ip}}"
+      - "{{ name_server_ip }}"
   vars:
-    child_dc: "{{lab.domains[item].dc}}"
-    name_server_ip: "{{hostvars[child_dc].ansible_host}}"
-    zone: "{{item.split('.')[0]}}"
+    child_dc: "{{ lab.domains[item].dc }}"
+    name_server_ip: >-
+      {{
+        hostvars[child_dc]['dc_ipv4'] |
+        default(dc_hostname_to_ip[child_dc] |
+        default(instance_to_ip[hostvars[child_dc]['ansible_host']] |
+        default('')))
+      }}
+    zone: "{{ item.split('.')[0] }}"
   loop: "{{ domains }}"
-  when: domain == '.'.join(item.split('.')[1:])
+  when:
+    - domain == '.'.join(item.split('.')[1:])
+    - name_server_ip != ''
 
-
+- name: Debug IP resolution for child domains
+  ansible.builtin.debug:
+    msg:
+      - "Child domain: {{ item }}"
+      - "Child DC: {{ lab.domains[item].dc }}"
+      - "DC IPv4: {{ hostvars[lab.domains[item].dc]['dc_ipv4'] | default('NOT SET') }}"
+      - "From hostname mapping: {{ dc_hostname_to_ip[lab.domains[item].dc] | default('NOT IN MAPPING') }}"
+      - "From instance mapping: {{ instance_to_ip[hostvars[lab.domains[item].dc]['ansible_host']] | default('NOT IN MAPPING') }}"
+  loop: "{{ domains }}"
+  when:
+    - domain == '.'.join(item.split('.')[1:])
+  tags: debug

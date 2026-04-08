@@ -1,6 +1,6 @@
 - name: install php packages
-  apt: 
-    update_cache: yes 
+  apt:
+    update_cache: yes
     state: latest
     pkg:
       - php

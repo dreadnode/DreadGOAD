@@ -1,0 +1,44 @@
+---
+
+#- name: show variables
+#  hosts: domain
+#  tasks:
+#    - debug:
+#        "var=ansible_interfaces"
+
+- name: Set Network adapter variables
+  hosts: domain
+  tasks:
+    - name: Set domain adapter
+      ansible.builtin.set_fact:
+        domain_adapter: "{{ item.connection_name }}"
+      when: item.ipv4.address == hostvars[dict_key].ansible_host
+      with_items: "{{ ansible_interfaces }}"
+    - name: Set NAT adapter
+      ansible.builtin.set_fact:
+        nat_adapter: "{{ item.connection_name }}"
+      when: item.ipv4.address != hostvars[dict_key].ansible_host
+      with_items: "{{ ansible_interfaces }}"
+    - name: Set number of interfaces
+      ansible.builtin.set_fact:
+        number_of_interfaces: "{{ ansible_interfaces | length }}"
+    - name: Set two adapters flag
+      ansible.builtin.set_fact:
+        two_adapters: "{{ 'no' if number_of_interfaces != '1' else 'yes' }}"
+    - name: Set NAT adapter to domain adapter when single interface
+      ansible.builtin.set_fact:
+        nat_adapter: "{{ domain_adapter }}"
+      when: two_adapters == 'no'
+
+- name: Show variables
+  hosts: domain
+  tasks:
+    - name: Show domain interface
+      ansible.builtin.debug:
+        msg: "domain interface : {{ domain_adapter }}"
+    - name: Show NAT interface
+      ansible.builtin.debug:
+        msg: "nat interface : {{ nat_adapter }}"
+    - name: Show two adapters flag
+      ansible.builtin.debug:
+        msg: "two_adapters : {{ two_adapters }}"

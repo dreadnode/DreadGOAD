@@ -1,6 +1,52 @@
-- name: "Create OU"
-  win_dsc:
-    resource_name: ADOrganizationalUnit
-    name: "{{ item.key }}"
-    path:  "{{ item.value.path }}"
-  with_dict: "{{ad_ou}}"
+---
+- name: Create OU
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param (
+          [String]$OUName,
+          [String]$OUPath
+      )
+
+      $ProgressPreference = 'SilentlyContinue'
+
+      try {
+          $ouDN = "OU=$OUName,$OUPath"
+          $ouExists = Get-ADOrganizationalUnit -Filter "DistinguishedName -eq '$ouDN'" -ErrorAction SilentlyContinue
+
+          if (-not $ouExists) {
+              New-ADOrganizationalUnit -Name $OUName -Path $OUPath -ErrorAction Stop
+              Write-Output "Created OU: $OUName"
+              $Ansible.Changed = $true
+          } else {
+              Write-Output "OU already exists: $OUName"
+              $Ansible.Changed = $false
+          }
+      } catch {
+          Write-Error "Failed to create OU $OUName - $_"
+          throw $_
+      }
+    parameters:
+      OUName: "{{ item.key }}"
+      OUPath: "{{ item.value.path }}"
+  loop: "{{ ad_ou | dict2items }}"
+  loop_control:
+    label: "Creating OU: {{ item.key }}"
+  register: ou_creation
+  retries: 3
+  delay: 10
+  until: ou_creation is not failed
+  async: 180
+  poll: 0
+
+- name: Wait for OU creation to complete
+  ansible.builtin.async_status:
+    jid: "{{ item.ansible_job_id }}"
+  register: ou_result
+  until: ou_result.finished
+  retries: 40
+  delay: 5
+  loop: "{{ ou_creation.results }}"
+  loop_control:
+    label: "Waiting for OU: {{ item.item.key }}"
+  when: item.ansible_job_id is defined

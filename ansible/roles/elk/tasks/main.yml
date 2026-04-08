@@ -1,10 +1,10 @@
 - name: "Update cache"
-  apt:
+  ansible.builtin.apt:
     update_cache: true
     cache_valid_time: 86400
 
 - name: Add required dependencies.
-  apt:
+  ansible.builtin.apt:
     name:
       - apt-transport-https
       - gnupg2
@@ -12,84 +12,84 @@
     update_cache: yes
 
 - name: Add Elasticsearch apt key.
-  apt_key:
+  ansible.builtin.apt_key:
     url: https://artifacts.elastic.co/GPG-KEY-elasticsearch
     state: present
 
 - name: Add Elasticsearch repository.
-  apt_repository:
+  ansible.builtin.apt_repository:
     repo: 'deb https://artifacts.elastic.co/packages/{{ elasticsearch_version }}/apt stable main'
     state: present
     update_cache: true
 
 - name: Install logstash
-  apt:
+  ansible.builtin.apt:
     name: logstash
     state: present
 
 - name: Install java
-  apt:
+  ansible.builtin.apt:
     name: openjdk-11-jre
     state: present
 
 - name: Install elasticsearch
-  apt:
+  ansible.builtin.apt:
     name: elasticsearch
     state: present
 
 - name: Install kibana
-  apt:
+  ansible.builtin.apt:
     name: kibana
     state: present
 
-- name: copy kibana config
-  copy:
+- name: Copy kibana config
+  ansible.builtin.copy:
     src: kibana.yml
     dest: /etc/kibana/kibana.yml
     owner: "root"
     group: "kibana"
     mode: 0660
 
-- name: elasticsearch change start timeout to 3min
-  lineinfile:
+- name: Elasticsearch change start timeout to 3min
+  ansible.builtin.lineinfile:
     destfile: /usr/lib/systemd/system/elasticsearch.service
     regexp: 'TimeoutStartSec='
     line: 'TimeoutStartSec=180'
 
-- name: copy elasticsearch config
-  copy:
+- name: Copy elasticsearch config
+  ansible.builtin.copy:
     src: elasticsearch.yml
     dest: /etc/elasticsearch/elasticsearch.yml
     owner: "root"
     group: "elasticsearch"
     mode: 0660
 
-- name: enable logstash
-  service:
+- name: Enable logstash
+  ansible.builtin.service:
     name: logstash
     enabled: yes
 
-- name: enable elasticsearch
-  service:
+- name: Enable elasticsearch
+  ansible.builtin.service:
     name: elasticsearch
     enabled: yes
 
-- name: enable kibana
-  service:
+- name: Enable kibana
+  ansible.builtin.service:
     name: kibana
     enabled: yes
 
-- name: start logstash
-  service:
+- name: Start logstash
+  ansible.builtin.service:
     name: logstash
     state: started
 
-- name: start elasticsearch
-  service:
+- name: Start elasticsearch
+  ansible.builtin.service:
     name: elasticsearch
     state: started
 
-- name: start kibana
-  service:
+- name: Start kibana
+  ansible.builtin.service:
     name: kibana
     state: started

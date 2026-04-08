@@ -1,3 +1,0 @@
----
-- name: restart-winlogbeat
-  win_shell: Restart-Service winlogbeat

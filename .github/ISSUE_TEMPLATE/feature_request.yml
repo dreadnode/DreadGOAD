@@ -1,0 +1,70 @@
+name: Feature request
+description: Suggest a new feature, improvement, or change to DreadGOAD.
+title: "[feature]: "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting an improvement to DreadGOAD.
+
+        Before you continue, please check the [existing issues](https://github.com/dreadnode/DreadGOAD/issues?q=is%3Aissue) to see whether something similar has already been proposed.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I have searched existing issues and discussions for a similar request.
+          required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Which part of the project does this affect?
+      options:
+        - CLI (`dreadgoad`)
+        - Ansible collection / roles
+        - Terraform / Terragrunt modules
+        - Packer / Warpgate templates
+        - A specific lab (GOAD, GOAD-Light, MINILAB, SCCM, NHA, DRACARYS, ...)
+        - A specific extension (ELK, Exchange, Wazuh, Guacamole, ...)
+        - Variant generator
+        - Documentation
+        - CI / release tooling
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the use case and the pain point you are running into. "I'm always frustrated when..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How would you like this to work? Be as concrete as you can — example commands, config snippets, or UI sketches all help.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches you considered and why you rejected them.
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Additional context
+      description: Links, references, related issues, or anything else useful.
+    validations:
+      required: false

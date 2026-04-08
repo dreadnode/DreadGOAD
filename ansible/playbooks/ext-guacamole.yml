@@ -1,0 +1,65 @@
+---
+# Extension: guacamole — Apache Guacamole remote access gateway
+- name: Read lab data files
+  hosts: guacamole
+  connection: local
+  vars_files:
+    - "{{ lab_data_file }}"
+  tasks:
+    - name: register lab var
+      set_fact:
+        lab: "{{lab}}"
+        cacheable: yes
+      run_once: true
+
+- name: Read extension config files and merge
+  hosts: guacamole
+  connection: local
+  tasks:
+    - name: Include and merge config file
+      vars:
+        ext_config: {}
+      ansible.builtin.include_vars:
+        file: "{{ item }}"
+        name: ext_config
+      loop: "{{ extension_data_files | default([]) }}"
+      register: included_vars
+
+    - name: Merge all included configs into lab
+      set_fact:
+        lab: "{{ lab | combine(item.ansible_facts.ext_config.lab_extension, recursive=True) }}"
+      loop: "{{ included_vars.results }}"
+      when: item.ansible_facts.ext_config.lab_extension is defined
+
+- name: Install Guacamole
+  hosts: guacamole
+  become: yes
+  vars_files:
+    - "{{ guacamole_vars_file }}"
+  roles:
+    - { role: 'geerlingguy.mysql', tags: 'mysql' }
+    - { role: 'dreadnode.goad.linux_tomcat', tags: 'tomcat' }
+    - { role: 'dreadnode.goad.linux_guacamole', tags: 'guacamole' }
+  vars:
+    mysql_databases:
+      - name: "{{guacamole_db}}"
+        encoding: utf8
+        collation: utf8_general_ci
+    mysql_users:
+      - name: "{{guacamole_db_username}}"
+        host: "%"
+        password: "{{guacamole_db_password}}"
+        priv: "{{guacamole_db}}.*:ALL"
+    salt: "{{99999999999999 | random | to_uuid | hash('sha256')}}"
+
+- name: Create guacamole connections
+  hosts: guacamole
+  become: yes
+  vars_files:
+    - "{{ guacamole_vars_file }}"
+  roles:
+    - { role: 'dreadnode.goad.linux_guacamole_create_connections', tags: 'guacamole_connections' }
+  vars:
+    guacadmin_username: "guacadmin"
+    hosts: "{{lab.hosts}}"
+    domains: "{{lab.domains}}"

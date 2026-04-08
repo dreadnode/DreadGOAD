@@ -1,25 +1,54 @@
-- name: check SQL Server Manager Studio installer exists
-  win_stat:
+---
+# Check for pending reboot before SSMS install (error 1603 common cause)
+- name: Check if reboot is pending before SSMS install
+  ansible.windows.win_powershell:
+    script: |
+      $pending = $false
+      if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') { $pending = $true }
+      if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired') { $pending = $true }
+      $pfro = Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -Name 'PendingFileRenameOperations' -ErrorAction SilentlyContinue
+      if ($pfro) { $pending = $true }
+      $pending
+  register: ssms_reboot_pending
+
+- name: Reboot before SSMS install if pending
+  ansible.windows.win_reboot:
+    reboot_timeout: 600
+    msg: "Rebooting before SSMS installation due to pending reboot"
+  when: ssms_reboot_pending.output[0] | default(false) | bool
+
+- name: Check SQL Server Manager Studio installer exists
+  ansible.windows.win_stat:
     path: c:\setup\mssql\SSMS_installer.exe
   register: ssms_installer_file
 
-- name: get the installer
-  win_get_url:
-      url: 'https://aka.ms/ssmsfullsetup'
-      dest: 'c:\setup\mssql\SSMS_installer.exe'
+- name: Get the installer
+  ansible.windows.win_get_url:
+    url: https://aka.ms/ssmsfullsetup
+    dest: c:\setup\mssql\SSMS_installer.exe
   when: not ssms_installer_file.stat.exists
 
-- name: check SSMS installation already done
-  win_stat:
-    path: "C:\\Program Files (x86)\\Microsoft SQL Server Management Studio 18"
+# Check for any SSMS version (18, 19, 20, 21)
+- name: Check SSMS installation already done
+  ansible.windows.win_powershell:
+    script: |
+      $installed = $false
+      $paths = @(
+        'C:\Program Files (x86)\Microsoft SQL Server Management Studio 18',
+        'C:\Program Files (x86)\Microsoft SQL Server Management Studio 19',
+        'C:\Program Files (x86)\Microsoft SQL Server Management Studio 20',
+        'C:\Program Files (x86)\Microsoft SQL Server Management Studio 21'
+      )
+      foreach ($p in $paths) { if (Test-Path $p) { $installed = $true; break } }
+      $installed
   register: ssms_installation
 
 - name: Install SSMS
-  win_command: c:\setup\mssql\SSMS_installer.exe /install /quiet /norestart
-  register: install_ssmss
-  when: not ssms_installation.stat.exists
+  ansible.windows.win_command: c:\setup\mssql\SSMS_installer.exe /install /quiet /norestart
+  register: install_ssms
+  when: not (ssms_installation.output[0] | default(false) | bool)
 
 - name: Reboot after install
-  win_reboot:
+  ansible.windows.win_reboot:
     reboot_timeout: 600
-  when: not ssms_installation.stat.exists
+  when: not (ssms_installation.output[0] | default(false) | bool)

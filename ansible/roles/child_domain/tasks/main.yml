@@ -1,23 +1,24 @@
-- name: "disable the registration of the {{nat_adapter}} interface (NAT address) in DNS"
-  ansible.windows.win_shell: Get-NetAdapter '{{nat_adapter}}' | Set-DNSClient -RegisterThisConnectionsAddress $False
+---
+- name: Disable the registration of the NAT interface in DNS
+  ansible.windows.win_shell: Get-NetAdapter {{ nat_adapter }} | Set-DNSClient -RegisterThisConnectionsAddress $False
   when: two_adapters
 
-- name: "Set configure dns to {{dns_domain}}"
-  win_dns_client:
-    adapter_names: "{{domain_adapter}}"
+- name: Set configure DNS to parent domain
+  ansible.windows.win_dns_client:
+    adapter_names: "{{ domain_adapter }}"
     ipv4_addresses:
-      - "{{hostvars[dns_domain].ansible_host}}"
+      - "{{ hostvars[remote_dc]['dc_ipv4'] | default(instance_to_ip[hostvars[remote_dc]['ansible_host']] if hostvars[remote_dc]['ansible_host'] in instance_to_ip else hostvars[remote_dc].ansible_host) }}"
     log_path: C:\dns_log.txt
 
 - name: Install windows features - AD Domain Services
-  win_feature:
+  ansible.windows.win_feature:
     name: AD-Domain-Services
     state: present
     include_management_tools: yes
   register: features
 
 - name: Install windows features - RSAT-ADDS
-  win_feature:
+  ansible.windows.win_feature:
     name: RSAT-ADDS
     state: present
     include_management_tools: yes
@@ -27,93 +28,92 @@
 # - name: "disable interface {{nat_adapter}} before join domain"
 #   win_shell: netsh interface set interface "{{nat_adapter}}" disable
 
-- name: add child domain to parent domain
+- name: Add child domain to parent domain
+  microsoft.ad.domain_child:
+    dns_domain_name: "{{ domain }}"
+    domain_admin_user: "{{ parent_domain_user }}"
+    domain_admin_password: "{{ parent_domain_password }}"
+    safe_mode_password: "{{ domain_password }}"
+    database_path: C:\Windows\NTDS
+    sysvol_path: C:\Windows\SYSVOL
+    log_path: C:\Windows\Logs
+    reboot: true
+  register: child_result
+  failed_when:
+    - child_result is failed
+    - '"already exists" not in child_result.msg | default("")'
+
+
+- name: Configure DNS listener addresses
   ansible.windows.win_powershell:
     script: |
-      [CmdletBinding()]
-      param (
-          [String]
-          $Password,
-
-          [String]
-          $DomainAdmin,
-
-          [String]
-          $ParentDomainName,
-
-          [String]
-          $NewDomainNetbiosName,
-
-          [String]
-          $ReplicationSourceDC,
-
-          [String]
-          $NewDomainName,
-
-          [String]
-          $DomSafePassword
-      )
+      $ProgressPreference = 'SilentlyContinue'
+      $ErrorActionPreference = "Stop"
       try {
-          $child_domain = Get-ADDomain -Identity $NewDomainName
-          $domainExist=$true
-      } catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
-          $domainExist=$false
+        dnscmd . /resetlistenaddresses {{ host_ipv4 | default(instance_to_ip[hostvars[dict_key]['ansible_host']] | default(hostvars[dict_key].ansible_host)) }}
+        Write-Output "DNS listener addresses configured successfully"
+      } catch {
+        $Ansible.Failed = $true
+        Write-Error "Failed to configure DNS listener addresses: $_"
       }
-      if (-not $domainExist) {
-        $Ansible.Changed = $true
-        $pass = ConvertTo-SecureString $Password -AsPlainText -Force
-        $Cred = New-Object System.Management.Automation.PSCredential ($DomainAdmin, $pass)
-        $safePassword = ConvertTo-SecureString $DomSafePassword -AsPlainText -Force
-        Install-ADDSDomain -Credential $Cred -SkipPreChecks -NewDomainName $NewDomainName -NewDomainNetbiosName $NewDomainNetbiosName -ParentDomainName $ParentDomainName -ReplicationSourceDC $ReplicationSourceDC -DatabasePath "C:\Windows\NTDS" -SYSVOLPath "C:\Windows\SYSVOL" -LogPath "C:\Windows\Logs" -SafeModeAdministratorPassword $safePassword -Force -NoRebootOnCompletion
-      } else {
-        $Ansible.Changed = $false
-      }
-    parameters:
-      Password: "{{parent_domain_password}}"
-      DomSafePassword: "{{domain_password}}"
-      DomainAdmin: "{{parent_domain_user}}"
-      ParentDomainName: "{{parent_domain}}"
-      ReplicationSourceDC: "{{source_dc}}"
-      NewDomainNetbiosName: "{{netbios_name}}"
-      NewDomainName: "{{domain.split('.')[0]}}"
-  register: child_result
-
-- name: Reboot
-  win_reboot:
-    reboot_timeout: 900
-    post_reboot_delay: 100
-  when: child_result.changed
-
-# - name: "enable interface {{nat_adapter}} after domain joined"
-#   win_shell: netsh interface set interface "{{nat_adapter}}" enable
-#   register: enable_interface
-#   until: "enable_interface is not failed"
-#   retries: 3
-#   delay: 120
-
-- name: enable the {{domain_adapter}} interface (local) for DNS client requests
-  ansible.windows.win_shell: dnscmd . /resetlistenaddresses {{ hostvars[dict_key].ansible_host }}
+  register: dns_listener
   when: two_adapters
 
-- name: Check for xDnsServer Powershell module
-  win_psmodule:
+- name: Enable TLS 1.2 permanently via registry
+  ansible.windows.win_regedit:
+    path: "{{ item.path }}"
+    name: SchUseStrongCrypto
+    data: 1
+    type: dword
+  loop:
+    - { path: 'HKLM:\SOFTWARE\Microsoft\.NetFramework\v4.0.30319' }
+    - { path: 'HKLM:\SOFTWARE\Wow6432Node\Microsoft\.NetFramework\v4.0.30319' }
+
+- name: Check if xDnsServer exists
+  ansible.windows.win_shell: |
+    if (Get-Module -ListAvailable -Name xDnsServer) {
+      exit 0
+    } else {
+      exit 1
+    }
+  register: xdnsserver_check
+  failed_when: false
+  changed_when: false
+
+- name: Install xDnsServer only if needed
+  community.windows.win_psmodule:
     name: xDnsServer
     state: present
+  when: xdnsserver_check.rc != 0
 
-# add external dns forwarder
 - name: Configure DNS Forwarders
-  win_dsc:
+  ansible.windows.win_dsc:
     resource_name: xDnsServerForwarder
     IsSingleInstance: "yes"
     UseRootHint: false
     IPAddresses:
-      - "{{dns_server_forwarder}}"
+      - "{{ dns_server_forwarder }}"
 
-- name: "Install XactiveDirectory"
-  win_psmodule:
+- name: Check if ActiveDirectoryDSC exists
+  ansible.windows.win_shell: |
+    if (Get-Module -ListAvailable -Name ActiveDirectoryDSC) {
+      exit 0
+    } else {
+      exit 1
+    }
+  register: activedirectorydsc_check
+  failed_when: false
+  changed_when: false
+
+- name: Install ActiveDirectoryDSC only if needed
+  community.windows.win_psmodule:
     name: ActiveDirectoryDSC
     state: present
+  when: activedirectorydsc_check.rc != 0
 
 # issue 156
-- name: enable the Active directory web services if not enabled
-  ansible.windows.win_shell: Set-Service -Name adws -StartupType Automatic
+- name: Enable the Active Directory Web Services
+  ansible.windows.win_service:
+    name: adws
+    start_mode: auto
+    state: started

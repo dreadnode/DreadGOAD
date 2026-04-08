@@ -55,7 +55,7 @@
                     </PathAndCredentials>
                 </DriverPaths>
             </component>
-            
+
             <component xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" name="Microsoft-Windows-Setup" processorArchitecture="amd64" publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
                 <DiskConfiguration>
                     <Disk wcm:action="add">
@@ -284,7 +284,7 @@
                         <Description>Enable WinRM</Description>
                         <Order>99</Order>
                     </SynchronousCommand>
-                    <!-- WITH WINDOWS UPDATES 
+                    <!-- WITH WINDOWS UPDATES
                     <SynchronousCommand wcm:action="add">
                         <CommandLine>cmd.exe /c G:\microsoft-updates.bat</CommandLine>
                         <Order>98</Order>

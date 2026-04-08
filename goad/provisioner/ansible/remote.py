@@ -34,7 +34,7 @@ class RemoteAnsibleProvisioner(Ansible):
 
     def run_playbook(self, playbook, inventories, tries=3, timeout=30, playbook_path=None):
         if playbook_path is None:
-            playbook_path = self.remote_project_path + '/ansible/'
+            playbook_path = self.remote_project_path + '/ansible/playbooks/'
         else:
             playbook_path = Utils.transform_local_path_to_remote_path(playbook_path, self.remote_project_path)
 

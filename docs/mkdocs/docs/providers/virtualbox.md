@@ -13,22 +13,20 @@
     - [Vagrant](https://developer.hashicorp.com/vagrant/docs)
     - Vagrant plugins:
         - vagrant-reload
-        - vagrant-vbguest 
+        - vagrant-vbguest
         - winrm
         - winrm-fs
         - winrm-elevated
 
 - Provisioning
-    - Python3 >=3.8
-    - goad requirements
-    - ansible-galaxy goad requirements
+    - Ansible (installed via the DreadGOAD CLI prerequisites)
+    - ansible-galaxy requirements (`ansible-galaxy collection install -r ansible/requirements.yml`)
 
 
 ## Check dependencies
 
 ```bash
-./goad.sh -p virtualbox
-GOAD/virtualbox/local/192.168.56.X > check
+dreadgoad doctor
 ```
 
 ![vbox_check_example.png](./../img/vbox_check_example.png)
@@ -41,19 +39,10 @@ GOAD/virtualbox/local/192.168.56.X > check
 
 ## Install
 
-- To install run the goad script and launch install or use the goad script arguments
+- Once Vagrant has created the VMs, provision the lab using the DreadGOAD CLI:
 
 ```bash
-./goad.sh -p virtualbox
-GOAD/virtualbox/local/192.168.56.X > set_lab <lab>  # here choose the lab you want (GOAD/GOAD-Light/NHA/SCCM)
-GOAD/virtualbox/local/192.168.56.X > set_ip_range <ip_range>  # here choose the  ip range you want to use ex: 192.168.56
-GOAD/virtualbox/local/192.168.56.X > install
+dreadgoad provision
 ```
 
 ![vbox_install](./../img/vbox_install.png)
-
-- or all in command line with arguments
-
-```bash
-./goad.sh -t install -p virtualbox -l <lab> -ip <ip_range_to_use>
-```

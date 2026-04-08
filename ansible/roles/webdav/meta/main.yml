@@ -1,0 +1,19 @@
+---
+galaxy_info:
+  role_name: webdav
+  namespace: dreadnode
+  author: Dreadnode
+  company: Dreadnode
+  description: Install and configure WebDAV client on Windows hosts
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Windows
+      versions:
+        - all
+  galaxy_tags:
+    - windows
+    - webdav
+    - configuration
+
+dependencies: []

@@ -1,59 +1,159 @@
+---
 - name: Ensure Administrator is part of Domain Admins
-  win_domain_group_membership:
-    name: "Domain Admins"
+  ansible.windows.win_powershell:
+    script: |
+      $domainAdmin = "{{ admin_user }}"
+      $domainName = "{{ lab.hosts[dict_key].domain }}"
+      $domainNetbios = "{{ lab.hosts[dict_key].domain.split('.')[0] }}"
+
+      try {
+          # Try the built-in AD cmdlet first
+          Add-ADGroupMember -Identity "Domain Admins" -Members $domainAdmin -ErrorAction Stop
+          Write-Output "Successfully added $domainAdmin to Domain Admins using Add-ADGroupMember"
+          $Ansible.Changed = $true
+      } catch {
+          Write-Output "Standard AD cmdlet failed: $_"
+
+          # If the cmdlet fails, try the traditional NET GROUP command
+          try {
+              $result = & net group "Domain Admins" "$domainNetbios\$domainAdmin" /add 2>&1
+              if ($LASTEXITCODE -eq 0) {
+                  Write-Output "Successfully added $domainAdmin to Domain Admins using net group command"
+                  $Ansible.Changed = $true
+              } else {
+                  throw "net group command failed with exit code $LASTEXITCODE"
+              }
+          } catch {
+              Write-Error "Failed to add $domainAdmin to Domain Admins: $_"
+              $Ansible.Changed = $false
+          }
+      }
+  register: admin_group_result
+
+- name: Organisation units
+  ansible.builtin.import_tasks: ou.yml
+- name: Groups
+  ansible.builtin.import_tasks: groups.yml
+- name: Users
+  ansible.builtin.import_tasks: users.yml
+
+- name: Add members to the Domainlocal group, preserving existing membership
+  microsoft.ad.group:
+    name: "{{ item.key }}"
+    scope: "{{ item.value.scope | default('DomainLocal') }}"
     members:
-      - Administrator
+      add: "{{ item.value.members | default([]) }}"
     state: present
+  loop: "{{ ad_groups['domainlocal'] | dict2items }}"
+  when: ad_groups['domainlocal'] is defined and item.value.members is defined
 
-- name: organisation units
-  import_tasks: ou.yml
-
-- name: groups
-  import_tasks: groups.yml
-
-- name: users
-  import_tasks: users.yml
-
-# Managed BY
-- name: Assign managed_by domainlocal groups
-  win_domain_group:
-    name: "{{ item.key }}"
-    managed_by: "{{ item.value.managed_by }}"
-  with_dict: "{{ ad_groups['domainlocal'] }}"
-  when: ad_groups['domainlocal'] is defined and item.value.managed_by is defined
-
-- name: Assign managed_by universal groups
-  win_domain_group:
-    name: "{{ item.key }}"
-    managed_by: "{{ item.value.managed_by }}"
-  with_dict: "{{ ad_groups['universal'] }}"
-  when: ad_groups['universal'] is defined and item.value.managed_by is defined
-
-- name: Assign managed_by global groups
-  win_domain_group:
-    name: "{{ item.key }}"
-    managed_by: "{{ item.value.managed_by }}"
-  with_dict: "{{ ad_groups['global'] }}"
-  when: ad_groups['global'] is defined and item.value.managed_by is defined
-
-# Add members
 - name: Add members to the Universal group, preserving existing membership
-  community.windows.win_domain_group_membership:
+  microsoft.ad.group:
     name: "{{ item.key }}"
-    members: "{{ item.value.members }}"
-  with_dict: "{{ ad_groups['universal'] }}"
+    scope: "{{ item.value.scope | default('Universal') }}"
+    members:
+      add: "{{ item.value.members | default([]) }}"
+    state: present
+  loop: "{{ ad_groups['universal'] | dict2items }}"
   when: ad_groups['universal'] is defined and item.value.members is defined
 
 - name: Add members to the Global group, preserving existing membership
-  community.windows.win_domain_group_membership:
+  microsoft.ad.group:
     name: "{{ item.key }}"
-    members: "{{ item.value.members }}"
-  with_dict: "{{ ad_groups['global'] }}"
+    scope: "{{ item.value.scope | default('Global') }}"
+    members:
+      add: "{{ item.value.members | default([]) }}"
+    state: present
+  loop: "{{ ad_groups['global'] | dict2items }}"
   when: ad_groups['global'] is defined and item.value.members is defined
 
-- name: Add members to the Domainlocal group, preserving existing membership
-  community.windows.win_domain_group_membership:
-    name: "{{ item.key }}"
-    members: "{{ item.value.members }}"
-  with_dict: "{{ ad_groups['domainlocal'] }}"
-  when: ad_groups['domainlocal'] is defined and item.value.members is defined
+# Managed BY
+- name: Assign managed_by domainlocal groups
+  ansible.windows.win_powershell:
+    script: |
+      $groupName = "{{ item.key }}"
+      $managedBy = "{{ item.value.managed_by | default('') }}"
+
+      try {
+          if ([string]::IsNullOrEmpty($managedBy)) {
+              Write-Output "No managed_by value provided for $groupName. Skipping."
+              $Ansible.Changed = $false
+              exit 0
+          }
+
+          $group = Get-ADGroup -Identity $groupName -ErrorAction Stop
+          Set-ADGroup -Identity $groupName -ManagedBy $managedBy -ErrorAction Stop
+          Write-Output "Successfully set $managedBy as manager for $groupName"
+          $Ansible.Changed = $true
+      } catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
+          Write-Output "Group $groupName not found. Skipping."
+          $Ansible.Changed = $false
+      } catch {
+          Write-Output "Failed to set manager for group ${groupName}. Error: $($_.Exception.Message)"
+          $Ansible.Changed = $false
+          # Don't fail the task, just report the error
+      }
+  loop: "{{ ad_groups['domainlocal'] | dict2items }}"
+  loop_control:
+    label: "Setting managed_by for domainlocal group: {{ item.key }}"
+  when: ad_groups['domainlocal'] is defined
+
+- name: Assign managed_by universal groups
+  ansible.windows.win_powershell:
+    script: |
+      $groupName = "{{ item.key }}"
+      $managedBy = "{{ item.value.managed_by | default('') }}"
+
+      try {
+          if ([string]::IsNullOrEmpty($managedBy)) {
+              Write-Output "No managed_by value provided for $groupName. Skipping."
+              $Ansible.Changed = $false
+              exit 0
+          }
+
+          $group = Get-ADGroup -Identity $groupName -ErrorAction Stop
+          Set-ADGroup -Identity $groupName -ManagedBy $managedBy -ErrorAction Stop
+          Write-Output "Successfully set $managedBy as manager for $groupName"
+          $Ansible.Changed = $true
+      } catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
+          Write-Output "Group $groupName not found. Skipping."
+          $Ansible.Changed = $false
+      } catch {
+          Write-Output "Failed to set manager for group ${groupName}. Error: $($_.Exception.Message)"
+          $Ansible.Changed = $false
+          # Don't fail the task, just report the error
+      }
+  loop: "{{ ad_groups['universal'] | dict2items }}"
+  loop_control:
+    label: "Setting managed_by for universal group: {{ item.key }}"
+  when: ad_groups['universal'] is defined
+
+- name: Assign managed_by global groups
+  ansible.windows.win_powershell:
+    script: |
+      $groupName = "{{ item.key }}"
+      $managedBy = "{{ item.value.managed_by | default('') }}"
+
+      try {
+          if ([string]::IsNullOrEmpty($managedBy)) {
+              Write-Output "No managed_by value provided for $groupName. Skipping."
+              $Ansible.Changed = $false
+              exit 0
+          }
+
+          $group = Get-ADGroup -Identity $groupName -ErrorAction Stop
+          Set-ADGroup -Identity $groupName -ManagedBy $managedBy -ErrorAction Stop
+          Write-Output "Successfully set $managedBy as manager for $groupName"
+          $Ansible.Changed = $true
+      } catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
+          Write-Output "Group $groupName not found. Skipping."
+          $Ansible.Changed = $false
+      } catch {
+          Write-Output "Failed to set manager for group ${groupName}. Error: $($_.Exception.Message)"
+          $Ansible.Changed = $false
+          # Don't fail the task, just report the error
+      }
+  loop: "{{ ad_groups['global'] | dict2items }}"
+  loop_control:
+    label: "Setting managed_by for global group: {{ item.key }}"
+  when: ad_groups['global'] is defined

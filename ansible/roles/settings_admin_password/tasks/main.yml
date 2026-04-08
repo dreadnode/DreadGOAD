@@ -1,0 +1,16 @@
+---
+- name: Ensure that Admin is present with a valid password
+  ansible.windows.win_user:
+    name: "{{ admin_user }}"
+    password: "{{ local_admin_password }}"
+    password_never_expires: yes
+    account_disabled: false
+    state: present
+
+#- name: Create administrator home directory
+#  ansible.windows.win_command: whoami
+#  vars:
+#    ansible_become: yes
+#    ansible_become_method: ansible.builtin.runas
+#    ansible_become_user: "Administrator"
+#    ansible_become_password: "{{local_admin_password}}"
