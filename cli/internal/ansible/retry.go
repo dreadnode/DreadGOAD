@@ -237,7 +237,12 @@ func CleanupSSMSessions(ctx context.Context, env string, log *slog.Logger) {
 		return
 	}
 
-	client, err := daws.NewClient(ctx, inv.Region())
+	region, err := cfg.ResolveRegionWithInventory(inv)
+	if err != nil {
+		log.Warn("could not resolve AWS region for SSM cleanup", "error", err)
+		return
+	}
+	client, err := daws.NewClient(ctx, region)
 	if err != nil {
 		log.Warn("could not create AWS client for SSM cleanup", "error", err)
 		return
@@ -269,7 +274,12 @@ func fixSSMUsers(ctx context.Context, env string, failedHosts []string, log *slo
 		return
 	}
 
-	client, err := daws.NewClient(ctx, inv.Region())
+	region, err := cfg.ResolveRegionWithInventory(inv)
+	if err != nil {
+		log.Warn("could not resolve AWS region for ssm-user fix", "error", err)
+		return
+	}
+	client, err := daws.NewClient(ctx, region)
 	if err != nil {
 		log.Warn("could not create AWS client for ssm-user fix", "error", err)
 		return

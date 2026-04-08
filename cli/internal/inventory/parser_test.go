@@ -175,11 +175,11 @@ func TestRegion(t *testing.T) {
 		}
 	})
 
-	t.Run("default fallback", func(t *testing.T) {
+	t.Run("missing returns empty", func(t *testing.T) {
 		path := writeTestInventory(t, "[default]\n")
 		inv, _ := Parse(path)
-		if got := inv.Region(); got != "us-west-2" {
-			t.Errorf("Region() = %q, want %q", got, "us-west-2")
+		if got := inv.Region(); got != "" {
+			t.Errorf("Region() = %q, want empty string (no silent fallback)", got)
 		}
 	})
 }

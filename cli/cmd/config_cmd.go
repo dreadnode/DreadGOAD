@@ -25,7 +25,7 @@ var configShowCmd = &cobra.Command{
 			return err
 		}
 		fmt.Printf("Environment:    %s\n", cfg.Env)
-		fmt.Printf("Region:         %s\n", valueOrDefault(cfg.Region, "(from inventory)"))
+		fmt.Printf("Region:         %s\n", valueOrDefault(cfg.Region, "(unset — required for AWS commands)"))
 		fmt.Printf("Debug:          %v\n", cfg.Debug)
 		fmt.Printf("Max Retries:    %d\n", cfg.MaxRetries)
 		fmt.Printf("Retry Delay:    %ds\n", cfg.RetryDelay)
@@ -84,7 +84,7 @@ var configInitCmd = &cobra.Command{
 
 		content := `# DreadGOAD CLI Configuration
 env: staging
-# region: us-west-2  # Override AWS region (default: from inventory)
+# region: us-east-1  # AWS region (required for AWS commands; can also be set via DREADGOAD_REGION or --region)
 debug: false
 max_retries: 3
 retry_delay: 30

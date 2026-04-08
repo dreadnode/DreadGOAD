@@ -128,12 +128,16 @@ func (inv *Inventory) InstanceIDs() []string {
 	return ids
 }
 
-// Region returns the AWS SSM region from inventory vars.
+// Region returns the AWS SSM region from inventory vars, or an empty string
+// if the inventory does not specify one. Callers should fall back to
+// config.Config.ResolveRegion() rather than hardcoding a default — silently
+// picking a region for the user causes confusing "no instances found" errors
+// when they're actually deployed in a different region.
 func (inv *Inventory) Region() string {
 	if r, ok := inv.Vars["ansible_aws_ssm_region"]; ok {
 		return r
 	}
-	return "us-west-2"
+	return ""
 }
 
 // HostByName returns a host by its name (case-insensitive).

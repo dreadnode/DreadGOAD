@@ -29,9 +29,9 @@ func requireInfra(ctx context.Context) (*infraContext, error) {
 		return nil, err
 	}
 
-	region := cfg.Region
-	if region == "" {
-		region = "us-west-1"
+	region, err := cfg.ResolveRegion()
+	if err != nil {
+		return nil, err
 	}
 
 	client, err := daws.NewClient(ctx, region)

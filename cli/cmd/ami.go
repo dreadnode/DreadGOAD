@@ -127,8 +127,11 @@ func runAMIBuild(cmd *cobra.Command, args []string) error {
 
 	verbose := viper.GetBool("debug")
 
+	// For `ami build`, an empty region is OK: each warpgate template has its
+	// own embedded region in its targets, and we only override it if the
+	// caller explicitly provided one. Local --region flag wins over cfg.Region.
 	bf := buildFlags{
-		region:          getFlagString(cmd, "region", cfg.Region, "us-west-1"),
+		region:          getFlagString(cmd, "region", cfg.Region, ""),
 		instanceType:    getFlagStringOpt(cmd, "instance-type"),
 		profile:         getFlagStringOpt(cmd, "profile"),
 		instanceProfile: getFlagStringOpt(cmd, "instance-profile"),
@@ -297,7 +300,17 @@ func getFlagBool(cmd *cobra.Command, name string) bool {
 }
 
 func newAWSClients(cmd *cobra.Command, cfg *config.Config) (*ami.AWSClients, error) {
-	region := getFlagString(cmd, "region", cfg.Region, "us-west-1")
+	// For ami list-resources / purge there is no warpgate template fallback,
+	// so a region is required. Local --region flag wins over cfg.Region;
+	// otherwise we error out via ResolveRegion rather than silently picking one.
+	region := getFlagStringOpt(cmd, "region")
+	if region == "" {
+		var err error
+		region, err = cfg.ResolveRegion()
+		if err != nil {
+			return nil, err
+		}
+	}
 	profile := getFlagStringOpt(cmd, "profile")
 	return ami.NewAWSClients(context.Background(), ami.ClientConfig{
 		Region:  region,

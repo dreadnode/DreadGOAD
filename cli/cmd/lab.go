@@ -79,9 +79,9 @@ func runLabStatus(cmd *cobra.Command, args []string) error {
 	}
 	ctx := context.Background()
 
-	region := cfg.Region
-	if region == "" {
-		region = "us-west-1"
+	region, err := cfg.ResolveRegion()
+	if err != nil {
+		return err
 	}
 
 	client, err := daws.NewClient(ctx, region)
@@ -118,9 +118,9 @@ func runLabAction(action string) func(*cobra.Command, []string) error {
 		}
 		ctx := context.Background()
 
-		region := cfg.Region
-		if region == "" {
-			region = "us-west-1"
+		region, err := cfg.ResolveRegion()
+		if err != nil {
+			return err
 		}
 
 		client, err := daws.NewClient(ctx, region)
@@ -221,9 +221,9 @@ func runVMAction(action string) func(*cobra.Command, []string) error {
 		}
 		ctx := context.Background()
 
-		region := cfg.Region
-		if region == "" {
-			region = "us-west-1"
+		region, err := cfg.ResolveRegion()
+		if err != nil {
+			return err
 		}
 
 		client, err := daws.NewClient(ctx, region)

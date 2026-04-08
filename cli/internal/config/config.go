@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/dreadnode/dreadgoad/internal/inventory"
 	"github.com/spf13/viper"
 )
 
@@ -239,6 +240,29 @@ func (c *Config) VpcCIDR(envName string) string {
 	return fmt.Sprintf("10.%d.0.0/16", octet)
 }
 
+// ResolveRegion returns the configured AWS region or an actionable error if
+// none is set. This is the single source of truth for region resolution: every
+// command that needs to talk to AWS should call it (or ResolveRegionWithInventory)
+// rather than hardcoding a default.
+func (c *Config) ResolveRegion() (string, error) {
+	if c.Region == "" {
+		return "", fmt.Errorf("AWS region not configured: set 'region' in dreadgoad.yaml, export DREADGOAD_REGION, or pass --region")
+	}
+	return c.Region, nil
+}
+
+// ResolveRegionWithInventory resolves the AWS region for talking to a deployed
+// lab, preferring the parsed Ansible inventory's own region (most authoritative
+// — the lab knows where it lives) and falling back to ResolveRegion.
+func (c *Config) ResolveRegionWithInventory(inv *inventory.Inventory) (string, error) {
+	if inv != nil {
+		if r := inv.Region(); r != "" {
+			return r, nil
+		}
+	}
+	return c.ResolveRegion()
+}
+
 // InfraBasePath returns the base path for a deployment's infra directory.
 func (c *Config) InfraBasePath() string {
 	return filepath.Join(c.ProjectRoot, "infra", c.Infra.Deployment)
@@ -246,17 +270,21 @@ func (c *Config) InfraBasePath() string {
 
 // InfraWorkDir returns the working directory for terragrunt operations
 // at the region level: infra/{deployment}/{env}/{region}/
-func (c *Config) InfraWorkDir() string {
-	region := c.Region
-	if region == "" {
-		region = "us-west-1"
+func (c *Config) InfraWorkDir() (string, error) {
+	region, err := c.ResolveRegion()
+	if err != nil {
+		return "", err
 	}
-	return filepath.Join(c.InfraBasePath(), c.Env, region)
+	return filepath.Join(c.InfraBasePath(), c.Env, region), nil
 }
 
 // InfraModulePath returns the path for a specific module within the infra working directory.
-func (c *Config) InfraModulePath(module string) string {
-	return filepath.Join(c.InfraWorkDir(), module)
+func (c *Config) InfraModulePath(module string) (string, error) {
+	workDir, err := c.InfraWorkDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(workDir, module), nil
 }
 
 func findProjectRoot() (string, error) {

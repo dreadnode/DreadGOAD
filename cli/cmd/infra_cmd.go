@@ -95,9 +95,9 @@ func runInfraAction(action string) func(*cobra.Command, []string) error {
 		exclude, _ := cmd.Flags().GetString("exclude")
 		deployment := resolveDeployment(cmd, cfg)
 
-		region := cfg.Region
-		if region == "" {
-			region = "us-west-1"
+		region, err := cfg.ResolveRegion()
+		if err != nil {
+			return err
 		}
 
 		opts := terragrunt.Options{
@@ -185,9 +185,9 @@ func runInfraOutput(cmd *cobra.Command, args []string) error {
 	module, _ := cmd.Flags().GetString("module")
 	deployment := resolveDeployment(cmd, cfg)
 
-	region := cfg.Region
-	if region == "" {
-		region = "us-west-1"
+	region, err := cfg.ResolveRegion()
+	if err != nil {
+		return err
 	}
 
 	workDir := filepath.Join(cfg.ProjectRoot, "infra", deployment, cfg.Env, region)
@@ -224,9 +224,9 @@ func runInfraValidate(cmd *cobra.Command, args []string) error {
 
 	deployment := resolveDeployment(cmd, cfg)
 
-	region := cfg.Region
-	if region == "" {
-		region = "us-west-1"
+	region, err := cfg.ResolveRegion()
+	if err != nil {
+		return err
 	}
 
 	basePath := filepath.Join(cfg.ProjectRoot, "infra", deployment)

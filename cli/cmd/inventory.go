@@ -78,7 +78,7 @@ func runInventorySync(cmd *cobra.Command, args []string) error {
 	}
 
 	jsonFile, _ := cmd.Flags().GetString("json")
-	instances, err := loadInstances(context.Background(), jsonFile, invPath, cfg.Env)
+	instances, err := loadInstances(context.Background(), jsonFile, invPath, cfg)
 	if err != nil {
 		return err
 	}
@@ -112,7 +112,7 @@ func updateEnvField(invPath, env string) error {
 	return nil
 }
 
-func loadInstances(ctx context.Context, jsonFile, invPath, env string) ([]instanceInfo, error) {
+func loadInstances(ctx context.Context, jsonFile, invPath string, cfg *config.Config) ([]instanceInfo, error) {
 	if jsonFile != "" {
 		raw, err := os.ReadFile(jsonFile)
 		if err != nil {
@@ -129,11 +129,15 @@ func loadInstances(ctx context.Context, jsonFile, invPath, env string) ([]instan
 	if err != nil {
 		return nil, err
 	}
-	client, err := daws.NewClient(ctx, parsed.Region())
+	region, err := cfg.ResolveRegionWithInventory(parsed)
 	if err != nil {
 		return nil, err
 	}
-	awsInstances, err := client.DiscoverInstances(ctx, env)
+	client, err := daws.NewClient(ctx, region)
+	if err != nil {
+		return nil, err
+	}
+	awsInstances, err := client.DiscoverInstances(ctx, cfg.Env)
 	if err != nil {
 		return nil, fmt.Errorf("discover instances: %w", err)
 	}
@@ -195,7 +199,11 @@ func runInventoryShow(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Printf("Inventory: %s (env=%s, region=%s)\n\n", parsed.FilePath, cfg.Env, parsed.Region())
+	displayRegion := parsed.Region()
+	if displayRegion == "" {
+		displayRegion = "(not set in inventory)"
+	}
+	fmt.Printf("Inventory: %s (env=%s, region=%s)\n\n", parsed.FilePath, cfg.Env, displayRegion)
 	fmt.Printf("%-8s %-24s %-10s %-10s %s\n", "HOST", "INSTANCE ID", "DICT_KEY", "DNS_DOMAIN", "GROUPS")
 	fmt.Println(strings.Repeat("-", 80))
 
@@ -235,7 +243,11 @@ func generateInstanceMapping(ctx context.Context, outputPath string) error {
 		outputPath = filepath.Join("/tmp", fmt.Sprintf("aws_instance_mapping_%s.json", cfg.Env))
 	}
 
-	client, err := daws.NewClient(ctx, parsed.Region())
+	region, err := cfg.ResolveRegionWithInventory(parsed)
+	if err != nil {
+		return err
+	}
+	client, err := daws.NewClient(ctx, region)
 	if err != nil {
 		return err
 	}

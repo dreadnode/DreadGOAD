@@ -75,7 +75,11 @@ func runSSMStatus(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("parse inventory: %w", err)
 	}
 
-	client, err := daws.NewClient(ctx, inv.Region())
+	region, err := cfg.ResolveRegionWithInventory(inv)
+	if err != nil {
+		return err
+	}
+	client, err := daws.NewClient(ctx, region)
 	if err != nil {
 		return err
 	}
@@ -120,7 +124,11 @@ func runSSMCleanup(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("parse inventory: %w", err)
 	}
 
-	client, err := daws.NewClient(ctx, inv.Region())
+	region, err := cfg.ResolveRegionWithInventory(inv)
+	if err != nil {
+		return err
+	}
+	client, err := daws.NewClient(ctx, region)
 	if err != nil {
 		return err
 	}
@@ -157,7 +165,10 @@ func runSSMConnect(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("host %q not found in inventory", args[0])
 	}
 
-	region := inv.Region()
+	region, err := cfg.ResolveRegionWithInventory(inv)
+	if err != nil {
+		return err
+	}
 	fmt.Printf("Starting SSM session to %s (%s) in %s...\n", host.Name, host.InstanceID, region)
 
 	// Ignore SIGINT in the parent so Ctrl+C is forwarded to the SSM
@@ -186,10 +197,18 @@ func runSSMRun(cmd *cobra.Command, args []string) error {
 	hostsFlag, _ := cmd.Flags().GetString("hosts")
 	psCmd, _ := cmd.Flags().GetString("cmd")
 
-	// Determine region - prefer flag, then inventory
-	region := cfg.Region
-	if region == "" {
-		region = "us-west-1"
+	// Parse the inventory so the region resolves consistently with the other
+	// ssm subcommands: prefer the inventory's ansible_aws_ssm_region, fall back
+	// to cfg.Region. Without this, a user with region in the inventory but not
+	// in dreadgoad.yaml would have ssm status/cleanup/connect work and only
+	// ssm run fail with "AWS region not configured".
+	inv, err := inventory.Parse(cfg.InventoryPath())
+	if err != nil {
+		return fmt.Errorf("parse inventory: %w", err)
+	}
+	region, err := cfg.ResolveRegionWithInventory(inv)
+	if err != nil {
+		return err
 	}
 
 	client, err := daws.NewClient(ctx, region)
