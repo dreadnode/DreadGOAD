@@ -1,0 +1,21 @@
+---
+galaxy_info:
+  role_name: sccm_install_iis
+  namespace: dreadnode
+  author: Dreadnode
+  company: Dreadnode
+  description: Install IIS prerequisites for SCCM site server
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Windows
+      versions:
+        - all
+  galaxy_tags:
+    - windows
+    - sccm
+    - mecm
+    - iis
+    - prerequisites
+
+dependencies: []

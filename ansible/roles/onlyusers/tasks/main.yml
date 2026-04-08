@@ -1,10 +1,10 @@
 - name: "Create users"
-  community.windows.win_domain_user:
+  microsoft.ad.user:
     name: "{{ item.key }}"
     firstname: "{{item.value.firstname}}"
     surname: "{{ item.value.surname }}"
     password: "{{ item.value.password }}"
-    password_never_expires: yes
+    password_never_expires: true
     state: present
     path: "{{item.value.path}}"
     description: "{{item.value.description}}"

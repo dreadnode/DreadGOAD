@@ -4,7 +4,7 @@
     dest: /etc/guacamole/guacamole.properties
     owner: "root"
     group: "root"
-    force: yes
+    force: true
     mode: 0644
 
 - name: Add guadc conf file
@@ -13,7 +13,7 @@
     dest: /etc/guacamole/guacd.conf
     owner: "root"
     group: "root"
-    force: yes
+    force: true
     mode: 0644
   notify:
     - restart tomcat9

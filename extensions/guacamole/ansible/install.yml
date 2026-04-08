@@ -8,7 +8,7 @@
     - name: register lab var
       set_fact:
         lab: "{{lab}}"
-        cacheable: yes
+        cacheable: true
       run_once: true
 
 # read all configuration file
@@ -45,7 +45,7 @@
 # --- install
 - name: Install Guacamole
   hosts: guacamole
-  become: yes
+  become: true
   vars_files:
     - "../../../guacamole.yml"
   roles:
@@ -67,7 +67,7 @@
 # --- create connections
 - name: Create guacamole connections
   hosts: guacamole
-  become: yes
+  become: true
   vars_files:
     - "../../../guacamole.yml"
   roles:

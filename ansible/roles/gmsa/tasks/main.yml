@@ -1,38 +1,181 @@
-# $gMSA_Name = 'gmsaWWW'
-# $gMSA_FQDN = 'gmsaWWW.contoso.com'
-# $gMSA_SPNs = 'http/www', 'http/www.contoso.com'
-# $gMSA_HostNames = 'webServer01', 'webServer02', 'webServer03'
+---
+# Each forest in the lab (sevenkingdoms.local, essos.local) needs its own
+# KDS root key before gMSA accounts can be created.  Child domain DCs
+# (e.g. north.sevenkingdoms.local) inherit the key from their forest root.
+
+- name: Ensure KDS root key exists and is effective
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param ()
+      Import-Module ActiveDirectory
+
+      $kdsKey = Get-KdsRootKey -ErrorAction SilentlyContinue
+      if ($kdsKey) {
+          $Ansible.Changed = $false
+          Write-Output "KDS root key already exists (EffectiveTime: $($kdsKey.EffectiveTime))"
+          return
+      }
+
+      # Create the key backdated 10 hours so it is immediately "effective"
+      # per the AD clock, then wait for the local KDS service to pick it up.
+      try {
+          Add-KdsRootKey -EffectiveTime (Get-Date).AddHours(-10)
+      } catch {
+          # Child domain DCs cannot create KDS root keys (HRESULT 0x80070032).
+          # The key must already exist from the forest root DC.
+          Write-Output "Cannot create KDS root key on this DC (expected for child domains): $_"
+          $Ansible.Changed = $false
+          return
+      }
+      Write-Output "Created KDS root key, waiting for KDS service initialisation..."
+
+      $ready = $false
+      for ($i = 1; $i -le 12; $i++) {
+          Start-Sleep -Seconds 10
+          $key = Get-KdsRootKey -ErrorAction SilentlyContinue
+          if ($key -and $key.EffectiveTime -le (Get-Date)) {
+              $ready = $true
+              Write-Output "KDS root key effective after $($i * 10) seconds"
+              break
+          }
+          Write-Output "Waiting for KDS root key (attempt $i/12)..."
+      }
+
+      if (-not $ready) {
+          throw "KDS root key not effective after 120 seconds"
+      }
+
+      $Ansible.Changed = $true
+    error_action: stop
+  vars:
+    ansible_become: true
+    ansible_become_method: ansible.builtin.runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+  when: ad_gmsa | default({}) | length > 0
 
 - name: Create GMSA Account
   ansible.windows.win_powershell:
     script: |
       [CmdletBinding()]
       param (
-          [String]
-          $gMSA_Name,
+          [String]$gMSA_Name,
+          [String]$gMSA_FQDN,
+          [String]$gMSA_SPNs_csv,
+          [String]$gMSA_HostNames_csv
+      )
+      try {
+          Import-Module ActiveDirectory
+          Set-Location AD:
 
-          [String]
-          $gMSA_FQDN,
+          [string[]]$gMSA_SPNs = $gMSA_SPNs_csv -split ','
+          [string[]]$gMSA_HostNames = $gMSA_HostNames_csv -split ','
 
-          [String[]]
-          $gMSA_SPNs,
+          # Get-ADServiceAccount throws a TERMINATING error (ADIdentityNotFoundException)
+          # when the identity doesn't exist. -ErrorAction SilentlyContinue does NOT
+          # suppress terminating errors — only try/catch works.
+          $existing = $null
+          try {
+              $existing = Get-ADServiceAccount -Identity $gMSA_Name -ErrorAction Stop
+          } catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
+              $existing = $null
+          } catch {
+              # Other AD errors (connectivity, permissions) — also treat as not found
+              # but log for debugging.
+              Write-Output "Get-ADServiceAccount lookup failed: $_"
+              $existing = $null
+          }
 
-          [String[]]
-          $gMSA_HostNames
+          if ($existing) {
+              $gMSA_HostsGroup = $gMSA_HostNames | ForEach-Object { Get-ADComputer -Identity $_ }
+              Set-ADServiceAccount -Identity $gMSA_Name -DNSHostName $gMSA_FQDN -PrincipalsAllowedToRetrieveManagedPassword $gMSA_HostsGroup
+              Set-ADObject -Identity $existing.DistinguishedName -Replace @{servicePrincipalName=$gMSA_SPNs}
+              $Ansible.Changed = $false
+              Write-Output "GMSA account $gMSA_Name already exists, updated configuration"
+              return
+          }
+
+          $gMSA_HostsGroup = $gMSA_HostNames | ForEach-Object { Get-ADComputer -Identity $_ }
+          New-ADServiceAccount -Name $gMSA_Name -DNSHostName $gMSA_FQDN -PrincipalsAllowedToRetrieveManagedPassword $gMSA_HostsGroup -ServicePrincipalNames $gMSA_SPNs
+
+          # Wait for the account to become visible. Get-ADServiceAccount may throw
+          # terminating errors while KDS is still initialising, so catch those too.
+          $maxVerify = 12
+          $verify = $null
+          for ($v = 1; $v -le $maxVerify; $v++) {
+              Start-Sleep -Seconds 10
+              try {
+                  $verify = Get-ADServiceAccount -Identity $gMSA_Name -ErrorAction Stop
+              } catch {
+                  $verify = $null
+              }
+              if ($verify) { break }
+              Write-Output "Waiting for gMSA to become visible (attempt $v/$maxVerify)..."
+          }
+          if (-not $verify) {
+              throw "GMSA account $gMSA_Name not found after 120s — KDS root key may not be effective"
+          }
+
+          $Ansible.Changed = $true
+          Write-Output "Created and verified GMSA account $gMSA_Name"
+      }
+      catch {
+          $Ansible.Failed = $true
+          $Ansible.Result = @{
+            status = "error"
+            message = "Failed to create GMSA account: $_"
+            name = $gMSA_Name
+          }
+      }
+    parameters:
+      gMSA_Name: "{{ item.value.gMSA_Name }}"
+      gMSA_FQDN: "{{ item.value.gMSA_FQDN }}"
+      gMSA_SPNs_csv: "{{ item.value.gMSA_SPNs | join(',') }}"
+      gMSA_HostNames_csv: "{{ item.value.gMSA_HostNames | join(',') }}"
+    error_action: stop
+  vars:
+    ansible_become: true
+    ansible_become_method: ansible.builtin.runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+  with_dict: "{{ ad_gmsa }}"
+
+- name: Verify GMSA accounts exist
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param (
+          [String]$gMSA_Name
       )
       Import-Module ActiveDirectory
-      Set-Location AD:
-      Add-KDSRootKey -EffectiveTime (Get-Date).AddHours(-10)
-      $gMSA_HostsGroup = $gMSA_HostNames | ForEach-Object { Get-ADComputer -Identity $_ }
-      New-ADServiceAccount -Name $gMSA_Name -DNSHostName $gMSA_FQDN -PrincipalsAllowedToRetrieveManagedPassword $gMSA_HostsGroup -ServicePrincipalNames $gMSA_SPNs
+      $maxAttempts = 12
+      for ($i = 1; $i -le $maxAttempts; $i++) {
+        try {
+          $account = Get-ADServiceAccount -Identity $gMSA_Name -ErrorAction Stop
+        } catch {
+          $account = $null
+        }
+        if ($account) {
+          $Ansible.Changed = $false
+          $Ansible.Result = @{ status = "verified"; name = $gMSA_Name }
+          return
+        }
+        if ($i -lt $maxAttempts) {
+          Start-Sleep -Seconds 10
+        }
+      }
+      $Ansible.Failed = $true
+      $Ansible.Result = @{
+        status = "error"
+        message = "GMSA account $gMSA_Name not found after 120s — check KDS root key"
+        name = $gMSA_Name
+      }
     parameters:
-      gMSA_Name: "{{item.value.gMSA_Name}}"
-      gMSA_FQDN: "{{item.value.gMSA_FQDN}}"
-      gMSA_SPNs: "{{item.value.gMSA_SPNs}}"
-      gMSA_HostNames: "{{item.value.gMSA_HostNames}}"
+      gMSA_Name: "{{ item.value.gMSA_Name }}"
   vars:
-    ansible_become: yes
-    ansible_become_method: runas
-    ansible_become_user: "{{domain_username}}"
-    ansible_become_password: "{{domain_password}}"
+    ansible_become: true
+    ansible_become_method: ansible.builtin.runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
   with_dict: "{{ ad_gmsa }}"

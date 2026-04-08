@@ -26,7 +26,7 @@ $sql = "
         (SELECT id FROM glpi_users WHERE name = ?),
         ?,
         1
-    ) 
+    )
     ON DUPLICATE KEY UPDATE email = VALUES(email);
 ";
 

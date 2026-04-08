@@ -163,7 +163,7 @@ class LabInstance:
         esxi_net_nat = config.get_value('vmware_esxi', 'esxi_net_nat')
         esxi_net_domain = config.get_value('vmware_esxi', 'esxi_net_domain')
         esxi_datastore = config.get_value('vmware_esxi', 'esxi_datastore')
-        
+
         # load .env template
         environment = Environment(loader=FileSystemLoader(GoadPath.get_template_path(self.provider_name)))
         envfile_template = environment.get_template(".env")
@@ -332,9 +332,9 @@ class LabInstance:
         Log.info('Create instance extensions inventory files')
 
         for extension in self.extensions:
-            extension_folder = GoadPath.get_extension_path(extension)
-            extension_environment = Environment(loader=FileSystemLoader(extension_folder))
-            instance_extension_inventory_template = extension_environment.get_template("inventory")
+            extension_template_dir = os.path.dirname(GoadPath.get_extension_inventory_template(extension))
+            extension_environment = Environment(loader=FileSystemLoader(extension_template_dir))
+            instance_extension_inventory_template = extension_environment.get_template("inventory.j2")
             instance_extension_inventory_content = instance_extension_inventory_template.render(
                 lab_name=self.lab_name,
                 ip_range=self.ip_range,

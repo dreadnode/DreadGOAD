@@ -1,0 +1,48 @@
+---
+- name: Add Wazuh GPG key
+  ansible.builtin.rpm_key:
+    key: https://packages.wazuh.com/key/GPG-KEY-WAZUH
+    state: present
+  when: ansible_os_family == "RedHat"
+
+- name: Add Wazuh APT key
+  ansible.builtin.apt_key:
+    url: https://packages.wazuh.com/key/GPG-KEY-WAZUH
+    state: present
+  when: ansible_os_family == "Debian"
+
+- name: Add Wazuh repository (Debian/Ubuntu)
+  ansible.builtin.apt_repository:
+    repo: "deb https://packages.wazuh.com/4.x/apt/ stable main"
+    state: present
+    filename: wazuh
+  when: ansible_os_family == "Debian"
+
+- name: Add Wazuh repository (RHEL/CentOS)
+  ansible.builtin.yum_repository:
+    name: wazuh
+    description: Wazuh repository
+    baseurl: https://packages.wazuh.com/4.x/yum/
+    gpgcheck: true
+    gpgkey: https://packages.wazuh.com/key/GPG-KEY-WAZUH
+    enabled: true
+  when: ansible_os_family == "RedHat"
+
+- name: Install Wazuh agent
+  ansible.builtin.package:
+    name: wazuh-agent
+    state: present
+  environment:
+    WAZUH_MANAGER: "{{ wazuh_manager_host }}"
+
+- name: Configure Wazuh agent manager address
+  ansible.builtin.lineinfile:
+    path: /var/ossec/etc/ossec.conf
+    regexp: '<address>.*</address>'
+    line: "      <address>{{ wazuh_manager_host }}</address>"
+
+- name: Enable and start Wazuh agent
+  ansible.builtin.systemd:
+    name: wazuh-agent
+    state: started
+    enabled: true

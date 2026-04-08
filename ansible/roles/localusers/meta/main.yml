@@ -1,0 +1,19 @@
+---
+galaxy_info:
+  role_name: localusers
+  namespace: dreadnode
+  author: Dreadnode
+  company: Dreadnode
+  description: Create and manage local Windows user accounts
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Windows
+      versions:
+        - all
+  galaxy_tags:
+    - windows
+    - user_management
+    - local_accounts
+
+dependencies: []

@@ -1,0 +1,20 @@
+---
+galaxy_info:
+  role_name: vulns_adcs_esc10_case2
+  namespace: dreadnode
+  author: Dreadnode
+  company: Dreadnode
+  description: ADCS ESC10 Case 2 - Set UPN certificate mapping method
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Windows
+      versions:
+        - all
+  galaxy_tags:
+    - windows
+    - vulnerability
+    - adcs
+    - pentest
+
+dependencies: []

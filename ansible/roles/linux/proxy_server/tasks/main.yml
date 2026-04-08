@@ -19,7 +19,7 @@
 
 # WPAD serve
 - name: Install Apache
-  apt: 
+  apt:
     name: apache2
     state: latest
 
@@ -29,7 +29,7 @@
     dest: /etc/apache2/sites-available/000-default.conf
     owner: "root"
     group: "root"
-    force: yes
+    force: true
     mode: 0644
 
 - name: setup wpad config
@@ -41,7 +41,7 @@
     mode: "644"
 
 - name: Start Apache service and enable
-  service: 
+  service:
     name: apache2
     state: started
     enabled: true

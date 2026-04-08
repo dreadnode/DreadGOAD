@@ -1,6 +1,11 @@
 # Road Map
 
+> **Note:** This is the upstream [GOAD](https://github.com/Orange-Cyberdefense/GOAD)
+> roadmap, preserved here for historical reference. It does not reflect
+> DreadGOAD-specific changes.
+
 ## v1
+
 - [X] SMB share anonymous
 - [X] SMB not signed
 - [X] Responder
@@ -8,11 +13,12 @@
 - [X] Windows defender
 - [X] ASREPRoast
 - [X] Kerberoasting
-- [X] AD Acl abuse 
+- [X] AD Acl abuse
 - [X] Unconstraint delegation
 - [X] Ntlm relay
 
 ## v2
+
 - [X] Password reuse between computer (PTH)
 - [X] Spray User = Password
 - [X] Password in description
@@ -39,7 +45,7 @@
 - [X] Add Webdav
 - [X] Add RDP bot
 - [X] Add full proxmox integration
-- [X] Add Gmsa (receipe created)
+- [X] Add Gmsa (recipe created)
 - [X] Add azure support
 - [X] Refactoring lab and providers
 - [X] Protected Users
@@ -51,6 +57,7 @@
 - [X] Sccm (see SCCM lab)
 
 ## v3
+
 - [X] aws support
 - [X] ludus support
 - [X] windows install compatibility
@@ -66,6 +73,7 @@
 - [X] ADCS add vulns
 
 ## maybe one day if i get the time
+
 - [ ] new training lab
 - [ ] extension "life", add some bots in the lab
 - [ ] extension Xworkstations, to add multiple workstations
@@ -73,4 +81,3 @@
 - [ ] extension VPN
 - [ ] Add Applocker to ws01
 - [ ] Wsus (to add on sccm)
-

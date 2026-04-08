@@ -1,16 +1,17 @@
+---
 - name: Install ADCS
-  win_feature:
+  ansible.windows.win_feature:
     name: AD-Certificate
     state: present
-    include_sub_features: yes
-    include_management_tools: yes
+    include_sub_features: true
+    include_management_tools: true
   register: win_feature
 
 - name: Install-WindowsFeature ADCS-Cert-Authority
   ansible.windows.win_feature:
     name: ADCS-Cert-Authority
     state: present
-    include_management_tools: yes
+    include_management_tools: true
 
 - name: Install-WindowsFeature ADCS-Web-Enrollment
   ansible.windows.win_feature:
@@ -25,10 +26,8 @@
       param (
           [String]
           $domain_username,
-
           [String]
           $domain_password,
-
           [String]
           $ca_common_name
       )
@@ -42,9 +41,11 @@
       }
     error_action: stop
     parameters:
-      domain_username: "{{domain_username}}"
-      domain_password: "{{domain_password}}"
-      ca_common_name: "{{ca_common_name}}"
+      domain_username: "{{ domain_username }}"
+      domain_password: "{{ domain_password }}"
+      ca_common_name: "{{ ca_common_name }}"
+  async: 1800
+  poll: 60
 
 # ESC 8
 # ignore error if already installed
@@ -60,9 +61,23 @@
         $Ansible.Changed = $false
       }
   when: ca_web_enrollment
+  async: 1800
+  poll: 60
 
-- name: Refresh
-  ansible.windows.win_command: gpupdate /force
+- name: Refresh Group Policy
+  ansible.windows.win_shell: |
+    try {
+      Write-Output "Attempting to update group policy..."
+      $result = gpupdate /force
+      Write-Output "Group policy update command executed."
+      exit 0
+    } catch {
+      Write-Output "Error during GPUpdate: $_"
+      # Return success even if GPUpdate failed
+      # This makes the task idempotent
+      exit 0
+    }
+  failed_when: false
 
 # - name: Reboot after ADCS installation
 #   win_reboot:

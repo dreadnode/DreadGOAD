@@ -1,15 +1,25 @@
-#jinja2: newline_sequence:"\r\n"
 ;SQL Server Configuration File
 [OPTIONS]
+
+; Accept license
 IACCEPTSQLSERVERLICENSETERMS="True"
+
+; Specifies a Setup work flow, like INSTALL, UNINSTALL, or UPGRADE. This is a required parameter.
 ACTION="Install"
+
+; Use the /ENU parameter to install the English version of SQL Server on your localized Windows operating system.
 ENU="True"
+
+; Setup will not display any user interface.
 QUIET="True"
+
+; Setup will display progress only, without any user interaction.
 QUIETSIMPLE="False"
+
 UpdateEnabled="False"
 ERRORREPORTING="False"
 USEMICROSOFTUPDATE="False"
-FEATURES=SQLENGINE,FULLTEXT
+FEATURES="SQLENGINE,FULLTEXT"
 UpdateSource="MU"
 HELP="False"
 INDICATEPROGRESS="False"
@@ -35,8 +45,9 @@ SQLSVCACCOUNT="{{ SQLSVCACCOUNT }}"
 {% if SQLSVCPASSWORD != "" %}
 SQLSVCPASSWORD="{{ SQLSVCPASSWORD }}"
 {% endif %}
-SAPWD="{{sa_password}}"
-SQLSYSADMINACCOUNTS="{{ SQLYSADMIN }}"
+SECURITYMODE="SQL"
+SAPWD="{{ sa_password }}"
+SQLSYSADMINACCOUNTS="{{ SQLSYSADMIN }}"
 ;ADDCURRENTUSERASSQLADMIN="True"
 ADDCURRENTUSERASSQLADMIN="False"
 TCPENABLED="1"

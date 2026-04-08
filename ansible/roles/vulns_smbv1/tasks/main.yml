@@ -1,0 +1,12 @@
+---
+- name: Enable SMBV1 feature
+  ansible.windows.win_feature:
+    name: SMB1Protocol
+    state: present
+    include_sub_features: true
+    include_management_tools: true
+  register: win_feature
+
+- name: Reboot if feature requires it
+  ansible.windows.win_reboot:
+  when: win_feature.reboot_required

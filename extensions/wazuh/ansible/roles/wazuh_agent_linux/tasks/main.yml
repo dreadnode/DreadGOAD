@@ -29,7 +29,7 @@
   when: "'wazuh-agent.service' not in ansible_facts.services or ansible_facts.services['wazuh-agent.service'].state != 'running'"
 
 - name: Install wazuh agent
-  ansible.builtin.apt: 
+  ansible.builtin.apt:
     name: "wazuh-agent={{wazuh_version}}"
     state: present
   environment:
@@ -41,5 +41,5 @@
   ansible.builtin.service:
     name: wazuh-agent
     state: started
-    enabled: yes
+    enabled: true
   when: "'wazuh-agent.service' not in ansible_facts.services or ansible_facts.services['wazuh-agent.service'].state != 'running'"

@@ -1,0 +1,4 @@
+---
+- name: Disable interface {{ nat_adapter }}
+  ansible.windows.win_shell: netsh interface set interface "{{ nat_adapter }}" disable
+  when: two_adapters | default(false) | bool

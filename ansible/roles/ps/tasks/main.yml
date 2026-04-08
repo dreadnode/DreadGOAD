@@ -1,2 +1,5 @@
-- name: Play task {{ps_script}}
-  script: "{{ps_script}}"
+---
+- name: Play task {{ ps_script }}
+  ansible.windows.win_shell: |
+    {{ lookup('file', ps_script) }}
+  register: ps_result

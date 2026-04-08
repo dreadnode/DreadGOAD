@@ -1,0 +1,28 @@
+---
+name: "Labeler"
+on:
+  pull_request_target:
+    branches: ["main"]
+    types: ["opened", "synchronize"]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  labeler:
+    name: Labeler
+    runs-on: ubuntu-latest
+    steps:
+      - name: Generate Token
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        id: app-token
+        with:
+          app-id: "${{ secrets.BOT_APP_ID }}"
+          private-key: "${{ secrets.BOT_APP_PRIVATE_KEY }}"
+
+      - name: Labeler
+        uses: actions/labeler@634933edcd8ababfe52f92936142cc22ac488b1b # v6.0.1
+        with:
+          configuration-path: .github/labeler.yaml
+          repo-token: "${{ steps.app-token.outputs.token }}"

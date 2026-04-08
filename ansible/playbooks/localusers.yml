@@ -1,0 +1,9 @@
+---
+
+# set local users ==================================================================================================
+- name: Local Users
+  hosts: domain
+  roles:
+    - { role: 'dreadnode.goad.localusers', tags: 'localusers' }
+  vars:
+    local_users: "{{ lab.hosts[dict_key].local_users | default({}) }}"

@@ -46,14 +46,14 @@
     dest: "/etc/hosts"
     line: "127.0.1.1       {{ hostname }}.{{ domain }}"
     state: present
-    backup: yes
+    backup: true
 
-- name: Modify Hosts File to add domain dc 
+- name: Modify Hosts File to add domain dc
   lineinfile:
     dest: "/etc/hosts"
     line: "{{dc_ip}}       {{ dc_fqdn }}  {{ domain }}"
     state: present
-    backup: yes
+    backup: true
 
 - name: Modify Hostname
   shell:
@@ -107,7 +107,7 @@
     line: "%{{ item }}   ALL=(ALL) NOPASSWD:ALL"
     state: present
     validate: /usr/sbin/visudo -cf %s
-    backup: yes
+    backup: true
   loop: "{{sudoers_group}}"
 
 - name: Allow {{ item }} Login Ubuntu
@@ -121,7 +121,7 @@
     regexp: '^#?GSSAPIAuthentication'
     line: 'GSSAPIAuthentication yes'
     state: present
-    backup: yes
+    backup: true
 
 - name: Enable GSSAPI Cleanup Credentials
   lineinfile:
@@ -129,7 +129,7 @@
     regexp: '^#?GSSAPICleanupCredentials'
     line: 'GSSAPICleanupCredentials yes'
     state: present
-    backup: yes
+    backup: true
 
 - name: Disable GSSAPIStrictAcceptorCheck
   lineinfile:
@@ -137,7 +137,7 @@
     regexp: '^#?GSSAPIStrictAcceptorCheck'
     line: 'GSSAPIStrictAcceptorCheck no'
     state: present
-    backup: yes
+    backup: true
 
 - name: Ensure PAM is enabled in SSHD
   lineinfile:
@@ -145,7 +145,7 @@
     regexp: '^#?UsePAM'
     line: 'UsePAM yes'
     state: present
-    backup: yes
+    backup: true
 
 - name: Install PAM Kerberos module
   apt:
@@ -156,7 +156,7 @@
 - name: Add ssh
   shell:
     "sudo realm join --client-software=sssd {{ domain }}"
-  ignore_errors: yes
+  ignore_errors: true
 
 - name: Define domain DNS in resolved.conf
   lineinfile:
@@ -174,7 +174,7 @@
     src: /run/systemd/resolve/resolv.conf
     dest: /etc/resolv.conf
     state: link
-    force: yes
+    force: true
 
 - name: Install ntpdate
   ansible.builtin.apt:
@@ -190,7 +190,7 @@
   ansible.builtin.apt:
     name: chrony
     state: present
-    update_cache: yes
+    update_cache: true
 
 - name: Configure DC as NTP server
   ansible.builtin.lineinfile:
@@ -223,7 +223,7 @@
   ansible.builtin.systemd:
     name: chrony
     state: started
-    enabled: yes
+    enabled: true
 
 - name: Set RTC in local timezone and adjust system clock
   ansible.builtin.command:
@@ -238,6 +238,6 @@
     path: /etc/sssd/sssd.conf
     regexp: '^ad_server\s*='
     state: absent
-    backup: yes
+    backup: true
   notify:
     - Restart SSSD

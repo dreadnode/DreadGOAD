@@ -4,7 +4,7 @@
         "dc01" : {
             "hostname" : "kingslanding",
             "type" : "dc",
-            "local_admin_password": "8dCT-DJjgScp",
+            "local_admin_password": "qjQ!bcwXKU!3yBrDM2VU",
             "domain" : "sevenkingdoms.local",
             "path" : "DC=sevenkingdoms,DC=local",
             "local_groups" : {
@@ -20,7 +20,7 @@
             },
             "scripts" : ["sidhistory.ps1"],
             "vulns" : ["disable_firewall", "adcs_esc10_case1", "adcs_esc10_case2"],
-            "security": ["account_is_sensitive"],
+            "security": ["account_is_sensitive", "audit_policy"],
             "security_vars": {
                 "account_is_sensitive" : { "renly": {"account" : "renly.baratheon"} }
             }
@@ -28,7 +28,7 @@
         "dc02" : {
             "hostname" : "winterfell",
             "type" : "dc",
-            "local_admin_password": "NgtI75cKV+Pu",
+            "local_admin_password": "VExkHyfsKTW_HMNA7fQy",
             "domain" : "north.sevenkingdoms.local",
             "path" : "DC=north,DC=sevenkingdoms,DC=local",
             "local_groups" : {
@@ -50,10 +50,10 @@
                 "gpo_abuse.ps1",
                 "rdp_scheduler.ps1"
             ],
-            "vulns" : ["disable_firewall","directory", "credentials", "autologon", "files", "enable_llmnr", "enable_nbt-ns", "shares"],
+            "vulns" : ["disable_firewall","directory", "credentials", "autologon", "files", "enable_llmnr", "enable_nbt_ns"],
             "vulns_vars" : {
                 "directory": {
-                    "setup": "c:\\setup"
+                    "setup": "C:\\setup"
                 },
                 "credentials" : {
                     "TERMSRV/castelblack": {
@@ -72,7 +72,7 @@
                 "files" : {
                     "rdp" : {
                         "src" : "dc02/bot_rdp.ps1",
-                        "dest" : "c:\\setup\\bot_rdp.ps1"
+                        "dest" : "C:\\setup\\bot_rdp.ps1"
                     },
                     "sysvol_fake_script": {
                         "src" : "dc02/sysvol_scripts/script.ps1",
@@ -83,12 +83,13 @@
                         "dest": "C:\\Windows\\SYSVOL\\domain\\scripts\\secret.ps1"
                     }
                 }
-            }
+            },
+            "security": ["audit_policy"]
         },
         "srv02" : {
             "hostname" : "castelblack",
             "type" : "server",
-            "local_admin_password": "NgtI75cKV+Pu",
+            "local_admin_password": "VExkHyfsKTW_HMNA7fQy",
             "domain" : "north.sevenkingdoms.local",
             "path" : "DC=north,DC=sevenkingdoms,DC=local",
             "use_laps": false,
@@ -103,7 +104,7 @@
                 ]
             },
             "scripts" : [],
-            "vulns" : ["directory", "disable_firewall", "openshares", "files", "permissions"],
+            "vulns" : ["directory", "disable_firewall", "openshares", "shares", "files", "permissions"],
             "vulns_vars" : {
                 "directory": {
                     "shares": "C:\\shares",
@@ -171,7 +172,7 @@
         "dc03" : {
             "hostname" : "meereen",
             "type" : "dc",
-            "local_admin_password": "Ufe-bVXSx9rk",
+            "local_admin_password": "M!BbXzL48D9mH9dQzp*e",
             "domain" : "essos.local",
             "path" : "DC=essos,DC=local",
             "local_groups" : {
@@ -197,12 +198,13 @@
                         "adcs_esc13_template": "ESC13"
                     }
                 }
-            }
+            },
+            "security": ["audit_policy"]
         },
         "srv03" : {
             "hostname" : "braavos",
             "type" : "server",
-            "local_admin_password": "978i2pF43UJ-",
+            "local_admin_password": "M!BbXzL48D9mH9dQzp*e",
             "domain" : "essos.local",
             "path" : "DC=essos,DC=local",
             "use_laps": true,
@@ -241,7 +243,7 @@
     "domains" : {
         "essos.local" : {
             "dc": "dc03",
-            "domain_password" : "Ufe-bVXSx9rk",
+            "domain_password" : "M!BbXzL48D9mH9dQzp*e",
             "netbios_name": "ESSOS",
             "ca_server": "Braavos",
             "trust" : "sevenkingdoms.local",
@@ -268,16 +270,16 @@
                         "path" : "CN=Users,DC=essos,DC=local"
                     },
                     "Dragons":{
-                        "managed_by" : "Administrator",
+                        "managed_by" : "goadmin",
                         "path" : "CN=Users,DC=essos,DC=local"
                     },
                     "QueenProtector":{
-                        "managed_by" : "Administrator",
+                        "managed_by" : "goadmin",
                         "path" : "CN=Users,DC=essos,DC=local",
                         "members" : ["ESSOS\\Dragons"]
                     },
                     "Domain Admins":{
-                        "managed_by" : "Administrator",
+                        "managed_by" : "goadmin",
                         "path" : "CN=Users,DC=essos,DC=local",
                         "members" : ["ESSOS\\QueenProtector"]
                     }
@@ -323,7 +325,7 @@
                 "daenerys.targaryen" : {
                     "firstname"   : "daenerys",
                     "surname"     : "targaryen",
-                    "password"    : "BurnThemAll!", 
+                    "password"    : "BurnThemAll!",
                     "city"        : "-",
                     "description" : "Darnerys Targaryen",
                     "groups"      : ["Targaryen", "Domain Admins"],
@@ -388,7 +390,7 @@
         },
         "north.sevenkingdoms.local" : {
             "dc": "dc02",
-            "domain_password" : "NgtI75cKV+Pu",
+            "domain_password" : "VExkHyfsKTW_HMNA7fQy",
             "netbios_name": "NORTH",
             "trust" : "",
             "laps_path": "OU=Laps,DC=north,DC=sevenkingdoms,DC=local",
@@ -537,7 +539,7 @@
         },
         "sevenkingdoms.local" : {
             "dc": "dc01",
-            "domain_password" : "8dCT-DJjgScp",
+            "domain_password" : "qjQ!bcwXKU!3yBrDM2VU",
             "netbios_name": "SEVENKINGDOMS",
             "trust" : "essos.local",
             "laps_path": "OU=Laps,DC=sevenkingdoms,DC=local",

@@ -19,7 +19,7 @@
 # provision ----
 - name: Enroll lx01 machine to domain
   hosts: lx01
-  become: yes
+  become: true
   roles:
   - { role: 'linux/add_linux_to_domain', tags: 'linux_domain'}
   vars:
@@ -34,7 +34,7 @@
     sudoers_group: "{{lab.hosts[dict_key].local_groups.sudoers | default([])}}"
     ssh_group: "{{lab.hosts[dict_key].local_groups.ssh | default([])}}"
 
-- name: Setup lx01 machine dns on domain controler
+- name: Setup lx01 machine dns on domain controller
   hosts: dc01
   roles:
   - { role: 'add_dns_record', tags: 'add_dns_record'}
@@ -46,7 +46,7 @@
 
 # - name: Setup lx01 machine as proxy
 #   hosts: lx01
-#   become: yes
+#   become: true
 #   roles:
 #   - { role: 'linux/proxy_server', tags: 'linux_domain'}
 #   vars:
@@ -55,8 +55,8 @@
 #     squid_port: "3128"
 #     ip_range: "{{hostvars[dict_key].ansible_host}}/24"
 #     proxy_fqdn: "{{hostname}}.{{domain}}"
-# 
-# - name: Setup lx01 machine as wpad CNAME in dns of domain controlers
+#
+# - name: Setup lx01 machine as wpad CNAME in dns of domain controllers
 #   hosts: dc
 #   tasks:
 #     - name: reset dns query blocklist (to remove wpad from list)

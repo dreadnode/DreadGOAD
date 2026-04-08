@@ -1,0 +1,60 @@
+# SMB share users only
+- name: Create directory if not exist
+  ansible.windows.win_file:
+    path: "{{ item.value.path }}"
+    state: directory
+  with_dict: "{{ vulns_vars }}"
+
+- name: Create share
+  ansible.windows.win_share:
+    name: "{{ item.key }}"
+    description: "{{ item.value.description | default(item.key) }}"
+    path: "{{ item.value.path }}"
+    list: "{{ item.value.list | default('yes') }}"
+    full: "{{ item.value.full | default('Administrators') }}"
+    change: "{{ item.value.change | default('') }}"
+    read: "{{ item.value.read | default('') }}"
+    deny: "{{ item.value.deny | default('') }}"
+  register: shareregister
+  with_dict: "{{ vulns_vars }}"
+
+# change permissions according to rights
+- name: Set full control permissions
+  ansible.builtin.include_tasks: perm.yml
+  vars:
+    path: "{{ item.value.path }}"
+    users: "{{ item.value.full | split(',') | map('trim') | select('ne', '') | list }}"
+    perm: "FullControl"
+    type: "allow"
+  with_dict: "{{ vulns_vars }}"
+  when: item.value.full is defined
+
+- name: Set change permissions
+  ansible.builtin.include_tasks: perm.yml
+  vars:
+    path: "{{ item.value.path }}"
+    users: "{{ item.value.change | split(',') | map('trim') | select('ne', '') | list }}"
+    perm: "Read,Write,Modify,Delete"
+    type: "allow"
+  with_dict: "{{ vulns_vars }}"
+  when: item.value.change is defined
+
+- name: Set read permissions
+  ansible.builtin.include_tasks: perm.yml
+  vars:
+    path: "{{ item.value.path }}"
+    users: "{{ item.value.read | split(',') | map('trim') | select('ne', '') | list }}"
+    perm: "Read"
+    type: "allow"
+  with_dict: "{{ vulns_vars }}"
+  when: item.value.read is defined
+
+- name: Set deny permissions
+  ansible.builtin.include_tasks: perm.yml
+  vars:
+    path: "{{ item.value.path }}"
+    users: "{{ item.value.deny | split(',') | map('trim') | select('ne', '') | list }}"
+    perm: "Read,Write,Modify,FullControl,Delete"
+    type: "deny"
+  with_dict: "{{ vulns_vars }}"
+  when: item.value.deny is defined

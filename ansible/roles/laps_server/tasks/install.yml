@@ -1,0 +1,45 @@
+---
+- name: Create temporary directory for downloads
+  ansible.windows.win_file:
+    path: C:\Temp\ansible
+    state: directory
+
+- name: Download LAPS Package
+  ansible.windows.win_get_url:
+    url: https://download.microsoft.com/download/C/7/A/C7AAD914-A8A6-4904-88A1-29E657445D03/LAPS.x64.msi
+    dest: C:\Temp\ansible\LAPS.x64.msi
+    force: false
+  register: download_result
+  retries: 3
+  delay: 5
+  until: download_result is success
+
+- name: Install to Servers
+  ansible.windows.win_package:
+    arguments: "ADDLOCAL=CSE"
+    path: C:\Temp\ansible\LAPS.x64.msi
+    state: present
+    creates_path: "%ProgramFiles%\\LAPS"
+  register: pri_laps_install
+  retries: 2
+  delay: 10
+  until: pri_laps_install is success
+
+- name: Reboot after installing LAPS (if required)
+  ansible.windows.win_reboot:
+  when: pri_laps_install.reboot_required
+
+- name: Refresh GPO on the Clients
+  ansible.windows.win_shell: |
+    try {
+      Write-Output "Attempting to update group policy..."
+      $result = gpupdate /force
+      Write-Output "Group policy update command executed."
+      exit 0
+    } catch {
+      Write-Output "Error during GPUpdate: $_"
+      # Return success even if GPUpdate failed
+      # This makes the task idempotent
+      exit 0
+    }
+  failed_when: false

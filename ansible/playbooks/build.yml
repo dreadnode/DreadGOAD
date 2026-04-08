@@ -1,0 +1,32 @@
+---
+
+- name: Build all
+  hosts: domain
+  pre_tasks:
+    - name: Load prebaked AMI manifest
+      ansible.windows.win_shell: |
+        if (Test-Path 'C:\ProgramData\goad\prebaked.json') {
+          Get-Content 'C:\ProgramData\goad\prebaked.json' -Raw
+        } else {
+          Write-Output '{}'
+        }
+      register: _prebaked_raw
+      changed_when: false
+
+    - name: Set prebaked facts
+      ansible.builtin.set_fact:
+        goad_prebaked: "{{ _prebaked_raw.stdout | trim | from_json }}"
+  roles:
+    - { role: 'dreadnode.goad.common', tags: 'common', http_proxy: "{{ enable_http_proxy }}"}
+    - { role: 'dreadnode.goad.settings_keyboard', tags: 'keyboard', layouts: "{{ keyboard_layouts }}" }
+
+# do not add srv with no update -> generate error on iis install
+- name: Build all no update
+  hosts: no_update
+  roles:
+    - { role: 'dreadnode.goad.settings_no_updates', tags: 'no_updates' }
+
+- name: Launch windows updates before continue
+  hosts: update
+  roles:
+    - { role: 'dreadnode.goad.settings_updates', tags: 'updates'}

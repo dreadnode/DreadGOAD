@@ -1,0 +1,21 @@
+---
+galaxy_info:
+  role_name: adcs_templates
+  namespace: dreadnode
+  author: Dreadnode
+  company: Dreadnode
+  description: Deploy and configure ADCS certificate templates
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Windows
+      versions:
+        - all
+  galaxy_tags:
+    - windows
+    - active_directory
+    - adcs
+    - certificate
+    - templates
+
+dependencies: []

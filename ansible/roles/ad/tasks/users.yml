@@ -1,33 +1,158 @@
+---
 - name: Sync the contents of one directory to another - hack to get Requires -Module Ansible.ModuleUtils.Legacy loaded
   community.windows.win_robocopy:
     src: C:\windows\temp
     dest: C:\windows\temp
 
-- name: "Create users"
-  win_domain_user:
-    name: "{{ item.key }}"
-    firstname: "{{item.value.firstname}}"
-    surname: "{{ item.value.surname | default(item.value.firstname) }}"
-    password: "{{ item.value.password }}"
-    password_never_expires: yes
-    state: present
-    path: "{{item.value.path}}"
-    description: "{{item.value.description | default('-')}}"
-    groups: "{{ item.value.groups}}"
-    city: "{{item.value.city | default('-')}}"
-    domain_username: "{{domain_username}}"
-    domain_password: "{{domain_password}}"
+- name: Create users
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param (
+        [string]$Username,
+        [string]$Firstname,
+        [string]$Surname,
+        [string]$Password,
+        [string]$Path,
+        [string]$Description,
+        [string]$City,
+        [string[]]$Groups
+      )
+
+      $ProgressPreference = 'SilentlyContinue'
+
+      try {
+        # Check if user already exists
+        $userExists = Get-ADUser -Filter {SamAccountName -eq $Username} -ErrorAction SilentlyContinue
+
+        if (-not $userExists) {
+          # Create secure password
+          $securePassword = ConvertTo-SecureString -String $Password -AsPlainText -Force
+
+          # Create new user
+          New-ADUser -SamAccountName $Username `
+                    -UserPrincipalName "$Username@$env:USERDNSDOMAIN" `
+                    -Name "$Firstname $Surname" `
+                    -GivenName $Firstname `
+                    -Surname $Surname `
+                    -Enabled $true `
+                    -PasswordNeverExpires $true `
+                    -Path $Path `
+                    -City $City `
+                    -Description $Description `
+                    -AccountPassword $securePassword
+
+          Write-Output "Created user $Username"
+          $Ansible.Changed = $true
+        } else {
+          Write-Output "User $Username already exists"
+          $Ansible.Changed = $false
+        }
+
+        # Add user to groups
+        foreach ($group in $Groups) {
+          try {
+            # Check if user is already member of the group
+            $isMember = Get-ADGroupMember -Identity $group -ErrorAction SilentlyContinue |
+                        Where-Object {$_.SamAccountName -eq $Username}
+
+            if (-not $isMember) {
+              Add-ADGroupMember -Identity $group -Members $Username -ErrorAction Stop
+              Write-Output "Added $Username to group $group"
+              $Ansible.Changed = $true
+            } else {
+              Write-Output "$Username is already a member of $group"
+            }
+          } catch {
+            $errorMessage = $_.Exception.Message
+            Write-Warning ("Failed to add " + $Username + " to group " + $group + " - " + $errorMessage)
+          }
+        }
+      } catch {
+        $errorMessage = $_.Exception.Message
+        Write-Error ("Failed to create or update user " + $Username + " - " + $errorMessage)
+        throw $_
+      }
+    parameters:
+      Username: "{{ item.key }}"
+      Firstname: "{{ item.value.firstname }}"
+      Surname: "{{ item.value.surname | default(item.value.firstname) }}"
+      Password: "{{ item.value.password }}"
+      Path: "{{ item.value.path }}"
+      Description: "{{ item.value.description | default('-') }}"
+      City: "{{ item.value.city | default('-') }}"
+      Groups: "{{ item.value.groups | default([]) }}"
   with_dict: "{{ ad_users }}"
   register: usercreate
-  until: "usercreate is not failed"
   retries: 3
   delay: 30
+  until: usercreate is not failed
+  async: 300
+  poll: 0
 
-- name: "Set users SPN lists"
-  win_domain_user:
-    name: "{{ item.key }}"
-    spn: "{{item.value.spns}}"
-    domain_username: "{{domain_username}}"
-    domain_password: "{{domain_password}}"
+- name: Wait for user creation to complete
+  ansible.builtin.async_status:
+    jid: "{{ item.ansible_job_id }}"
+  register: job_result
+  until: job_result.finished
+  retries: 60
+  delay: 5
+  loop: "{{ usercreate.results }}"
+  loop_control:
+    label: "Creating user: {{ item.item.key }}"
+  when: item.ansible_job_id is defined
+
+- name: Set users SPN lists
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param (
+        [string]$Username,
+        [string[]]$SPNs
+      )
+
+      $ProgressPreference = 'SilentlyContinue'
+
+      try {
+        # Get current SPNs for the user
+        $user = Get-ADUser -Identity $Username -Properties ServicePrincipalNames
+        $currentSPNs = $user.ServicePrincipalNames
+
+        $changed = $false
+
+        # Add any missing SPNs
+        foreach ($spn in $SPNs) {
+          if ($currentSPNs -notcontains $spn) {
+            Set-ADUser -Identity $Username -ServicePrincipalNames @{Add=$spn}
+            Write-Output "Added SPN $spn to user $Username"
+            $changed = $true
+          } else {
+            Write-Output "SPN $spn already exists for user $Username"
+          }
+        }
+
+        $Ansible.Changed = $changed
+      } catch {
+        $errorMessage = $_.Exception.Message
+        Write-Error ("Failed to set SPNs for user " + $Username + " - " + $errorMessage)
+      }
+    parameters:
+      Username: "{{ item.key }}"
+      SPNs: "{{ item.value.spns }}"
   with_dict: "{{ ad_users }}"
   when: item.value.spns is defined
+  async: 300
+  poll: 0
+  register: spn_task
+
+- name: Wait for SPN configuration to complete
+  ansible.builtin.async_status:
+    jid: "{{ item.ansible_job_id }}"
+  register: spn_result
+  until: spn_result.finished
+  retries: 60
+  delay: 5
+  loop: "{{ spn_task.results }}"
+  loop_control:
+    label: "Configuring SPN for user: {{ item.item.key }}"
+  when: item.ansible_job_id is defined

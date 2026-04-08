@@ -1,0 +1,21 @@
+---
+galaxy_info:
+  role_name: sccm_config_client_install
+  namespace: dreadnode
+  author: Dreadnode
+  company: Dreadnode
+  description: Install SCCM client on managed endpoints
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Windows
+      versions:
+        - all
+  galaxy_tags:
+    - windows
+    - sccm
+    - mecm
+    - client
+    - deployment
+
+dependencies: []

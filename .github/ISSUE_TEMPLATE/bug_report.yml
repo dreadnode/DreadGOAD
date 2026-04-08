@@ -1,0 +1,122 @@
+name: Bug report
+description: Report a problem with the DreadGOAD CLI, Ansible roles, Terraform modules, or another part of the tooling.
+title: "[bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug report.
+
+        Before you continue, please confirm:
+
+        - The issue is in the **DreadGOAD tooling** (CLI, Ansible, Terraform/Terragrunt, Packer, Warpgate, variant generator). Weak passwords and other intentional vulnerabilities inside the deployed labs are by design — please do not file those as bugs.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Pre-flight checks
+      options:
+        - label: I have searched existing issues and this is not a duplicate.
+          required: true
+        - label: I have run `dreadgoad doctor` (or the equivalent) and read its output.
+          required: false
+        - label: This is a bug in the DreadGOAD tooling, not an intentional lab vulnerability.
+          required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: DreadGOAD version
+      description: "Output of `dreadgoad --version`, or the commit SHA of `main` you are on."
+      placeholder: "e.g. 1.2.3 (commit: abc1234, built: 2026-04-07)  -or-  main @ abc1234"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: provider
+    attributes:
+      label: Provider
+      description: Which infrastructure provider were you using?
+      options:
+        - VirtualBox
+        - VMware
+        - Proxmox
+        - AWS
+        - Azure
+        - Ludus
+        - Not provider-specific
+        - Other (please describe in the bug report)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: lab
+    attributes:
+      label: Lab
+      description: Which lab were you deploying when you hit the issue?
+      options:
+        - GOAD
+        - GOAD-Light
+        - GOAD-Mini
+        - MINILAB
+        - SCCM
+        - NHA
+        - DRACARYS
+        - A generated variant
+        - Not lab-specific
+        - Other (please describe in the bug report)
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operator OS
+      description: The OS where you are running the DreadGOAD CLI / Ansible (not the lab VMs).
+      placeholder: "e.g. macOS 14.5 (arm64), Ubuntu 22.04, Windows 11 + WSL2"
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, including what you expected to happen and what actually happened.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: |
+        The exact commands you ran. Please include the full command line, any relevant config snippets (`dreadgoad.yaml`, `globalsettings.ini`), and the working directory.
+      placeholder: |
+        1. `git clone https://github.com/dreadnode/DreadGOAD.git`
+        2. `cd cli && go build -o dreadgoad .`
+        3. `./dreadgoad provision --lab GOAD-Light --provider virtualbox`
+        4. ...
+      render: shell
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        Paste the relevant CLI output, Ansible log lines, or Terraform error.
+
+        Tip: rerun with `--debug` for more detail. Logs are also written to `~/.ansible/logs/goad/`.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots, related issues, recent changes you made, ideas about the cause, etc.
+    validations:
+      required: false

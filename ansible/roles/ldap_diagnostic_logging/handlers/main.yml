@@ -1,0 +1,11 @@
+---
+# Note: Restarting NTDS on a DC is disruptive
+# In production, changes take effect on next restart
+# For lab environments, we can force a restart
+
+- name: Restart NTDS service
+  ansible.windows.win_shell: |
+    Write-Output "NTDS diagnostic settings updated. Changes will take effect on next restart."
+    # Uncomment below to force restart (will cause brief AD outage)
+    # Restart-Service NTDS -Force
+  listen: Restart NTDS service

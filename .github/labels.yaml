@@ -1,0 +1,132 @@
+---
+# Area
+- name: area/github
+  color: "72CCF3" # Light Blue
+  description: >-
+    Changes made to github actions
+
+- name: area/pre-commit
+  color: "BC9BE3" # Lavender
+  description: >-
+    Changes made to pre-commit hooks
+
+- name: area/license
+  color: "F4D1B7" # Peach
+  description: >-
+    Changes made to license file
+
+- name: area/readme
+  color: "84B6EB" # Steel Blue
+  description: >-
+    Changes made to README.md file
+
+- name: area/roles
+  color: "FF6600" # Orange
+  description: >-
+    Changes made to Ansible roles
+
+- name: area/playbooks
+  color: "FF99CC" # Pink
+  description: >-
+    Changes made to playbooks directory
+
+- name: area/taskfiles
+  color: "66CCFF" # Sky Blue
+  description: >-
+    Changes made to taskfiles
+
+- name: area/terraform
+  color: "7B42BC" # Terraform Purple
+  description: >-
+    Changes made to Terraform/provider configs
+
+- name: area/packer
+  color: "02A8EF" # Packer Blue
+  description: >-
+    Changes made to Packer configurations
+
+- name: area/docker
+  color: "2496ED" # Docker Blue
+  description: >-
+    Changes made to Docker configurations
+
+- name: area/docs
+  color: "0075CA" # Documentation Blue
+  description: >-
+    Changes made to documentation
+
+- name: area/scripts
+  color: "A8D08D" # Sage Green
+  description: >-
+    Changes made to utility scripts
+
+- name: area/extensions
+  color: "E0C068" # Amber
+  description: >-
+    Changes made to extensions (ELK, Exchange, Wazuh, etc.)
+
+- name: area/python
+  color: "3776AB" # Python Blue
+  description: >-
+    Changes made to Python application code
+
+- name: area/ad-labs
+  color: "D4A017" # Gold
+  description: >-
+    Changes made to AD lab definitions
+
+# Lab variants
+- name: lab/GOAD
+  color: "C0392B" # Dark Red
+  description: >-
+    Changes made to GOAD lab
+
+- name: lab/GOAD-Light
+  color: "E74C3C" # Light Red
+  description: >-
+    Changes made to GOAD-Light lab
+
+- name: lab/GOAD-Mini
+  color: "F1948A" # Salmon
+  description: >-
+    Changes made to GOAD-Mini lab
+
+- name: lab/NHA
+  color: "8E44AD" # Wisteria
+  description: >-
+    Changes made to NHA lab
+
+- name: lab/SCCM
+  color: "2980B9" # Belize Blue
+  description: >-
+    Changes made to SCCM lab
+
+# Renovate
+- name: renovate/container
+  color: "FFC300" # Golden Yellow
+- name: renovate/github-action
+  color: "FFD700" # Gold
+- name: renovate/github-release
+  color: "FFE4B5" # Moccasin
+
+# Semantic Type
+- name: type/digest
+  color: "FFEC19" # Yellow
+- name: type/patch
+  color: "FF9800" # Dark Orange
+- name: type/minor
+  color: "FF6B6B" # Salmon
+- name: type/major
+  color: "F6412D" # Red Orange
+- name: type/break
+  color: "FF0000" # Bright Red
+
+# Uncategorized
+- name: bug
+  color: "D93F0B" # Dark Red
+- name: do-not-merge
+  color: "B60205" # Blood Red
+- name: docs
+  color: "0075CA" # Documentation Blue
+- name: enhancement
+  color: "A2EEEF" # Light Blue

@@ -28,7 +28,7 @@
     remote_src: true
   when: not glpi_is_installed.stat.exists
 
-- name: Set permisions to glpi directory
+- name: Set permissions to glpi directory
   file:
     path: "{{ glpi_install_path }}/glpi/files"
     recurse: true

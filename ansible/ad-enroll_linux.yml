@@ -1,12 +1,12 @@
 ---
-# Load datas
+# Load data
 - import_playbook: data.yml
   vars:
     data_path: "../ad/{{domain_name}}/data/"
 
 - name: Enroll linux machine to domain
   hosts: linux_domain
-  become: yes
+  become: true
   roles:
   - { role: 'linux/add_linux_to_domain', tags: 'linux_domain'}
   vars:

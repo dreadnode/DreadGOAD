@@ -1,7 +1,7 @@
 boxes.append(
     { :name => "{{lab_name}}-GUACAMOLE",
       :ip => "{{ip_range}}.52",
-      :box => "bento/ubuntu-22.04", 
+      :box => "bento/ubuntu-22.04",
       :os => "linux",
       :cpus => 2,
       :mem => 3000,

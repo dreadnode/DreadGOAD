@@ -1,0 +1,934 @@
+{
+  "lab": {
+    "hosts": {
+      "dc01": {
+        "hostname": "guardian-app",
+        "type": "dc",
+        "local_admin_password": "m798_WN0mbDFKFv)>szo",
+        "domain": "deltasystems.local",
+        "path": "DC=deltasystems,DC=local",
+        "local_groups": {
+          "Administrators": [
+            "deltasystems\\eric.flores",
+            "deltasystems\\stephanie2.hughes",
+            "deltasystems\\AdministrationSquad2"
+          ],
+          "Remote Desktop Users": [
+            "deltasystems\\ServicesTeam",
+            "deltasystems\\ExecutiveUnit"
+          ]
+        },
+        "scripts": [
+          "sidhistory.ps1"
+        ],
+        "vulns": [
+          "disable_firewall"
+        ],
+        "security": [
+          "account_is_sensitive",
+          "audit_policy"
+        ],
+        "security_vars": {
+          "account_is_sensitive": {
+            "michelle": {
+              "account": "michelle.mitchell"
+            }
+          }
+        }
+      },
+      "dc02": {
+        "hostname": "beacon",
+        "type": "dc",
+        "local_admin_password": "xYK7tDxi:+PSp(AS;>=%",
+        "domain": "hq.deltasystems.local",
+        "path": "DC=hq,DC=deltasystems,DC=local",
+        "local_groups": {
+          "Administrators": [
+            "hq\\william.wood",
+            "hq\\anna.erics",
+            "hq\\catherine2.ramos"
+          ],
+          "Remote Desktop Users": [
+            "hq\\Operations"
+          ]
+        },
+        "scripts": [
+          "asrep_roasting.ps1",
+          "constrained_delegation_use_any.ps1",
+          "constrained_delegation_kerb_only.ps1",
+          "ntlm_relay.ps1",
+          "responder.ps1",
+          "gpo_abuse.ps1",
+          "rdp_scheduler.ps1"
+        ],
+        "vulns": [
+          "disable_firewall",
+          "directory",
+          "credentials",
+          "autologon",
+          "files",
+          "enable_llmnr",
+          "enable_nbt_ns",
+          "shares"
+        ],
+        "vulns_vars": {
+          "directory": {
+            "setup": "C:\\setup"
+          },
+          "credentials": {
+            "TERMSRV/summit": {
+              "username": "hq\\catherine2.ramos",
+              "secret": "plyfvjuqn",
+              "runas": "hq\\catherine2.ramos",
+              "runas_password": "plyfvjuqn"
+            }
+          },
+          "autologon": {
+            "catherine2.ramos": {
+              "username": "hq\\catherine2.ramos",
+              "password": "plyfvjuqn"
+            }
+          },
+          "files": {
+            "rdp": {
+              "src": "dc02/bot_rdp.ps1",
+              "dest": "C:\\setup\\bot_rdp.ps1"
+            },
+            "sysvol_fake_script": {
+              "src": "dc02/sysvol_scripts/script.ps1",
+              "dest": "C:\\Windows\\SYSVOL\\domain\\scripts\\script.ps1"
+            },
+            "sysvol_secret": {
+              "src": "dc02/sysvol_scripts/secret.ps1",
+              "dest": "C:\\Windows\\SYSVOL\\domain\\scripts\\secret.ps1"
+            }
+          }
+        },
+        "security": [
+          "audit_policy"
+        ]
+      },
+      "srv02": {
+        "hostname": "summit",
+        "type": "server",
+        "local_admin_password": "xYK7tDxi:+PSp(AS;>=%",
+        "domain": "hq.deltasystems.local",
+        "path": "DC=hq,DC=deltasystems,DC=local",
+        "use_laps": false,
+        "local_groups": {
+          "Administrators": [
+            "hq\\brenda.lee"
+          ],
+          "Remote Desktop Users": [
+            "hq\\Systems",
+            "hq\\LeadershipSquad",
+            "hq\\Operations"
+          ]
+        },
+        "scripts": [],
+        "vulns": [
+          "directory",
+          "disable_firewall",
+          "openshares",
+          "files",
+          "permissions"
+        ],
+        "vulns_vars": {
+          "directory": {
+            "shares": "C:\\shares",
+            "all": "C:\\shares\\all"
+          },
+          "files": {
+            "website": {
+              "src": "srv02/wwwroot",
+              "dest": "C:\\inetpub\\"
+            },
+            "letter_in_shares": {
+              "src": "srv02/all/pamela2.txt",
+              "dest": "C:\\shares\\all\\pamela2.txt"
+            }
+          },
+          "permissions": {
+            "IIS_IUSRS_upload": {
+              "path": "C:\\inetpub\\wwwroot\\upload",
+              "user": "IIS_IUSRS",
+              "rights": "FullControl"
+            }
+          }
+        },
+        "mssql": {
+          "sa_password": "6q_E@9Bk]^|LolaX9",
+          "svcaccount": "sql_svc",
+          "sysadmins": [
+            "HQ\\christine.martin"
+          ],
+          "executeaslogin": {
+            "HQ\\stephanie.williams": "sa",
+            "HQ\\alexander.peterson": "HQ\\christine.martin"
+          },
+          "executeasuser": {
+            "pamela2_master_dbo": {
+              "user": "HQ\\pamela2.rogers",
+              "db": "master",
+              "impersonate": "dbo"
+            },
+            "pamela2_dbms_dbo": {
+              "user": "HQ\\pamela2.rogers",
+              "db": "msdb",
+              "impersonate": "dbo"
+            }
+          },
+          "linked_servers": {
+            "TITAN": {
+              "data_src": "titan.vortexindustries.local",
+              "users_mapping": [
+                {
+                  "local_login": "HQ\\christine.martin",
+                  "remote_login": "sa",
+                  "remote_password": "ZX8HtJQcV!kom[5L]"
+                }
+              ]
+            }
+          }
+        }
+      },
+      "dc03": {
+        "hostname": "beacon-app",
+        "type": "dc",
+        "local_admin_password": "^$1N+]GIm4s1smahoB_]",
+        "domain": "vortexindustries.local",
+        "path": "DC=vortexindustries,DC=local",
+        "local_groups": {
+          "Administrators": [
+            "vortexind\\kenneth.carter"
+          ],
+          "Remote Desktop Users": [
+            "vortexind\\OperationsStaff"
+          ]
+        },
+        "scripts": [
+          "asrep_roasting2.ps1"
+        ],
+        "vulns": [
+          "ntlmdowngrade",
+          "disable_firewall"
+        ],
+        "security": [
+          "audit_policy"
+        ]
+      },
+      "srv03": {
+        "hostname": "titan",
+        "type": "server",
+        "local_admin_password": "^$1N+]GIm4s1smahoB_]",
+        "domain": "vortexindustries.local",
+        "path": "DC=vortexindustries,DC=local",
+        "use_laps": true,
+        "local_groups": {
+          "Administrators": [
+            "vortexind\\pamela.clark"
+          ]
+        },
+        "Remote Desktop Users": [
+          "vortexind\\SupportGroup"
+        ],
+        "scripts": [],
+        "vulns": [
+          "openshares",
+          "disable_firewall"
+        ],
+        "security": [
+          "enable_run_as_ppl"
+        ],
+        "mssql": {
+          "sa_password": "ZX8HtJQcV!kom[5L]",
+          "svcaccount": "sql_svc",
+          "sysadmins": [
+            "VORTEXIND\\pamela.clark"
+          ],
+          "executeaslogin": {
+            "VORTEXIND\\catherine.turner": "sa"
+          },
+          "executeasuser": {},
+          "linked_servers": {
+            "SUMMIT": {
+              "data_src": "summit.hq.deltasystems.local",
+              "users_mapping": [
+                {
+                  "local_login": "VORTEXIND\\pamela.clark",
+                  "remote_login": "sa",
+                  "remote_password": "6q_E@9Bk]^|LolaX9"
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    "domains": {
+      "vortexindustries.local": {
+        "dc": "dc03",
+        "domain_password": "^$1N+]GIm4s1smahoB_]",
+        "netbios_name": "VORTEXIND",
+        "ca_server": "Titan",
+        "trust": "deltasystems.local",
+        "laps_path": "OU=Laps,DC=vortexindustries,DC=local",
+        "organisation_units": {},
+        "laps_readers": [
+          "catherine.turner",
+          "SupportSquad"
+        ],
+        "groups": {
+          "universal": {},
+          "global": {
+            "OperationsStaff": {
+              "managed_by": "charles.walker",
+              "path": "CN=Users,DC=vortexindustries,DC=local"
+            },
+            "SupportGroup": {
+              "managed_by": "pamela.clark",
+              "path": "CN=Users,DC=vortexindustries,DC=local"
+            },
+            "AdministrationGroup": {
+              "managed_by": "goadmin",
+              "path": "CN=Users,DC=vortexindustries,DC=local"
+            },
+            "Services": {
+              "managed_by": "goadmin",
+              "path": "CN=Users,DC=vortexindustries,DC=local",
+              "members": [
+                "VORTEXIND\\AdministrationGroup"
+              ]
+            },
+            "Domain Admins": {
+              "managed_by": "goadmin",
+              "path": "CN=Users,DC=vortexindustries,DC=local",
+              "members": [
+                "VORTEXIND\\Services"
+              ]
+            }
+          },
+          "domainlocal": {
+            "AdministrationSquad": {
+              "managed_by": "kenneth.carter",
+              "path": "CN=Users,DC=vortexindustries,DC=local"
+            },
+            "SupportSquad": {
+              "path": "CN=Users,DC=vortexindustries,DC=local"
+            }
+          }
+        },
+        "multi_domain_groups_member": {
+          "AdministrationSquad": [
+            "deltasystems.local\\christine2.martin2",
+            "vortexindustries.local\\kenneth.carter"
+          ],
+          "SupportSquad": [
+            "deltasystems.local\\ServicesTeam"
+          ]
+        },
+        "gmsa": {
+          "gmsa_account": {
+            "gMSA_Name": "gmsaFalcon",
+            "gMSA_FQDN": "gmsaFalcon.vortexindustries.local",
+            "gMSA_SPNs": [
+              "HTTP/titan",
+              "HTTP/titan.vortexindustries.local"
+            ],
+            "gMSA_HostNames": [
+              "titan"
+            ]
+          }
+        },
+        "acls": {
+          "GenericAll_pamela.clark_charles.walker": {
+            "for": "pamela.clark",
+            "to": "charles.walker",
+            "right": "GenericAll",
+            "inheritance": "None"
+          },
+          "GenericAll_supportsquad_catherine.turner": {
+            "for": "SupportSquad",
+            "to": "catherine.turner",
+            "right": "GenericAll",
+            "inheritance": "None"
+          },
+          "GenericAll_pamela.clark_esc4": {
+            "for": "pamela.clark",
+            "to": "CN=ESC4,CN=Certificate Templates,CN=Public Key Services,CN=Services,CN=Configuration,DC=vortexindustries,DC=local",
+            "right": "GenericAll",
+            "inheritance": "None"
+          },
+          "WriteProperty_charles.walker_catherine.turner": {
+            "for": "charles.walker",
+            "to": "catherine.turner",
+            "right": "WriteProperty",
+            "inheritance": "All"
+          },
+          "GenericWrite_administrationsquad_titan$": {
+            "for": "AdministrationSquad",
+            "to": "titan$",
+            "right": "GenericWrite",
+            "inheritance": "None"
+          },
+          "GenericAll_susan.white_pamela.clark": {
+            "for": "susan.white",
+            "to": "pamela.clark",
+            "right": "GenericAll",
+            "inheritance": "None"
+          },
+          "GenericAll_gmsafalcon$_shirley.gonzalez": {
+            "for": "gmsaFalcon$",
+            "to": "shirley.gonzalez",
+            "right": "GenericAll",
+            "inheritance": "None"
+          }
+        },
+        "users": {
+          "kenneth.carter": {
+            "firstname": "kenneth",
+            "surname": "carter",
+            "password": "Av^MO$q>t)<i",
+            "city": "-",
+            "description": "Kenneth Carter",
+            "groups": [
+              "OperationsStaff",
+              "Domain Admins"
+            ],
+            "path": "CN=Users,DC=vortexindustries,DC=local"
+          },
+          "charles.walker": {
+            "firstname": "charles",
+            "surname": "walker",
+            "password": "PQArKVRKX",
+            "city": "-",
+            "description": "Charles Walker",
+            "groups": [
+              "OperationsStaff"
+            ],
+            "path": "CN=Users,DC=vortexindustries,DC=local"
+          },
+          "pamela.clark": {
+            "firstname": "pamela",
+            "surname": "clark",
+            "password": "vcjff",
+            "city": "-",
+            "description": "Pamela Clark",
+            "groups": [
+              "SupportGroup"
+            ],
+            "path": "CN=Users,DC=vortexindustries,DC=local"
+          },
+          "catherine.turner": {
+            "firstname": "catherine",
+            "surname": "turner",
+            "password": "Z]#9y@%",
+            "city": "-",
+            "description": "Catherine Turner",
+            "groups": [
+              "OperationsStaff"
+            ],
+            "path": "CN=Users,DC=vortexindustries,DC=local"
+          },
+          "susan.white": {
+            "firstname": "susan",
+            "surname": "white",
+            "password": "l246ggx",
+            "city": "-",
+            "description": "Susan White",
+            "groups": [],
+            "path": "CN=Users,DC=vortexindustries,DC=local"
+          },
+          "shirley.gonzalez": {
+            "firstname": "shirley",
+            "surname": "gonzalez",
+            "password": "SEZrjMFR",
+            "city": "-",
+            "description": "Shirley Gonzalez",
+            "groups": [
+              "AdministrationGroup"
+            ],
+            "path": "CN=Users,DC=vortexindustries,DC=local"
+          },
+          "sql_svc": {
+            "firstname": "sql",
+            "surname": "service",
+            "password": "g0JGPuQBYkLNtB60YJwNoclpn8FCyI",
+            "city": "-",
+            "description": "sql service",
+            "groups": [],
+            "path": "CN=Users,DC=vortexindustries,DC=local",
+            "spns": [
+              "MSSQLSvc/titan.vortexindustries.local:1433",
+              "MSSQLSvc/titan.vortexindustries.local"
+            ]
+          }
+        }
+      },
+      "hq.deltasystems.local": {
+        "dc": "dc02",
+        "domain_password": "xYK7tDxi:+PSp(AS;>=%",
+        "netbios_name": "HQ",
+        "trust": "",
+        "laps_path": "OU=Laps,DC=hq,DC=deltasystems,DC=local",
+        "organisation_units": {},
+        "groups": {
+          "universal": {},
+          "global": {
+            "Operations": {
+              "managed_by": "william.wood",
+              "path": "CN=Users,DC=Hq,DC=deltasystems,DC=local"
+            },
+            "Systems": {
+              "managed_by": "brenda.lee",
+              "path": "CN=Users,DC=Hq,DC=deltasystems,DC=local"
+            },
+            "LeadershipSquad": {
+              "managed_by": "brenda.lee",
+              "path": "CN=Users,DC=Hq,DC=deltasystems,DC=local"
+            }
+          },
+          "domainlocal": {
+            "PlatformUnit": {
+              "path": "CN=Users,DC=Hq,DC=deltasystems,DC=local"
+            }
+          }
+        },
+        "multi_domain_groups_member": {},
+        "acls": {
+          "anonymous_rpc": {
+            "for": "NT AUTHORITY\\ANONYMOUS LOGON",
+            "to": "DC=Hq,DC=deltasystems,DC=local",
+            "right": "ReadProperty",
+            "inheritance": "All"
+          },
+          "anonymous_rpc2": {
+            "for": "NT AUTHORITY\\ANONYMOUS LOGON",
+            "to": "DC=Hq,DC=deltasystems,DC=local",
+            "right": "GenericExecute",
+            "inheritance": "All"
+          }
+        },
+        "users": {
+          "pamela2.rogers": {
+            "firstname": "pamela2",
+            "surname": "rogers",
+            "password": "heNvyj",
+            "city": "Dallas",
+            "description": "Pamela2 Rogers",
+            "groups": [
+              "Operations"
+            ],
+            "path": "CN=Users,DC=Hq,DC=deltasystems,DC=local"
+          },
+          "william.wood": {
+            "firstname": "william",
+            "surname": "wood",
+            "password": "<Bs!d4UGlv[ll>*x-Iz",
+            "city": "Phoenix",
+            "description": "William Wood",
+            "groups": [
+              "Operations",
+              "Domain Admins"
+            ],
+            "path": "CN=Users,DC=Hq,DC=deltasystems,DC=local"
+          },
+          "anna.erics": {
+            "firstname": "anna",
+            "surname": "erics",
+            "password": "uejpqnidxtnoehjdwbtsqaztl",
+            "city": "Phoenix",
+            "description": "Anna Erics",
+            "groups": [
+              "Operations"
+            ],
+            "path": "CN=Users,DC=Hq,DC=deltasystems,DC=local"
+          },
+          "catherine2.ramos": {
+            "firstname": "catherine2",
+            "surname": "ramos",
+            "password": "plyfvjuqn",
+            "city": "Dallas",
+            "description": "Catherine2 Ramos",
+            "groups": [
+              "Operations"
+            ],
+            "path": "CN=Users,DC=Hq,DC=deltasystems,DC=local"
+          },
+          "ryan.myers": {
+            "firstname": "ryan",
+            "surname": "myers",
+            "password": "si4q5iagz",
+            "city": "Dallas",
+            "description": "Ryan Myers",
+            "groups": [
+              "Operations"
+            ],
+            "path": "CN=Users,DC=Hq,DC=deltasystems,DC=local",
+            "spns": [
+              "HTTP/eyrie.hq.deltasystems.local"
+            ]
+          },
+          "alexander.peterson": {
+            "firstname": "alexander",
+            "surname": "peterson",
+            "password": "wlrucscdadzooz",
+            "city": "Dallas",
+            "description": "Alexander Peterson",
+            "groups": [
+              "Operations"
+            ],
+            "path": "CN=Users,DC=Hq,DC=deltasystems,DC=local"
+          },
+          "laura.campbell": {
+            "firstname": "laura",
+            "surname": "campbell",
+            "password": "MTmya1uW0b",
+            "city": "Dallas",
+            "description": "Laura Campbell",
+            "groups": [
+              "Operations"
+            ],
+            "path": "CN=Users,DC=Hq,DC=deltasystems,DC=local"
+          },
+          "emily.baker": {
+            "firstname": "emily",
+            "surname": "baker",
+            "password": "jqfay",
+            "city": "Dallas",
+            "description": "Emily Baker",
+            "groups": [
+              "Operations"
+            ],
+            "path": "CN=Users,DC=Hq,DC=deltasystems,DC=local"
+          },
+          "christine.martin": {
+            "firstname": "christine",
+            "surname": "martin",
+            "password": "ddlfwkwdemov",
+            "city": "Denver",
+            "description": "Christine Martin",
+            "groups": [
+              "Operations",
+              "Systems"
+            ],
+            "path": "CN=Users,DC=Hq,DC=deltasystems,DC=local",
+            "spns": [
+              "HTTP/thewall.hq.deltasystems.local"
+            ]
+          },
+          "stephanie.williams": {
+            "firstname": "stephanie",
+            "surname": "williams",
+            "password": "JUHTgaxCdT",
+            "city": "Denver",
+            "description": "Stephanie Williams",
+            "groups": [
+              "Systems"
+            ],
+            "path": "CN=Users,DC=Hq,DC=deltasystems,DC=local"
+          },
+          "brenda.lee": {
+            "firstname": "brenda",
+            "surname": "lee",
+            "password": "60)XJ*11Sm",
+            "city": "Denver",
+            "description": "Brenda Lee",
+            "groups": [
+              "Systems",
+              "LeadershipSquad"
+            ],
+            "path": "CN=Users,DC=Hq,DC=deltasystems,DC=local"
+          },
+          "sql_svc": {
+            "firstname": "sql",
+            "surname": "service",
+            "password": "g0JGPuQBYkLNtB60YJwNoclpn8FCyI",
+            "city": "-",
+            "description": "sql service",
+            "groups": [],
+            "path": "CN=Users,DC=Hq,DC=deltasystems,DC=local",
+            "spns": [
+              "MSSQLSvc/summit.hq.deltasystems.local:1433",
+              "MSSQLSvc/summit.hq.deltasystems.local"
+            ]
+          }
+        }
+      },
+      "deltasystems.local": {
+        "dc": "dc01",
+        "domain_password": "m798_WN0mbDFKFv)>szo",
+        "netbios_name": "DELTASYSTEMS",
+        "trust": "vortexindustries.local",
+        "laps_path": "OU=Laps,DC=deltasystems,DC=local",
+        "organisation_units": {
+          "Legal": {
+            "path": "DC=deltasystems,DC=local"
+          },
+          "Europe": {
+            "path": "DC=deltasystems,DC=local"
+          },
+          "APAC": {
+            "path": "DC=deltasystems,DC=local"
+          },
+          "Southern": {
+            "path": "DC=deltasystems,DC=local"
+          },
+          "Western": {
+            "path": "DC=deltasystems,DC=local"
+          },
+          "HR": {
+            "path": "DC=deltasystems,DC=local"
+          },
+          "Americas": {
+            "path": "DC=deltasystems,DC=local"
+          },
+          "Corporate": {
+            "path": "DC=deltasystems,DC=local"
+          }
+        },
+        "groups": {
+          "universal": {},
+          "global": {
+            "Systems2": {
+              "managed_by": "brian.johnson",
+              "path": "OU=HR,DC=deltasystems,DC=local"
+            },
+            "ExecutiveUnit": {
+              "managed_by": "eric.flores",
+              "path": "OU=Western,DC=deltasystems,DC=local"
+            },
+            "ServicesTeam": {
+              "path": "OU=Southern,DC=deltasystems,DC=local"
+            },
+            "Administration": {
+              "path": "OU=Southern,DC=deltasystems,DC=local"
+            },
+            "Security": {
+              "path": "OU=Southern,DC=deltasystems,DC=local"
+            },
+            "AdministrationSquad2": {
+              "path": "OU=Southern,DC=deltasystems,DC=local"
+            }
+          },
+          "domainlocal": {
+            "InfrastructureTeam": {
+              "path": "CN=Users,DC=deltasystems,DC=local"
+            }
+          }
+        },
+        "multi_domain_groups_member": {
+          "InfrastructureTeam": [
+            "vortexindustries.local\\kenneth.carter"
+          ]
+        },
+        "acls": {
+          "forcechangepassword_brian.johnson_george.parker": {
+            "for": "brian.johnson",
+            "to": "george.parker",
+            "right": "Ext-User-Force-Change-Password",
+            "inheritance": "None"
+          },
+          "GenericWrite_george.parker_karen.moore": {
+            "for": "george.parker",
+            "to": "karen.moore",
+            "right": "GenericWrite",
+            "inheritance": "None"
+          },
+          "Writedacl_karen.moore_christine2.martin2": {
+            "for": "karen.moore",
+            "to": "christine2.martin2",
+            "right": "WriteDacl",
+            "inheritance": "None"
+          },
+          "self-self-membership-on-group_christine2.martin2_servicesteam": {
+            "for": "christine2.martin2",
+            "to": "ServicesTeam",
+            "right": "Ext-Self-Self-Membership",
+            "inheritance": "None"
+          },
+          "addmember_servicesteam_administration": {
+            "for": "ServicesTeam",
+            "to": "Administration",
+            "right": "Ext-Write-Self-Membership",
+            "inheritance": "All"
+          },
+          "write_administration_security": {
+            "for": "Administration",
+            "to": "Security",
+            "right": "WriteOwner",
+            "inheritance": "None"
+          },
+          "GenericAll_security_charles2.parker2": {
+            "for": "Security",
+            "to": "charles2.parker2",
+            "right": "GenericAll",
+            "inheritance": "None"
+          },
+          "GenericAll_charles2.parker2_guardian-app$": {
+            "for": "charles2.parker2",
+            "to": "guardian-app$",
+            "right": "GenericAll",
+            "inheritance": "None"
+          },
+          "GenericAll_infrastructureteam_guardian-app$": {
+            "for": "InfrastructureTeam",
+            "to": "guardian-app$",
+            "right": "GenericAll",
+            "inheritance": "None"
+          },
+          "GenericAll_pamela3.diaz_domain_admins": {
+            "for": "pamela3.diaz",
+            "to": "Domain Admins",
+            "right": "GenericAll",
+            "inheritance": "None"
+          },
+          "GenericAll_pamela3.diaz_adminsdholder": {
+            "for": "pamela3.diaz",
+            "to": "CN=AdminSDHolder,CN=System,DC=deltasystems,DC=local",
+            "right": "GenericAll",
+            "inheritance": "None"
+          },
+          "WriteDACL_michelle.mitchell_southern": {
+            "for": "michelle.mitchell",
+            "to": "OU=Southern,DC=deltasystems,DC=local",
+            "right": "WriteDacl",
+            "inheritance": "None"
+          }
+        },
+        "users": {
+          "brian.johnson": {
+            "firstname": "brian",
+            "surname": "johnson",
+            "password": "f5ql8xzwbco69kd",
+            "city": "San Francisco",
+            "description": "Brian Johnson",
+            "groups": [
+              "Systems2"
+            ],
+            "path": "OU=Southern,DC=deltasystems,DC=local"
+          },
+          "george.parker": {
+            "firstname": "george",
+            "surname": "parker",
+            "password": "bpyhct",
+            "city": "Phoenix",
+            "description": "George Parker",
+            "groups": [
+              "Systems2"
+            ],
+            "path": "OU=Southern,DC=deltasystems,DC=local"
+          },
+          "stephanie2.hughes": {
+            "firstname": "stephanie2",
+            "surname": "hughes",
+            "password": "3jivwfkcxr",
+            "city": "Phoenix",
+            "description": "Stephanie2 Hughes",
+            "groups": [
+              "Systems2",
+              "ExecutiveUnit",
+              "Domain Admins",
+              "ServicesTeam"
+            ],
+            "path": "OU=Southern,DC=deltasystems,DC=local"
+          },
+          "christine2.martin2": {
+            "firstname": "christine2",
+            "surname": "martin2",
+            "password": "@U#7L^SKww",
+            "city": "Phoenix",
+            "description": "Christine2 Martin2",
+            "groups": [
+              "Systems2"
+            ],
+            "path": "OU=HR,DC=deltasystems,DC=local"
+          },
+          "eric.flores": {
+            "firstname": "eric",
+            "surname": "flores",
+            "password": "mcnkpmyufebebibtdmcc",
+            "city": "Phoenix",
+            "description": "Eric Flores",
+            "groups": [
+              "ExecutiveUnit",
+              "Domain Admins",
+              "ServicesTeam",
+              "Protected Users"
+            ],
+            "path": "OU=Southern,DC=deltasystems,DC=local"
+          },
+          "karen.moore": {
+            "firstname": "karen",
+            "surname": "moore",
+            "password": "zzseh2865o2",
+            "city": "Phoenix",
+            "description": "Karen Moore",
+            "groups": [
+              "ExecutiveUnit",
+              "Systems2"
+            ],
+            "path": "OU=Southern,DC=deltasystems,DC=local"
+          },
+          "michelle.mitchell": {
+            "firstname": "michelle",
+            "surname": "mitchell",
+            "password": "yuddrrlgxpv",
+            "city": "Phoenix",
+            "description": "Michelle Mitchell",
+            "groups": [
+              "ExecutiveUnit",
+              "ServicesTeam"
+            ],
+            "path": "OU=Southern,DC=deltasystems,DC=local"
+          },
+          "charles2.parker2": {
+            "firstname": "charles2",
+            "surname": "parker2",
+            "password": "ra4QyzbTFQD",
+            "city": "Phoenix",
+            "description": "Charles2 Parker2",
+            "groups": [
+              "ExecutiveUnit",
+              "ServicesTeam"
+            ],
+            "path": "OU=Southern,DC=deltasystems,DC=local"
+          },
+          "sharon.wilson": {
+            "firstname": "sharon",
+            "surname": "wilson",
+            "password": "<+p*d<,vg<*-hx",
+            "city": "Phoenix",
+            "description": "Sharon Wilson",
+            "groups": [
+              "ServicesTeam"
+            ],
+            "path": "OU=Southern,DC=deltasystems,DC=local"
+          },
+          "pamela3.diaz": {
+            "firstname": "pamela3",
+            "surname": "diaz",
+            "password": "6&BeB8*+M",
+            "city": "Phoenix",
+            "description": "Pamela3 Diaz",
+            "groups": [
+              "ServicesTeam"
+            ],
+            "path": "OU=Southern,DC=deltasystems,DC=local"
+          },
+          "deborah.edwards": {
+            "firstname": "deborah",
+            "surname": "edwards",
+            "password": "WFqrVsLcNEFirMwxV",
+            "city": "Phoenix",
+            "description": "Deborah Edwards",
+            "groups": [
+              "ServicesTeam"
+            ],
+            "path": "OU=Southern,DC=deltasystems,DC=local"
+          }
+        }
+      }
+    }
+  }
+}

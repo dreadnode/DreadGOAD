@@ -6,48 +6,24 @@
 - You should find your way in to get domain admin on the domain dracarys.lab
 - Using vagrant user is prohibited of course ^^
 - Starting point is on lx01 : `<ip_range>.12`
-- Obviously do not cheat by looking at the passwords and flags in the recipe files, the lab must start without user to full compromise. 
-- If you use goad previously your ansible requirements may not be up to date. Be sure to do this before the install:
-
-```bash
-source ~/.goad/.venv/bin/activate
-cd ~/GOAD/ansible
-
-# if you python is >=3.11
-ansible-galaxy install -r requirements_311.yml 
-# if you got a python <3.10
-ansible-galaxy install -r requirements.yml 
-```
-
+- Obviously do not cheat by looking at the passwords and flags in the recipe files, the lab must start without user to full compromise.
 - Install :
 
 ```bash
-./goad.sh -t install -l DRACARYS -p virtualbox
+dreadgoad -l DRACARYS -p virtualbox install
 ```
 
-or
+- Once install finishes, disable the vagrant user to avoid using it :
 
 ```bash
-./goad.sh
-> set_lab DRACARYS
-> set_provider <your_provider>
-> set_iprange 192.168.56  # select the one you want and you can skip this with ludus
-> install
+dreadgoad -l DRACARYS -p virtualbox disable-vagrant
 ```
 
-- Once install finish disable vagrant user to avoid using it :
+- Now reboot all the machines to avoid unintended secrets stored :
 
 ```bash
-./goad.sh
-> load <instance_id>
-> disable_vagrant
-```
-
-- Now do a reboot of all the machine to avoid unintended secrets stored : 
-
-```bash
-> stop
-> start
+dreadgoad -l DRACARYS -p virtualbox stop
+dreadgoad -l DRACARYS -p virtualbox start
 ```
 
 And you are ready to play ! :)
@@ -55,8 +31,7 @@ And you are ready to play ! :)
 - If you need to re-enable vagrant
 
 ```bash
-> load <instance_id>
-> enable_vagrant
+dreadgoad -l DRACARYS -p virtualbox enable-vagrant
 ```
 
 - If you want to create a write up of the chall, no problem, have fun. Please ping me on X (@M4yFly) or Discord, i will be happy to read it :)

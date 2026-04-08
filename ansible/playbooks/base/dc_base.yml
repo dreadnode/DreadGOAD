@@ -1,0 +1,209 @@
+---
+# Base AMI playbook for GOAD domain controllers
+# This provisions a Windows Server base image with:
+# - PowerShell DSC modules
+# - AD Domain Services role (NOT promoted)
+# - DNS Server role
+# - RSAT tools
+# - RDP enabled
+# - Windows Updates applied
+# - Cleanup for AMI creation
+
+- name: Provision GOAD Domain Controller Base Image
+  hosts: all
+  gather_facts: true
+
+  tasks:
+    - name: Install PowerShellGet and NuGet provider
+      ansible.windows.win_shell: |
+        $ProgressPreference = 'SilentlyContinue'
+        $ErrorActionPreference = 'Stop'
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        Install-PackageProvider -Name NuGet -Force -Confirm:$false
+        Install-Module PowerShellGet -Force -Confirm:$false
+      register: powershellget_install
+      retries: 3
+      delay: 10
+      until: powershellget_install is not failed
+
+    - name: Install required DSC modules
+      community.windows.win_psmodule:
+        name: "{{ item }}"
+        state: present
+        accept_license: true
+        skip_publisher_check: true
+      loop:
+        - ComputerManagementDsc
+        - ActiveDirectoryDsc
+        - xNetworking
+        - NetworkingDsc
+        - xDnsServer
+      environment:
+        LOCALAPPDATA: 'C:\Windows\system32\config\systemprofile\AppData\Local'
+      register: dsc_install
+      retries: 3
+      delay: 10
+      until: dsc_install is not failed
+
+    - name: Verify DSC LCM is ready
+      ansible.windows.win_powershell:
+        script: |
+          $ProgressPreference = 'SilentlyContinue'
+          $ErrorActionPreference = "Stop"
+          try {
+            $lcm = Get-DscLocalConfigurationManager
+            if ($lcm.LCMState -ne 'Idle') {
+              throw "LCM not ready, state: $($lcm.LCMState)"
+            }
+            Write-Output "DSC LCM is ready (state: Idle)"
+            $Ansible.Changed = $false
+          } catch {
+            $Ansible.Failed = $true
+            throw $_
+          }
+      register: dsc_ready
+      retries: 5
+      delay: 5
+      until: dsc_ready is not failed
+      changed_when: false
+
+    - name: Install AD Domain Services role
+      ansible.windows.win_feature:
+        name: AD-Domain-Services
+        state: present
+        include_management_tools: true
+      register: adds_install
+
+    - name: Install DNS Server role
+      ansible.windows.win_feature:
+        name: DNS
+        state: present
+        include_management_tools: true
+      register: dns_install
+
+    - name: Install RSAT tools
+      ansible.windows.win_feature:
+        name:
+          - RSAT-AD-Tools
+          - RSAT-AD-PowerShell
+          - RSAT-ADDS
+          - RSAT-AD-AdminCenter
+          - RSAT-ADDS-Tools
+          - RSAT-DNS-Server
+        state: present
+      register: rsat_install
+
+    - name: Install Group Policy Management Console
+      ansible.windows.win_feature:
+        name: GPMC
+        state: present
+      register: gpmc_install
+
+    - name: Reboot if feature installation requires it
+      ansible.windows.win_reboot:
+        reboot_timeout: 600
+        post_reboot_delay: 120
+      when: >
+        adds_install.reboot_required or
+        dns_install.reboot_required or
+        rsat_install.reboot_required or
+        gpmc_install.reboot_required
+
+    - name: Enable Remote Desktop
+      ansible.windows.win_dsc:
+        resource_name: RemoteDesktopAdmin
+        IsSingleInstance: 'Yes'
+        Ensure: present
+        UserAuthentication: Secure
+      register: rdp_result
+      retries: 3
+      delay: 10
+      until: rdp_result is not failed
+
+    - name: Allow RDP through Windows Firewall
+      ansible.windows.win_dsc:
+        resource_name: xFirewall
+        Name: "Administrator access for RDP (TCP-In)"
+        Ensure: present
+        Enabled: true
+        Profile: "Domain"
+        Direction: "Inbound"
+        Localport: "3389"
+        Protocol: "TCP"
+        Description: "Opens the listener port for RDP"
+      register: firewall_result
+      retries: 3
+      delay: 10
+      until: firewall_result is not failed
+
+    - name: Configure SSM agent for post-DC-promotion
+      ansible.windows.win_powershell:
+        script: |
+          $ProgressPreference = 'SilentlyContinue'
+          Write-Host "Configuring SSM agent to start after DC promotion..."
+
+          # Ensure SSM agent service is set to automatic and delayed start
+          # This helps with post-promotion connectivity issues
+          $service = Get-Service -Name AmazonSSMAgent -ErrorAction SilentlyContinue
+          if ($service) {
+            Set-Service -Name AmazonSSMAgent -StartupType Automatic
+            sc.exe config AmazonSSMAgent start= delayed-auto
+            Write-Host "SSM agent configured for delayed automatic start"
+          } else {
+            Write-Host "SSM agent not found, skipping configuration"
+          }
+      register: ssm_config
+
+    - name: Enable Windows Update service
+      ansible.windows.win_service:
+        name: wuauserv
+        state: started
+        start_mode: auto
+
+    - name: Install all Windows Updates
+      ansible.windows.win_updates:
+        category_names: '*'
+        reboot: true
+        reboot_timeout: 3600
+      register: update_result
+
+    - name: Create prebaked manifest directory
+      ansible.windows.win_file:
+        path: 'C:\ProgramData\goad'
+        state: directory
+
+    - name: Write prebaked AMI manifest
+      ansible.windows.win_copy:
+        dest: 'C:\ProgramData\goad\prebaked.json'
+        content: >-
+          {{ _manifest | to_nice_json }}
+      vars:
+        _manifest:
+          version: 1
+          role: dc
+          dsc_modules: true
+          rdp_enabled: true
+          windows_updated: true
+
+    - name: Cleanup for AMI creation
+      ansible.windows.win_powershell:
+        script: |
+          $ProgressPreference = 'SilentlyContinue'
+          Write-Host "Cleaning up for AMI creation..."
+
+          # Clear Windows Update download cache
+          Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\Windows\SoftwareDistribution\Download\*" -Recurse -Force -ErrorAction SilentlyContinue
+          Start-Service -Name wuauserv
+
+          # Clear temp files
+          Remove-Item -Path "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item -Path "C:\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
+
+          # Clear event logs
+          wevtutil cl Application
+          wevtutil cl Security
+          wevtutil cl System
+
+          Write-Host "Cleanup complete"
+      register: cleanup_result

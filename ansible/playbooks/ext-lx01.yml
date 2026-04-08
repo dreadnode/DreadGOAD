@@ -1,0 +1,39 @@
+---
+# Extension: lx01 — Enroll Linux machine to domain
+
+- name: Read extension config file
+  hosts: domain:extensions
+  connection: local
+  vars_files:
+    - "{{ extension_data_dir }}/config.json"
+  tasks:
+    - name: merge lab variable with extension config
+      set_fact:
+        lab: "{{ lab|combine(lab_extension, recursive=True) }}"
+
+- name: Enroll lx01 machine to domain
+  hosts: lx01
+  become: true
+  roles:
+    - { role: 'dreadnode.goad.linux_add_linux_to_domain', tags: 'linux_domain' }
+  vars:
+    hostname: "{{lab.hosts[dict_key].hostname}}"
+    domain: "{{lab.hosts[dict_key].domain}}"
+    dc_key: "{{lab.domains[domain].dc}}"
+    dc_name: "{{lab.hosts[dc_key].hostname}}"
+    dc_fqdn: "{{dc_name}}.{{domain}}"
+    dc_ip: "{{hostvars[dc_key].ansible_host}}"
+    domain_username: "{{admin_user}}"
+    domain_password: "{{lab.domains[domain].domain_password}}"
+    sudoers_group: "{{lab.hosts[dict_key].local_groups.sudoers | default([])}}"
+    ssh_group: "{{lab.hosts[dict_key].local_groups.ssh | default([])}}"
+
+- name: Setup lx01 machine dns on domain controller
+  hosts: dc01
+  roles:
+    - { role: 'dreadnode.goad.add_dns_record', tags: 'add_dns_record' }
+  vars:
+    domain: "{{lab.hosts[dict_key].domain}}"
+    record_name: "{{lab.hosts['lx01'].hostname}}"
+    record_type: "A"
+    record_value: "{{hostvars['lx01'].ansible_host}}"

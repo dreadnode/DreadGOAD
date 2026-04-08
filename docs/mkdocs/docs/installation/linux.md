@@ -1,7 +1,8 @@
+<!-- markdownlint-disable MD046 -->
 # :material-linux: Linux
 
-- First you will prepare your host for an hypervisor
-- Second you will prepare your python environment
+- First you will prepare your host for a hypervisor
+- Second you will install the `dreadgoad` CLI
 
 ## Prepare your Provider
 
@@ -10,7 +11,7 @@
     - Vagrant
         - In order to download vm and create them on virtualbox you need to install vagrant
         - [https://developer.hashicorp.com/vagrant/install#linux](https://developer.hashicorp.com/vagrant/install#linux)
-    
+
     - Virtualbox
         - Install virtualbox
         ```bash
@@ -37,7 +38,7 @@
     - Vagrant
         - In order to download vm and create them on virtualbox you need to install vagrant
         - [https://developer.hashicorp.com/vagrant/install#linux](https://developer.hashicorp.com/vagrant/install#linux)
-    
+
     - Vmware workstation
         - Install vmware workstation [https://support.broadcom.com/group/ecx/productdownloads?subfamily=VMware+Workstation+Pro](https://support.broadcom.com/group/ecx/productdownloads?subfamily=VMware+Workstation+Pro)
 
@@ -70,7 +71,7 @@
 === ":simple-amazon: Aws"
     - AWS CLI
 
-        - Install aws cli 
+        - Install aws cli
             [https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html#getting-started-install-instructions](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html#getting-started-install-instructions)
         - Create an aws access key and secret for goad usage
             - Go to IAM > User > your user > Security credentials
@@ -96,106 +97,83 @@
 
 === "🏟️  Ludus"
 
-    - To add GOAD on Ludus please use goad directly on the server.
-    - By now goad can work only directly on the server and not from a workstation client.
+    - To add GOAD on Ludus please use dreadgoad directly on the server.
+    - By now dreadgoad can work only directly on the server and not from a workstation client.
 
     - Install Ludus : [https://docs.ludus.cloud/docs/quick-start/install-ludus/](https://docs.ludus.cloud/docs/quick-start/install-ludus/)
 
     - Be sure to create an administrator user and keep his api key
 
     - Once your installation is complete on ludus server (debian 12) and your user is created do :
-    
+
     ```bash
-    git clone https://github.com/Orange-Cyberdefense/GOAD.git
-    cd GOAD
-    sudo apt install python3.11-venv
-    ./goad.sh
-    ...>exit
-    vim ~/.goad/goad.ini # add the api_key in the config file (keep impersonate to yes and use an admin user)
-    ./goad.sh -p ludus
-    ...>set_lab XXX # GOAD/GOAD-Light/NHA/SCCM
-    ...>install
+    git clone https://github.com/dreadnode/DreadGOAD.git
+    cd DreadGOAD
+
+    # Install the CLI (see "Install the CLI" section below)
+    # Then:
+    dreadgoad config init
+    dreadgoad config set ludus.api_key <your_api_key>
+    dreadgoad provision -p ludus
     ```
 
-## Prepare your python environment for goad.py
+## Install the CLI
 
-=== "Classic"
-    
-    - To run the Goad installation/management script you will need : **Python version >=3.8** with venv module installed
-    
-    - Install the python3-venv corresponding to your python version 
-    
+=== "Download binary"
+
+    Download the latest release for your platform from the [DreadGOAD releases page](https://github.com/dreadnode/DreadGOAD/releases):
+
     ```bash
-    sudo apt install python<version>-venv
+    # Example for Linux amd64 - adjust version and platform as needed
+    curl -LO https://github.com/dreadnode/DreadGOAD/releases/latest/download/dreadgoad-linux-amd64
+    chmod +x dreadgoad-linux-amd64
+    sudo mv dreadgoad-linux-amd64 /usr/local/bin/dreadgoad
     ```
-    
-    - Example:
-    
+
+    Verify the installation:
+
     ```bash
-    sudo apt install python3.10-venv
+    dreadgoad --version
     ```
 
-    - Then you are ready to launch 
+=== "Build from source"
 
-    ```
-    ./goad.sh
-    ```
+    Requires Go 1.21+ installed on your system.
 
-    - The script will :
-        - verify python version >=3.8
-        - create a venv in `~/.goad/.venv`
-        - launch python requirements installation
-        - launch ansible-galaxy collections requirements installation
-        - start goad.py with the venv created
-
-    !!! tip
-        if you got an error during requirements installation, look at the error and delete `~/.goad/.venv` before try again
-
-    !!! tip
-        if you need to force a python version change the variable `py=python3` to `py=python3.10` for example in the `goad.sh` script
-
-=== "With poetry"
-
-    - Install python dependencies:
-    ```
-    poetry install
-    ``` 
-
-    - Install ansible-galaxy requirements:
-        - If python < 3.11
-        ```
-        poetry run ansible-galaxy ansible/requirements.yml
-        ```
-
-        - If python >= 3.11
-        ```
-        poetry run ansible-galaxy ansible/requirements_311.yml
-        ```
-
-    - Run goad:
-    ```
-    poetry run python3 goad.py
-    ```
-
-=== "Provisioning with docker"
-    
-    !!! info
-        With this method ansible-core will not be installed locally on your venv
-    
-    - [x] be sure you have docker installed on your os for the provisioning part (ansible will be run from the container)
-    - [x] To run the Goad installation/management script you will need :
-        -  Python (version >= 3.8) with venv module installed
-    
-    - Install the python3-venv corresponding to your python version 
-    
     ```bash
-    sudo apt install python<version>-venv
+    git clone https://github.com/dreadnode/DreadGOAD.git
+    cd DreadGOAD/cli
+    go build -o dreadgoad .
+    sudo mv dreadgoad /usr/local/bin/
     ```
-    
-    - Example:
-    
+
+    Verify the installation:
+
     ```bash
-    sudo apt install python3.10-venv
+    dreadgoad --version
     ```
-    
-    - Run goad with `./goad_docker.sh` instead of `./goad.sh` to install the dependencies without the ansible part (local and runner provisioning method will not be available)
+
+=== "Go install"
+
+    If you have Go installed:
+
+    ```bash
+    go install github.com/dreadnode/DreadGOAD/cli@latest
+    ```
+
+    Make sure `$GOPATH/bin` is in your `PATH`.
+
+## Initial setup
+
+Once the CLI is installed, initialize your configuration and verify dependencies:
+
+```bash
+# Create default configuration
+dreadgoad config init
+
+# Check all required dependencies are installed
+dreadgoad doctor
+```
+
+!!! tip
+    `dreadgoad doctor` checks for ansible-core, AWS CLI, Python (for Ansible), and required Ansible collections. Fix any issues it reports before proceeding with installation.

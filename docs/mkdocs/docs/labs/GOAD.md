@@ -8,16 +8,16 @@ GOAD is the first and main lab of this project. It contains 3 domains and 2 fore
 
 This lab is actually composed of five virtual machines:
 
-**domain sevenkingdoms.local**
+### domain sevenkingdoms.local
 
 - **kingslanding** : DC01  running on Windows Server 2019 (with windefender enabled by default)
 
-**domain north.sevenkingdoms.local**
+### domain north.sevenkingdoms.local
 
 - **winterfell**   : DC02  running on Windows Server 2019 (with windefender enabled by default)
 - **castelblack**  : SRV02 running on Windows Server 2019 (with windefender **disabled** by default)
 
-**domain essos.local**
+### domain essos.local
 
 - **meereen**      : DC03  running on Windows Server 2016 (with windefender enabled by default)
 - **braavos**      : SRV03 running on Windows Server 2016 (with windefender enabled by default)
@@ -46,7 +46,7 @@ This lab is actually composed of five virtual machines:
         - IIS : allow asp upload, run as NT Authority/network
         - MSSQL:
             - admin : jon.snow
-            - impersonate : 
+            - impersonate :
                 - execute as login : samwel.tarlly -> sa
                 - execute as user : arya.stark -> dbo
             - link :
@@ -77,7 +77,7 @@ NORTH.SEVENKINGDOMS.LOCAL
 - STARKS:              RDP on WINTERFELL AND CASTELBLACK
     - arya.stark:        Execute as user on mssql, pass on all share
     - eddard.stark:      DOMAIN ADMIN NORTH/ (bot 5min) LLMRN request to do NTLM relay with responder
-    - catelyn.stark:     
+    - catelyn.stark:
     - robb.stark:        bot (3min) RESPONDER LLMR / lsass present user
     - sansa.stark:       keywalking password / unconstrained delegation
     - brandon.stark:     ASREP_ROASTING
@@ -104,11 +104,11 @@ SEVENKINGDOMS.LOCAL
     - robert.baratheon:  DOMAIN ADMIN SEVENKINGDOMS, protected user
     - joffrey.baratheon: ACE Write DACL on tyron.lannister
     - renly.baratheon:   WriteDACL on container, sensitive user
-    - stannis.baratheon: ACE genericall-on-computer kingslanding 
+    - stannis.baratheon: ACE genericall-on-computer kingslanding
 - SMALL COUNCIL :      ACE add Member to group dragon stone / RDP on KINGSLANDING
-    - petyer.baelish:    
+    - petyer.baelish:
     - lord.varys:        ACE genericall-on-group Domain Admins and sdholder
-    - maester.pycelle:   
+    - maester.pycelle:
 - DRAGONSTONE :        ACE Write Owner on group KINGSGUARD
 - KINGSGUARD :         ACE generic all on user stannis.baratheon
 - AccorsTheNarrowSea:       cross forest group
@@ -124,4 +124,3 @@ ESSOS.LOCAL
     - khal.drogo:         mssql admin / GenericAll on viserys (shadow credentials) / GenericAll on ECS4
 - DragonsFriends:       cross forest group
 - Spys:                 cross forest group / Read LAPS password  / ACL generic all jorah.mormont
-

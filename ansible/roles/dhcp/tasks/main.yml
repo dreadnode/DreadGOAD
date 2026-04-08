@@ -1,48 +1,48 @@
 # https://www.faqforge.com/windows/configure-dhcp-powershell/
 
 - name: Install DHCP
-  win_feature:
+  ansible.windows.win_feature:
     name: DHCP
     state: present
-    include_management_tools: yes
+    include_management_tools: true
   register: win_feature
 
 - name: Reboot if installing windows feature requires it
   ansible.windows.win_reboot:
   when: win_feature.reboot_required
 
-- name: allow dhcp in dc
-  win_shell: |
-    Add-DHCPServerInDC -DNSName {{dc_fqdn}}
+- name: Allow dhcp in dc
+  ansible.windows.win_shell: |
+    Add-DHCPServerInDC -DNSName {{ dc_fqdn }}
   vars:
-    ansible_become: yes
-    ansible_become_method: runas
-    ansible_become_user: "{{domain_username}}"
-    ansible_become_password: "{{domain_password}}"
+    ansible_become: true
+    ansible_become_method: ansible.builtin.runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
 
 - name: Set dhcp scope
-  win_shell: |
+  ansible.windows.win_shell: |
     $s = Get-DhcpServerv4Scope
     if ($null -eq $s) {
-      Add-DhcpServerV4Scope -Name "DHCP Scope" -StartRange {{ip_from}} -EndRange {{ip_to}} -SubnetMask {{ip_mask}} -LeaseDuration {{lease_duration}}
+      Add-DhcpServerV4Scope -Name "DHCP Scope" -StartRange {{ ip_from }} -EndRange {{ ip_to }} -SubnetMask {{ ip_mask }} -LeaseDuration {{ lease_duration }}
     }
 
 - name: Get default gateway
-  win_shell: |
+  ansible.windows.win_shell: |
     (Get-NetRoute -DestinationPrefix "0.0.0.0/0").NextHop
   register: ip_gateway_command
 
 - name: Set ip_gateway
-  set_fact:
-    ip_gateway: "{{ ip_gateway_command.stdout | trim }}"
+  ansible.builtin.set_fact:
+    ip_gateway: "{{ ip_gateway_command.stdout | default(ip_gateway_command.host_out) | default('') | trim }}"
 
 - name: Add DNS Server and Default Gateway Options in DHCP
-  win_shell: |
-    Set-DhcpServerV4OptionValue -DnsServer {{dns_ip}} -Router {{ip_gateway}}
+  ansible.windows.win_shell: |
+    Set-DhcpServerV4OptionValue -DnsServer {{ dns_ip }} -Router {{ ip_gateway }}
 
 #- name: create server option boot server hostname (MECM)
 #  win_shell: |
-#    Set-DhcpServerV4OptionValue -OptionId 66 -Value {{sccm_server}}
+#    Set-DhcpServerV4OptionValue -OptionId 66 -Value {{ sccm_server }}
 #
 #- name: create boot file name (SMSBoot\x64\wdsnbp.com)
 #  win_shell: |
@@ -52,6 +52,6 @@
 # https://www.it-connect.fr/serveurs-dhcp-wds-boot-pxe-bios-et-uefi/
 # Add-DhcpServerv4OptionDefinition -ComputerName SRV-ADDS-01 -Name PXEClient -Description "PXE Support" -OptionId 060 -Type String
 - name: Restart service DHCP
-  win_service:
-    name: 'dhcpserver'
+  ansible.windows.win_service:
+    name: 'Dhcpserver'
     state: restarted

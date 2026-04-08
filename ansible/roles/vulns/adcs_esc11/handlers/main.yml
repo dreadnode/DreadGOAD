@@ -1,2 +1,0 @@
-- name: restart-adcs
-  win_shell: Restart-Service certsvc

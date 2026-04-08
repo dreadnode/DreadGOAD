@@ -1,0 +1,24 @@
+---
+galaxy_info:
+  role_name: elk
+  namespace: dreadnode
+  author: Dreadnode
+  company: Dreadnode
+  description: Install and configure the ELK stack for log aggregation
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Ubuntu
+      versions:
+        - all
+    - name: Debian
+      versions:
+        - all
+  galaxy_tags:
+    - linux
+    - elk
+    - elasticsearch
+    - logging
+    - monitoring
+
+dependencies: []

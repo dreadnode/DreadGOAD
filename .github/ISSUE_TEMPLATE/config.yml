@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Upstream GOAD documentation
+    url: https://orange-cyberdefense.github.io/GOAD/
+    about: "Background on the original GOAD project that DreadGOAD is forked from."
+  - name: DreadGOAD documentation
+    url: https://github.com/dreadnode/DreadGOAD/tree/main/docs
+    about: "Provider guides, lab descriptions, validation guide, and the full vulnerability catalog."

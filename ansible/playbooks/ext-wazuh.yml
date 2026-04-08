@@ -1,0 +1,23 @@
+---
+# Extension: wazuh — Install Wazuh manager and agents
+#Credits to SOCFortress and Mayfly277
+- name: Install and configure Wazuh Manager
+  hosts: wazuh_server
+  become: true
+  roles:
+    - { role: 'dreadnode.goad.wazuh_manager', tags: 'wazuh_manager' }
+
+- name: Install Wazuh Agent
+  hosts: wazuh_agents
+  roles:
+    - { role: 'dreadnode.goad.wazuh_agent', tags: 'wazuh_agent' }
+  vars:
+    wazuh_manager_host: "{{ hostvars['wazuh']['ansible_host'] }}"
+
+- name: Install Wazuh Agent on Linux
+  hosts: wazuh_agents_linux
+  become: true
+  roles:
+    - { role: 'dreadnode.goad.wazuh_agent_linux', tags: 'wazuh_agent_linux' }
+  vars:
+    wazuh_manager_host: "{{ hostvars['wazuh']['ansible_host'] }}"

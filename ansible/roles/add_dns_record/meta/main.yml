@@ -1,0 +1,7 @@
+---
+galaxy_info:
+  author: dreadnode
+  description: Stub role — needs implementation
+  min_ansible_version: "2.15"
+  license: GPL-3.0-or-later
+dependencies: []

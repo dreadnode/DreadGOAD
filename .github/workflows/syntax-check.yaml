@@ -1,0 +1,222 @@
+---
+name: Ansible Syntax Check
+on:
+  merge_group:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+  push:
+    branches:
+      - main
+  schedule:
+    # Runs every Sunday at 4 AM (see https://crontab.guru)
+    - cron: "0 4 * * 0"
+  workflow_dispatch:
+    inputs:
+      ROLE:
+        description: 'Role to test (e.g. "elk", "ad", "vulns_acls")'
+        required: false
+        default: ''
+        type: string
+
+concurrency:
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
+
+env:
+  ANSIBLE_FORCE_COLOR: "1"
+  COLLECTION_NAMESPACE: dreadnode
+  COLLECTION_NAME: goad
+  COLLECTION_PATH: ansible_collections/dreadnode/goad
+  REQUIREMENTS_FILE: .hooks/requirements.txt
+  PY_COLORS: "1"
+  PYTHON_VERSION: "3.14.3"
+  ROLE: ${{ github.event.inputs.ROLE }}
+  ANSIBLE_COLLECTIONS_PATH: ~/.ansible/collections
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      roles: ${{ steps.detect.outputs.roles }}
+      test_all: ${{ steps.check-event.outputs.test_all }}
+    steps:
+      - name: Checkout git repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          path: ${{ env.COLLECTION_PATH }}
+          fetch-depth: 0
+
+      - name: Check event type
+        id: check-event
+        run: |
+          if [[ "${{ github.event_name }}" == "push" ]] || \
+             [[ "${{ github.event_name }}" == "schedule" ]] || \
+             [[ "${{ github.event_name }}" == "merge_group" ]] || \
+             [[ "${{ github.event_name }}" == "workflow_dispatch" && -z "${{ env.ROLE }}" ]]; then
+            echo "test_all=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "test_all=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Detect changed roles
+        id: detect
+        if: steps.check-event.outputs.test_all == 'false'
+        working-directory: ${{ env.COLLECTION_PATH }}
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+            HEAD="${{ github.event.pull_request.head.sha }}"
+          else
+            BASE="origin/main"
+            HEAD="HEAD"
+          fi
+
+          CHANGED_FILES=$(git diff --name-only "$BASE"..."$HEAD")
+          echo "Changed files:"
+          echo "$CHANGED_FILES"
+
+          ROLES=$(echo "$CHANGED_FILES" | grep '^ansible/roles/' | cut -d'/' -f3 | sort -u | tr '\n' ' ')
+          echo "roles=$ROLES" >> "$GITHUB_OUTPUT"
+          echo "Changed roles: $ROLES"
+
+  validate-inputs:
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.ROLE != '' }}
+    steps:
+      - name: Checkout git repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          path: ${{ env.COLLECTION_PATH }}
+
+      - name: Validate inputs
+        run: |
+          if [[ -n "${{ env.ROLE }}" ]]; then
+            if [[ ! -d "${{ env.COLLECTION_PATH }}/ansible/roles/${{ env.ROLE }}" ]]; then
+              echo "::error::Role '${{ env.ROLE }}' not found in ansible/roles/"
+              exit 1
+            fi
+            if [[ ! -f "${{ env.COLLECTION_PATH }}/ansible/roles/${{ env.ROLE }}/tasks/main.yml" ]]; then
+              echo "::error::Role '${{ env.ROLE }}' has no tasks/main.yml"
+              exit 1
+            fi
+          fi
+
+  syntax-check:
+    needs: detect-changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout git repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          path: ${{ env.COLLECTION_PATH }}
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          cache-dependency-path: '${{ env.COLLECTION_PATH }}/${{ env.REQUIREMENTS_FILE }}'
+
+      - name: Cache Ansible collections
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: ~/.ansible/collections
+          key: ${{ runner.os }}-ansible-${{ hashFiles('**/requirements.yml') }}
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install -r "${{ env.COLLECTION_PATH }}/${{ env.REQUIREMENTS_FILE }}"
+
+      - name: Install galaxy dependencies
+        working-directory: ${{ env.COLLECTION_PATH }}/ansible
+        run: |
+          ansible-galaxy collection install -r requirements.yml --force
+
+      - name: Build and install collection locally
+        working-directory: ${{ env.COLLECTION_PATH }}/ansible
+        run: |
+          ansible-galaxy collection build --force
+          ansible-galaxy collection install ${{ env.COLLECTION_NAMESPACE }}-${{ env.COLLECTION_NAME }}-*.tar.gz -p ~/.ansible/collections --force --pre
+
+      - name: Syntax check roles
+        env:
+          ANSIBLE_CONFIG: ${{ env.COLLECTION_PATH }}/ansible/ansible.cfg
+          ANSIBLE_ROLES_PATH: ${{ env.COLLECTION_PATH }}/ansible/roles
+          TEST_ALL: ${{ needs.detect-changes.outputs.test_all }}
+          CHANGED_ROLES: ${{ needs.detect-changes.outputs.roles }}
+          SINGLE_ROLE: ${{ env.ROLE }}
+        run: |
+          set -e
+          FAILED=0
+          PASSED=0
+          SKIPPED=0
+          ROLES_DIR="${{ env.COLLECTION_PATH }}/ansible/roles"
+          TMPDIR=$(mktemp -d)
+
+          for role_dir in "$ROLES_DIR"/*/; do
+            role=$(basename "$role_dir")
+
+            # Skip roles without tasks
+            if [ ! -f "$role_dir/tasks/main.yml" ]; then
+              continue
+            fi
+
+            # If a single role was specified, only test that one
+            if [ -n "$SINGLE_ROLE" ]; then
+              if [ "$role" != "$SINGLE_ROLE" ]; then
+                continue
+              fi
+            # If not testing all, filter to changed roles
+            elif [ "$TEST_ALL" != "true" ] && [ -n "$CHANGED_ROLES" ]; then
+              if ! echo "$CHANGED_ROLES" | grep -qw "$role"; then
+                SKIPPED=$((SKIPPED + 1))
+                continue
+              fi
+            fi
+
+            echo "::group::Syntax check: $role"
+
+            # Generate temporary playbook
+            cat > "$TMPDIR/check_${role}.yml" <<PLAYBOOK
+          ---
+          - name: Syntax check ${role}
+            hosts: all
+            gather_facts: false
+            tasks:
+              - name: Include role
+                ansible.builtin.include_role:
+                  name: dreadnode.goad.${role}
+          PLAYBOOK
+
+            if ansible-playbook --syntax-check "$TMPDIR/check_${role}.yml"; then
+              echo "PASS: $role"
+              PASSED=$((PASSED + 1))
+            else
+              echo "::error::Syntax check failed for role: $role"
+              FAILED=$((FAILED + 1))
+            fi
+            echo "::endgroup::"
+          done
+
+          rm -rf "$TMPDIR"
+
+          echo ""
+          echo "=== Results ==="
+          echo "Passed:  $PASSED"
+          echo "Failed:  $FAILED"
+          echo "Skipped: $SKIPPED"
+
+          if [ "$FAILED" -gt 0 ]; then
+            echo "::error::$FAILED role(s) failed syntax check"
+            exit 1
+          fi
+
+          if [ "$PASSED" -eq 0 ] && [ -z "$SINGLE_ROLE" ]; then
+            echo "No roles were checked. This may indicate a problem with change detection."
+          fi

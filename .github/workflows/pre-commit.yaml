@@ -1,0 +1,98 @@
+---
+name: Pre-Commit
+on:
+  merge_group:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+  push:
+    branches:
+      - main
+  schedule:
+    # Run once a week (see https://crontab.guru)
+    - cron: "0 0 * * 0"
+  workflow_dispatch:
+
+# Cancel any in-progress job when a new workflow is triggered
+concurrency:
+  cancel-in-progress: true
+  group: pre-commit-${{ github.workflow }}-${{ github.ref }}
+
+env:
+  GO_VERSION: "1.26.2"
+  PYTHON_VERSION: "3.14.3"
+
+jobs:
+  pre-commit:
+    name: Update pre-commit hooks and run pre-commit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout git repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+          cache-dependency-path: '.hooks/requirements.txt'
+
+      - name: Install dependencies
+        run: |
+          python3 -m pip install -r .hooks/requirements.txt
+
+      - name: Install Ansible collections
+        run: |
+          ansible-galaxy collection install -r ansible/requirements.yml --force
+
+      - name: Build and install collection locally
+        working-directory: ansible
+        run: |
+          ansible-galaxy collection build --force
+          ansible-galaxy collection install dreadnode-goad-*.tar.gz -p ~/.ansible/collections --force --pre
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85 # v4
+        with:
+          terraform_version: "1.9.7"
+
+      - name: Set up TFLint
+        uses: terraform-linters/setup-tflint@b480b8fcdaa6f2c577f8e4fa799e89e756bb7c93 # v6
+        with:
+          tflint_version: latest
+
+      - name: Init TFLint
+        run: tflint --init --config .hooks/linters/.tflint.hcl
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install Go tools
+        run: |
+          # Install shfmt
+          go install mvdan.cc/sh/v3/cmd/shfmt@latest
+
+          # Install goimports
+          go install golang.org/x/tools/cmd/goimports@latest
+
+          # Install gocyclo
+          go install github.com/fzipp/gocyclo/cmd/gocyclo@latest
+
+          # Install golangci-lint
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b "$(go env GOPATH)/bin"
+
+          # Install gocritic
+          go install github.com/go-critic/go-critic/cmd/gocritic@latest
+
+          # Add Go bin directory to PATH
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Run pre-commit
+        run: |
+          pre-commit run --show-diff-on-failure --color=always --all-files
