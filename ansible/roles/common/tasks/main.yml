@@ -1,50 +1,130 @@
-- name: "Force a DNS on the adapter {{nat_adapter}}"
+---
+- name: Force a DNS on the adapter {{ nat_adapter }}
   ansible.windows.win_dns_client:
-    adapter_names: "{{nat_adapter}}"
-    dns_servers: 
-      - "{{hostvars[dns_domain].ansible_host}}"
-      - "{{dns_server}}"
-  when: force_dns_server == "yes"
+    adapter_names: "{{ nat_adapter }}"
+    dns_servers:
+      - "{{ dns_server }}"
+      - "{{ dns_server_forwarder }}"
+  when: force_dns_server | bool
 
 - name: Set a proxy for specific protocols
-  community.windows.win_http_proxy:
+  ansible.windows.win_inet_proxy:
     proxy:
-      http: "{{ad_http_proxy}}"
-      https: "{{ad_https_proxy}}"
-  when: http_proxy == "yes"
+      http: "{{ ad_http_proxy }}"
+      https: "{{ ad_https_proxy }}"
+    bypass: ["<local>", "*.local", "169.254.169.254"]
+  when: enable_http_proxy | bool
 
 - name: Configure IE to use a specific proxy per protocol
-  community.windows.win_inet_proxy:
+  ansible.windows.win_inet_proxy:
     proxy:
-      http: "{{ad_http_proxy}}"
-      https: "{{ad_https_proxy}}"
-  when: http_proxy == "yes"
+      http: "{{ ad_http_proxy }}"
+      https: "{{ ad_https_proxy }}"
+    bypass: ["<local>", "*.local", "169.254.169.254"]
+  when: enable_http_proxy | bool
 
-- name: Upgrade module PowerShellGet to fix accept license issue on last windows ansible version
-  win_shell: |
+- name: Upgrade module PowerShellGet to fix accept license issue
+  ansible.windows.win_shell: |
+    $ProgressPreference = 'SilentlyContinue'
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     Install-PackageProvider -Name NuGet -Force
     Install-Module PowerShellGet -Force
 
-- name: Windows | Check for ComputerManagementDsc Powershell module
-  win_psmodule:
-    name: ComputerManagementDsc
+- name: Check all required modules
+  ansible.windows.win_shell: |
+    $ProgressPreference = 'SilentlyContinue'
+    $modules = @('ComputerManagementDsc', 'ActiveDirectoryDSC', 'xNetworking')
+    $missing = @()
+
+    foreach ($module in $modules) {
+      if (-not (Get-Module -ListAvailable -Name $module)) {
+        $missing += $module
+      }
+    }
+
+    if ($missing.Count -gt 0) {
+      Write-Output ($missing -join ',')
+      exit 1
+    } else {
+      Write-Output "ALL_INSTALLED"
+      exit 0
+    }
+  register: module_check
+  failed_when: false
+  changed_when: false
+
+- name: Install all missing modules in parallel
+  community.windows.win_psmodule:
+    name: "{{ item | trim }}"
     state: present
+    accept_license: true
+    skip_publisher_check: true
+  environment:
+    LOCALAPPDATA: 'C:\Windows\system32\config\systemprofile\AppData\Local'
+  loop: "{{ module_check.stdout_lines[0].split(',') if module_check.stdout_lines else [] }}"
+  loop_control:
+    label: "Installing module: {{ item | trim }}"
+  when:
+    - module_check.rc != 0
+    - item | trim != ''
+    - item | trim != 'ALL_INSTALLED'
+  register: module_install
+  async: 600
+  poll: 0
+  vars:
+    ansible_win_async_startup_timeout: 30
+
+- name: Wait for module installations to complete
+  ansible.builtin.async_status:
+    jid: "{{ async_result_item.ansible_job_id }}"
+  loop: "{{ module_install.results }}"
+  loop_control:
+    loop_var: "async_result_item"
+    label: "Waiting for module: {{ async_result_item.item | default('unknown') | trim }}"
+  register: async_poll_results
+  until: async_poll_results.finished
+  retries: 120
+  delay: 5
+  when:
+    - module_install is not skipped
+    - async_result_item.ansible_job_id is defined
+  failed_when: async_poll_results.finished and async_poll_results.failed
+
+- name: Verify DSC LCM is ready
+  ansible.windows.win_powershell:
+    script: |
+      $ProgressPreference = 'SilentlyContinue'
+      $ErrorActionPreference = "Stop"
+      try {
+        $lcm = Get-DscLocalConfigurationManager
+        if ($lcm.LCMState -ne 'Idle') {
+          throw "LCM not ready, state: $($lcm.LCMState)"
+        }
+        Write-Output "DSC LCM is ready (state: Idle)"
+        $Ansible.Changed = $false
+      } catch {
+        $Ansible.Failed = $true
+        throw $_
+      }
+  register: dsc_ready
+  retries: 5
+  delay: 5
+  until: dsc_ready is not failed
+  changed_when: false
 
 - name: Windows | Enable Remote Desktop
-  win_dsc:
+  ansible.windows.win_dsc:
     resource_name: RemoteDesktopAdmin
-    IsSingleInstance : 'yes'
+    IsSingleInstance: 'Yes'
     Ensure: present
     UserAuthentication: Secure
-
-- name: Windows | Check for xNetworking Powershell module
-  win_psmodule:
-    name: xNetworking
-    state: present
+  register: rdp_result
+  retries: 3
+  delay: 10
+  until: rdp_result is not failed
 
 - name: Firewall | Allow RDP through Firewall
-  win_dsc:
+  ansible.windows.win_dsc:
     resource_name: xFirewall
     Name: "Administrator access for RDP (TCP-In)"
     Ensure: present
@@ -54,11 +134,15 @@
     Localport: "3389"
     Protocol: "TCP"
     Description: "Opens the listener port for RDP"
+  register: firewall_result
+  retries: 3
+  delay: 10
+  until: firewall_result is not failed
 
 - name: Add a network static route
-  community.windows.win_route:
-    destination: "{{route_network}}"
-    gateway: "{{route_gateway}}"
+  ansible.windows.win_route:
+    destination: "{{ route_network }}"
+    gateway: "{{ route_gateway }}"
     metric: 1
     state: present
-  when: add_route == "yes"
+  when: add_route | bool

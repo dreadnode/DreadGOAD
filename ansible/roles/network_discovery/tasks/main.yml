@@ -1,0 +1,22 @@
+---
+- name: Include AWS instance mapping tasks
+  ansible.builtin.include_tasks: aws_mapping.yml
+
+- name: Check if network facts are already cached
+  ansible.builtin.set_fact:
+    skip_ip_detection: "{{ host_ipv4 is defined and host_ipv4 != '' }}"
+    skip_adapter_detection: "{{ domain_adapter is defined and domain_adapter != '' }}"
+
+- name: Include adapter detection tasks
+  ansible.builtin.include_tasks: adapters.yml
+  when: not skip_adapter_detection | default(false)
+
+- name: Include IP detection tasks
+  ansible.builtin.include_tasks: ip_detection.yml
+  when: not skip_ip_detection | default(false)
+
+- name: Include fallback facts
+  ansible.builtin.include_tasks: fallbacks.yml
+
+- name: Include DC fact storage
+  ansible.builtin.include_tasks: dc_facts.yml

@@ -1,7 +1,7 @@
-site_name: Game Of Active Directory
-site_url: https://orange-cyberdefense.github.io/GOAD/
-repo_url: https://github.com/Orange-Cyberdefense/GOAD
-site_author: mayfly
+site_name: DreadGOAD
+site_url: https://github.com/dreadnode/DreadGOAD
+repo_url: https://github.com/dreadnode/DreadGOAD
+site_author: Dreadnode
 nav:
   - GOAD: index.md
   - 🚀 Installation:
@@ -12,11 +12,13 @@ nav:
     - index: providers/index.md
     - Virtualbox: providers/virtualbox.md
     - Vmware Workstation: providers/vmware.md
+    - Vmware on Windows: providers/vmware_windows.md
     - Vmware Esxi: providers/vmware_esxi.md
     - Aws: providers/aws.md
+    - AWS AMI Workflow: providers/aws-ami-workflow.md
     - Azure: providers/azure.md
     - Proxmox: providers/proxmox.md
-    - Ludus: providers/ludus.md    
+    - Ludus: providers/ludus.md
   - 🏰 Labs:
     - index: labs/index.md
     - GOAD: labs/GOAD.md
@@ -34,22 +36,23 @@ nav:
     - ws01: extensions/ws01.md
     - elk: extensions/elk.md
     - wazuh: extensions/wazuh.md
-  - 💻 Usage: 
-    - index : usage/index.md
-    - Arguments: usage/goad_args.md
-    - Interactive: usage/goad_console.md
-  - 📝 Developers: 
-    - index : developers/index.md
+  - 💻 Usage:
+    - index: usage/index.md
+    - CLI Commands: usage/goad_args.md
+    - Migration Guide: usage/goad_console.md
+  - 🖥️ CLI Reference: cli-reference.md
+  - 📝 Developers:
+    - index: developers/index.md
     - Add Extension: developers/add_extension.md
     - Add Lab: developers/add_lab.md
     - Add Provider: developers/add_provider.md
   - 🇮 instances: instances.md
   - 🛠️ provisioning: provisioning.md
-  - ⚠️ Troubleshoot :  troobleshoot.md
-  - ❓ FAQ :  questions.md
-  - 📋 Roadmap :  changelog.md
-  - 📣 References : references.md
-  - 🙏 Thanks :  thx.md
+  - ⚠️ Troubleshoot: troobleshoot.md
+  - ❓ FAQ: questions.md
+  - 📋 Roadmap: changelog.md
+  - 📣 References: references.md
+  - 🙏 Thanks: thx.md
 theme:
   name: material
   logo: assets/logo.png
@@ -79,20 +82,17 @@ extra_css:
 extra:
   consent:
     title: Cookie consent
-    description: >- 
+    description: >-
       We use cookies to recognize your repeated visits and preferences, as well
       as to measure the effectiveness of our documentation and whether users
       find what they're searching for. With your consent, you're helping us to
       make our documentation better.
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/Orange-Cyberdefense/GOAD
-    - icon: fontawesome/brands/x-twitter
-      link: https://x.com/M4yFly
-    - icon: fontawesome/brands/discord
-      link: https://discord.gg/NYy7rsMf3u
+      link: https://github.com/dreadnode/DreadGOAD
     - icon: fontawesome/solid/heart
       link: https://github.com/sponsors/Mayfly277
+      name: Sponsor the original GOAD creator
 markdown_extensions:
   - attr_list
   - md_in_html

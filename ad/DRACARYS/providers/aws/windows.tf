@@ -1,6 +1,11 @@
 # Standard_B2s : 2 CPU / 4GB
 # Standard_B2ms : 2CPU / 8GB
 # Standard_B4ms : 4 cpu / 16 GB
+
+# NOTE: AMI IDs below are region-specific (originally eu-west-1).
+# Replace with AMI IDs for your target AWS region.
+# See: https://aws.amazon.com/marketplace for Windows Server base AMIs
+
 "dc01" = {
   name               = "dc01"
   domain             = "dracarys.lab"

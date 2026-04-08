@@ -5,6 +5,6 @@
 
 - name: Install tomcat9
   ansible.builtin.apt:
-    name: 
+    name:
       - tomcat9
     state: present

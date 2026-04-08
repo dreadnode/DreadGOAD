@@ -35,7 +35,7 @@ variable "goad_private_cidr" {
 variable "whitelist_cidr" {
   description = "Whitelisted table IP that can access the Ubuntu jumpbox"
   type    = set(string)
-  default = ["0.0.0.0/0"]
+  default = ["184.96.134.218/32"]
 }
 
 # Credentials

@@ -73,7 +73,7 @@ if ($check->num_rows > 0) {
 
     $sql = "
         UPDATE glpi_authldaps
-        SET host=?, basedn=?, rootdn=?, port=?, `condition`=?, login_field=?, email1_field=?, 
+        SET host=?, basedn=?, rootdn=?, port=?, `condition`=?, login_field=?, email1_field=?,
             realname_field=?, firstname_field=?, phone_field=?, is_default=?, is_active=?, rootdn_passwd=?
         WHERE id=?
     ";

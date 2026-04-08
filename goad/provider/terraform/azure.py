@@ -137,7 +137,7 @@ class AzureProvider(TerraformProvider):
                 table.add_row(vm.vm_id, vm.name, vm.location, power_state, ','.join(vm_public_ips), ','.join(vm_private_ips))
             print(table)
         except Exception as e:
-            Log.error('Error retreiving running vms')
+            Log.error('Error retrieving running vms')
             return False
 
     def start(self):
@@ -177,7 +177,7 @@ class AzureProvider(TerraformProvider):
                 Log.success(f'vm {vm.name} deallocate (no more billed)')
             self.status()
         except Exception as e:
-            Log.error('Error stoping the lab vms')
+            Log.error('Error stopping the lab vms')
             return False
 
     def start_vm(self, vm_name):
@@ -285,7 +285,7 @@ class AzureProvider(TerraformProvider):
                                 public_ip = network_client.public_ip_addresses.get(nic_resource_group, public_ip_name)
                                 return public_ip.ip_address
         except Exception as e:
-            Log.error('Error retreiving jumpbox ip')
+            Log.error('Error retrieving jumpbox ip')
             return False
         return None
 

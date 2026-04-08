@@ -1,0 +1,33 @@
+---
+# LDAP Diagnostic Logging Configuration
+# Enables LDAP query auditing on Domain Controllers for security monitoring
+
+# NTDS Diagnostics logging levels (0-5)
+# 0 = None
+# 1 = Minimal
+# 2 = Basic
+# 3 = Extensive
+# 4 = Verbose
+# 5 = Internal (very verbose, use with caution)
+
+# 16 LDAP Interface Events - logs LDAP searches and binds
+ldap_interface_events_level: 2
+
+# 15 Field Engineering - enables Event ID 1644 for expensive/inefficient LDAP queries
+field_engineering_level: 5
+
+# Thresholds for Event ID 1644 (in milliseconds/results)
+# Expensive Search Results Threshold - log searches returning more than N results
+ldap_expensive_search_threshold: 1
+
+# Inefficient Search Results Threshold - log searches visiting more than N entries
+ldap_inefficient_search_threshold: 1
+
+# Search Time Threshold (milliseconds) - log searches taking longer than N ms
+ldap_search_time_threshold: 100
+
+# Directory Service event log configuration
+directory_service_log_max_size_kb: 102400  # 100 MB
+
+# Enable all LDAP diagnostic events
+ldap_enable_all_diagnostics: true

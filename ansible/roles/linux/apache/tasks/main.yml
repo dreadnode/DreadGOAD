@@ -1,5 +1,5 @@
 - name: Install Apache
-  apt: 
+  apt:
     name: apache2
     state: latest
 
@@ -13,7 +13,7 @@
     mode: 0644
 
 - name: Start Apache service and enable
-  service: 
+  service:
     name: apache2
     state: started
     enabled: true

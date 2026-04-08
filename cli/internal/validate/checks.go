@@ -1,0 +1,813 @@
+package validate
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"strings"
+)
+
+func printHeader(w io.Writer, header string) {
+	_, _ = fmt.Fprintf(w, "\n== %s ==\n", header)
+}
+
+func (v *Validator) checkCredentialDiscovery(ctx context.Context, w io.Writer) {
+	printHeader(w, "Credential Discovery Vulnerabilities")
+
+	users := v.lab.UsersWithPasswordInDescription()
+	if len(users) == 0 {
+		v.addResult(w, "SKIP", "Credentials", "No users with password-in-description configured", "")
+		return
+	}
+
+	for _, uf := range users {
+		dcRole := strings.ToUpper(uf.DCRole)
+		output := v.runPS(ctx, dcRole, fmt.Sprintf(
+			`Get-ADUser -Identity '%s' -Properties Description | Select-Object -ExpandProperty Description`,
+			uf.Username))
+		if strings.Contains(strings.ToLower(output), strings.ToLower(uf.User.Password)) {
+			v.addResult(w, "PASS", "Credentials", fmt.Sprintf("%s has password in description", uf.Username), "")
+		} else {
+			v.addResult(w, "FAIL", "Credentials", fmt.Sprintf("%s does NOT have password in description", uf.Username), "")
+		}
+	}
+}
+
+func (v *Validator) checkKerberosAttacks(ctx context.Context, w io.Writer) {
+	printHeader(w, "Kerberos Attack Vectors")
+
+	v.checkASREPRoasting(ctx, w)
+	v.checkKerberoasting(ctx, w)
+}
+
+func (v *Validator) checkASREPRoasting(ctx context.Context, w io.Writer) {
+	// Find DCs that run AS-REP roasting scripts
+	asrepHosts := v.lab.HostsWithScript("asrep_roasting")
+	if len(asrepHosts) == 0 {
+		v.addResult(w, "SKIP", "Kerberos", "No AS-REP roasting scripts configured", "")
+		return
+	}
+
+	for _, role := range asrepHosts {
+		dcRole := strings.ToUpper(role)
+		output := v.runPS(ctx, dcRole,
+			`Get-ADUser -Filter {DoesNotRequirePreAuth -eq $true} -Properties DoesNotRequirePreAuth | Select-Object -ExpandProperty SamAccountName`)
+		users := parseOutputLines(output)
+		if len(users) > 0 {
+			v.addResult(w, "PASS", "Kerberos",
+				fmt.Sprintf("AS-REP roastable users on %s: %s", dcRole, strings.Join(users, ", ")), "")
+		} else {
+			v.addResult(w, "FAIL", "Kerberos",
+				fmt.Sprintf("No AS-REP roastable users found on %s", dcRole), "")
+		}
+	}
+}
+
+func (v *Validator) checkKerberoasting(ctx context.Context, w io.Writer) {
+	spnUsers := v.lab.UsersWithSPNs()
+	if len(spnUsers) == 0 {
+		v.addResult(w, "SKIP", "Kerberos", "No users with SPNs configured", "")
+		return
+	}
+
+	for _, uf := range spnUsers {
+		dcRole := strings.ToUpper(uf.DCRole)
+		output := v.runPS(ctx, dcRole, fmt.Sprintf(
+			`Get-ADUser -Identity '%s' -Properties ServicePrincipalName | Select-Object -ExpandProperty ServicePrincipalName`,
+			uf.Username))
+		if strings.TrimSpace(output) != "" {
+			v.addResult(w, "PASS", "Kerberos",
+				fmt.Sprintf("%s has SPNs configured (Kerberoastable)", uf.Username), "")
+		} else {
+			v.addResult(w, "FAIL", "Kerberos",
+				fmt.Sprintf("%s does NOT have SPNs configured", uf.Username), "")
+		}
+	}
+}
+
+func (v *Validator) checkNetworkMisconfigs(ctx context.Context, w io.Writer) {
+	printHeader(w, "Network-Level Misconfigurations")
+
+	// Check SMB signing on all Windows servers
+	servers := v.lab.WindowsServers()
+	if len(servers) == 0 {
+		v.addResult(w, "SKIP", "Network", "No Windows servers configured", "")
+		return
+	}
+
+	for _, role := range servers {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+		output := v.runPS(ctx, host,
+			`Get-SmbServerConfiguration | Select-Object RequireSecuritySignature,EnableSecuritySignature | Format-Table -AutoSize | Out-String`)
+		lower := strings.ToLower(output)
+
+		switch {
+		case strings.Contains(lower, "false") && strings.Count(lower, "false") >= 2:
+			v.addResult(w, "PASS", "Network", fmt.Sprintf("%s has SMB signing disabled", hostLabel), "")
+		case strings.Contains(lower, "false"):
+			v.addResult(w, "WARN", "Network", fmt.Sprintf("%s has SMB signing enabled but not required", hostLabel), "")
+		default:
+			v.addResult(w, "FAIL", "Network", fmt.Sprintf("%s has SMB signing enforced", hostLabel), "")
+		}
+	}
+}
+
+func (v *Validator) checkAnonymousSMB(ctx context.Context, w io.Writer) {
+	printHeader(w, "Anonymous/Guest SMB Enumeration")
+
+	// Check RestrictAnonymous on each DC
+	for _, role := range v.lab.DCs() {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+
+		output := v.runPS(ctx, host,
+			`Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Lsa' -Name RestrictAnonymous -ErrorAction SilentlyContinue | Select-Object -ExpandProperty RestrictAnonymous`)
+		val := strings.TrimSpace(output)
+		if val == "0" {
+			v.addResult(w, "PASS", "SMB", fmt.Sprintf("RestrictAnonymous is 0 on %s (NULL sessions enabled)", hostLabel), "")
+		} else {
+			v.addResult(w, "INFO", "SMB", fmt.Sprintf("RestrictAnonymous is %s on %s", val, hostLabel), "")
+		}
+
+		output = v.runPS(ctx, host,
+			`Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Lsa' -Name RestrictAnonymousSAM -ErrorAction SilentlyContinue | Select-Object -ExpandProperty RestrictAnonymousSAM`)
+		val = strings.TrimSpace(output)
+		if val == "0" {
+			v.addResult(w, "PASS", "SMB", fmt.Sprintf("RestrictAnonymousSAM is 0 on %s (SAM enum enabled)", hostLabel), "")
+		} else {
+			v.addResult(w, "INFO", "SMB", fmt.Sprintf("RestrictAnonymousSAM is %s on %s", val, hostLabel), "")
+		}
+	}
+
+	// Check Guest accounts on servers
+	for _, role := range v.lab.WindowsServers() {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+		output := v.runPS(ctx, host,
+			`Get-LocalUser -Name Guest | Select-Object Name,Enabled | Format-Table -AutoSize | Out-String`)
+		if strings.Contains(strings.ToLower(output), "true") {
+			v.addResult(w, "PASS", "SMB", fmt.Sprintf("Guest account enabled on %s", hostLabel), "")
+		} else {
+			v.addResult(w, "FAIL", "SMB", fmt.Sprintf("Guest account NOT enabled on %s", hostLabel), "")
+		}
+	}
+
+	// Check NTLM downgrade on hosts with that vuln
+	for _, role := range v.lab.HostsWithVuln("ntlmdowngrade") {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+		output := v.runPS(ctx, host,
+			`Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Lsa' -Name LmCompatibilityLevel -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LmCompatibilityLevel`)
+		val := strings.TrimSpace(output)
+		if val == "0" || val == "1" || val == "2" {
+			v.addResult(w, "PASS", "SMB", fmt.Sprintf("LmCompatibilityLevel is %s on %s (NTLM downgrade vulnerable)", val, hostLabel), "")
+		} else {
+			v.addResult(w, "FAIL", "SMB", fmt.Sprintf("LmCompatibilityLevel is %s on %s (expected 0-2)", val, hostLabel), "")
+		}
+	}
+}
+
+func (v *Validator) checkDelegation(ctx context.Context, w io.Writer) {
+	printHeader(w, "Delegation Configurations")
+
+	// Find DCs with delegation scripts
+	allHosts := v.lab.HostsWithScript("constrained_delegation")
+	allHosts = append(allHosts, v.lab.HostsWithScript("unconstrained_delegation")...)
+	if len(allHosts) == 0 {
+		// Fall back to checking all DCs
+		allHosts = v.lab.DCs()
+	}
+	if len(allHosts) == 0 {
+		v.addResult(w, "SKIP", "Delegation", "No domain controllers configured", "")
+		return
+	}
+
+	checked := make(map[string]bool)
+	for _, role := range allHosts {
+		host := strings.ToUpper(role)
+		if checked[host] || !v.hasHost(host) {
+			continue
+		}
+		checked[host] = true
+
+		// Unconstrained delegation
+		output := v.runPS(ctx, host,
+			`Get-ADUser -Filter {TrustedForDelegation -eq $true} -Properties TrustedForDelegation | Select-Object -ExpandProperty SamAccountName`)
+		users := parseOutputLines(output)
+		if len(users) > 0 {
+			v.addResult(w, "PASS", "Delegation",
+				fmt.Sprintf("Unconstrained delegation users on %s: %s", host, strings.Join(users, ", ")), "")
+		}
+
+		// Constrained delegation
+		output = v.runPS(ctx, host,
+			`Get-ADUser -Filter 'msDS-AllowedToDelegateTo -like "*"' -Properties msDS-AllowedToDelegateTo | Select-Object -ExpandProperty SamAccountName`)
+		users = parseOutputLines(output)
+		if len(users) > 0 {
+			v.addResult(w, "PASS", "Delegation",
+				fmt.Sprintf("Constrained delegation users on %s: %s", host, strings.Join(users, ", ")), "")
+		}
+	}
+}
+
+func (v *Validator) checkMachineAccountQuota(ctx context.Context, w io.Writer) {
+	printHeader(w, "Machine Account Quota")
+
+	for _, role := range v.lab.DCs() {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		output := v.runPS(ctx, host,
+			`Get-ADObject -Identity ((Get-ADDomain).distinguishedname) -Properties ms-DS-MachineAccountQuota | Select-Object -ExpandProperty ms-DS-MachineAccountQuota`)
+		val := strings.TrimSpace(output)
+		if val == "10" {
+			v.addResult(w, "PASS", "MachineQuota", "Machine Account Quota is 10 (allows RBCD)", "")
+		} else {
+			v.addResult(w, "WARN", "MachineQuota", fmt.Sprintf("Machine Account Quota is %s (default is 10)", val), "")
+		}
+		return // Only check first available DC
+	}
+}
+
+func (v *Validator) checkMSSQL(ctx context.Context, w io.Writer) {
+	printHeader(w, "MSSQL Configurations")
+
+	mssqlFacts := v.lab.HostsWithMSSQLConfig()
+	if len(mssqlFacts) == 0 {
+		v.addResult(w, "SKIP", "MSSQL", "No MSSQL configured for this lab", "")
+		return
+	}
+
+	for _, mf := range mssqlFacts {
+		host := strings.ToUpper(mf.HostRole)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(mf.Hostname)
+
+		output := v.runPS(ctx, host,
+			`Get-Service 'MSSQL$SQLEXPRESS','MSSQLSERVER' -ErrorAction SilentlyContinue | Where-Object {$_.Status -eq 'Running'} | Select-Object -ExpandProperty Name`)
+		if strings.TrimSpace(output) == "" {
+			v.addResult(w, "FAIL", "MSSQL", fmt.Sprintf("MSSQL NOT running on %s", hostLabel), "")
+			continue
+		}
+		v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("MSSQL running on %s", hostLabel), "")
+
+		sqlQuery := func(query string) string {
+			return v.runPS(ctx, host, fmt.Sprintf(
+				`$c = New-Object System.Data.SqlClient.SqlConnection 'Server=localhost;Integrated Security=True;TrustServerCertificate=True'; `+
+					`$c.Open(); $cmd = $c.CreateCommand(); $cmd.CommandText = '%s'; `+
+					`$r = $cmd.ExecuteReader(); while ($r.Read()) { Write-Output $r[0].ToString() }; $r.Close(); $c.Close()`,
+				query))
+		}
+
+		for _, admin := range mf.MSSQL.SysAdmins {
+			output = sqlQuery(fmt.Sprintf(
+				"SELECT m.name FROM sys.server_role_members srm JOIN sys.server_principals r ON srm.role_principal_id = r.principal_id JOIN sys.server_principals m ON srm.member_principal_id = m.principal_id WHERE r.name = ''sysadmin'' AND m.name = ''%s''",
+				admin))
+			if strings.TrimSpace(output) != "" {
+				v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("%s is sysadmin on %s", admin, hostLabel), "")
+			} else {
+				v.addResult(w, "FAIL", "MSSQL", fmt.Sprintf("%s is NOT sysadmin on %s", admin, hostLabel), "")
+			}
+		}
+
+		for grantee, target := range mf.MSSQL.ExecuteAsLogin {
+			output = sqlQuery(fmt.Sprintf(
+				"SELECT pr.name FROM sys.server_permissions sp JOIN sys.server_principals pr ON sp.grantee_principal_id = pr.principal_id JOIN sys.server_principals pr2 ON sp.major_id = pr2.principal_id WHERE sp.permission_name = ''IMPERSONATE'' AND pr.name = ''%s'' AND pr2.name = ''%s''",
+				grantee, target))
+			if strings.TrimSpace(output) != "" {
+				v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("%s can impersonate %s on %s", grantee, target, hostLabel), "")
+			} else {
+				v.addResult(w, "FAIL", "MSSQL", fmt.Sprintf("%s CANNOT impersonate %s on %s", grantee, target, hostLabel), "")
+			}
+		}
+
+		for name, ls := range mf.MSSQL.LinkedServers {
+			output = sqlQuery(fmt.Sprintf(
+				"SELECT name FROM sys.servers WHERE is_linked = 1 AND name = ''%s''", name))
+			if strings.TrimSpace(output) != "" {
+				v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("Linked server %s -> %s on %s", name, ls.DataSrc, hostLabel), "")
+			} else {
+				v.addResult(w, "FAIL", "MSSQL", fmt.Sprintf("Linked server %s NOT found on %s", name, hostLabel), "")
+			}
+		}
+
+		output = sqlQuery("SELECT CONVERT(INT, ISNULL(value, value_in_use)) FROM sys.configurations WHERE name = ''xp_cmdshell''")
+		if strings.TrimSpace(output) == "1" {
+			v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("xp_cmdshell enabled on %s", hostLabel), "")
+		} else {
+			v.addResult(w, "FAIL", "MSSQL", fmt.Sprintf("xp_cmdshell NOT enabled on %s", hostLabel), "")
+		}
+	}
+}
+
+func (v *Validator) checkADCS(ctx context.Context, w io.Writer) {
+	printHeader(w, "ADCS Configuration")
+
+	adcsHosts := v.lab.ADCSHosts()
+	if len(adcsHosts) == 0 {
+		v.addResult(w, "SKIP", "ADCS", "No ADCS configured for this lab", "")
+		return
+	}
+
+	for _, role := range adcsHosts {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+
+		output := v.runPS(ctx, host,
+			`Get-WindowsFeature ADCS-Cert-Authority | Select-Object Name,InstallState | Format-Table -AutoSize | Out-String`)
+		if strings.Contains(strings.ToLower(output), "installed") {
+			v.addResult(w, "PASS", "ADCS", fmt.Sprintf("ADCS installed on %s", hostLabel), "")
+		} else {
+			v.addResult(w, "FAIL", "ADCS", fmt.Sprintf("ADCS NOT installed on %s", hostLabel), "")
+		}
+
+		if v.lab.CAWebEnrollment() {
+			output = v.runPS(ctx, host,
+				`Get-WindowsFeature ADCS-Web-Enrollment | Select-Object Name,InstallState | Format-Table -AutoSize | Out-String`)
+			if strings.Contains(strings.ToLower(output), "installed") {
+				v.addResult(w, "PASS", "ADCS", "ADCS Web Enrollment installed (ESC8 possible)", "")
+			} else {
+				v.addResult(w, "WARN", "ADCS", "ADCS Web Enrollment not installed", "")
+			}
+		}
+
+		output = v.runPS(ctx, host,
+			`Get-ADObject -Filter {objectClass -eq 'pKIEnrollmentService'} -SearchBase ("CN=Enrollment Services,CN=Public Key Services,CN=Services," + (Get-ADRootDSE).configurationNamingContext) -Properties certificateTemplates | Select-Object -ExpandProperty certificateTemplates`)
+		if strings.TrimSpace(output) == "" {
+			continue
+		}
+		publishedTemplates := parseOutputLines(output)
+		escTemplates := []string{"ESC1", "ESC2", "ESC3", "ESC3-CRA", "ESC4"}
+		for _, tmpl := range escTemplates {
+			found := false
+			for _, pub := range publishedTemplates {
+				if strings.EqualFold(strings.TrimSpace(pub), tmpl) {
+					found = true
+					break
+				}
+			}
+			if found {
+				v.addResult(w, "PASS", "ADCS", fmt.Sprintf("Template %s published on %s CA", tmpl, hostLabel), "")
+			} else {
+				v.addResult(w, "FAIL", "ADCS", fmt.Sprintf("Template %s NOT published on %s CA", tmpl, hostLabel), "")
+			}
+		}
+	}
+}
+
+func (v *Validator) checkACLPermissions(ctx context.Context, w io.Writer) {
+	printHeader(w, "ACL Permissions")
+
+	acls := v.lab.AllACLs()
+	if len(acls) == 0 {
+		v.addResult(w, "SKIP", "ACL", "No ACLs configured for this lab", "")
+		return
+	}
+
+	for _, af := range acls {
+		// Skip ACLs targeting computer accounts
+		if strings.HasSuffix(af.ACL.To, "$") {
+			continue
+		}
+
+		dcRole := strings.ToUpper(af.DCRole)
+		if !v.hasHost(dcRole) {
+			continue
+		}
+
+		source := v.lab.User(af.ACL.For)
+		target := v.lab.User(af.ACL.To)
+
+		sourceFirst := strings.SplitN(source, ".", 2)[0]
+		// Strip trailing $ for gMSA accounts to match the identity reference
+		sourceFirst = strings.TrimSuffix(sourceFirst, "$")
+
+		// Build the PowerShell lookup for the target object.
+		// DN paths (containing = signs) are resolved directly via Get-Acl;
+		// SamAccountNames are looked up with Get-ADObject which finds
+		// users, groups, and service accounts alike.
+		script := fmt.Sprintf(`
+$ErrorActionPreference = 'Stop'
+Import-Module ActiveDirectory
+Set-Location AD:
+$target = '%s'
+$sourceMatch = '*%s*'
+try {
+  if ($target -match '=') {
+    $objDN = $target
+    $objAcl = Get-Acl -Path $objDN -ErrorAction Stop
+  } else {
+    $obj = Get-ADObject -Filter "SamAccountName -eq '$target'" -Properties nTSecurityDescriptor -ErrorAction Stop
+    if (-not $obj) { Write-Output 'TARGET_NOT_FOUND'; exit }
+    $objAcl = $obj.nTSecurityDescriptor
+  }
+  $ace = $objAcl.Access | Where-Object { $_.IdentityReference -like $sourceMatch }
+  if ($ace) { Write-Output 'ACL_FOUND' } else { Write-Output 'ACL_NOT_FOUND' }
+} catch {
+  Write-Output "CHECK_ERROR: $_"
+}`, target, sourceFirst)
+
+		output := v.runPS(ctx, dcRole, script)
+
+		switch {
+		case strings.Contains(output, "ACL_FOUND"):
+			v.addResult(w, "PASS", "ACL", fmt.Sprintf("%s has %s on %s", source, af.ACL.Right, target), "")
+		case strings.Contains(output, "ACL_NOT_FOUND"):
+			v.addResult(w, "FAIL", "ACL", fmt.Sprintf("%s does NOT have %s on %s", source, af.ACL.Right, target), "")
+		default:
+			v.addResult(w, "WARN", "ACL", fmt.Sprintf("Could not verify ACL: %s -> %s (%s)", source, target, af.ACL.Right), "")
+		}
+	}
+}
+
+func (v *Validator) checkDomainTrusts(ctx context.Context, w io.Writer) {
+	printHeader(w, "Domain Trusts")
+
+	trusts := v.lab.DomainTrusts()
+	if len(trusts) == 0 {
+		v.addResult(w, "SKIP", "Trusts", "No domain trusts configured for this lab", "")
+		return
+	}
+
+	for _, tf := range trusts {
+		if tf.SourceDCRole != "" {
+			srcHost := strings.ToUpper(tf.SourceDCRole)
+			if v.hasHost(srcHost) {
+				output := v.runPS(ctx, srcHost,
+					`Get-ADTrust -Filter * | Select-Object Name,Direction,TrustType | Format-Table -AutoSize | Out-String`)
+				if strings.Contains(strings.ToLower(output), strings.ToLower(tf.TargetDomain)) {
+					v.addResult(w, "PASS", "Trusts",
+						fmt.Sprintf("Trust configured: %s -> %s", tf.SourceDomain, tf.TargetDomain), "")
+				} else {
+					v.addResult(w, "FAIL", "Trusts",
+						fmt.Sprintf("Trust NOT found: %s -> %s", tf.SourceDomain, tf.TargetDomain), "")
+				}
+			}
+		}
+
+		if tf.TargetDCRole != "" {
+			tgtHost := strings.ToUpper(tf.TargetDCRole)
+			if v.hasHost(tgtHost) {
+				output := v.runPS(ctx, tgtHost,
+					`Get-ADTrust -Filter * | Select-Object Name,Direction,TrustType | Format-Table -AutoSize | Out-String`)
+				if strings.Contains(strings.ToLower(output), strings.ToLower(tf.SourceDomain)) {
+					v.addResult(w, "PASS", "Trusts",
+						fmt.Sprintf("Trust configured: %s -> %s", tf.TargetDomain, tf.SourceDomain), "")
+				} else {
+					v.addResult(w, "FAIL", "Trusts",
+						fmt.Sprintf("Trust NOT found: %s -> %s", tf.TargetDomain, tf.SourceDomain), "")
+				}
+			}
+		}
+	}
+}
+
+func (v *Validator) checkServices(ctx context.Context, w io.Writer) {
+	printHeader(w, "Additional Services")
+
+	// Print Spooler on all DCs
+	for _, role := range v.lab.DCs() {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		output := v.runPS(ctx, host,
+			`Get-Service Spooler | Select-Object Status | Format-Table -AutoSize | Out-String`)
+		if strings.Contains(strings.ToLower(output), "running") {
+			v.addResult(w, "PASS", "Services", fmt.Sprintf("Print Spooler running on %s (coercion possible)", host), "")
+		} else {
+			v.addResult(w, "WARN", "Services", fmt.Sprintf("Print Spooler not running on %s", host), "")
+		}
+	}
+
+	// IIS on Windows servers (only report if found or expected)
+	for _, role := range v.lab.WindowsServers() {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+		output := v.runPS(ctx, host,
+			`Get-Service W3SVC -ErrorAction SilentlyContinue | Select-Object Name,Status | Format-Table -AutoSize | Out-String`)
+		if strings.Contains(strings.ToLower(output), "running") {
+			v.addResult(w, "PASS", "Services", fmt.Sprintf("IIS running on %s", hostLabel), "")
+		} else if strings.TrimSpace(output) != "" {
+			v.addResult(w, "WARN", "Services", fmt.Sprintf("IIS not running on %s", hostLabel), "")
+		}
+	}
+}
+
+func (v *Validator) checkScheduledTasks(ctx context.Context, w io.Writer) {
+	printHeader(w, "Scheduled Tasks (Bots)")
+
+	botScripts := map[string]string{
+		"rdp_scheduler": "connect_bot",
+		"ntlm_relay":    "ntlm_bot",
+		"responder":     "responder_bot",
+	}
+
+	found := false
+	for pattern, taskName := range botScripts {
+		hosts := v.lab.HostsWithScript(pattern)
+		for _, role := range hosts {
+			found = true
+			host := strings.ToUpper(role)
+			if !v.hasHost(host) {
+				continue
+			}
+			output := v.runPS(ctx, host, fmt.Sprintf(
+				`Get-ScheduledTask -TaskName '%s' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty State`, taskName))
+			state := strings.TrimSpace(output)
+			switch {
+			case strings.EqualFold(state, "Running") || strings.EqualFold(state, "Ready"):
+				v.addResult(w, "PASS", "ScheduledTasks", fmt.Sprintf("%s is %s on %s", taskName, state, host), "")
+			case state != "":
+				v.addResult(w, "WARN", "ScheduledTasks", fmt.Sprintf("%s state is %s on %s", taskName, state, host), "")
+			default:
+				v.addResult(w, "FAIL", "ScheduledTasks", fmt.Sprintf("%s NOT found on %s", taskName, host), "")
+			}
+		}
+	}
+	if !found {
+		v.addResult(w, "SKIP", "ScheduledTasks", "No bot scripts configured", "")
+	}
+}
+
+func (v *Validator) checkLLMNR(ctx context.Context, w io.Writer) {
+	printHeader(w, "LLMNR / NBT-NS")
+
+	llmnrHosts := v.lab.HostsWithVuln("enable_llmnr")
+	for _, role := range llmnrHosts {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+		output := v.runPS(ctx, host,
+			`$v = Get-ItemProperty -Path 'HKLM:\Software\policies\Microsoft\Windows NT\DNSClient' -Name EnableMulticast -ErrorAction SilentlyContinue; if ($v) { $v.EnableMulticast } else { 'NOT_SET' }`)
+		val := strings.TrimSpace(output)
+		if val == "1" || val == "NOT_SET" {
+			v.addResult(w, "PASS", "LLMNR", fmt.Sprintf("LLMNR enabled on %s", hostLabel), "")
+		} else {
+			v.addResult(w, "FAIL", "LLMNR", fmt.Sprintf("LLMNR disabled on %s (value=%s)", hostLabel, val), "")
+		}
+	}
+
+	nbtHosts := v.lab.HostsWithVuln("enable_nbt_ns")
+	for _, role := range nbtHosts {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+		output := v.runPS(ctx, host,
+			`Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\NetBT\Parameters\Interfaces\*' -Name NetbiosOptions -ErrorAction SilentlyContinue | Select-Object -ExpandProperty NetbiosOptions`)
+		lines := parseOutputLines(output)
+		allZero := len(lines) > 0
+		for _, l := range lines {
+			if strings.TrimSpace(l) != "0" {
+				allZero = false
+				break
+			}
+		}
+		switch {
+		case allZero:
+			v.addResult(w, "PASS", "LLMNR", fmt.Sprintf("NBT-NS enabled on %s", hostLabel), "")
+		case len(lines) == 0:
+			v.addResult(w, "WARN", "LLMNR", fmt.Sprintf("NBT-NS status unknown on %s", hostLabel), "")
+		default:
+			v.addResult(w, "FAIL", "LLMNR", fmt.Sprintf("NBT-NS disabled on %s", hostLabel), "")
+		}
+	}
+
+	if len(llmnrHosts) == 0 && len(nbtHosts) == 0 {
+		v.addResult(w, "SKIP", "LLMNR", "No LLMNR/NBT-NS vulns configured", "")
+	}
+}
+
+func (v *Validator) checkGPOAbuse(ctx context.Context, w io.Writer) {
+	printHeader(w, "GPO Abuse")
+
+	hosts := v.lab.HostsWithScript("gpo_abuse")
+	if len(hosts) == 0 {
+		v.addResult(w, "SKIP", "GPO", "No GPO abuse scripts configured", "")
+		return
+	}
+
+	for _, role := range hosts {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		output := v.runPS(ctx, host,
+			`Get-GPO -All | Where-Object { $_.DisplayName -notmatch 'Default Domain' } | Select-Object -ExpandProperty DisplayName`)
+		gpos := parseOutputLines(output)
+		if len(gpos) > 0 {
+			v.addResult(w, "PASS", "GPO", fmt.Sprintf("Custom GPOs on %s: %s", host, strings.Join(gpos, ", ")), "")
+		} else {
+			v.addResult(w, "FAIL", "GPO", fmt.Sprintf("No custom GPOs found on %s", host), "")
+		}
+	}
+}
+
+func (v *Validator) checkGMSA(ctx context.Context, w io.Writer) {
+	printHeader(w, "gMSA Accounts")
+
+	facts := v.lab.DomainsWithGMSA()
+	if len(facts) == 0 {
+		v.addResult(w, "SKIP", "gMSA", "No gMSA configured for this lab", "")
+		return
+	}
+
+	for _, gf := range facts {
+		host := strings.ToUpper(gf.DCRole)
+		if !v.hasHost(host) {
+			continue
+		}
+		output := v.runPS(ctx, host, fmt.Sprintf(
+			`Get-ADServiceAccount -Identity '%s' -Properties Enabled | Select-Object -ExpandProperty Enabled`, gf.GMSA.Name))
+		if strings.Contains(strings.ToLower(output), "true") {
+			v.addResult(w, "PASS", "gMSA", fmt.Sprintf("gMSA %s exists and enabled in %s", gf.GMSA.Name, gf.Domain), "")
+		} else {
+			v.addResult(w, "FAIL", "gMSA", fmt.Sprintf("gMSA %s NOT found or disabled in %s", gf.GMSA.Name, gf.Domain), "")
+		}
+	}
+}
+
+func (v *Validator) checkLAPS(ctx context.Context, w io.Writer) {
+	printHeader(w, "LAPS")
+
+	lapsHosts := v.lab.HostsWithLAPS()
+	if len(lapsHosts) == 0 {
+		v.addResult(w, "SKIP", "LAPS", "No LAPS hosts configured", "")
+		return
+	}
+
+	for _, role := range lapsHosts {
+		hc := v.lab.HostConfigs[role]
+		hostname := strings.ToUpper(hc.Hostname)
+		dcRole := v.lab.DCForDomain(hc.Domain)
+		if dcRole == "" {
+			continue
+		}
+		dc := strings.ToUpper(dcRole)
+		if !v.hasHost(dc) {
+			continue
+		}
+		output := v.runPS(ctx, dc, fmt.Sprintf(
+			`Get-ADComputer -Identity '%s' -Properties ms-Mcs-AdmPwd | Select-Object -ExpandProperty ms-Mcs-AdmPwd`, hostname))
+		if strings.TrimSpace(output) != "" {
+			v.addResult(w, "PASS", "LAPS", fmt.Sprintf("LAPS password set for %s", hostname), "")
+		} else {
+			v.addResult(w, "FAIL", "LAPS", fmt.Sprintf("LAPS password NOT set for %s", hostname), "")
+		}
+	}
+}
+
+func (v *Validator) checkSIDFiltering(ctx context.Context, w io.Writer) {
+	printHeader(w, "SID Filtering")
+
+	trusts := v.lab.DomainTrusts()
+	if len(trusts) == 0 {
+		v.addResult(w, "SKIP", "SIDFiltering", "No domain trusts configured", "")
+		return
+	}
+
+	for _, tf := range trusts {
+		if tf.SourceDCRole == "" {
+			continue
+		}
+		host := strings.ToUpper(tf.SourceDCRole)
+		if !v.hasHost(host) {
+			continue
+		}
+		output := v.runPS(ctx, host, fmt.Sprintf(
+			`netdom trust %s /d:%s /quarantine 2>&1`, tf.SourceDomain, tf.TargetDomain))
+		lower := strings.ToLower(output)
+		switch {
+		case strings.Contains(lower, "not enabled"):
+			v.addResult(w, "PASS", "SIDFiltering", fmt.Sprintf("SID filtering disabled on %s -> %s (exploitation possible)", tf.SourceDomain, tf.TargetDomain), "")
+		case strings.Contains(lower, "enabled"):
+			v.addResult(w, "WARN", "SIDFiltering", fmt.Sprintf("SID filtering enabled on %s -> %s", tf.SourceDomain, tf.TargetDomain), "")
+		default:
+			v.addResult(w, "INFO", "SIDFiltering", fmt.Sprintf("Could not determine SID filtering: %s -> %s", tf.SourceDomain, tf.TargetDomain), "")
+		}
+	}
+}
+
+func (v *Validator) checkSMBShares(ctx context.Context, w io.Writer) {
+	printHeader(w, "SMB Shares")
+
+	shareHosts := v.lab.HostsWithVuln("openshares")
+	if len(shareHosts) == 0 {
+		v.addResult(w, "SKIP", "Shares", "No openshares vulns configured", "")
+		return
+	}
+
+	for _, role := range shareHosts {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+		output := v.runPS(ctx, host,
+			`Get-SmbShare | Where-Object { $_.Name -notmatch 'ADMIN\$|C\$|IPC\$' } | Select-Object -ExpandProperty Name`)
+		shares := parseOutputLines(output)
+		if len(shares) > 0 {
+			v.addResult(w, "PASS", "Shares", fmt.Sprintf("Custom shares on %s: %s", hostLabel, strings.Join(shares, ", ")), "")
+		} else {
+			v.addResult(w, "FAIL", "Shares", fmt.Sprintf("No custom shares found on %s", hostLabel), "")
+		}
+	}
+}
+
+func (v *Validator) checkFirewallDisabled(ctx context.Context, w io.Writer) {
+	printHeader(w, "Firewall")
+
+	fwHosts := v.lab.HostsWithVuln("disable_firewall")
+	if len(fwHosts) == 0 {
+		v.addResult(w, "SKIP", "Firewall", "No disable_firewall vulns configured", "")
+		return
+	}
+
+	for _, role := range fwHosts {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+		output := v.runPS(ctx, host,
+			`Get-NetFirewallProfile | Where-Object { $_.Enabled -eq $true } | Select-Object -ExpandProperty Name`)
+		enabledProfiles := parseOutputLines(output)
+		if len(enabledProfiles) == 0 {
+			v.addResult(w, "PASS", "Firewall", fmt.Sprintf("Firewall disabled on %s", hostLabel), "")
+		} else {
+			v.addResult(w, "FAIL", "Firewall", fmt.Sprintf("Firewall still enabled on %s (profiles: %s)", hostLabel, strings.Join(enabledProfiles, ", ")), "")
+		}
+	}
+}
+
+func (v *Validator) checkPasswordPolicy(ctx context.Context, w io.Writer) {
+	printHeader(w, "Password Policy")
+
+	for _, role := range v.lab.DCs() {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		output := v.runPS(ctx, host,
+			`$p = Get-ADDefaultDomainPasswordPolicy; Write-Output "$($p.ComplexityEnabled)|$($p.MinPasswordLength)|$($p.LockoutThreshold)"`)
+		parts := strings.Split(strings.TrimSpace(output), "|")
+		if len(parts) < 3 {
+			v.addResult(w, "WARN", "PasswordPolicy", fmt.Sprintf("Could not read password policy on %s", host), "")
+			continue
+		}
+		domain := v.lab.DomainForHost(strings.ToLower(host))
+		if domain == "" {
+			domain = host
+		}
+		complexity := parts[0]
+		minLen := parts[1]
+		if strings.EqualFold(complexity, "false") {
+			v.addResult(w, "PASS", "PasswordPolicy", fmt.Sprintf("Password complexity disabled in %s (weak policy)", domain), "")
+		} else {
+			v.addResult(w, "INFO", "PasswordPolicy", fmt.Sprintf("Password complexity enabled in %s", domain), "")
+		}
+		if minLen == "0" || minLen == "1" || minLen == "2" || minLen == "3" {
+			v.addResult(w, "PASS", "PasswordPolicy", fmt.Sprintf("Min password length is %s in %s (weak)", minLen, domain), "")
+		} else {
+			v.addResult(w, "INFO", "PasswordPolicy", fmt.Sprintf("Min password length is %s in %s", minLen, domain), "")
+		}
+	}
+}
+
+// parseOutputLines splits PowerShell output into non-empty trimmed lines.
+func parseOutputLines(output string) []string {
+	var lines []string
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}

@@ -1,0 +1,101 @@
+---
+
+# set AD data ==================================================================================================
+
+# parent controllers
+- name: Main DC AD configuration
+  hosts: parent_dc
+  gather_facts: true
+  vars:
+    domain: "{{ lab.hosts[dict_key].domain }}"
+    domain_username: "{{ admin_user }}@{{ domain }}"
+    domain_password: "{{ lab.domains[domain].domain_password }}"
+    netbios_name: "{{ lab.domains[domain].netbios_name }}"
+
+  pre_tasks:
+    - name: Check for pending reboots before starting
+      ansible.windows.win_powershell:
+        script: |
+          $ProgressPreference = 'SilentlyContinue'
+          $ErrorActionPreference = 'SilentlyContinue'
+
+          $pendingReboot = $false
+
+          # Use Test-Path for faster registry checks
+          if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending") {
+            $pendingReboot = $true
+          }
+
+          if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired") {
+            $pendingReboot = $true
+          }
+
+          # Check for PendingFileRenameOperations (this is a value, not a key)
+          try {
+            $prop = Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager" -Name PendingFileRenameOperations
+            if ($prop.PendingFileRenameOperations) {
+              $pendingReboot = $true
+            }
+          } catch {}
+
+          # Check if Domain Join is pending reboot
+          try {
+            $prop = Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Services\Netlogon" -Name JoinDomain
+            if ($prop.JoinDomain) {
+              $pendingReboot = $true
+            }
+          } catch {}
+
+          $Ansible.Changed = $false
+          # Output the result as a boolean
+          $pendingReboot
+      register: pending_reboot_check
+      failed_when: false
+
+    - name: Reboot if needed before starting DC configuration
+      ansible.windows.win_reboot:
+        reboot_timeout: 900
+        post_reboot_delay: 120
+      when: pending_reboot_check.output[0] | default(false) | bool
+
+  roles:
+    - { role: 'dreadnode.goad.domain_controller', tags: 'dc_main_domains' }
+
+  post_tasks:
+    - name: Final verification of domain controller functionality
+      ansible.windows.win_powershell:
+        script: |
+          $ProgressPreference = 'SilentlyContinue'
+          $ErrorActionPreference = "Stop"
+
+          try {
+            # Verify domain controller is responsive
+            $dc = Get-ADDomainController
+
+            # Test Active Directory Web Services
+            $adws = Get-Service ADWS
+            if ($adws.Status -ne "Running") {
+              throw "ADWS service is not running"
+            }
+
+            # Test DNS service
+            $dns = Get-Service DNS
+            if ($dns.Status -ne "Running") {
+              throw "DNS service is not running"
+            }
+
+            # Test basic domain functionality
+            $domain = Get-ADDomain
+            $domainMode = $domain.DomainMode
+
+            Write-Output "Domain controller verification passed. Domain mode: $domainMode"
+            $Ansible.Changed = $false
+          } catch {
+            $Ansible.Failed = $true
+            Write-Error "Domain controller verification failed: $_"
+          }
+      register: final_verification
+      retries: 3
+      delay: 10
+      until: final_verification is not failed
+      changed_when: false

@@ -22,7 +22,7 @@
             "vulns" : ["disable_firewall", "directory", "files", "adcs_templates"],
             "vulns_vars" : {
                 "directory": {
-                    "setup": "c:\\setup"
+                    "setup": "C:\\setup"
                 },
                 "files" : {
                     "template" : {

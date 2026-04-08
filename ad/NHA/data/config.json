@@ -15,7 +15,7 @@
             "vulns" : ["administrator_folder","directory","files","adcs_templates","acls"],
             "vulns_vars" : {
                 "directory": {
-                    "setup": "c:\\setup"
+                    "setup": "C:\\setup"
                 },
                 "files" : {
                     "template" : {
@@ -24,7 +24,7 @@
                     },
                     "flag":{
                         "src" : "flags/dc_final.txt",
-                        "dest": "c:\\users\\administrator\\desktop\\flag.txt"
+                        "dest": "C:\\users\\administrator\\desktop\\flag.txt"
                     }
                 },
                 "adcs_templates": {
@@ -35,9 +35,9 @@
                 },
                 "acls": {
                     "GenericAll_Jonin_signature" : {
-                        "for": "Jonin", 
-                        "to": "CN=SignatureValidation,CN=Certificate Templates,CN=Public Key Services,CN=Services,CN=Configuration,DC=ninja,DC=hack", 
-                        "right": "GenericAll", 
+                        "for": "Jonin",
+                        "to": "CN=SignatureValidation,CN=Certificate Templates,CN=Public Key Services,CN=Services,CN=Configuration,DC=ninja,DC=hack",
+                        "right": "GenericAll",
                         "inheritance": "None"
                     }
                 }
@@ -62,7 +62,7 @@
                 "files" : {
                     "flag":{
                         "src" : "flags/dc_academy.txt",
-                        "dest": "c:\\users\\administrator\\desktop\\flag.txt"
+                        "dest": "C:\\users\\administrator\\desktop\\flag.txt"
                     }
                 }
             }
@@ -89,7 +89,7 @@
                     },
                     "flag":{
                         "src" : "flags/web.txt",
-                        "dest": "c:\\users\\administrator\\desktop\\flag.txt"
+                        "dest": "C:\\users\\administrator\\desktop\\flag.txt"
                     }
                 }
             }
@@ -121,20 +121,20 @@
                 "files" : {
                     "sql" : {
                         "src" : "SQL/academy_dump.sql",
-                        "dest" : "c:\\setup\\academy_dump.sql"
+                        "dest" : "C:\\setup\\academy_dump.sql"
                     },
                     "flag_low":{
                         "src" : "flags/sql_low.txt",
-                        "dest": "c:\\flag.txt"
+                        "dest": "C:\\flag.txt"
                     },
                     "flag_high":{
                         "src" : "flags/sql_high.txt",
-                        "dest": "c:\\users\\administrator\\desktop\\flag.txt"
+                        "dest": "C:\\users\\administrator\\desktop\\flag.txt"
                     }
                 },
                 "mssql": {
                     "init" : {
-                        "cmd" : "-i c:\\setup\\academy_dump.sql"
+                        "cmd" : "-i C:\\setup\\academy_dump.sql"
                     }
                 }
             }
@@ -156,17 +156,17 @@
                 "files" : {
                     "csp" : {
                         "src" : "bot.ps1",
-                        "dest" : "c:\\bot.ps1"
+                        "dest" : "C:\\bot.ps1"
                     },
                     "flag":{
                         "src" : "flags/share.txt",
-                        "dest": "c:\\users\\administrator\\desktop\\flag.txt"
+                        "dest": "C:\\users\\administrator\\desktop\\flag.txt"
                     }
                 },
                 "schedule": {
                     "bot": {
                         "name": "connect_bot",
-                        "cmd" : "powershell c:\\bot.ps1",
+                        "cmd" : "powershell C:\\bot.ps1",
                         "interval" : "PT1M"
                     }
                 }
@@ -215,7 +215,7 @@
                 "alice.johnson" : {
                     "firstname"   : "Alice",
                     "surname"     : "johnson",
-                    "password"    : "Ih@teC0mputeRs", 
+                    "password"    : "Ih@teC0mputeRs",
                     "city"        : "ninja",
                     "description" : "hokage",
                     "groups"      : ["Hokage", "Domain Admins"],
@@ -365,7 +365,7 @@
                 "alice" : {
                     "firstname"   : "alice",
                     "surname"     : "johnson",
-                    "password"    : "C0mplexP@ssAD456", 
+                    "password"    : "C0mplexP@ssAD456",
                     "city"        : "ninja",
                     "description" : "hokage",
                     "groups"      : ["Sensei", "Domain Admins"],

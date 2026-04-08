@@ -1,0 +1,11 @@
+# LOGS and Monitoring ==========================================================================================
+- name: Install ELK
+  hosts: elk_server
+  become: yes
+  roles:
+    - { role: 'dreadnode.goad.elk', tags: 'elk' }
+
+- name: Install log agent on windows vms
+  hosts: elk_log
+  roles:
+    - { role: 'dreadnode.goad.logs_windows', tags: 'agent' }

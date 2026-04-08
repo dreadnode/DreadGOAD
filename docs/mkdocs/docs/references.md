@@ -1,8 +1,8 @@
 # References
 
-🚧 TODO TO BE COMPLETED
+Blog posts, writeups, podcasts, and videos covering DreadGOAD (GOAD) labs and related topics.
 
-- Mayfly's blog : 
+- Mayfly's blog :
     - [GOAD writeups](https://mayfly277.github.io/categories/goad/)
     - [SCCM writeups](https://mayfly277.github.io/categories/sccm/)
     - [Proxmox Install](https://mayfly277.github.io/categories/proxmox/)

@@ -5,7 +5,7 @@
 param(
     [Parameter(Mandatory=$true)]
     [string]$esc13group,
-    
+
     [Parameter(Mandatory=$true)]
     [string]$esc13templateName
 )
@@ -94,11 +94,11 @@ $policies = $newPolicy
 $policies = $policies | ForEach-Object { $_.ToString() }
 
 # Update the ESC13 template AD object
-Set-ADObject -Identity $adObject.DistinguishedName -Replace @{ 'msPKI-Certificate-Policy' = $policies } 
+Set-ADObject -Identity $adObject.DistinguishedName -Replace @{ 'msPKI-Certificate-Policy' = $policies }
 
 # Get DN of the ESC13 Group
 $ludus_esc13_group_dn = (Get-ADGroup $esc13group).DistinguishedName
-$ludus_esc13_group_dn  
+$ludus_esc13_group_dn
 
 # Get Distinguished Name of the ESC13 OID Issuance Policy we created
 # Thanks to Jonas (https://twitter.com/Jonas_B_K) for helping with this!

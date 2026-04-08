@@ -1,6 +1,6 @@
 - name: Install mysql java connector
   ansible.builtin.apt:
-    name: 
+    name:
       - libmariadb-java
     state: present
 
@@ -100,7 +100,7 @@
     - kill guacd
     - restart guacd
 
-- name: Update index.hmtl of ROOT in tomcat to redirect to guacamole
+- name: Update index.html of ROOT in tomcat to redirect to guacamole
   ansible.builtin.copy:
     content: "<meta http-equiv='Refresh' content=\"0; url='/guacamole'\"/>"
     dest: "/var/lib/tomcat9/webapps/ROOT/index.html"

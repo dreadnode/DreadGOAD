@@ -6,7 +6,7 @@
 - You should find your way in to get domain admin on the domain dracarys.lab
 - Using vagrant user is prohibited of course ^^
 - Starting point is on lx01 : `<ip_range>.12`
-- Obviously do not cheat by looking at the passwords and flags in the recipe files, the lab must start without user to full compromise. 
+- Obviously do not cheat by looking at the passwords and flags in the recipe files, the lab must start without user to full compromise.
 - If you use goad previously your ansible requirements may not be up to date. Be sure to do this before the install:
 
 ```bash
@@ -14,9 +14,9 @@ source ~/.goad/.venv/bin/activate
 cd ~/GOAD/ansible
 
 # if you python is >=3.11
-ansible-galaxy install -r requirements_311.yml 
+ansible-galaxy install -r requirements_311.yml
 # if you got a python <3.10
-ansible-galaxy install -r requirements.yml 
+ansible-galaxy install -r requirements.yml
 ```
 
 - Install :
@@ -43,7 +43,7 @@ or
 > disable_vagrant
 ```
 
-- Now do a reboot of all the machine to avoid unintended secrets stored : 
+- Now do a reboot of all the machine to avoid unintended secrets stored :
 
 ```bash
 > stop

@@ -1,0 +1,172 @@
+; GLOBAL CONFIG ----------------------------
+[all:vars]
+; domain_name : folder inside ad/
+domain_name=GOAD
+
+; administrator user
+admin_user=administrator
+
+; environment
+env=staging
+
+; SSM connection (windows)
+ansible_become=false
+ansible_connection=amazon.aws.aws_ssm
+ansible_aws_ssm_bucket_name=dread-infra-alpha-operator-range-staging-us-west-1
+ansible_aws_ssm_region=us-west-1
+ansible_shell_type=powershell
+ansible_aws_ssm_s3_addressing_style=virtual
+ansible_aws_ssm_retries=3
+ansible_remote_tmp=C:\Windows\Temp
+
+; miscellaneous
+data_path="{{ playbook_dir }}/../../ad/GOAD/data"
+
+; global settings inventory default value
+keyboard_layouts=["en-US", "da-DK", "fr-FR"]
+
+; modify this to add a default route
+add_route=no
+route_gateway=192.168.56.1
+route_network=10.0.0.0/8
+
+; modify this to enable http proxy
+enable_http_proxy=no
+ad_http_proxy=http://x.x.x.x:xxxx
+ad_https_proxy=http://x.x.x.x:xxxx
+
+;force_dns_server
+force_dns_server=no
+dns_server=1.1.1.1
+
+;dns server forwarder
+dns_server_forwarder=1.1.1.1
+
+; Default system settings ----------------------------
+[default]
+; ------------------------------------------------
+; sevenkingdoms.local
+; ------------------------------------------------
+dc01 ansible_host=i-014ce68c3bdbf888e dict_key=dc01 dns_domain=dc01 ansible_user=ansible
+; ------------------------------------------------
+; north.sevenkingdoms.local
+; ------------------------------------------------
+dc02 ansible_host=i-01ef190a91a23eab1 dict_key=dc02 dns_domain=dc01 ansible_user=ansible
+srv02 ansible_host=i-0bd336a4bd9090496 dict_key=srv02 dns_domain=dc02 ansible_user=ansible
+; ------------------------------------------------
+; essos.local
+; ------------------------------------------------
+dc03 ansible_host=i-0f03ae2e9dd3332d7 dict_key=dc03 dns_domain=dc03 ansible_user=ansible
+srv03 ansible_host=i-0692242788b6cb839 dict_key=srv03 dns_domain=dc03 ansible_user=ansible
+
+; LAB SCENARIO CONFIGURATION -----------------------------
+
+; computers inside domain (mandatory)
+; usage : build.yml, ad-relations.yml, ad-servers.yml, vulnerabilities.yml
+[domain]
+dc01
+dc02
+dc03
+srv02
+srv03
+
+; domain controller (mandatory)
+; usage : ad-acl.yml, ad-data.yml, ad-relations.yml, laps.yml
+[dc]
+dc01
+dc02
+dc03
+
+; domain server to enroll (mandatory if you want servers)
+; usage : ad-data.yml, ad-servers.yml, laps.yml
+[server]
+srv02
+srv03
+
+; workstation to enroll (mandatory if you want workstation)
+; usage : ad-servers.yml, laps.yml
+[workstation]
+
+; parent domain controller (mandatory)
+; usage : ad-servers.yml
+[parent_dc]
+dc01
+dc03
+
+; child domain controller (need a fqdn child_name.parent_name)
+; usage : ad-servers.yml
+[child_dc]
+dc02
+
+; external trust, need domain trust entry in config (bidirectionnal)
+; usage : ad-trusts.yml
+[trust]
+dc01
+dc03
+
+; install adcs
+; usage : adcs.yml
+[adcs]
+dc01
+srv03
+
+; install custom template (dc)
+; usage : adcs.yml
+[adcs_customtemplates]
+dc03
+
+; install iis with default website asp upload on 80
+; usage : servers.yml
+[iis]
+srv02
+
+; install mssql
+; usage : servers.yml
+[mssql]
+srv02
+srv03
+
+; install mssql gui
+; usage : servers.yml
+[mssql_ssms]
+srv02
+
+; install webdav
+[webdav]
+srv02
+srv03
+
+[laps_dc]
+dc03
+[laps_server]
+srv03
+[laps_workstation]
+
+; allow computer update
+; usage : update.yml
+[update]
+srv02
+
+; disable update
+; usage : update.yml
+[no_update]
+dc01
+dc02
+dc03
+srv03
+
+; allow defender
+; usage : security.yml
+[defender_on]
+
+; disable defender
+; usage : security.yml
+[defender_off]
+dc01
+dc02
+dc03
+srv02
+srv03
+
+;stay empty until override
+[extensions]

@@ -241,7 +241,7 @@
                     <Description>Install-WMF3Hotfix.ps1</Description>
                     <Order>97</Order>
                 </SynchronousCommand>
-                <!-- no updates 
+                <!-- no updates
                 <SynchronousCommand wcm:action="add">
                     <CommandLine>powershell -NoProfile -ExecutionPolicy Bypass -Command "G:\ConfigureRemotingForAnsible.ps1"</CommandLine>
                     <Description>ConfigureRemotingForAnsible</Description>

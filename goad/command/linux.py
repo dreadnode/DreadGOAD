@@ -129,4 +129,3 @@ class LinuxCommand(Command):
             Log.error(f"An error occurred while running the command: {e}")
             return False
         return result.returncode == 0
-

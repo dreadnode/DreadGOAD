@@ -7,6 +7,6 @@
 
 ## Install
 
-```
+```bash
 instance_id> install_extension guacamole
 ```

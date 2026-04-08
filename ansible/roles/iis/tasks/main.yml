@@ -1,19 +1,60 @@
+---
 - name: Enable update service
   ansible.windows.win_service:
-    name: Windows Update
+    name: wuauserv
     state: started
     start_mode: auto
 
-- name: Install IIS Management Features
-  win_feature:
-    name: Web-Mgmt-Tools, 
-          Web-Mgmt-Console, 
-          Web-Scripting-Tools, 
-          Web-Mgmt-Service
-    state: present
+- name: Check if IIS features are already installed
+  ansible.windows.win_powershell:
+    script: |
+      $ProgressPreference = 'SilentlyContinue'
 
-- name: Add SYSTEM allow rights to machine keys (required for installation of IIS 6 components)
-  win_acl:
+      # Use Get-WindowsFeature for Server (faster than Get-WindowsOptionalFeature)
+      $features = @(
+        'Web-Server', 'Web-Mgmt-Tools', 'Web-Mgmt-Console',
+        'Web-Scripting-Tools', 'Web-Mgmt-Service', 'Web-Mgmt-Compat',
+        'Web-Metabase', 'Web-Lgcy-Mgmt-Console', 'Web-Lgcy-Scripting', 'Web-WMI'
+      )
+
+      $missing = @()
+      foreach ($feature in $features) {
+        $state = Get-WindowsFeature -Name $feature -ErrorAction SilentlyContinue
+        if ($state.InstallState -ne 'Installed') {
+          $missing += $feature
+        }
+      }
+
+      if ($missing.Count -eq 0) {
+        Write-Output "ALL_INSTALLED"
+      } else {
+        Write-Output ($missing -join ',')
+      }
+      $Ansible.Changed = $false
+  register: feature_check
+  changed_when: false
+
+- name: Install all IIS features in single operation
+  ansible.windows.win_feature:
+    name:
+      - Web-Server
+      - Web-Mgmt-Tools
+      - Web-Mgmt-Console
+      - Web-Scripting-Tools
+      - Web-Mgmt-Service
+      - Web-Mgmt-Compat
+      - Web-Metabase
+      - Web-Lgcy-Mgmt-Console
+      - Web-Lgcy-Scripting
+      - Web-WMI
+    state: present
+    include_sub_features: yes
+    include_management_tools: yes
+  register: win_feature
+  when: feature_check.output[0] != 'ALL_INSTALLED'
+
+- name: Add SYSTEM allow rights to machine keys
+  ansible.windows.win_acl:
     path: C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\
     user: SYSTEM
     rights: FullControl
@@ -22,39 +63,19 @@
     inherit: ContainerInherit, ObjectInherit
     propagation: 'InheritOnly'
 
-- name: Install IIS 6 Compatibility Features 
-  win_feature:
-    name: Web-Mgmt-Compat,
-          Web-Metabase,
-          Web-Lgcy-Mgmt-Console,
-          Web-Lgcy-Scripting,
-          Web-WMI
-    state: present
-
-- name: Install IIS Web-Server with sub features and management tools
-  win_feature:
-    name: Web-Server
-    state: present
-    include_sub_features: yes
-    include_management_tools: yes
-  register: win_feature
-
-- name: Create directory
-  win_file:
-    path: C:\\inetpub
+- name: Create IIS directories
+  ansible.windows.win_file:
+    path: "{{ item }}"
     state: directory
+  loop:
+    - C:\inetpub
+    - C:\inetpub\wwwroot
 
-- name: Create directory
-  win_file:
-    path: C:\\inetpub\\wwwroot
-    state: directory
-
-- name: default-website-index
-  win_copy:
+- name: Deploy default website index
+  ansible.windows.win_copy:
     src: files/index.html
     dest: "C:\\inetpub\\wwwroot\\index.html"
 
-- name: Reboot if installing Web-Server feature requires it
+- name: Reboot if required
   ansible.windows.win_reboot:
-  when: win_feature.reboot_required
-
+  when: win_feature.reboot_required | default(false)

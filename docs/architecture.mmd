@@ -1,0 +1,39 @@
+graph LR
+    Collection["dreadnode.goad<br/>Ansible Collection"]
+
+    Collection --> LAPS["LAPS<br/><i>4 roles</i>"]
+    Collection --> SCCM["SCCM<br/><i>14 roles</i>"]
+    Collection --> Vulnerabilities["Vulnerabilities<br/><i>20 roles</i>"]
+    Collection --> Security["Security<br/><i>8 roles</i>"]
+    Collection --> Settings["Settings<br/><i>13 roles</i>"]
+    Collection --> ActiveDirectory["Active Directory<br/><i>21 roles</i>"]
+    Collection --> ServerRoles["Server Roles<br/><i>31 roles</i>"]
+
+    LAPS -.- LAPS_detail["dc &bull; permissions &bull; server<br/>verify"]
+    SCCM -.- SCCM_detail["config_accounts &bull; config_boundary &bull; config_client_install<br/>config_client_push &bull; config_discovery &bull; config_naa<br/>config_pxe &bull; config_users &bull; install_adk<br/>install_iis &bull; install_mecm &bull; install_prerequisites<br/>install_wsus &bull; pxe"]
+    Vulnerabilities -.- Vulnerabilities_detail["acls &bull; adcs_templates &bull; administrator_folder<br/>anonymous_enum &bull; autologon &bull; credentials<br/>directory &bull; disable_firewall &bull; enable_credssp_client<br/>enable_credssp_server &bull; enable_llmnr &bull; enable_nbt_ns<br/>files &bull; mssql &bull; ntlmdowngrade<br/>openshares &bull; permissions &bull; schedule<br/>shares &bull; smbv1"]
+    Security -.- Security_detail["dc_audit_sacl &bull; ldap_diagnostic_logging &bull; account_is_sensitive<br/>asr &bull; audit_policy &bull; enable_run_as_ppl<br/>ensure_kb_not_installed &bull; powershell_restrict"]
+    Settings -.- Settings_detail["adjust_rights &bull; admin_password &bull; copy_files<br/>disable_nat_adapter &bull; enable_nat_adapter &bull; gpmc<br/>gpo_remove &bull; hostname &bull; keyboard<br/>no_updates &bull; updates &bull; user_rights<br/>windows_defender"]
+    ActiveDirectory -.- ActiveDirectory_detail["acl &bull; ad &bull; adcs<br/>adcs_templates &bull; child_domain &bull; dc_dns_conditional_forwarder<br/>disable_user &bull; dns_conditional_forwarder &bull; domain_controller<br/>domain_controller_slave &bull; enable_user &bull; gmsa<br/>gmsa_hosts &bull; groups_domains &bull; member_server<br/>move_to_ou &bull; onlyusers &bull; parent_child_dns<br/>password_policy &bull; sync_domains &bull; trusts"]
+    ServerRoles -.- ServerRoles_detail["common &bull; commonwkstn &bull; dhcp<br/>elk &bull; fix_dns &bull; iis<br/>localusers &bull; logs_windows &bull; mssql<br/>audit &bull; link &bull; reporting<br/>ssms &bull; ps &bull; webdav<br/>add_dns_record &bull; exchange_bot &bull; keepass<br/>klink &bull; linux &bull; linux_add_linux_to_domain<br/>linux_guacamole &bull; linux_guacamole_create_connections &bull; linux_tomcat<br/>ludus_exchange &bull; network_discovery &bull; security<br/>vulns &bull; wazuh_agent &bull; wazuh_agent_linux<br/>wazuh_manager"]
+
+    Collection --> Playbooks["Playbooks<br/><i>40 playbooks</i>"]
+    Playbooks -.- Playbooks_detail["ad &bull; ad-acl &bull; ad-child_domain<br/>ad-data &bull; ad-gmsa &bull; ad-members<br/>ad-parent_domain &bull; ad-relations &bull; ad-servers<br/>ad-trusts &bull; adcs &bull; build<br/>dhcp &bull; diagnose-dc01 &bull; disable_vagrant<br/>enable_vagrant &bull; ext-elk &bull; ext-exchange<br/>ext-guacamole &bull; ext-lx01 &bull; ext-wazuh<br/>ext-ws01 &bull; fix_dns &bull; fix_trust<br/>interfaces &bull; laps &bull; localusers<br/>main &bull; network_setup &bull; onlyusers<br/>reboot &bull; sccm-client &bull; sccm-config<br/>sccm-install &bull; sccm-pxe &bull; security<br/>security_logging &bull; servers &bull; vulnerabilities<br/>wait5m"]
+
+    style Collection fill:#4a9eff,stroke:#2d7cd4,color:#fff,font-weight:bold
+    style Playbooks fill:#7f8c8d,stroke:#6c7a7d,color:#fff
+    style Playbooks_detail fill:#2a2a2a,stroke:#6c7a7d,color:#ccc
+    style LAPS fill:#f39c12,stroke:#d68910,color:#fff
+    style LAPS_detail fill:#3d2e0a,stroke:#d68910,color:#ccc
+    style SCCM fill:#1abc9c,stroke:#16a085,color:#fff
+    style SCCM_detail fill:#0d2e28,stroke:#16a085,color:#ccc
+    style Vulnerabilities fill:#9b59b6,stroke:#8e44ad,color:#fff
+    style Vulnerabilities_detail fill:#2a1a33,stroke:#8e44ad,color:#ccc
+    style Security fill:#e67e22,stroke:#d35400,color:#fff
+    style Security_detail fill:#3a2210,stroke:#d35400,color:#ccc
+    style Settings fill:#3498db,stroke:#2980b9,color:#fff
+    style Settings_detail fill:#132a3d,stroke:#2980b9,color:#ccc
+    style ActiveDirectory fill:#e74c3c,stroke:#c0392b,color:#fff
+    style ActiveDirectory_detail fill:#3a1515,stroke:#c0392b,color:#ccc
+    style ServerRoles fill:#2ecc71,stroke:#27ae60,color:#fff
+    style ServerRoles_detail fill:#133320,stroke:#27ae60,color:#ccc

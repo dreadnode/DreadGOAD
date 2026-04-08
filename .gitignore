@@ -1,40 +1,44 @@
-.vagrant/
 .idea/
 .venv/
-.archives/
-writeup/
-docs/scenarios/
-docs/notes.md
-temp/
-ansible/.venv/
-ansible/collections/
-ansible/test.yml
-*VBoxHeadless*.log
-.terraform/
-.terraform.lock.hcl
-*.tfstate*
-tfplan
-*.pem
+.DS_Store
+__pycache__/
+*.pyc
+*.tar.gz
+*.log
+*retry
+
+# Ansible artifacts
+.ansible/
+.task/
+*AnsiballZ*
+
+# Build artifacts
+dreadgoad
+ansible/roles/adcs_templates/files/ADCSTemplate.zip
+ansible/roles/vulns_adcs_templates/files/ADCSTemplate.zip
+
+# Scenario data (keep only tracked environments)
 ad/PURPLE
 ad/REDLAB
 ad/EDRLAB
 ad/DEMO
 ad/FEDGOAD
-ansible/roles/edr
-ansible/edr.yml
-ansible/private_data_dir/artifacts/
-.vscode
 ad/MINILAB
+
+# Keys and secrets
+*.pem
 ad/*/providers/*/ssh_keys/*id_rsa*
 ad/*/providers/*/ssh_keys/*.pub
 ad/*/providers/*/extensions/*.rb
-__pycache__/
-*.pyc
-workspace/*
-todo.md
-next_extensions/
-/extensions/exchange/ansible/iso/resources/iso/*.ISO
-docs/site/
-docs/olddocs/
-docs/mkdocs/site/
-scripts/archives/
+
+# Terraform / Terragrunt
+.terraform/
+.terraform.lock.hcl
+.terragrunt-cache/
+*.tfstate
+*.tfstate.backup
+*.tfplan
+
+# IDE / OS
+.vscode
+temp/

@@ -1,0 +1,4 @@
+---
+# Set to true to skip network detection (e.g., when facts are already cached)
+skip_ip_detection: false
+skip_adapter_detection: false

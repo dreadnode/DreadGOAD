@@ -48,7 +48,7 @@
     state: present
     backup: yes
 
-- name: Modify Hosts File to add domain dc 
+- name: Modify Hosts File to add domain dc
   lineinfile:
     dest: "/etc/hosts"
     line: "{{dc_ip}}       {{ dc_fqdn }}  {{ domain }}"

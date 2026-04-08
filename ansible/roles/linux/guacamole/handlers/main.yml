@@ -1,5 +1,5 @@
 - name: restart tomcat9
-  service: 
+  service:
     name: tomcat9
     state: restarted
 
@@ -7,6 +7,6 @@
   ansible.builtin.command: pkill guacd
 
 - name: restart guacd
-  service: 
+  service:
     name: guacd
     state: restarted

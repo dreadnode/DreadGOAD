@@ -4,22 +4,27 @@
 
 This is a light version of goad without the essos domain. This lab was build for computer with less performance.
 Missing scenarios:
+
 - cross forest exploitation (no more external forest)
 - mssql trusted link
 - some old computer vulnerabilities (zero logon, petitpotam unauthent,...)
 - ESC4, ESC2/3
 
-### Servers
-This lab is actually composed of three virtual machines:
+## Servers
+
+This lab is actually composed of five virtual machines:
+
 - **kingslanding** : DC01  running on Windows Server 2019 (with windefender enabled by default)
 - **winterfell**   : DC02  running on Windows Server 2019 (with windefender enabled by default)
 - **castelblack**  : SRV02 running on Windows Server 2019 (with windefender **disabled** by default)
 
-#### domain : north.sevenkingdoms.local
+### domain : north.sevenkingdoms.local
+
 - **winterfell**     : DC01
 - **castelblack**    : SRV02 : MSSQL / IIS
 
-#### domain : sevenkingdoms.local
+### domain : sevenkingdoms.local
+
 - **kingslanding**   : DC02
 
 
@@ -27,19 +32,20 @@ The lab setup is automated using vagrant and ansible automation tools.
 You can change the vm version in the Vagrantfile according to Stefan Scherer vagrant repository : https://app.vagrantup.com/StefanScherer
 
 
-### Users/Groups and associated vulnerabilites/scenarios
+### Users/Groups and associated vulnerabilities/scenarios
 
 - You can find a lot of the available scenarios on [https://mayfly277.github.io/categories/ad/](https://mayfly277.github.io/categories/ad/)
 
 NORTH.SEVENKINGDOMS.LOCAL
+
 - STARKS:              RDP on WINTERFELL AND CASTELBLACK
   - arya.stark:        Execute as user on mssql
   - eddard.stark:      DOMAIN ADMIN NORTH/ (bot 5min) LLMRN request to do NTLM relay with responder
-  - catelyn.stark:     
+  - catelyn.stark:
   - robb.stark:        bot (3min) RESPONDER LLMR
-  - sansa.stark:       
+  - sansa.stark:
   - brandon.stark:     ASREP_ROASTING
-  - rickon.stark:      
+  - rickon.stark:
   - theon.greyjoy:
   - jon.snow:          mssql admin / KERBEROASTING / group cross domain / mssql trusted link
   - hodor:             PASSWORD SPRAY (user=password)
@@ -53,6 +59,7 @@ NORTH.SEVENKINGDOMS.LOCAL
 - AcrossTheSea :       cross forest group
 
 SEVENKINGDOMS.LOCAL
+
 - LANISTERS
   - tywin.lannister:   ACL forcechangepassword on jaime.lanister
   - jaime.lannister:   ACL genericwrite-on-user joffrey.baratheon
@@ -90,6 +97,6 @@ SEVENKINGDOMS.LOCAL
     - IIS : allow asp upload, run as NT Authority/network
     - MSSQL:
       - admin : jon.snow
-      - impersonate : 
+      - impersonate :
         - execute as login : samwel.tarlly -> sa
         - execute as user : arya.stark -> dbo
