@@ -37,16 +37,24 @@ Provisions Windows Server with:
 - Trust relationships
 - User/Group/OU creation
 
-### `mssql_base.yml` - SQL Server Base
+### `mssql_base_setup.yml` + `mssql_base_sql.yml` - SQL Server Base
 
-Provisions Windows Server with:
+Split into two playbooks to stay under the AWS Image Builder 16K component data limit.
 
-- All of member_base.yml content
-- SQL Server Express 2019
+**`mssql_base_setup.yml`** provisions Windows Server with:
+
+- PowerShell DSC modules
+- IIS Web Server and WebDAV Publishing
+- RDP enabled with firewall rule
+
+**`mssql_base_sql.yml`** provisions SQL Server:
+
+- SQL Server Express (version auto-detected by OS)
 - SQL Server firewall rules (TCP 1433, UDP 1434)
-- Basic SQL Server configuration
+- SQL Server configuration and ssm-user access
+- Windows Updates and cleanup
 
-**Used by**: `goad-mssql-base` and `goad-mssql-base-2016` warpgate templates
+**Used by**: `goad-mssql-base`, `goad-mssql-base-2016`, and `goad-mssql-base-2025` warpgate templates
 
 **Runtime tasks still needed**:
 
@@ -136,19 +144,20 @@ These playbooks expect:
 - **Network connectivity** to download:
   - PowerShell modules from PowerShell Gallery
   - Windows Updates from Microsoft
-  - SQL Server Express installer (for mssql_base.yml)
+  - SQL Server Express installer (for mssql_base_sql.yml)
 
 ## Variables
 
 These playbooks intentionally avoid requiring variables. They use sensible defaults for base image provisioning.
 
-The only configurable variable is in `mssql_base.yml`:
+The only configurable variable is in `mssql_base_sql.yml`:
 
 ```yaml
 vars:
-  sql_download_url: "https://go.microsoft.com/fwlink/p/?linkid=866658"  # SQL Server Express 2019
   sql_instance_name: "SQLEXPRESS"
 ```
+
+The SQL Server download URL is auto-detected based on the Windows Server version.
 
 ## Design Decisions
 

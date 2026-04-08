@@ -25,6 +25,16 @@
           Import-Module ActiveDirectory
           Set-Location AD:
           Add-KDSRootKey -EffectiveTime (Get-Date).AddHours(-10) -ErrorAction SilentlyContinue
+
+          $existing = Get-ADServiceAccount -Identity $gMSA_Name -ErrorAction SilentlyContinue
+          if ($existing) {
+              $gMSA_HostsGroup = $gMSA_HostNames | ForEach-Object { Get-ADComputer -Identity $_ }
+              Set-ADServiceAccount -Identity $gMSA_Name -DNSHostName $gMSA_FQDN -ServicePrincipalNames @{Replace=$gMSA_SPNs} -PrincipalsAllowedToRetrieveManagedPassword $gMSA_HostsGroup
+              $Ansible.Changed = $false
+              Write-Output "GMSA account $gMSA_Name already exists, updated configuration"
+              return
+          }
+
           $gMSA_HostsGroup = $gMSA_HostNames | ForEach-Object { Get-ADComputer -Identity $_ }
           New-ADServiceAccount -Name $gMSA_Name -DNSHostName $gMSA_FQDN -PrincipalsAllowedToRetrieveManagedPassword $gMSA_HostsGroup -ServicePrincipalNames $gMSA_SPNs
           $Ansible.Changed = $true

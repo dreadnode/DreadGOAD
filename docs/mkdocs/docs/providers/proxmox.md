@@ -23,7 +23,11 @@
 
 ```bash
 # check prerequisites
-./goad.sh -t check -l GOAD -p proxmox
-# Install
-./goad.sh -t install -l GOAD -p proxmox
+dreadgoad doctor
+# Create infrastructure
+dreadgoad infra apply
+# Sync inventory
+dreadgoad inventory sync
+# Provision the lab
+dreadgoad provision
 ```

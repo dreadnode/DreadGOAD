@@ -1,11 +1,9 @@
 # troubleshoot
 
 !!! tip
-In most case if you get errors during install, don't think.
-Select the failed instance ̀`load <instance_id>` and just replay the install with `provision_lab` to relaunch all or `provision_lab_from <playbook>` if you know the last failed playbook
-(most of the errors which could came up are due to windows latency during installation, wait few minutes and replay the install)
-
-🚧 TODO refresh me with new goad version :)
+    In most cases if you get errors during install, don't panic.
+    Run `dreadgoad provision` to relaunch all playbooks, or `dreadgoad provision --from <playbook>` to resume from a specific playbook.
+    Most errors are due to Windows latency during installation -- wait a few minutes and replay the install.
 
 ## vagrant up - WinRM - digest initialization failed : Initialization Error
 

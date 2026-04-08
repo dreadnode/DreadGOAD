@@ -1,6 +1,6 @@
 # References
 
-🚧 TODO TO BE COMPLETED
+Blog posts, writeups, podcasts, and videos covering DreadGOAD (GOAD) labs and related topics.
 
 - Mayfly's blog :
     - [GOAD writeups](https://mayfly277.github.io/categories/goad/)

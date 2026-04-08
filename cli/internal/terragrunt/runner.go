@@ -60,8 +60,10 @@ func Run(ctx context.Context, opts Options) error {
 
 func RunAll(ctx context.Context, opts Options) error {
 	args := []string{"run", "--all", opts.Action}
-	if opts.AutoApprove && (opts.Action == "apply" || opts.Action == "destroy") {
-		args = append(args, "-auto-approve")
+	// terragrunt v0.97+ auto-appends -auto-approve for run --all.
+	// Only add --no-auto-approve when the caller explicitly wants a prompt.
+	if !opts.AutoApprove && (opts.Action == "apply" || opts.Action == "destroy") {
+		args = append(args, "--no-auto-approve")
 	}
 	if opts.NonInteractive {
 		args = append(args, "--non-interactive")

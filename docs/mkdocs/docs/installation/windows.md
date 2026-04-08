@@ -1,9 +1,7 @@
 # :material-microsoft-windows: Windows
 
-- First you will prepare your windows host for an hypervisor
-- Second you will choose between
-    - install debian 12 with WSL to run goad install script
-    - Or prepare your windows host (install with a provisioning machine)
+- First you will prepare your windows host for a hypervisor
+- Second you will install the `dreadgoad` CLI
 
 ## Prepare Windows Host
 
@@ -75,21 +73,21 @@
 
 
 === ":simple-amazon: Aws"
-    Nothing to prepare on windows host, install and prepare wsl and next follow linux install from your wsl console : [see aws linux install](linux.md/#__tabbed_1_4)
+    Nothing to prepare on windows host, install and prepare WSL and next follow linux install from your WSL console : [see aws linux install](linux.md/#__tabbed_1_4)
 
 === ":material-microsoft-azure: Azure"
-    Nothing to prepare on windows host, install and prepare wsl and next linux install from your wsl console [see azure linux install](linux.md/#__tabbed_1_3)
+    Nothing to prepare on windows host, install and prepare WSL and next follow linux install from your WSL console [see azure linux install](linux.md/#__tabbed_1_3)
 
 === ":simple-proxmox: Promox"
-    Not supported, you will have to create a provisioning machine on your proxmox and run goad from then ([see proxmox linux install](linux.md/#__tabbed_1_5))
+    Not supported, you will have to create a provisioning machine on your proxmox and run dreadgoad from there ([see proxmox linux install](linux.md/#__tabbed_1_5))
 
 === "🏟️  Ludus"
     Not supported, you will have to act from your ludus server ([see ludus linux install](linux.md/#__tabbed_1_6))
 
-## :simple-python: Prepare python environment
+## Install the CLI
 
 === "With WSL"
-    Now your host environment is ready for virtual machine creation. Now we will install WSL to run the goad installation script.
+    Now your host environment is ready for virtual machine creation. Install WSL to run the `dreadgoad` CLI and Ansible.
 
     !!! info "wsl version"
         New Linux installations, installed using the wsl --install command, will be set to WSL 2 by default.
@@ -106,48 +104,57 @@
     - First install wsl on your environment [https://learn.microsoft.com/en-us/windows/wsl/install](https://learn.microsoft.com/en-us/windows/wsl/install)
     - Next go to the microsoft store and install debian (debian12)
 
-    ### Prepare WSL distribution
+    ### Install dreadgoad in WSL
+
     - Open debian console then :
 
-        - Verify you are using python version >= 3.8
-        ```bash
-        python3 --version
-        ```
-
-        - Install python packages
+        - Install Ansible dependencies
         ```bash
         sudo apt update
-        sudo apt install python3 python3-pip python3-venv libpython3-dev
+        sudo apt install python3 python3-pip ansible-core sshpass
         ```
 
-    - Next you can clone and run goad
+        - Install the `dreadgoad` CLI
+        ```bash
+        # Download the latest Linux binary
+        curl -LO https://github.com/dreadnode/DreadGOAD/releases/latest/download/dreadgoad-linux-amd64
+        chmod +x dreadgoad-linux-amd64
+        sudo mv dreadgoad-linux-amd64 /usr/local/bin/dreadgoad
+        ```
 
+        - Or build from source
+        ```bash
+        cd /mnt/c/whatever_folder_you_want
+        git clone https://github.com/dreadnode/DreadGOAD.git
+        cd DreadGOAD/cli
+        go build -o dreadgoad .
+        sudo mv dreadgoad /usr/local/bin/
+        ```
+
+    - Initialize and verify
     ```bash
-    cd /mnt/c/whatever_folder_you_want
-    git clone https://github.com/Orange-Cyberdefense/GOAD.git
-    cd GOAD
-    ./goad.sh
+    dreadgoad config init
+    dreadgoad doctor
     ```
 
-=== "With Python on windows host"
+=== "Direct Windows Install"
 
     !!! info "For vmware or virtualbox only"
-        This mode doesn't need WSL but it is only if you plan to install goad locally on vmware or virtualbox
+        This mode runs `dreadgoad` natively on Windows. Ansible provisioning still requires WSL or a remote provisioning machine.
 
     - Prerequisites:
-        - :simple-python: [python](https://www.python.org/downloads/windows/) on your windows (tested ok with python 3.10)
         - :simple-git: [git](https://git-scm.com/downloads/win)
 
-    - Checkout GOAD :
+    - Download the Windows binary from the [DreadGOAD releases page](https://github.com/dreadnode/DreadGOAD/releases):
         ```
-        git clone https://github.com/Orange-Cyberdefense/GOAD
-        cd GOAD/
+        curl -LO https://github.com/dreadnode/DreadGOAD/releases/latest/download/dreadgoad-windows-amd64.exe
+        move dreadgoad-windows-amd64.exe C:\Users\%USERNAME%\bin\dreadgoad.exe
         ```
-    - Install python dependencies (choose the noansible file) :
+
+    - Add `C:\Users\%USERNAME%\bin` to your PATH if not already present.
+
+    - Initialize and verify:
         ```
-        pip install -r noansible_requirements.yml
-        ```
-    - Launch goad with vm provisioning method :
-        ```
-        py goad.py -m vm
+        dreadgoad config init
+        dreadgoad doctor
         ```

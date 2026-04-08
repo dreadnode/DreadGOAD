@@ -29,15 +29,15 @@ You need to login to Azure with the CLI.
 az login
 ```
 
-## Goad configuration
+## DreadGOAD configuration
 
-- The goad configuration file as some options for azure:
+- Initialize the configuration file with `dreadgoad config init`
+- Azure-specific settings are configured in `dreadgoad.yaml`:
 
-```ini
-# ~/.goad/goad.ini
-...
-[azure]
-az_location = westeurope
+```yaml
+# dreadgoad.yaml
+azure:
+  location: westeurope
 ```
 
 - If you want to use a different location you can modify it.
@@ -47,28 +47,26 @@ az_location = westeurope
 
 ```bash
 # check prerequisites
-./goad.sh -t check -l GOAD -p azure
-# Install
-./goad.sh -t install -l GOAD -p azure
-```
-
-or from the interactive console :
-
-```bash
-GOAD/azure/remote/192.168.56.X > install
+dreadgoad doctor
+# Create cloud infrastructure
+dreadgoad infra apply
+# Sync inventory
+dreadgoad inventory sync
+# Provision the lab
+dreadgoad provision
 ```
 
 ## start/stop/status
 
-- You can see the status of the lab with the command `status`
-- You can also start and stop the lab with the command `start` and `stop`
+- You can see the status of the lab with `dreadgoad lab status`
+- You can also start and stop the lab with `dreadgoad lab start` and `dreadgoad lab stop`
 
 !!! info
     The command `stop` use deallocate, it take a long time to run but it is not only stopping the vms, it will deallocate them. By doing that, you will stop paying from them (but you still paying storage) and can save some money.
 
 ## VMs sku
 
-- The vm used for goad are defined in the lab terraform file : `ad/<lab>/providers/azure/windows.tf`
+- The VMs used for DreadGOAD are defined in the lab terraform file: `ad/<lab>/providers/azure/windows.tf`
 - This file is containing information about each vm in use
 
 ```hcl
@@ -86,30 +84,24 @@ GOAD/azure/remote/192.168.56.X > install
 
 ## How it works ?
 
-- On the installation goad script will create a folder into `goad/workspaces/<instance_folder>`
-- This folder will contain the terraform scripts and some of the ansible inventories
-- Goad will create the cloud infrastructure with terraform.
-- The lab is created (not provisioned yet) and a "jumpbox" vm is also created
+- The DreadGOAD CLI uses Terragrunt/Terraform to create the cloud infrastructure (`dreadgoad infra apply`)
+- The lab is created (not provisioned yet) and a "jumpbox" VM is also created
 - Next the needed sources will be pushed to the jumpbox using `ssh` and `rsync`
-- The jumpbox ssh_key is stored on `goad/workspaces/<instance_folder>/ssh_keys`
-- The jumpbox is prepared to run ansible
-- The provisioning is launch with ssh remotely on the jumpbox
+- The jumpbox is prepared to run Ansible
+- The provisioning is launched with SSH remotely on the jumpbox
 
 ## Install step by step
 
 ```bash
-GOAD/azure/remote/192.168.56.X > create_empty # create empty instance
-GOAD/azure/remote/192.168.56.X > load <instance_id>
-GOAD/azure/remote/192.168.56.X (<instance_id>) > provide # play terraform
-GOAD/azure/remote/192.168.56.X (<instance_id>) > sync_source_jumpbox # sync jumpbox source
-GOAD/azure/remote/192.168.56.X (<instance_id>) > prepare_jumpbox # install dependencies on jumpbox
-GOAD/azure/remote/192.168.56.X (<instance_id>) > provision_lab # run ansible
+dreadgoad doctor                # check prerequisites
+dreadgoad infra apply           # create cloud infrastructure with Terragrunt/Terraform
+dreadgoad inventory sync        # sync inventory and sources to jumpbox
+dreadgoad provision             # run Ansible provisioning via jumpbox
 ```
 
 ## Tips
 
-- To connect to the jumpbox VM you can use `ssh_jumpbox` in the goad interactive console
-- To setup a socks proxy you can use `ssh_jumpbox_proxy <proxy_port>` in the goad interactive console
+- To connect to a host you can use `dreadgoad ssm connect <host>`
 
 - If the command `destroy` or `delete` fails, you can delete the resource group using the CLI
 

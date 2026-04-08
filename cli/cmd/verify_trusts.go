@@ -86,7 +86,8 @@ func runVerifyTrusts(cmd *cobra.Command, args []string) error {
 		script.WriteString("\nWrite-Host ''\nWrite-Host '=== Trust Status ==='\n")
 		script.WriteString("$trusts = Get-ADTrust -Filter *\n")
 		script.WriteString("foreach ($t in $trusts) {\n")
-		script.WriteString("    Write-Host \"$($t.Name): $(if (Test-ComputerSecureChannel -Server $t.Name -ErrorAction SilentlyContinue) { 'HEALTHY' } else { 'Check manually' })\"\n")
+		script.WriteString("    $null = nltest /sc_verify:$($t.Name) 2>&1\n")
+		script.WriteString("    if ($LASTEXITCODE -eq 0) { Write-Host \"$($t.Name): HEALTHY\" } else { Write-Host \"$($t.Name): Check manually\" }\n")
 		script.WriteString("}\n")
 
 		result, err := infra.Client.RunPowerShellCommand(ctx, srcID, script.String(), 2*time.Minute)

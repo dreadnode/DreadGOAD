@@ -1,107 +1,36 @@
 ---
-# Base AMI playbook for GOAD MSSQL servers
-# This provisions a Windows Server base image with:
-# - PowerShell DSC modules
-# - IIS web server
-# - SQL Server Express 2019
-# - RDP enabled
-# - Windows Updates applied
-# - Cleanup for AMI creation
-
-- name: Provision GOAD MSSQL Server Base Image
+- name: Provision GOAD MSSQL Server Base Image - SQL Server
   hosts: all
   gather_facts: true
 
   vars:
-    sql_download_url: "https://go.microsoft.com/fwlink/p/?linkid=866658"
     sql_instance_name: "SQLEXPRESS"
 
   tasks:
-    - name: Install PowerShellGet and NuGet provider
-      ansible.windows.win_shell: |
-        $ProgressPreference = 'SilentlyContinue'
-        $ErrorActionPreference = 'Stop'
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        Install-PackageProvider -Name NuGet -Force -Confirm:$false
-        Install-Module PowerShellGet -Force -Confirm:$false
-      register: powershellget_install
-      retries: 3
-      delay: 10
-      until: powershellget_install is not failed
-
-    - name: Install required DSC modules
-      community.windows.win_psmodule:
-        name: "{{ item }}"
-        state: present
-        accept_license: true
-        skip_publisher_check: true
-      loop:
-        - ComputerManagementDsc
-        - ActiveDirectoryDsc
-        - xNetworking
-        - NetworkingDsc
-      environment:
-        LOCALAPPDATA: 'C:\Windows\system32\config\systemprofile\AppData\Local'
-      register: dsc_install
-      retries: 3
-      delay: 10
-      until: dsc_install is not failed
-
-    - name: Verify DSC LCM is ready
+    - name: Detect Windows Server version for SQL Server compatibility
       ansible.windows.win_powershell:
         script: |
-          $ProgressPreference = 'SilentlyContinue'
-          $ErrorActionPreference = "Stop"
-          try {
-            $lcm = Get-DscLocalConfigurationManager
-            if ($lcm.LCMState -ne 'Idle') {
-              throw "LCM not ready, state: $($lcm.LCMState)"
-            }
-            Write-Output "DSC LCM is ready (state: Idle)"
-            $Ansible.Changed = $false
-          } catch {
-            $Ansible.Failed = $true
-            throw $_
+          $build = [System.Environment]::OSVersion.Version.Build
+          # Windows Server 2025 build >= 26100
+          if ($build -ge 26100) {
+            $Ansible.Result = "2025"
+          } else {
+            $Ansible.Result = "pre2025"
           }
-      register: dsc_ready
-      retries: 5
-      delay: 5
-      until: dsc_ready is not failed
+      register: os_detect
       changed_when: false
 
-    - name: Install IIS Web Server
-      ansible.windows.win_feature:
-        name:
-          - Web-Server
-          - Web-WebServer
-          - Web-Common-Http
-          - Web-Default-Doc
-          - Web-Dir-Browsing
-          - Web-Http-Errors
-          - Web-Static-Content
-          - Web-Health
-          - Web-Http-Logging
-          - Web-Performance
-          - Web-Stat-Compression
-          - Web-Security
-          - Web-Filtering
-          - Web-Mgmt-Tools
-          - Web-Mgmt-Console
-        state: present
-        include_management_tools: true
-      register: iis_install
+    - name: Set SQL Server variables for Windows Server 2025+
+      ansible.builtin.set_fact:
+        sql_download_url: "https://download.microsoft.com/download/5/1/4/5145fe04-4d30-4b85-b0d1-39c332a9d2be/SQL2022-SSEI-Expr.exe"
+        sql_version_id: "MSSQL16"
+      when: os_detect.result == "2025"
 
-    - name: Install WebDAV Publishing
-      ansible.windows.win_feature:
-        name: Web-DAV-Publishing
-        state: present
-      register: webdav_install
-
-    - name: Reboot if IIS installation requires it
-      ansible.windows.win_reboot:
-        reboot_timeout: 600
-        post_reboot_delay: 60
-      when: iis_install.reboot_required or webdav_install.reboot_required
+    - name: Set SQL Server variables for Windows Server 2016/2019
+      ansible.builtin.set_fact:
+        sql_download_url: "https://go.microsoft.com/fwlink/p/?linkid=866658"
+        sql_version_id: "MSSQL15"
+      when: os_detect.result != "2025"
 
     - name: Create SQL Server setup directories
       ansible.windows.win_file:
@@ -139,14 +68,14 @@
       ansible.windows.win_copy:
         dest: C:\setup\mssql\sql_conf.ini
         content: |
-          ;SQL Server 2019 Express Configuration File
+          ;SQL Server Express Configuration File
           [OPTIONS]
           ACTION="Install"
           QUIET="True"
           FEATURES=SQLENGINE
           INSTANCENAME="{{ sql_instance_name }}"
           SQLSVCACCOUNT="NT AUTHORITY\NETWORK SERVICE"
-          SQLSYSADMINACCOUNTS="BUILTIN\Administrators"
+          SQLSYSADMINACCOUNTS="BUILTIN\Administrators" "NT AUTHORITY\NETWORK SERVICE" "NT AUTHORITY\SYSTEM"
           AGTSVCACCOUNT="NT AUTHORITY\NETWORK SERVICE"
           TCPENABLED="1"
           NPENABLED="1"
@@ -160,7 +89,7 @@
 
     - name: Check if SQL Server is already installed
       ansible.windows.win_reg_stat:
-        path: "HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\MSSQL15.{{ sql_instance_name }}"
+        path: "HKLM:\\SOFTWARE\\Microsoft\\Microsoft SQL Server\\{{ sql_version_id }}.{{ sql_instance_name }}"
       register: mssql_installed
       failed_when: false
 
@@ -176,7 +105,7 @@
 
     - name: Configure SQL Server TCP port
       ansible.windows.win_regedit:
-        path: 'HKLM:\Software\Microsoft\Microsoft SQL Server\MSSQL15.{{ sql_instance_name }}\MSSQLServer\SuperSocketNetLib\Tcp\IPAll'
+        path: 'HKLM:\Software\Microsoft\Microsoft SQL Server\{{ sql_version_id }}.{{ sql_instance_name }}\MSSQLServer\SuperSocketNetLib\Tcp\IPAll'
         name: TcpPort
         data: "1433"
         type: string
@@ -188,32 +117,21 @@
         post_reboot_delay: 60
       when: sql_tcp_port.changed
 
-    - name: Enable Remote Desktop
-      ansible.windows.win_dsc:
-        resource_name: RemoteDesktopAdmin
-        IsSingleInstance: 'Yes'
-        Ensure: present
-        UserAuthentication: Secure
-      register: rdp_result
-      retries: 3
-      delay: 10
-      until: rdp_result is not failed
+    - name: Grant ssm-user SQL sysadmin for Ansible SSM connection
+      ansible.windows.win_powershell:
+        script: |
+          $instance = "localhost\{{ sql_instance_name }}"
+          # ssm-user is in local Administrators, but UAC token filtering strips
+          # the Administrators SID from non-elevated SSM sessions. Grant ssm-user
+          # an explicit SQL login so Ansible over SSM can run SqlCmd.
+          $result1 = SqlCmd -S $instance -E -Q "IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = 'ssm-user') CREATE LOGIN [ssm-user] FROM WINDOWS WITH DEFAULT_DATABASE=[master]" 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "CREATE LOGIN failed: $result1" }
 
-    - name: Allow RDP through Windows Firewall
-      ansible.windows.win_dsc:
-        resource_name: xFirewall
-        Name: "Administrator access for RDP (TCP-In)"
-        Ensure: present
-        Enabled: true
-        Profile: "Domain"
-        Direction: "Inbound"
-        Localport: "3389"
-        Protocol: "TCP"
-        Description: "Opens the listener port for RDP"
-      register: firewall_result
-      retries: 3
-      delay: 10
-      until: firewall_result is not failed
+          $result2 = SqlCmd -S $instance -E -Q "IF IS_SRVROLEMEMBER('sysadmin', 'ssm-user') = 0 EXEC sp_addsrvrolemember 'ssm-user', 'sysadmin'" 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "sp_addsrvrolemember failed: $result2" }
+
+          Write-Output "ssm-user granted SQL sysadmin on $instance"
+      register: ssm_sql_grant
 
     - name: Allow SQL Server through Windows Firewall (TCP 1433)
       ansible.windows.win_dsc:
@@ -256,14 +174,11 @@
       ansible.windows.win_powershell:
         script: |
           $ProgressPreference = 'SilentlyContinue'
-          Write-Host "Cleaning up for AMI creation..."
 
-          # Clear Windows Update download cache
           Stop-Service -Name wuauserv -Force -ErrorAction SilentlyContinue
           Remove-Item -Path "C:\Windows\SoftwareDistribution\Download\*" -Recurse -Force -ErrorAction SilentlyContinue
           Start-Service -Name wuauserv
 
-          # Clear temp files
           Remove-Item -Path "$env:TEMP\*" -Recurse -Force -ErrorAction SilentlyContinue
           Remove-Item -Path "C:\Windows\Temp\*" -Recurse -Force -ErrorAction SilentlyContinue
 
@@ -272,10 +187,7 @@
           Remove-Item -Path "C:\setup\mssql\media\*" -Recurse -Force -ErrorAction SilentlyContinue
           Remove-Item -Path "C:\setup\mssql\extraction\*" -Recurse -Force -ErrorAction SilentlyContinue
 
-          # Clear event logs
           wevtutil cl Application
           wevtutil cl Security
           wevtutil cl System
-
-          Write-Host "Cleanup complete"
       register: cleanup_result
