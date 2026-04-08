@@ -60,15 +60,8 @@ cd cli && go build -o dreadgoad . && cd ..
 
 ### Deploy a Lab
 
-DreadGOAD ships two tools, scoped strictly by provider:
-
-- **AWS** → `dreadgoad` end-to-end (Terragrunt + Warpgate + Ansible + SSM).
-- **VirtualBox / VMware / Proxmox / Azure / Ludus** → `./goad.sh` end-to-end.
-
-`dreadgoad`'s operational commands (`provision`, `health-check`, `validate`, `verify-trusts`, `lab`, `ssm`, …) are **AWS-only** — they assume EC2 + SSM. See [CLI vs `goad.py`](docs/mkdocs/docs/cli-vs-goadpy.md) for the full breakdown.
-
 ```bash
-# AWS workflow — provision the lab against an existing AWS deployment
+# Provision the full GOAD lab
 ./cli/dreadgoad provision
 
 # Health check all instances
@@ -92,7 +85,6 @@ See [tools/variant_generator/](tools/variant_generator/) for details.
 
 ## Documentation
 
-- [CLI vs `goad.py`](docs/mkdocs/docs/cli-vs-goadpy.md) -- which tool to use for which provider, capability matrix, command equivalence
 - [CLI configuration](docs/cli.md) -- Viper-based config, environment variables, per-environment settings
 - [Domains and users](docs/domains-and-users.md) -- full network topology, credentials, and attack paths
 - [Vulnerability catalog](docs/GOAD-vulnerabilities-comprehensive.md) -- all 50+ vulnerabilities with exploitation techniques
