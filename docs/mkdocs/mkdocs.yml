@@ -4,6 +4,7 @@ repo_url: https://github.com/dreadnode/DreadGOAD
 site_author: Dreadnode
 nav:
   - GOAD: index.md
+  - 🧭 CLI vs goad.py: cli-vs-goadpy.md
   - 🚀 Installation:
     - index: installation/index.md
     - Linux: installation/linux.md
