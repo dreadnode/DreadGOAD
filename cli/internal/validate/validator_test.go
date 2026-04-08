@@ -18,7 +18,7 @@ func fakeCheck(name string, delay time.Duration, results int) checkFunc {
 		printHeader(w, name)
 		time.Sleep(delay)
 		for i := range results {
-			fmt.Fprintf(w, "  result-%s-%d\n", name, i)
+			_, _ = fmt.Fprintf(w, "  result-%s-%d\n", name, i)
 		}
 	}
 }
@@ -143,7 +143,7 @@ func TestRunChecks_SemaphoreLimitsConcurrency(t *testing.T) {
 			}
 			time.Sleep(50 * time.Millisecond)
 			running.Add(-1)
-			fmt.Fprintf(w, "done\n")
+			_, _ = fmt.Fprintf(w, "done\n")
 		}
 	}
 
@@ -205,7 +205,7 @@ func captureStdout(t *testing.T) *stdoutCapture {
 
 func (c *stdoutCapture) restore() string {
 	c.t.Helper()
-	c.w.Close()
+	_ = c.w.Close()
 	os.Stdout = c.orig
 	res := <-c.done
 	if res.err != nil {

@@ -8,7 +8,7 @@ import (
 )
 
 func printHeader(w io.Writer, header string) {
-	fmt.Fprintf(w, "\n== %s ==\n", header)
+	_, _ = fmt.Fprintf(w, "\n== %s ==\n", header)
 }
 
 func (v *Validator) checkCredentialDiscovery(ctx context.Context, w io.Writer) {

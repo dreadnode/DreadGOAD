@@ -123,7 +123,7 @@ func (v *Validator) runChecks(ctx context.Context, checks []checkFunc) {
 	}
 
 	for _, ch := range chs {
-		os.Stdout.Write(<-ch)
+		_, _ = os.Stdout.Write(<-ch)
 	}
 }
 
@@ -215,15 +215,15 @@ func (v *Validator) addResult(w io.Writer, status, category, name, detail string
 
 	switch status {
 	case "PASS":
-		fmt.Fprint(w, color.GreenString("  ✓ %s\n", name))
+		_, _ = fmt.Fprint(w, color.GreenString("  ✓ %s\n", name))
 	case "FAIL":
-		fmt.Fprint(w, color.RedString("  ✗ %s\n", name))
+		_, _ = fmt.Fprint(w, color.RedString("  ✗ %s\n", name))
 	case "WARN":
-		fmt.Fprint(w, color.YellowString("  ⚠ %s\n", name))
+		_, _ = fmt.Fprint(w, color.YellowString("  ⚠ %s\n", name))
 	case "SKIP":
-		fmt.Fprint(w, color.CyanString("  ⊘ %s\n", name))
+		_, _ = fmt.Fprint(w, color.CyanString("  ⊘ %s\n", name))
 	case "INFO":
-		fmt.Fprintf(w, "  ℹ %s\n", name)
+		_, _ = fmt.Fprintf(w, "  ℹ %s\n", name)
 	}
 }
 
