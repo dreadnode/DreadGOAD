@@ -175,8 +175,13 @@ func indexOf(lines []string, substr string) int {
 type stdoutCapture struct {
 	orig *os.File
 	r, w *os.File
-	done chan string
+	done chan captureResult
 	t    *testing.T
+}
+
+type captureResult struct {
+	output string
+	err    error
 }
 
 func captureStdout(t *testing.T) *stdoutCapture {
@@ -188,11 +193,11 @@ func captureStdout(t *testing.T) *stdoutCapture {
 	orig := os.Stdout
 	os.Stdout = w
 
-	done := make(chan string)
+	done := make(chan captureResult)
 	go func() {
 		var buf bytes.Buffer
-		_, _ = io.Copy(&buf, r)
-		done <- buf.String()
+		_, err := io.Copy(&buf, r)
+		done <- captureResult{output: buf.String(), err: err}
 	}()
 
 	return &stdoutCapture{orig: orig, r: r, w: w, done: done, t: t}
@@ -202,5 +207,9 @@ func (c *stdoutCapture) restore() string {
 	c.t.Helper()
 	c.w.Close()
 	os.Stdout = c.orig
-	return <-c.done
+	res := <-c.done
+	if res.err != nil {
+		c.t.Fatalf("capturing stdout: %v", res.err)
+	}
+	return res.output
 }
