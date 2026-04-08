@@ -3,33 +3,36 @@
 # These tasks configure SQL Server after installation
 # They should ALWAYS run to ensure proper configuration (idempotent)
 #
-# Note: Tasks use become/runas SYSTEM for SqlCmd. The golden AMI build also
-# grants ssm-user an explicit SQL sysadmin login as defense-in-depth
-# (BUILTIN\Administrators alone is not sufficient due to UAC token filtering
-# on non-elevated SSM sessions).
+# The golden AMI build grants ssm-user an explicit SQL sysadmin login
+# (BUILTIN\Administrators alone is not sufficient due to UAC token
+# filtering on non-elevated SSM sessions).  Config tasks run as
+# ssm-user with that explicit login — no become/runas SYSTEM needed.
 #
-# ssm-user sysadmin is bracketed: granted at the start of config, revoked at
-# the end. This keeps re-runs idempotent while minimizing residual privilege.
+# The bootstrap task tries Windows auth first, then falls back to sa
+# auth (available after the first provision) so that re-runs work even
+# if ssm-user's SQL login was previously dropped.
+#
+# ssm-user's SQL sysadmin is intentionally kept across runs so that
+# re-provisioning remains idempotent without a bootstrap problem.
 
-- name: Grant ssm-user SQL sysadmin for config run
+- name: Ensure BUILTIN\Administrators has SQL sysadmin
   ansible.windows.win_shell: |
     $ErrorActionPreference = "Continue"
-    $errors = @()
 
-    $result1 = SqlCmd {{ connection_type }} -Q "IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = 'ssm-user') CREATE LOGIN [ssm-user] FROM WINDOWS WITH DEFAULT_DATABASE=[master]" 2>&1
-    if ($LASTEXITCODE -ne 0) { $errors += "CREATE LOGIN failed: $result1" }
+    # Test if current session already has SQL sysadmin via Windows auth
+    $test = SqlCmd {{ connection_type }} -Q "SET NOCOUNT ON; SELECT CASE WHEN IS_SRVROLEMEMBER('sysadmin')=1 THEN 'HAS_SYSADMIN' ELSE 'NO_SYSADMIN' END" 2>&1
+    $hasSysadmin = ($LASTEXITCODE -eq 0) -and ($test -match 'HAS_SYSADMIN')
 
-    $result2 = SqlCmd {{ connection_type }} -Q "IF IS_SRVROLEMEMBER('sysadmin', 'ssm-user') = 0 EXEC sp_addsrvrolemember 'ssm-user', 'sysadmin'" 2>&1
-    if ($LASTEXITCODE -ne 0) { $errors += "sp_addsrvrolemember failed: $result2" }
-
-    if ($errors.Count -gt 0) {
-      Write-Error ($errors -join "`n")
-      exit 1
+    if (-not $hasSysadmin) {
+      # Current session lacks sysadmin - bootstrap via sa auth (enabled by prior provision).
+      # Grant sysadmin to BUILTIN\Administrators so any admin user (ssm-user, ansible, etc.) works.
+      $saArgs = @("-b", "-U", "sa", "-P", "{{ sa_password }}", "-S", "localhost\{{ sql_instance_name }}")
+      $r1 = & SqlCmd @saArgs -Q "IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = 'BUILTIN\Administrators') CREATE LOGIN [BUILTIN\Administrators] FROM WINDOWS WITH DEFAULT_DATABASE=[master]" 2>&1
+      if ($LASTEXITCODE -ne 0) { Write-Error "CREATE LOGIN BUILTIN\Administrators failed: $r1"; exit 1 }
+      $r2 = & SqlCmd @saArgs -Q "IF IS_SRVROLEMEMBER('sysadmin', 'BUILTIN\Administrators') = 0 EXEC sp_addsrvrolemember 'BUILTIN\Administrators', 'sysadmin'" 2>&1
+      if ($LASTEXITCODE -ne 0) { Write-Error "sp_addsrvrolemember failed: $r2"; exit 1 }
     }
-    Write-Output "ssm-user granted SQL sysadmin"
-  become: true
-  become_method: ansible.builtin.runas
-  become_user: SYSTEM
+    Write-Output "SQL sysadmin access verified (had_sysadmin=$hasSysadmin)"
 
 - name: Add MSSQL admin
   ansible.windows.win_shell: |
@@ -49,9 +52,6 @@
       exit 1
     }
     Write-Output "Successfully configured sysadmin: {{ item }}"
-  become: true
-  become_method: ansible.builtin.runas
-  become_user: SYSTEM
   loop: "{{ sql_sysadmins }}"
   register: admin_result
 
@@ -81,9 +81,6 @@
       exit 1
     }
     Write-Output "Successfully granted IMPERSONATE ON LOGIN::[{{ item.value }}] TO [{{ item.key }}]"
-  become: true
-  become_method: ansible.builtin.runas
-  become_user: SYSTEM
   with_dict: "{{ executeaslogin }}"
   register: impersonate_login_result
 
@@ -117,9 +114,6 @@
       exit 1
     }
     Write-Output "Successfully granted IMPERSONATE ON USER::[{{ item.value.impersonate }}] TO [{{ item.value.user }}] in {{ item.value.db }}"
-  become: true
-  become_method: ansible.builtin.runas
-  become_user: SYSTEM
   with_dict: "{{ executeasuser }}"
   register: impersonate_user_result
 
@@ -149,9 +143,6 @@
       exit 1
     }
     Write-Output "Successfully enabled sa account"
-  become: true
-  become_method: ansible.builtin.runas
-  become_user: SYSTEM
   register: sa_result
 
 - name: Log sa account errors
@@ -167,30 +158,30 @@
       exit 1
     }
     Write-Output "Successfully enabled mixed mode authentication (LoginMode=2)"
-  become: true
-  become_method: ansible.builtin.runas
-  become_user: SYSTEM
   register: auth_mode_result
 
-- name: Revoke ssm-user SQL sysadmin after config
+- name: Enable xp_cmdshell
   ansible.windows.win_shell: |
     $ErrorActionPreference = "Continue"
     $errors = @()
 
-    $result1 = SqlCmd {{ connection_type }} -Q "IF IS_SRVROLEMEMBER('sysadmin', 'ssm-user') = 1 EXEC sp_dropsrvrolemember 'ssm-user', 'sysadmin'" 2>&1
-    if ($LASTEXITCODE -ne 0) { $errors += "sp_dropsrvrolemember failed: $result1" }
+    $result1 = SqlCmd {{ connection_type }} -Q "EXEC sp_configure 'show advanced options', 1; RECONFIGURE" 2>&1
+    if ($LASTEXITCODE -ne 0) { $errors += "show advanced options failed: $result1" }
 
-    $result2 = SqlCmd {{ connection_type }} -Q "IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = 'ssm-user') DROP LOGIN [ssm-user]" 2>&1
-    if ($LASTEXITCODE -ne 0) { $errors += "DROP LOGIN failed: $result2" }
+    $result2 = SqlCmd {{ connection_type }} -Q "EXEC sp_configure 'xp_cmdshell', 1; RECONFIGURE" 2>&1
+    if ($LASTEXITCODE -ne 0) { $errors += "xp_cmdshell enable failed: $result2" }
 
     if ($errors.Count -gt 0) {
       Write-Error ($errors -join "`n")
       exit 1
     }
-    Write-Output "ssm-user SQL sysadmin revoked"
-  become: true
-  become_method: ansible.builtin.runas
-  become_user: SYSTEM
+    Write-Output "Successfully enabled xp_cmdshell"
+  register: xp_cmdshell_result
+
+- name: Log xp_cmdshell errors
+  ansible.builtin.debug:
+    msg: "WARNING: xp_cmdshell config had stderr: {{ xp_cmdshell_result.stderr }}"
+  when: xp_cmdshell_result.stderr is defined and xp_cmdshell_result.stderr | length > 0
 
 - name: Restart service MSSQL
   ansible.windows.win_service:

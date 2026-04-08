@@ -110,6 +110,14 @@
           if (-not $forObj) {
             $withDollar = $for + '$'
             $forObj = Get-ADObject -Filter "SamAccountName -eq '$withDollar'" -Properties objectSID -ErrorAction SilentlyContinue
+            # Get-ADObject -Filter can choke on trailing $ in filter strings;
+            # fall back to type-specific cmdlets that use -Identity instead.
+            if (-not $forObj) {
+              $forObj = Get-ADServiceAccount -Identity $for -Properties objectSID -ErrorAction SilentlyContinue
+            }
+            if (-not $forObj) {
+              $forObj = Get-ADComputer -Identity $for -Properties objectSID -ErrorAction SilentlyContinue
+            }
           }
           if (-not $forObj) {
             throw "Cannot find object with SamAccountName: $for"

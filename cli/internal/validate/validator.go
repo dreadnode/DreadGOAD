@@ -1,12 +1,15 @@
 package validate
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	daws "github.com/dreadnode/dreadgoad/internal/aws"
@@ -35,6 +38,7 @@ type Report struct {
 
 // Validator runs vulnerability checks against GOAD instances.
 type Validator struct {
+	mu      sync.Mutex
 	client  *daws.Client
 	log     *slog.Logger
 	env     string
@@ -78,7 +82,7 @@ func (v *Validator) DiscoverHosts(ctx context.Context) error {
 			host := strings.ToUpper(role)
 			if strings.Contains(name, host) {
 				v.hosts[host] = inst.InstanceID
-				v.addResult("PASS", "Discovery", fmt.Sprintf("Found %s", host), inst.InstanceID)
+				v.addResult(os.Stdout, "PASS", "Discovery", fmt.Sprintf("Found %s", host), inst.InstanceID)
 			}
 		}
 	}
@@ -87,51 +91,84 @@ func (v *Validator) DiscoverHosts(ctx context.Context) error {
 	for _, role := range v.lab.DCs() {
 		host := strings.ToUpper(role)
 		if _, ok := v.hosts[host]; !ok {
-			v.addResult("FAIL", "Discovery", fmt.Sprintf("Missing %s", host), "not found")
+			v.addResult(os.Stdout, "FAIL", "Discovery", fmt.Sprintf("Missing %s", host), "not found")
 			return fmt.Errorf("required host %s not found", host)
 		}
 	}
 	return nil
 }
 
+// maxConcurrentChecks limits how many check categories run in parallel.
+// This bounds concurrent SSM calls to avoid throttling.
+const maxConcurrentChecks = 5
+
+// checkFunc is the signature for all check functions.
+type checkFunc func(context.Context, io.Writer)
+
+// runChecks executes check functions concurrently, printing each check's
+// output in submission order as it completes (per-check buffered channels).
+func (v *Validator) runChecks(ctx context.Context, checks []checkFunc) {
+	chs := make([]chan []byte, len(checks))
+	sem := make(chan struct{}, maxConcurrentChecks)
+
+	for i, fn := range checks {
+		chs[i] = make(chan []byte, 1)
+		go func(ch chan<- []byte, f checkFunc) {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			var buf bytes.Buffer
+			f(ctx, &buf)
+			ch <- buf.Bytes()
+		}(chs[i], fn)
+	}
+
+	for _, ch := range chs {
+		_, _ = os.Stdout.Write(<-ch)
+	}
+}
+
 // RunQuickChecks runs a subset of critical checks.
 func (v *Validator) RunQuickChecks(ctx context.Context) {
-	v.checkCredentialDiscovery(ctx)
-	v.checkNetworkMisconfigs(ctx)
-	v.checkMSSQL(ctx)
-	v.checkADCS(ctx)
-	v.checkDomainTrusts(ctx)
-	v.checkServices(ctx)
-	v.checkScheduledTasks(ctx)
+	v.runChecks(ctx, []checkFunc{
+		v.checkCredentialDiscovery,
+		v.checkNetworkMisconfigs,
+		v.checkMSSQL,
+		v.checkADCS,
+		v.checkDomainTrusts,
+		v.checkServices,
+		v.checkScheduledTasks,
+	})
 }
 
 // RunAllChecks executes all vulnerability validation checks.
 func (v *Validator) RunAllChecks(ctx context.Context) {
-	v.checkCredentialDiscovery(ctx)
-	v.checkKerberosAttacks(ctx)
-	v.checkNetworkMisconfigs(ctx)
-	v.checkAnonymousSMB(ctx)
-	v.checkDelegation(ctx)
-	v.checkMachineAccountQuota(ctx)
-	v.checkMSSQL(ctx)
-	v.checkADCS(ctx)
-	v.checkACLPermissions(ctx)
-	v.checkDomainTrusts(ctx)
-	v.checkSIDFiltering(ctx)
-	v.checkServices(ctx)
-	v.checkScheduledTasks(ctx)
-	v.checkLLMNR(ctx)
-	v.checkGPOAbuse(ctx)
-	v.checkGMSA(ctx)
-	v.checkLAPS(ctx)
-	v.checkSMBShares(ctx)
-	v.checkFirewallDisabled(ctx)
-	v.checkPasswordPolicy(ctx)
+	v.runChecks(ctx, []checkFunc{
+		v.checkCredentialDiscovery,
+		v.checkKerberosAttacks,
+		v.checkNetworkMisconfigs,
+		v.checkAnonymousSMB,
+		v.checkDelegation,
+		v.checkMachineAccountQuota,
+		v.checkMSSQL,
+		v.checkADCS,
+		v.checkACLPermissions,
+		v.checkDomainTrusts,
+		v.checkSIDFiltering,
+		v.checkServices,
+		v.checkScheduledTasks,
+		v.checkLLMNR,
+		v.checkGPOAbuse,
+		v.checkGMSA,
+		v.checkLAPS,
+		v.checkSMBShares,
+		v.checkFirewallDisabled,
+		v.checkPasswordPolicy,
+	})
 }
 
 // GetReport returns the current report.
 func (v *Validator) GetReport() *Report {
-	v.report.Total = len(v.report.Results)
+	v.report.Total = v.report.Passed + v.report.Failed + v.report.Warnings
 	return &v.report
 }
 
@@ -161,24 +198,32 @@ func (v *Validator) runPS(ctx context.Context, host, command string) string {
 	return result.Stdout
 }
 
-func (v *Validator) addResult(status, category, name, detail string) {
+func (v *Validator) addResult(w io.Writer, status, category, name, detail string) {
 	r := Result{Status: status, Category: category, Name: name, Detail: detail}
-	v.report.Results = append(v.report.Results, r)
 
+	v.mu.Lock()
+	v.report.Results = append(v.report.Results, r)
 	switch status {
 	case "PASS":
 		v.report.Passed++
-		color.Green("  ✓ %s", name)
 	case "FAIL":
 		v.report.Failed++
-		color.Red("  ✗ %s", name)
 	case "WARN":
 		v.report.Warnings++
-		color.Yellow("  ⚠ %s", name)
+	}
+	v.mu.Unlock()
+
+	switch status {
+	case "PASS":
+		_, _ = fmt.Fprint(w, color.GreenString("  ✓ %s\n", name))
+	case "FAIL":
+		_, _ = fmt.Fprint(w, color.RedString("  ✗ %s\n", name))
+	case "WARN":
+		_, _ = fmt.Fprint(w, color.YellowString("  ⚠ %s\n", name))
 	case "SKIP":
-		color.Cyan("  ⊘ %s", name)
+		_, _ = fmt.Fprint(w, color.CyanString("  ⊘ %s\n", name))
 	case "INFO":
-		fmt.Printf("  ℹ %s\n", name)
+		_, _ = fmt.Fprintf(w, "  ℹ %s\n", name)
 	}
 }
 
