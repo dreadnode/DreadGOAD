@@ -5,7 +5,89 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dreadnode/dreadgoad/internal/inventory"
 )
+
+func TestResolveRegion(t *testing.T) {
+	t.Run("returns configured region", func(t *testing.T) {
+		c := &Config{Region: "eu-west-1"}
+		got, err := c.ResolveRegion()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "eu-west-1" {
+			t.Errorf("ResolveRegion() = %q, want %q", got, "eu-west-1")
+		}
+	})
+
+	t.Run("errors when region is empty", func(t *testing.T) {
+		c := &Config{Region: ""}
+		_, err := c.ResolveRegion()
+		if err == nil {
+			t.Fatal("expected error for empty region, got nil")
+		}
+		if !strings.Contains(err.Error(), "region") {
+			t.Errorf("error should mention region, got: %v", err)
+		}
+	})
+}
+
+func TestResolveRegionWithInventory(t *testing.T) {
+	t.Run("prefers inventory region", func(t *testing.T) {
+		c := &Config{Region: "us-west-1"}
+		inv := &inventory.Inventory{
+			Vars: map[string]string{"ansible_aws_ssm_region": "ap-southeast-1"},
+		}
+		got, err := c.ResolveRegionWithInventory(inv)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "ap-southeast-1" {
+			t.Errorf("ResolveRegionWithInventory() = %q, want %q", got, "ap-southeast-1")
+		}
+	})
+
+	t.Run("falls back to config when inventory has no region", func(t *testing.T) {
+		c := &Config{Region: "us-east-2"}
+		inv := &inventory.Inventory{Vars: map[string]string{}}
+		got, err := c.ResolveRegionWithInventory(inv)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "us-east-2" {
+			t.Errorf("ResolveRegionWithInventory() = %q, want %q", got, "us-east-2")
+		}
+	})
+
+	t.Run("falls back to config when inventory is nil", func(t *testing.T) {
+		c := &Config{Region: "eu-central-1"}
+		got, err := c.ResolveRegionWithInventory(nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got != "eu-central-1" {
+			t.Errorf("ResolveRegionWithInventory() = %q, want %q", got, "eu-central-1")
+		}
+	})
+
+	t.Run("errors when both inventory and config have no region", func(t *testing.T) {
+		c := &Config{Region: ""}
+		inv := &inventory.Inventory{Vars: map[string]string{}}
+		_, err := c.ResolveRegionWithInventory(inv)
+		if err == nil {
+			t.Fatal("expected error when no region available, got nil")
+		}
+	})
+
+	t.Run("errors when nil inventory and config has no region", func(t *testing.T) {
+		c := &Config{Region: ""}
+		_, err := c.ResolveRegionWithInventory(nil)
+		if err == nil {
+			t.Fatal("expected error when no region available, got nil")
+		}
+	})
+}
 
 func TestConfigInventoryPath(t *testing.T) {
 	c := &Config{ProjectRoot: "/opt/goad", Env: "dev"}

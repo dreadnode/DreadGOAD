@@ -51,7 +51,7 @@ func init() {
 	envCmd.AddCommand(envCreateCmd)
 	envCmd.AddCommand(envListCmd)
 
-	envCreateCmd.Flags().String("region", "us-east-1", "AWS region for the environment")
+	envCreateCmd.Flags().String("region", "", "AWS region for the environment (required; or set via dreadgoad.yaml / DREADGOAD_REGION / --region)")
 	envCreateCmd.Flags().String("vpc-cidr", "", "VPC CIDR block (default: auto-assigned)")
 	envCreateCmd.Flags().String("reference", "staging", "Reference environment to copy infrastructure from")
 	envCreateCmd.Flags().Bool("variant", false, "Generate randomized variant config")
@@ -70,17 +70,26 @@ func runEnvCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	region, _ := cmd.Flags().GetString("region")
+	if region == "" {
+		region, err = cfg.ResolveRegion()
+		if err != nil {
+			return fmt.Errorf("env create requires a region: pass --region, set 'region' in dreadgoad.yaml, or export DREADGOAD_REGION")
+		}
+	}
 	vpcCIDR, _ := cmd.Flags().GetString("vpc-cidr")
 	reference, _ := cmd.Flags().GetString("reference")
 	useVariant, _ := cmd.Flags().GetBool("variant")
 	force, _ := cmd.Flags().GetBool("force")
 
-	deployment := cfg.Infra.Deployment
-	infraBase := filepath.Join(cfg.ProjectRoot, "infra", deployment)
-
 	if vpcCIDR == "" {
 		vpcCIDR = cfg.VpcCIDR(envName)
 	}
+
+	return scaffoldEnv(cfg, envName, region, vpcCIDR, reference, useVariant, force)
+}
+
+func scaffoldEnv(cfg *config.Config, envName, region, vpcCIDR, reference string, useVariant, force bool) error {
+	infraBase := filepath.Join(cfg.ProjectRoot, "infra", cfg.Infra.Deployment)
 	envDir := filepath.Join(infraBase, envName)
 	regionDir := filepath.Join(envDir, region)
 
