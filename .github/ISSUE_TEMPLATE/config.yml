@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability in the DreadGOAD tooling
+    url: https://github.com/dreadnode/DreadGOAD/security/advisories/new
+    about: "Report security issues in the CLI, Ansible collection, Terraform / Terragrunt modules, or other tooling privately. Do NOT use a public issue. Note: weak passwords and other intentional vulnerabilities inside the deployed labs are by design and should not be reported."
+  - name: Upstream GOAD documentation
+    url: https://orange-cyberdefense.github.io/GOAD/
+    about: "Background on the original GOAD project that DreadGOAD is forked from."
+  - name: DreadGOAD documentation
+    url: https://github.com/dreadnode/DreadGOAD/tree/main/docs
+    about: "Provider guides, lab descriptions, validation guide, and the full vulnerability catalog."
