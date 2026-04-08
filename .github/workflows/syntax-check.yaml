@@ -34,7 +34,7 @@ env:
   COLLECTION_PATH: ansible_collections/dreadnode/goad
   REQUIREMENTS_FILE: .hooks/requirements.txt
   PY_COLORS: "1"
-  PYTHON_VERSION: "3.14.3"
+  PYTHON_VERSION: "3.14.4"
   ROLE: ${{ github.event.inputs.ROLE }}
   ANSIBLE_COLLECTIONS_PATH: ~/.ansible/collections
 
