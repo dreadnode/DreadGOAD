@@ -65,6 +65,13 @@ The Terragrunt configs reference modules from `modules/`:
 ## Deployment
 
 ```bash
+dreadgoad infra init --env staging --region us-west-1
+dreadgoad infra apply --env staging --region us-west-1
+```
+
+Or with raw Terragrunt for more control:
+
+```bash
 cd infra/goad-deployment/staging/us-west-1
 
 # Deploy networking first
@@ -78,11 +85,28 @@ All instances use SSM for management -- no SSH keys or open ports. VPC endpoints
 
 ## Adding a New Environment
 
-```bash
-# Duplicate the staging tree
-cp -r goad-deployment/staging goad-deployment/dev
+Use the CLI to scaffold a new environment:
 
-# Edit dev/env.hcl with new account ID, VPC CIDR, etc.
+```bash
+dreadgoad env create dev
+```
+
+This reads the VPC CIDR from `dreadgoad.yaml` (`environments.dev.vpc_cidr`),
+generates `env.hcl`, `region.hcl`, copies infrastructure from the reference
+environment, and creates an inventory file. See `dreadgoad env create --help`.
+
+To set a custom CIDR, either configure it in `dreadgoad.yaml`:
+
+```yaml
+environments:
+  dev:
+    vpc_cidr: "10.0.0.0/16"
+```
+
+Or pass it as a flag:
+
+```bash
+dreadgoad env create dev --vpc-cidr 10.0.0.0/16
 ```
 
 Each environment gets its own Terraform state, so multiple labs can run in parallel.
@@ -90,10 +114,10 @@ Each environment gets its own Terraform state, so multiple labs can run in paral
 ## Adding a New Region
 
 ```bash
-# Create region directory under your environment
-mkdir -p goad-deployment/staging/eu-west-1
-cp goad-deployment/staging/us-west-1/region.hcl goad-deployment/staging/eu-west-1/
-# Edit region.hcl, then copy network/ and goad/ directories
+dreadgoad env create staging --region eu-west-1 --reference staging
 ```
+
+This scaffolds the region directory with `region.hcl`, network, and host
+configurations copied from the reference environment.
 
 For the full end-to-end workflow including warpgate AMI builds and Ansible provisioning, see the [AWS AMI build & deploy workflow](../docs/mkdocs/docs/providers/aws-ami-workflow.md).

@@ -64,14 +64,30 @@ environments:
     variant_source: ad/GOAD           # Source directory to clone from
     variant_target: ad/GOAD-variant-1 # Output directory for generated variant
     variant_name: variant-1           # Variant identifier
+    vpc_cidr: "10.0.0.0/16"          # VPC CIDR block for this environment
   staging:
     variant: false
+    vpc_cidr: "10.1.0.0/16"
+  prod:
+    vpc_cidr: "10.2.0.0/16"
+  test:
+    vpc_cidr: "10.8.0.0/16"
 ```
 
 ## Per-Environment Settings
 
 The `environments` map lets you configure behavior per environment. The
 active environment is selected by the top-level `env` key.
+
+### VPC CIDR
+
+Each environment needs a unique VPC CIDR block. Set `vpc_cidr` in the
+environment config -- this value is used by `dreadgoad env create` when
+scaffolding Terragrunt files and must match the `vpc_cidr` in the
+corresponding `env.hcl`.
+
+If `vpc_cidr` is not set and no `--vpc-cidr` flag is passed, the CLI
+generates a deterministic CIDR from the environment name.
 
 ### Variant Support
 
@@ -82,6 +98,7 @@ that preserve all structural relationships and vulnerabilities.
 
 | Key              | Description                          | Default              |
 |------------------|--------------------------------------|----------------------|
+| `vpc_cidr`       | VPC CIDR block for this environment  | Auto-generated       |
 | `variant`        | Enable randomized variant            | `false`              |
 | `variant_source` | Source GOAD directory to clone from  | `ad/GOAD`            |
 | `variant_target` | Output directory for the variant     | `ad/GOAD-variant-1`  |

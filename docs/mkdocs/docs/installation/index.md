@@ -1,14 +1,13 @@
 <!-- markdownlint-disable MD046 -->
-# 🚀 Installation
+# Installation
 
-In the last version, GOAD use no more bash for the installation/management script.
-The goad management script is now written in :simple-python: python to permit more flexibility and cover the needs to create a Windows WSL support.
+DreadGOAD uses a self-contained Go CLI binary (`dreadgoad`) for all management operations. The CLI handles infrastructure provisioning, Ansible orchestration, inventory management, and environment validation. The only external dependencies are Ansible (for provisioning) and your chosen provider's tools (e.g., AWS CLI, Terraform).
 
-- First prepare you system for GOAD execution:
+- First prepare your system for DreadGOAD execution:
     - :material-linux: [Linux](linux.md)
     - :material-microsoft-windows: [Windows](windows.md)
 
-- Installation depend of the provider you use, please follow the appropriate guide :
+- Installation depends on the provider you use, please follow the appropriate guide:
     - :simple-virtualbox: [Install with Virtualbox](../providers/virtualbox.md)
     - :simple-vmware: [Install with VmWare](../providers/vmware.md)
     - :simple-proxmox: [Install with Proxmox](../providers/proxmox.md)
@@ -18,184 +17,94 @@ The goad management script is now written in :simple-python: python to permit mo
 
 ## TLDR - quick install
 
-??? info "TLDR : :material-ubuntu: ubuntu 22.04 quick install"
+??? info "TLDR : :simple-amazon: AWS quick install"
 
     ```bash
-    # Install vbox
-    sudo apt install virtualbox
+    # Install dreadgoad CLI (download from releases or build from source)
+    # See https://github.com/dreadnode/DreadGOAD/releases for latest binaries
+    # Or build from source:
+    git clone https://github.com/dreadnode/DreadGOAD.git
+    cd DreadGOAD
+    cd cli && go build -o dreadgoad . && sudo mv dreadgoad /usr/local/bin/
 
-    # Install vagrant
-    wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
-    echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list
-    sudo apt update && sudo apt install vagrant
+    # Initialize configuration
+    dreadgoad config init
 
-    # Install Vagrant plugins
-    vagrant plugin install vagrant-reload vagrant-vbguest winrm winrm-fs winrm-elevated
+    # Check dependencies (ansible-core, AWS CLI, Python for Ansible, collections)
+    dreadgoad doctor
 
-    # Add some dependencies
-    sudo apt install sshpass lftp rsync openssh-client python3.10-venv
+    # Create a deployment environment
+    dreadgoad env create dev
 
-    git clone https://github.com/Orange-Cyberdefense/GOAD.git
-    cd GOAD
-    # verify installation
-    ./goad.sh -t check -l GOAD -p virtualbox
+    # Provision infrastructure
+    dreadgoad infra init && dreadgoad infra apply
 
-    # install
-    ./goad.sh -t install -l GOAD -p virtualbox
+    # Sync inventory
+    dreadgoad inventory sync
 
-    # launch goad in interactive mode
-    ./goad.sh
+    # Run Ansible provisioning
+    dreadgoad provision
+
+    # Validate the lab
+    dreadgoad validate
     ```
 
-## Installation
+## Installation Steps
 
-- Installation is in three parts :
-    - Templating : this will create the template to use (needed only for proxmox and ludus)
-    - Providing : this will instantiate the virtual machines depending on your provider
-    - Provisioning : it is always made with ansible, it will install all the stuff to create the lab
+- Installation is in three parts:
+    - Templating: this will create the template to use (needed only for proxmox and ludus)
+    - Providing: this will instantiate the virtual machines depending on your provider
+    - Provisioning: it is always made with ansible, it will install all the stuff to create the lab
 
-- GOAD script cover the providing and provisioning part
+- The `dreadgoad` CLI covers the providing and provisioning parts through subcommands:
+    - `dreadgoad infra init` / `dreadgoad infra apply` - provision infrastructure
+    - `dreadgoad provision` - run Ansible provisioning
+    - `dreadgoad validate` - validate the deployment
 
-- The install script take multiple parameters:
-    - `-p`  : the provider to use (vmware/virtualbox/proxmox/ludus/azure/aws)
-    - `-l`  : the lab to install (GOAD/GOAD-Light/SCCM/NHA/MINILAB)
-    - `-m`  : the method of installation (local/runner/docker/remote), most of the time don't change it
-    - `-ip` : the ip range to use
+### Dependencies
 
-- The easy way is just launch `./goad.sh` and use help `?`in the interactive prompt
+`dreadgoad` is a self-contained Go binary with no runtime dependencies of its own. However, the following external tools are required depending on your workflow:
 
+- **Always required**: `ansible-core`, Python (for Ansible)
+- **For AWS provider**: AWS CLI, Terraform/Terragrunt
+- **For Azure provider**: Azure CLI, Terraform
+- **For Virtualbox/VMware**: Vagrant and appropriate plugins
+- **For Proxmox**: Proxmox API access
 
-### Python Dependencies
-
-- Goad in :simple-python: python come with a lot of dependencies as you can see in the `requirements.yml` file on the root of the project.
-- If you don't want to run the provisioning from your python venv but only from docker you can use `goad_docker.sh` script instead of `goad.sh`. This will run the ansible with the docker method instead of local or runner.
-
-This are the python dependencies used by goad :
-
-- Mandatory for :simple-python: goad.py:
-
-```bash
-rich
-psutil
-Jinja2
-pyyaml
-```
-
-- Mandatory for :material-ansible: ansible inside goad (for provisioning method local or runner) :
-  - python < 3.11
-
-    ```bash
-    # Ansible
-    ansible_runner
-    ansible-core==2.12.6
-    pywinrm
-    ```
-
-  - python >= 3.11
-
-    ```bash
-    # Ansible
-    setuptools
-    ansible_runner
-    ansible-core==2.18.0
-    pywinrm
-    ```
-
-- Mandatory for :material-microsoft-azure: azure provider :
-
-```bash
-# AZURE
-azure-identity
-azure-mgmt-compute
-azure-mgmt-network
-```
-
-- Mandatory for :simple-amazon: aws provider :
-
-```bash
-# AWS
-boto3
-```
-
-- Mandatory for :simple-proxmox: proxmox provider:
-
-```bash
-# Proxmox
-proxmoxer
-requests
-```
-
-- You can launch goad without installing all the pip package but for that you will have to disable some dependencies with the `-d` arguments:
-
-```bash
--d vmware     : disable vmware provider
--d virtualbox : disable virtualbox provider
--d azure      : disable azure provider
--d aws        : disable azure provider
--d proxmox    : disable proxmox provider
--d ludus      : disable ludus provider
--d local      : disable local provisioning method (if you use docker only)
--d runner     : disable ansible runner provisioning method (if you use docker only)
--d remote     : disable remote provisioning method
--d docker     : disable docker provisioning method
-```
+Run `dreadgoad doctor` to check that all required dependencies are installed and configured.
 
 ## Configuration files
 
-### $HOME/.goad/goad.ini
+### dreadgoad.yaml
 
-- On the first launch goad create a global configuration file at : `$HOME/.goad/goad.ini` this file contains some default configuration and some parameters needed by some providers.
+- On first setup, run `dreadgoad config init` to create a configuration file at `~/.config/dreadgoad/dreadgoad.yaml`.
+- View the current effective configuration with `dreadgoad config show`.
+- Set individual values with `dreadgoad config set <key> <value>`.
 
-- If you change the `[default]` config it will change the default selection when goad start
-- Others configurations are related to specific providers
+The config file uses YAML format and supports the following resolution order:
 
-```ini
-[default]
-; lab: goad / goad-light / minilab / nha / sccm
-lab = GOAD
-; provider : virtualbox / vmware / aws / azure / proxmox
-provider = vmware
-; provisioner method : local / remote
-provisioner = local
-; ip_range (3 first ip digits)
-ip_range = 192.168.56
+1. CLI flags (`--env`, `--region`, `--debug`)
+2. Environment variables (`DREADGOAD_ENV`, `DREADGOAD_REGION`, etc.)
+3. Config file (YAML)
+4. Built-in defaults
 
-[aws]
-aws_region = eu-west-3
-aws_zone = eu-west-3c
+```yaml
+# Active environment (selects into the environments map below)
+env: staging
 
-[azure]
-az_location = westeurope
+# AWS region override (default: resolved from inventory)
+# region: us-west-2
 
-[proxmox]
-pm_api_url = https://192.168.1.1:8006/api2/json
-pm_user = infra_as_code@pve
-pm_node = GOAD
-pm_pool = GOAD
-pm_full_clone = false
-pm_storage = local
-pm_vlan = 10
-pm_network_bridge = vmbr3
-pm_network_model = e1000
-
-[proxmox_templates_id]
-winserver2019_x64 = 102
-winserver2016_x64 = 103
-winserver2019_x64_utd = 104
-windows10_22h2_x64 = 105
-
-[ludus]
-; api key must not have % if you have a % in it, change it by a %%
-ludus_api_key = change_me
-use_impersonation = yes
+debug: false
+max_retries: 3  # Ansible playbook retry attempts
 ```
 
 ### Global configuration : globalsettings.ini
 
-- Goad got a global configuration file : `globalsettings.ini` used by the ansible provisioning
+- DreadGOAD has a global configuration file: `globalsettings.ini` used by the ansible provisioning
 - This file is an ansible inventory file.
 - This file is always added at the end of the ansible inventory file list so you can override values here
-- You can change it before running the installation to modify :
+- You can change it before running the installation to modify:
     - keyboard_layouts
     - proxy configuration
     - add a route to the vm

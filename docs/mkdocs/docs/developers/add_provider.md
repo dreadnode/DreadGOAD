@@ -1,123 +1,69 @@
 # Add a new provider
 
-🚧 TODO TO BE COMPLETED
+Adding a new provider involves creating provider-specific files for each lab and updating the DreadGOAD CLI and infrastructure modules.
 
 ## Provider files
 
-- Add the new provider files in each lab location : `ad/<lab>/providers/<provider_name>`
-- Add the new provider files in each extension location : `extensions/<extension>/providers/<provider_name>`
-- Create the provider templates file in : `template/provider/<provider_name>`
+- Add the new provider files in each lab location: `ad/<lab>/providers/<provider_name>`
+- Add the new provider files in each extension location: `extensions/<extension>/providers/<provider_name>`
+- Create the provider templates file in: `template/provider/<provider_name>`
 
-## Provider python class
+## Provider architecture
 
-- Create the new provider class in `goad/provider/`
+DreadGOAD uses a Go CLI (`dreadgoad`) for all provider orchestration. The provider logic lives in `cli/cmd/` and infrastructure is managed through Terragrunt modules in `infra/`.
 
-- If you use vagrant :
-    - create the new provider in `goad/provider/vagrant/myprovider.py`
+There are two main provider patterns:
 
-```python
-from goad.provider.vagrant.vagrant import VagrantProvider
-from goad.utils import *
+### Vagrant-based providers (virtualbox, vmware)
 
+Vagrant-based providers use a `Vagrantfile` in `ad/<lab>/providers/<provider_name>/` to define and manage VMs. The Vagrantfile specifies:
 
-class MyProviderProvider(VagrantProvider):
-    provider_name = MYPROVIDER
-    default_provisioner = PROVISIONING_LOCAL
-    # define the provisioner allowed
-    allowed_provisioners = [PROVISIONING_LOCAL, PROVISIONING_RUNNER, PROVISIONING_DOCKER, PROVISIONING_VM]
+- VM names, memory, and CPU allocations
+- Network interfaces and IP assignments
+- Linked clones from base boxes
+- WinRM communicator settings
 
-    def check(self):
-        checks = [
-            super().check(),
-            self.command.check_myprovider(),
-            # self.command.check_vagrant_plugin('myvagrant_plugin', False)
-        ]
-        return all(checks)
+Each lab's Vagrantfile is self-contained. The CLI invokes Vagrant commands (`vagrant up`, `vagrant halt`, `vagrant destroy`, etc.) to manage the VM lifecycle.
+
+Provider directory structure:
+
+```text
+ad/<lab>/providers/<provider_name>/
+    Vagrantfile     # VM definitions
+    inventory       # Ansible inventory with provider-specific IPs and connection settings
 ```
 
-- add constants in `goad/utils.py`
+### Terraform/Terragrunt-based providers (aws, azure, proxmox)
 
-```python
-MYPROVIDER = "myprovider"
-ALLOWED_PROVIDERS = [AWS, VIRTUALBOX, AZURE, VMWARE, PROXMOX, LUDUS, MYPROVIDER]
+Terraform-based providers define infrastructure as `.tf` files in `ad/<lab>/providers/<provider_name>/` and use shared Terragrunt modules from `infra/` for deployment orchestration.
+
+Each lab's provider directory contains:
+
+```text
+ad/<lab>/providers/<provider_name>/
+    windows.tf      # Windows VM resource definitions
+    linux.tf        # Linux VM resource definitions (if needed)
+    inventory       # Ansible inventory with provider-specific connection settings
 ```
 
-- add the check in the command class:
+The `infra/` directory contains Terragrunt root configuration (`root.hcl`) and deployment modules (`infra/goad-deployment/`) that handle:
 
-```python
-# goad/command/cmd.py
-def check_myprovider(self):
-    pass
-```
+- VPC/network setup
+- Security groups and firewall rules
+- VM provisioning from AMIs or cloud images
+- Jumpbox/provisioning host setup
 
-- add the check in the inherited classes : linux.py/ windows.py / wsl.py
-- add the new provider in the provider_factory.py file
+## Adding a new provider
 
-- If you use Terraform :
-    - create the new provider in `goad/provider/terraform/myprovider.py`
+1. **Create provider directories** in each lab under `ad/<lab>/providers/<provider_name>/` with the appropriate files (Vagrantfile or .tf files) and a provider-specific `inventory` file.
 
-```python
-from goad.provider.terraform.terraform import TerraformProvider
-from goad.utils import *
-from goad.log import Log
+2. **Update CLI support** in `cli/cmd/` to handle the new provider:
+    - Add provider name to the allowed providers list in the configuration (`cli/internal/config/`)
+    - Add any provider-specific commands or flags
+    - Implement health checks in `doctor.go` for provider prerequisites
 
+3. **For Terragrunt providers**: add or extend modules in `infra/` to support the new cloud platform.
 
-class MyProviderProvider(TerraformProvider):
+4. **Add provider templates** in `template/provider/<provider_name>` so new labs can be scaffolded with the correct provider files.
 
-    provider_name = MYPROVIDER
-    default_provisioner = PROVISIONING_REMOTE
-    allowed_provisioners = [PROVISIONING_REMOTE]
-
-    def __init__(self, lab_name):
-        super().__init__(lab_name)
-        self.resource_group = lab_name
-        self.jumpbox_setup_script = 'setup_script.sh'
-
-    def check(self):
-        check = super().check()
-        myproviders_checks = [
-            self.command.mycheck()
-        ]
-        return check and all(myproviders_checks)
-
-    def start(self):
-        # TODO
-        pass
-
-    def stop(self):
-        # TODO
-        pass
-
-    def status(self):
-        # TODO
-        pass
-
-    def start_vm(self, vm_name):
-        # TODO
-        pass
-
-    def stop_vm(self, vm_name):
-        # TODO
-        pass
-
-    def destroy_vm(self, vm_name):
-        # TODO
-        pass
-
-    def ssh_jumpbox(self):
-        # TODO
-        pass
-
-    def get_jumpbox_ip(self, ip_range=''):
-        # TODO
-        pass
-```
-
-- add constants in `goad/utils.py`
-- add the check commands in the cmd.py and the inherited classes : linux.py/ windows.py / wsl.py
-- add the new provider in the provider_factory.py file
-
-- next adapt the menu if needed in menu.py
-- add dependencies if needed in the requirements files, in the dependencies.py files and in the config.py files
-- add a provider color if you want in instances.py
-- define if is_terraform or is_vagrant in instance.py
+5. **Test** with `dreadgoad doctor` to verify prerequisites, then `dreadgoad provision` to run a full deployment.

@@ -58,25 +58,6 @@ func init() {
 	envCreateCmd.Flags().Bool("force", false, "Overwrite existing environment")
 }
 
-func vpcCIDRForEnv(envName string) string {
-	knownCIDRs := map[string]string{
-		"dev":     "10.0.0.0/16",
-		"staging": "10.1.0.0/16",
-		"prod":    "10.2.0.0/16",
-		"test":    "10.8.0.0/16",
-	}
-	if cidr, ok := knownCIDRs[envName]; ok {
-		return cidr
-	}
-	// Generate a deterministic second octet from env name (range 10-250)
-	var hash byte
-	for _, c := range envName {
-		hash = hash*31 + byte(c)
-	}
-	octet := int(hash)%240 + 10
-	return fmt.Sprintf("10.%d.0.0/16", octet)
-}
-
 func runEnvCreate(cmd *cobra.Command, args []string) error {
 	envName := strings.TrimSpace(args[0])
 	if envName == "" {
@@ -94,12 +75,12 @@ func runEnvCreate(cmd *cobra.Command, args []string) error {
 	useVariant, _ := cmd.Flags().GetBool("variant")
 	force, _ := cmd.Flags().GetBool("force")
 
-	if vpcCIDR == "" {
-		vpcCIDR = vpcCIDRForEnv(envName)
-	}
-
 	deployment := cfg.Infra.Deployment
 	infraBase := filepath.Join(cfg.ProjectRoot, "infra", deployment)
+
+	if vpcCIDR == "" {
+		vpcCIDR = cfg.VpcCIDR(envName)
+	}
 	envDir := filepath.Join(infraBase, envName)
 	regionDir := filepath.Join(envDir, region)
 

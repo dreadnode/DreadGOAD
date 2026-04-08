@@ -35,8 +35,9 @@ nav:
     - wazuh: extensions/wazuh.md
   - 💻 Usage:
     - index: usage/index.md
-    - Arguments: usage/goad_args.md
-    - Interactive: usage/goad_console.md
+    - CLI Commands: usage/goad_args.md
+    - Migration Guide: usage/goad_console.md
+  - 🖥️ CLI Reference: cli-reference.md
   - 📝 Developers:
     - index: developers/index.md
     - Add Extension: developers/add_extension.md

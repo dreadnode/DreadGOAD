@@ -84,7 +84,7 @@ goad-{template-name}/
 The `warpgate.yaml` files reference Ansible playbooks under `ansible/playbooks/base/`:
 
 - `dc_base.yml` -- used by `goad-dc-base`, `goad-dc-base-2016`, and `goad-dc-base-2025`
-- `mssql_base.yml` -- used by `goad-mssql-base`, `goad-mssql-base-2016`, and `goad-mssql-base-2025`
+- `mssql_base_setup.yml` + `mssql_base_sql.yml` -- used by `goad-mssql-base`, `goad-mssql-base-2016`, and `goad-mssql-base-2025`
 
 ## Using Built AMIs
 

@@ -24,19 +24,14 @@
       - winrm-elevated
   - ovftool (https://developer.broadcom.com/tools/open-virtualization-format-ovf-tool/latest)
 
-- Provisioning with python
-  - Python3 (>=3.8)
-  - [ansible-core==2.12.6](https://docs.ansible.com/ansible/latest/index.html)
-  - pywinrm
-
-- Or provisioning With Docker
-  - [Docker](https://www.docker.com/)
+- Provisioning
+  - Ansible (installed via the DreadGOAD CLI prerequisites)
+  - ansible-galaxy requirements (`ansible-galaxy collection install -r ansible/requirements.yml`)
 
 ## check dependencies
 
 ```bash
-./goad.sh -p vmware_esxi
-GOAD/vmware_esxi/local/192.168.56.X > check
+dreadgoad doctor
 ```
 
 ![esxi_check.png](./../img/esxi_check.png)
@@ -49,19 +44,10 @@ GOAD/vmware_esxi/local/192.168.56.X > check
 
 ## Install
 
-- To install run the goad script and launch install or use the goad script arguments
+- Once Vagrant has created the VMs, provision the lab using the DreadGOAD CLI:
 
 ```bash
-./goad.sh -p vmware_esxi
-GOAD/vmware_esxi/local/192.168.56.X > set_lab <lab>  # here choose the lab you want (GOAD/GOAD-Light/NHA/SCCM)
-GOAD/vmware_esxi/local/192.168.56.X > set_ip_range <ip_range>  # here choose the  ip range you want to use ex: 192.168.56 (only the first three digits)
-GOAD/vmware_esxi/local/192.168.56.X > install
+dreadgoad provision
 ```
 
 ![esxi_install](./../img/esxi_install.png)
-
-- or all in command line with arguments
-
-```bash
-./goad.sh -t install -p vmware_esxi -l <lab> -ip <ip_range_to_use>
-```

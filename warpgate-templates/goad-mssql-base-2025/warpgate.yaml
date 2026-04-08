@@ -28,9 +28,16 @@ variables:
   ami_name_filter: "Windows_Server-2025-English-Full-Base-*"
 
 provisioners:
-  # Provision with Ansible via AWS SSM
   - type: ansible
-    playbook_path: ${PROVISION_REPO_PATH}/ansible/playbooks/base/mssql_base.yml
+    playbook_path: ${PROVISION_REPO_PATH}/ansible/playbooks/base/mssql_base_setup.yml
+    galaxy_file: ${PROVISION_REPO_PATH}/ansible/requirements.yml
+    extra_vars:
+      ansible_connection: aws_ssm
+      ansible_shell_type: powershell
+      ansible_aws_ssm_bucket_name: ""
+      ansible_aws_ssm_region: "${aws_region}"
+  - type: ansible
+    playbook_path: ${PROVISION_REPO_PATH}/ansible/playbooks/base/mssql_base_sql.yml
     galaxy_file: ${PROVISION_REPO_PATH}/ansible/requirements.yml
     extra_vars:
       ansible_connection: aws_ssm

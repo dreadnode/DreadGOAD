@@ -3,8 +3,33 @@
 # These tasks configure SQL Server after installation
 # They should ALWAYS run to ensure proper configuration (idempotent)
 #
-# Note: SSM sessions run as ssm-user (not SYSTEM), so we must use
-# become to escalate to SYSTEM which has SQL sysadmin privileges.
+# Note: Tasks use become/runas SYSTEM for SqlCmd. The golden AMI build also
+# grants ssm-user an explicit SQL sysadmin login as defense-in-depth
+# (BUILTIN\Administrators alone is not sufficient due to UAC token filtering
+# on non-elevated SSM sessions).
+#
+# ssm-user sysadmin is bracketed: granted at the start of config, revoked at
+# the end. This keeps re-runs idempotent while minimizing residual privilege.
+
+- name: Grant ssm-user SQL sysadmin for config run
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = "Continue"
+    $errors = @()
+
+    $result1 = SqlCmd {{ connection_type }} -Q "IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = 'ssm-user') CREATE LOGIN [ssm-user] FROM WINDOWS WITH DEFAULT_DATABASE=[master]" 2>&1
+    if ($LASTEXITCODE -ne 0) { $errors += "CREATE LOGIN failed: $result1" }
+
+    $result2 = SqlCmd {{ connection_type }} -Q "IF IS_SRVROLEMEMBER('sysadmin', 'ssm-user') = 0 EXEC sp_addsrvrolemember 'ssm-user', 'sysadmin'" 2>&1
+    if ($LASTEXITCODE -ne 0) { $errors += "sp_addsrvrolemember failed: $result2" }
+
+    if ($errors.Count -gt 0) {
+      Write-Error ($errors -join "`n")
+      exit 1
+    }
+    Write-Output "ssm-user granted SQL sysadmin"
+  become: true
+  become_method: ansible.builtin.runas
+  become_user: SYSTEM
 
 - name: Add MSSQL admin
   ansible.windows.win_shell: |
@@ -146,6 +171,26 @@
   become_method: ansible.builtin.runas
   become_user: SYSTEM
   register: auth_mode_result
+
+- name: Revoke ssm-user SQL sysadmin after config
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = "Continue"
+    $errors = @()
+
+    $result1 = SqlCmd {{ connection_type }} -Q "IF IS_SRVROLEMEMBER('sysadmin', 'ssm-user') = 1 EXEC sp_dropsrvrolemember 'ssm-user', 'sysadmin'" 2>&1
+    if ($LASTEXITCODE -ne 0) { $errors += "sp_dropsrvrolemember failed: $result1" }
+
+    $result2 = SqlCmd {{ connection_type }} -Q "IF EXISTS (SELECT 1 FROM sys.server_principals WHERE name = 'ssm-user') DROP LOGIN [ssm-user]" 2>&1
+    if ($LASTEXITCODE -ne 0) { $errors += "DROP LOGIN failed: $result2" }
+
+    if ($errors.Count -gt 0) {
+      Write-Error ($errors -join "`n")
+      exit 1
+    }
+    Write-Output "ssm-user SQL sysadmin revoked"
+  become: true
+  become_method: ansible.builtin.runas
+  become_user: SYSTEM
 
 - name: Restart service MSSQL
   ansible.windows.win_service:

@@ -27,6 +27,7 @@ type EnvironmentConfig struct {
 	VariantTarget     string   `mapstructure:"variant_target"`
 	VariantName       string   `mapstructure:"variant_name"`
 	EnabledExtensions []string `mapstructure:"enabled_extensions"`
+	VpcCidr           string   `mapstructure:"vpc_cidr"`
 }
 
 // InfraConfig holds infrastructure/terragrunt settings.
@@ -221,6 +222,21 @@ func (c *Config) IsExtensionCompatible(name, lab string) bool {
 // EnabledExtensionsForEnv returns the enabled extensions for the active environment.
 func (c *Config) EnabledExtensionsForEnv() []string {
 	return c.ActiveEnvironment().EnabledExtensions
+}
+
+// VpcCIDR returns the VPC CIDR for the given environment. It checks the
+// environment config first, falling back to deterministic generation.
+func (c *Config) VpcCIDR(envName string) string {
+	if ec, ok := c.Environments[envName]; ok && ec.VpcCidr != "" {
+		return ec.VpcCidr
+	}
+	// Generate a deterministic second octet from env name (range 10-250)
+	var hash byte
+	for _, ch := range envName {
+		hash = hash*31 + byte(ch)
+	}
+	octet := int(hash)%240 + 10
+	return fmt.Sprintf("10.%d.0.0/16", octet)
 }
 
 // InfraBasePath returns the base path for a deployment's infra directory.
