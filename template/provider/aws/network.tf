@@ -1,11 +1,11 @@
 # VPC
 resource "aws_vpc" "goad_vpc" {
-  cidr_block = var.goad_cidr 
-  tags = { 
+  cidr_block = var.goad_cidr
+  tags = {
     Name = "{{lab_name}}-VPC"
     Lab = "{{lab_identifier}}"
-  } 
-} 
+  }
+}
 
 
 # Subnets
@@ -13,7 +13,7 @@ resource "aws_subnet" "goad_private_network" {
   vpc_id     = aws_vpc.goad_vpc.id
   cidr_block = var.goad_private_cidr
   availability_zone = var.zone
-  
+
   tags = {
     Name = "{{lab_name}}-private-network"
     Lab = "{{lab_identifier}}"
@@ -190,4 +190,3 @@ resource "aws_nat_gateway" "nat_gateway" {
 
   depends_on = [aws_internet_gateway.internet_gateway]
 }
-

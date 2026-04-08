@@ -1,0 +1,126 @@
+---
+# Configure Windows Audit Policies for File Share and Object Access Auditing
+# This role enables detailed audit logging for Events 5145 (Detailed File Share Access)
+# and 4663 (Object Access) which are NOT enabled by default in Windows Server
+
+- name: Enable Detailed File Share auditing (Event 5145)
+  ansible.windows.win_shell: |
+    auditpol /set /subcategory:"Detailed File Share" /success:enable /failure:enable
+  register: audit_file_share
+  changed_when: audit_file_share.rc == 0
+
+- name: Enable File System auditing (Event 4663 - Step 1)
+  ansible.windows.win_shell: |
+    auditpol /set /subcategory:"File System" /success:enable /failure:enable
+  register: audit_file_system
+  changed_when: audit_file_system.rc == 0
+
+- name: Enable Handle Manipulation auditing (Event 4658, 4690)
+  ansible.windows.win_shell: |
+    auditpol /set /subcategory:"Handle Manipulation" /success:enable /failure:enable
+  register: audit_handle_manipulation
+  changed_when: audit_handle_manipulation.rc == 0
+
+- name: Configure SACL on SYSVOL folder (Event 4663 - Step 2)
+  ansible.windows.win_shell: |
+    $sysvol = "C:\Windows\SYSVOL\domain"
+    if (Test-Path $sysvol) {
+      # Get current ACL
+      $acl = Get-Acl $sysvol
+
+      # Create audit rule for Everyone - ReadData/WriteData/Delete/DeleteSubdirectoriesAndFiles
+      $auditRule = New-Object System.Security.AccessControl.FileSystemAuditRule(
+        "Everyone",
+        "ReadData,WriteData,AppendData,Delete,DeleteSubdirectoriesAndFiles,ReadAttributes,WriteAttributes,ReadExtendedAttributes,WriteExtendedAttributes",
+        "ContainerInherit,ObjectInherit",
+        "None",
+        "Success,Failure"
+      )
+
+      # Add audit rule to ACL
+      $acl.AddAuditRule($auditRule)
+
+      # Apply the ACL
+      Set-Acl -Path $sysvol -AclObject $acl
+
+      Write-Output "SACL configured on SYSVOL"
+    } else {
+      Write-Output "SYSVOL not found - skipping (not a DC or not yet configured)"
+    }
+  register: sacl_sysvol
+  changed_when: "'SACL configured' in sacl_sysvol.stdout"
+  failed_when: false
+
+- name: Configure SACL on NETLOGON folder (Event 4663 - Step 2)
+  ansible.windows.win_shell: |
+    $netlogon = "C:\Windows\SYSVOL\sysvol\{{ domain }}\scripts"
+    if (Test-Path $netlogon) {
+      # Get current ACL
+      $acl = Get-Acl $netlogon
+
+      # Create audit rule for Everyone - ReadData/WriteData/Delete/DeleteSubdirectoriesAndFiles
+      $auditRule = New-Object System.Security.AccessControl.FileSystemAuditRule(
+        "Everyone",
+        "ReadData,WriteData,AppendData,Delete,DeleteSubdirectoriesAndFiles,ReadAttributes,WriteAttributes,ReadExtendedAttributes,WriteExtendedAttributes",
+        "ContainerInherit,ObjectInherit",
+        "None",
+        "Success,Failure"
+      )
+
+      # Add audit rule to ACL
+      $acl.AddAuditRule($auditRule)
+
+      # Apply the ACL
+      Set-Acl -Path $netlogon -AclObject $acl
+
+      Write-Output "SACL configured on NETLOGON"
+    } else {
+      Write-Output "NETLOGON not found at expected path - skipping"
+    }
+  register: sacl_netlogon
+  changed_when: "'SACL configured' in sacl_netlogon.stdout"
+  failed_when: false
+
+- name: Configure SACL on additional sensitive folders
+  ansible.windows.win_shell: |
+    $folder = "{{ item.path }}"
+    if (Test-Path $folder) {
+      # Get current ACL
+      $acl = Get-Acl $folder
+
+      # Create audit rule with specified permissions
+      $auditRule = New-Object System.Security.AccessControl.FileSystemAuditRule(
+        "{{ item.identity | default('Everyone') }}",
+        "{{ item.rights | default('ReadData,WriteData,AppendData,Delete,DeleteSubdirectoriesAndFiles') }}",
+        "{{ item.inheritance | default('ContainerInherit,ObjectInherit') }}",
+        "None",
+        "{{ item.audit_flags | default('Success,Failure') }}"
+      )
+
+      # Add audit rule to ACL
+      $acl.AddAuditRule($auditRule)
+
+      # Apply the ACL
+      Set-Acl -Path $folder -AclObject $acl
+
+      Write-Output "SACL configured on {{ item.path }}"
+    } else {
+      Write-Output "Path not found: {{ item.path }} - skipping"
+    }
+  loop: "{{ security_vars.audit_folders | default([]) }}"
+  register: sacl_custom
+  changed_when: "'SACL configured' in sacl_custom.stdout"
+  failed_when: false
+  when: security_vars.audit_folders is defined
+
+- name: Verify audit policies are enabled
+  ansible.windows.win_shell: |
+    Write-Output "=== Current Audit Policy Configuration ==="
+    auditpol /get /subcategory:"Detailed File Share"
+    auditpol /get /subcategory:"File System"
+    auditpol /get /subcategory:"Handle Manipulation"
+  register: audit_verification
+
+- name: Display audit policy verification
+  ansible.builtin.debug:
+    var: audit_verification.stdout_lines

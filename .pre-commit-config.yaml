@@ -1,0 +1,178 @@
+---
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: check-symlinks
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-added-large-files
+        exclude: '(docs/img/.*\.png|ad/.*/files/.*/wwwroot/bin/.*\.(dll|exe))$'
+      - id: detect-private-key
+        exclude: 'ad/.*/files/.*'
+      - id: check-shebang-scripts-are-executable
+
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+
+  - repo: https://github.com/adrienverge/yamllint.git
+    rev: v1.38.0
+    hooks:
+      - id: yamllint
+        entry: yamllint --strict -c .hooks/linters/yamllint.yaml
+        exclude: 'template/provider/ludus/config\.yml|requirements_311\.yml|noansible_requirements\.yml'
+
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.2
+    hooks:
+      - id: codespell
+        entry: codespell -q 3 -f -S ".git,.github,README.md"
+        exclude: '(\.min\.css\.map|\.css\.map|\.min\.map|\.min\.js|sysmonconfig-export\.xml|jquery\.validate\.(min\.)?js|jquery-3\.4\.1(\.slim)?\.js|modernizr-[\d\.]+\.js)$'
+
+  - repo: https://github.com/jumanjihouse/pre-commit-hooks
+    rev: 3.0.0
+    hooks:
+      - id: script-must-have-extension
+        name: Ensure shell scripts end with .sh
+        types: [shell]
+        exclude: '\.sh\.tpl$'
+      - id: shellcheck
+        exclude: '\.sh\.tpl$'
+      - id: shfmt
+
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.48.0
+    hooks:
+      - id: markdownlint
+        args: ['--fix', '--config', '.hooks/linters/markdownlint.json']
+
+  - repo: https://github.com/ansible/ansible-lint
+    rev: v26.4.0
+    hooks:
+      - id: ansible-lint
+        entry: ansible-lint -v --force-color -c .hooks/linters/ansible-lint.yaml
+        language: python
+        language_version: python3
+        # do not pass files to ansible-lint, see:
+        # https://github.com/ansible-community/ansible-lint/issues/611
+        # pass_filenames: false
+        always_run: true
+        # https://github.com/pre-commit/pre-commit/issues/1526
+        # if you want to use only the base ansible version for linting,
+        # replace 'community' extra with 'core' or just mention the exact
+        # version of Ansible you want to install as a dependency.
+        additional_dependencies: [".[community]"]
+
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.105.0
+    hooks:
+      - id: terraform_fmt
+        files: ^(modules|infra)/
+      - id: terraform_validate
+        files: ^modules/
+        args:
+          - --hook-config=--retry-once-with-cleanup=true
+      - id: terraform_tflint
+        files: ^(modules|infra)/
+        args:
+          - --args=--config=__GIT_WORKING_DIR__/.hooks/linters/.tflint.hcl
+
+  - repo: local
+    hooks:
+      - id: prettier
+        name: Run prettier
+        entry: .hooks/prettier-hook.sh
+        language: script
+        types: [json, yaml]
+
+      - id: docsible
+        name: Generate Ansible documentation with docsible
+        entry: .hooks/docsible-hook.sh
+        language: script
+        always_run: true
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: update-architecture-diagram
+        name: Update Architecture Diagram
+        entry: python .hooks/gen-arch-diagram.py
+        language: system
+        pass_filenames: false
+        always_run: false
+        files: ^ansible/(roles/|plugins/|playbooks/).*
+
+      - id: go-fmt
+        name: Run gofmt
+        entry: bash -c 'cd cli && gofmt -l -w .'
+        language: system
+        files: '\.go$'
+        pass_filenames: false
+
+      - id: go-imports
+        name: Run goimports
+        entry: bash -c 'cd cli && goimports -l -w .'
+        language: system
+        files: '\.go$'
+        pass_filenames: false
+
+      - id: go-cyclo
+        name: Run gocyclo
+        entry: bash -c 'cd cli && gocyclo -over 15 .'
+        language: system
+        files: '\.go$'
+        pass_filenames: false
+
+      - id: golangci-lint
+        name: Run golangci-lint
+        entry: bash -c 'cd cli && golangci-lint run --timeout=5m --enable=unused ./...'
+        language: system
+        files: '\.go$'
+        pass_filenames: false
+
+      - id: go-critic
+        name: Run go-critic
+        entry: bash -c 'cd cli && gocritic check ./...'
+        language: system
+        files: '\.go$'
+        pass_filenames: false
+
+      - id: go-build
+        name: Run go build
+        entry: bash -c 'cd cli && go build ./...'
+        language: system
+        files: '\.go$'
+        pass_filenames: false
+
+      - id: go-mod-tidy
+        name: Run go mod tidy
+        entry: bash -c 'cd cli && go mod tidy'
+        language: system
+        files: '(go\.mod|go\.sum)$'
+        pass_filenames: false
+
+      - id: go-no-replacement
+        name: Avoid committing a go module replacement
+        entry: .hooks/go-no-replacement.sh
+        language: script
+        files: go.mod
+
+      - id: go-unit-tests
+        name: Go unit tests
+        language: script
+        entry: .hooks/run-go-tests.sh modified
+        files: '\.go$'
+        pass_filenames: true
+
+      - id: go-vet
+        name: Run go vet
+        language: script
+        entry: .hooks/go-vet.sh
+        files: '\.go$'
+        always_run: true
+        pass_filenames: true
+        require_serial: true
+        log_file: /tmp/go-vet.log

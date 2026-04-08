@@ -127,42 +127,32 @@ class GoadPath:
     def get_instance_provider_path(instance_id):
         return GoadPath.get_instance_path(instance_id) + sep + 'provider'
 
-    # EXTENSIONS
+    # EXTENSIONS — Ansible content lives in ansible/playbooks/{templates,files}/extensions/,
+    # provider configs live in providers/ at project root.
     @staticmethod
-    def get_extensions_path():
-        return project_path + os.path.sep + 'extensions'
+    def get_extension_inventory_template(extension_name):
+        return project_path + sep + 'ansible' + sep + 'playbooks' + sep + 'templates' + sep + 'extensions' + sep + extension_name + sep + 'inventory.j2'
 
     @staticmethod
-    def get_extension_path(extension_name):
-        """
-        :return: <project>/extensions/<extension_name>/
-        """
-        return GoadPath.get_extensions_path() + os.path.sep + extension_name + os.path.sep
+    def get_extension_data_dir(extension_name):
+        return project_path + sep + 'ansible' + sep + 'playbooks' + sep + 'files' + sep + 'extensions' + sep + extension_name
 
     @staticmethod
     def get_extension_config_file(extension_name):
-        """
-        :return: <project>/extensions/<extension_name>/
-        """
-        return GoadPath.get_extensions_path() + os.path.sep + extension_name + os.path.sep + 'extension.json'
+        return GoadPath.get_extension_data_dir(extension_name) + sep + 'extension.json'
+
+    @staticmethod
+    def get_extensions_ansible_path():
+        return project_path + sep + 'ansible' + sep + 'playbooks' + sep + 'files' + sep + 'extensions'
 
     @staticmethod
     def get_extension_providers_path(extension_name):
-        """
-        :return: <project>/extensions/<extension_name>/provider
-        """
-        return GoadPath.get_extension_path(extension_name) + 'providers'
+        return project_path + sep + 'providers' + sep + extension_name
 
     @staticmethod
     def get_extension_providers_provider_path(extension_name, provider_name):
-        """
-        :return:  <project>/extensions/<extension_name>/providers/<provider>/
-        """
-        return GoadPath.get_extension_providers_path(extension_name) + os.path.sep + provider_name + os.path.sep
+        return GoadPath.get_extension_providers_path(extension_name) + sep + provider_name + sep
 
     @staticmethod
     def get_extension_ansible_path(extension_name):
-        """
-        :return <project>/extensions/<extension_name>/ansible
-        """
-        return GoadPath.get_extension_path(extension_name) + 'ansible'
+        return GoadPath.get_extension_data_dir(extension_name)

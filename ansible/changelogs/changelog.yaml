@@ -1,0 +1,18 @@
+---
+ancestor: null
+releases:
+  1.0.0:
+    release_date: "2026-03-30"
+    changes:
+      release_summary: >-
+        Initial release of the dreadnode.goad Ansible collection.
+        Restructured from the DreadGOAD project into a proper
+        Ansible collection format.
+      major_changes:
+        - Restructured repository as a standalone Ansible collection (dreadnode.goad).
+        - Flattened nested roles (settings/*, security/*, vulns/*, laps/*, sccm/*) with prefix naming.
+        - Extracted custom PowerShell modules to plugins/modules/.
+        - All role references updated to use fully qualified collection names (FQCN).
+        - Removed non-Ansible components (Python provisioner, Vagrant, Packer, Terraform).
+      deprecated_features:
+        - Replaced community.windows.win_domain_user with microsoft.ad.user in onlyusers role.

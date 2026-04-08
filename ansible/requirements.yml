@@ -1,18 +1,22 @@
 ---
 collections:
-  # Install a collection from Ansible Galaxy.
   - name: ansible.windows
-    version: 1.11.0
+    version: ">=2.5.0"
   - name: community.general
+    version: ">=9.0.0,<11.0.0"
   - name: community.windows
-    version: 1.11.0
+    version: ">=2.3.0"
   - name: chocolatey.chocolatey
+    version: ">=1.5.3"
   - name: community.crypto
   - name: community.mysql
   - name: scicore.guacamole
   - name: ansible.posix
-# - name: goad.windows
-#   type: dir
-#   source: ./collections/goad/windows
+  - name: microsoft.ad
+    version: 1.10.0
+  - name: amazon.aws
+    version: 11.2.0
+
 roles:
   - name: geerlingguy.mysql
+    version: ">=4.0.0,<5.0.0"

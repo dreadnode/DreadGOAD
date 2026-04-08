@@ -1,6 +1,7 @@
+---
 - name: Install-WindowsFeature RSAT-AD-PowerShell
   ansible.windows.win_feature:
-    name: RSAT-AD-PowerShell 
+    name: RSAT-AD-PowerShell
     state: present
   when: "hostname in item.value.gMSA_HostNames"
   with_dict: "{{ ad_gmsa }}"
@@ -9,17 +10,29 @@
   ansible.windows.win_powershell:
     script: |
       [CmdletBinding()]
-        param (
+      param (
           [String]
           $gMSA_Name
       )
-      Install-ADServiceAccount -Identity $gMSA_Name
+      try {
+          Install-ADServiceAccount -Identity $gMSA_Name
+          $Ansible.Changed = $true
+          Write-Output "Successfully installed GMSA account $gMSA_Name"
+      }
+      catch {
+          Write-Error "Failed to install GMSA account: $_"
+          $Ansible.Changed = $false
+          exit 1
+      }
     parameters:
-        gMSA_Name: "{{item.value.gMSA_Name}}"
+      gMSA_Name: "{{ item.value.gMSA_Name }}"
+    error_action: stop
   vars:
-    ansible_become: yes
-    ansible_become_method: runas
-    ansible_become_user: "{{domain_username}}"
-    ansible_become_password: "{{domain_password}}"
+    ansible_become: true
+    ansible_become_method: ansible.builtin.runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
   when: "hostname in item.value.gMSA_HostNames"
   with_dict: "{{ ad_gmsa }}"
+  register: gmsa_install_result
+  failed_when: gmsa_install_result.host_err is defined and gmsa_install_result.host_err != '' or gmsa_install_result.stderr is defined and gmsa_install_result.stderr != ''

@@ -1,0 +1,13 @@
+---
+
+# set AD data ==================================================================================================
+
+- name: Prepare servers set admin password, set hostname
+  hosts: domain
+  tags: prepare_servers
+  roles:
+    - { role: 'dreadnode.goad.settings_admin_password', tags: 'admin_password' }
+    - { role: 'dreadnode.goad.settings_hostname', tags: 'hostname' }
+  vars:
+    local_admin_password: "{{ lab.hosts[inventory_hostname].local_admin_password }}"
+    hostname: "{{ lab.hosts[inventory_hostname].hostname }}"

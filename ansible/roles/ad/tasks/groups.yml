@@ -1,28 +1,221 @@
+---
 # https://clintboessen.blogspot.com/2010/04/group-scopes.html
 # https://docs.microsoft.com/en-us/previous-versions/windows/it-pro/windows-server-2003/cc755692(v=ws.10)
-- name: Create Groups Universal
-  win_domain_group:
-    name: "{{ item.key }}"
-    scope: universal
-    path: "{{item.value.path}}"
-    state: present
-  with_dict: "{{ ad_groups['universal'] }}"
+- name: Create Universal Groups
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param (
+          [String]$GroupName,
+          [String]$GroupScope = "Universal",
+          [String]$Path
+      )
+      try {
+          try {
+              $groupExists = Get-ADGroup -Filter {Name -eq $GroupName} -ErrorAction SilentlyContinue
+          } catch {
+              $groupExists = $null
+          }
+          if ($groupExists) {
+              Write-Output "Group $GroupName already exists, skipping creation"
+              $Ansible.Changed = $false
+          } else {
+              $params = @{
+                  Name = $GroupName
+                  GroupScope = $GroupScope
+                  GroupCategory = "Security"
+              }
+              if (-not [String]::IsNullOrEmpty($Path)) {
+                  $params["Path"] = $Path
+              }
+              New-ADGroup @params
+              Write-Output "Group $GroupName created successfully"
+              $Ansible.Changed = $true
+          }
+      } catch {
+          Write-Error "Failed to create group $GroupName - $_"
+          $Ansible.Changed = $false
+          exit 1
+      }
+    parameters:
+      GroupName: "{{ item.key }}"
+      GroupScope: "Universal"
+      Path: "{{ item.value.path | default('') }}"
+  loop: "{{ ad_groups['universal'] | dict2items }}"
+  loop_control:
+    label: "Creating universal group: {{ item.key }}"
   when: ad_groups['universal'] is defined
+  register: universal_group_result
+  retries: 3
+  delay: 10
+  until: universal_group_result is not failed
+  async: 120
+  poll: 0
 
-- name: Create Groups Global
-  win_domain_group:
-    name: "{{ item.key }}"
-    scope: global
-    path: "{{item.value.path}}"
-    state: present
-  with_dict: "{{ ad_groups['global'] }}"
+- name: Wait for Universal group creation to complete
+  ansible.builtin.async_status:
+    jid: "{{ item.ansible_job_id }}"
+  register: universal_group_status
+  until: universal_group_status.finished
+  retries: 30
+  delay: 5
+  loop: "{{ universal_group_result.results }}"
+  loop_control:
+    label: "Waiting for universal group: {{ item.item.key }}"
+  when: universal_group_result is not skipped and item.ansible_job_id is defined
+
+- name: Create Global Groups
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param (
+          [String]$GroupName,
+          [String]$GroupScope = "Global",
+          [String]$Path
+      )
+      try {
+          try {
+              $groupExists = Get-ADGroup -Filter {Name -eq $GroupName} -ErrorAction SilentlyContinue
+          } catch {
+              $groupExists = $null
+          }
+          if ($groupExists) {
+              Write-Output "Group $GroupName already exists, skipping creation"
+              $Ansible.Changed = $false
+          } else {
+              $params = @{
+                  Name = $GroupName
+                  GroupScope = $GroupScope
+                  GroupCategory = "Security"
+              }
+              if (-not [String]::IsNullOrEmpty($Path)) {
+                  $params["Path"] = $Path
+              }
+              New-ADGroup @params
+              Write-Output "Group $GroupName created successfully"
+              $Ansible.Changed = $true
+          }
+      } catch {
+          Write-Error "Failed to create group $GroupName - $_"
+          $Ansible.Changed = $false
+          exit 1
+      }
+    parameters:
+      GroupName: "{{ item.key }}"
+      GroupScope: "Global"
+      Path: "{{ item.value.path | default('') }}"
+  loop: "{{ ad_groups['global'] | dict2items }}"
+  loop_control:
+    label: "Creating global group: {{ item.key }}"
   when: ad_groups['global'] is defined
+  register: global_group_result
+  retries: 3
+  delay: 10
+  until: global_group_result is not failed
+  async: 120
+  poll: 0
 
-- name: Create Groups domainlocal
-  win_domain_group:
-    name: "{{ item.key }}"
-    scope: domainlocal
-    path: "{{item.value.path}}"
-    state: present
-  with_dict: "{{ ad_groups['domainlocal'] }}"
+- name: Wait for Global group creation to complete
+  ansible.builtin.async_status:
+    jid: "{{ item.ansible_job_id }}"
+  register: global_group_status
+  until: global_group_status.finished
+  retries: 30
+  delay: 5
+  loop: "{{ global_group_result.results }}"
+  loop_control:
+    label: "Waiting for global group: {{ item.item.key }}"
+  when: global_group_result is not skipped and item.ansible_job_id is defined
+
+- name: Create DomainLocal Groups
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param (
+          [String]$GroupName,
+          [String]$GroupScope = "DomainLocal",
+          [String]$Path
+      )
+
+      # First check if AD Web Services are running
+      try {
+          # Try to get domain info to check connectivity
+          $domainInfo = Get-ADDomain -ErrorAction SilentlyContinue
+          Write-Output "AD Web Services are available, domain is $($domainInfo.DNSRoot)"
+      } catch {
+          # Check if the service is running
+          $adws = Get-Service -Name ADWS -ErrorAction SilentlyContinue
+          if (-not $adws -or $adws.Status -ne 'Running') {
+              Start-Service -Name ADWS -ErrorAction SilentlyContinue
+              Start-Sleep -Seconds 10
+              try {
+                  $domainInfo = Get-ADDomain -ErrorAction Stop
+                  Write-Output "AD Web Services are now available, domain is $($domainInfo.DNSRoot)"
+              } catch {
+                  Write-Error ("Active Directory Web Services still not available - " + $_.Exception.Message)
+                  exit 1
+              }
+          } else {
+              Write-Error ("Unable to connect to Active Directory - " + $_.Exception.Message)
+              exit 1
+          }
+      }
+
+      try {
+          # Check if group exists
+          try {
+              $groupExists = Get-ADGroup -Filter {Name -eq $GroupName} -ErrorAction SilentlyContinue
+          } catch {
+              # Error in Get-ADGroup, possibly domain connectivity issues
+              Write-Error ("Failed to query AD for group $GroupName - " + $_.Exception.Message)
+              exit 1
+          }
+
+          if ($groupExists) {
+              Write-Output "Group $GroupName already exists, skipping creation"
+              $Ansible.Changed = $false
+          } else {
+              $params = @{
+                  Name = $GroupName
+                  GroupScope = $GroupScope
+                  GroupCategory = "Security"
+              }
+              if (-not [String]::IsNullOrEmpty($Path)) {
+                  $params["Path"] = $Path
+              }
+
+              New-ADGroup @params
+              Write-Output "Group $GroupName created successfully"
+              $Ansible.Changed = $true
+          }
+      } catch {
+          Write-Error ("Failed to create group $GroupName - " + $_.Exception.Message)
+          $Ansible.Changed = $false
+          exit 1
+      }
+    parameters:
+      GroupName: "{{ item.key }}"
+      GroupScope: "DomainLocal"
+      Path: "{{ item.value.path | default('') }}"
+  loop: "{{ ad_groups['domainlocal'] | dict2items }}"
+  loop_control:
+    label: "Creating domainlocal group: {{ item.key }}"
   when: ad_groups['domainlocal'] is defined
+  register: domainlocal_group_result
+  retries: 3
+  delay: 10
+  until: domainlocal_group_result is not failed
+  async: 120
+  poll: 0
+
+- name: Wait for DomainLocal group creation to complete
+  ansible.builtin.async_status:
+    jid: "{{ item.ansible_job_id }}"
+  register: domainlocal_group_status
+  until: domainlocal_group_status.finished
+  retries: 30
+  delay: 5
+  loop: "{{ domainlocal_group_result.results }}"
+  loop_control:
+    label: "Waiting for domainlocal group: {{ item.item.key }}"
+  when: domainlocal_group_result is not skipped and item.ansible_job_id is defined

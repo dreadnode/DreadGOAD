@@ -1,0 +1,19 @@
+---
+galaxy_info:
+  role_name: disable_user
+  namespace: dreadnode
+  author: Dreadnode
+  company: Dreadnode
+  description: Disable an Active Directory user account
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Windows
+      versions:
+        - all
+  galaxy_tags:
+    - windows
+    - active_directory
+    - user_management
+
+dependencies: []

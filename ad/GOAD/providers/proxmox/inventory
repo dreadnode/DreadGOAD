@@ -19,4 +19,3 @@ srv03 ansible_host={{ip_range}}.23 dns_domain=dc03 dict_key=srv03
 [all:vars]
 force_dns_server=yes
 dns_server={{ip_range}}.1
-

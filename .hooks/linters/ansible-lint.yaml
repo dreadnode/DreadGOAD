@@ -1,0 +1,47 @@
+---
+# exclude_paths included in this file are parsed relative to this file's location
+# and not relative to the CWD of execution. CLI arguments passed to the --exclude
+# option are parsed relative to the CWD of execution.
+exclude_paths:
+  - .claude/
+  - .github/
+  - infra/
+  # Files with unskippable load-failure (unicode/runtime) or syntax-check issues
+  - ad/GOAD-Light/files/dc01/templates/
+  - ad/GOAD-Mini/files/dc01/templates/
+  - ad/NHA/files/templates/
+  - docs/mkdocs/mkdocs.yml
+  - noansible_requirements.yml
+  - ansible/requirements_311.yml
+  - template/provider/ludus/
+  - playbooks.yml
+  # Extension playbooks reference roles/deps not resolvable in the linter sandbox
+  - ansible/playbooks/ext-exchange.yml
+  - ansible/playbooks/ext-guacamole.yml
+  - ansible/playbooks/ext-lx01.yml
+  - ansible/playbooks/ext-wazuh.yml
+  - ansible/playbooks/network_setup.yml
+  - ansible/roles/onlyusers/
+
+skip_list:
+  - yaml
+  - command-instead-of-shell
+  - role-name
+  - git-latest
+  - package-latest
+  - var-naming[no-role-prefix]
+  - var-naming[pattern]
+  - naming[pattern]
+  # syntax-check is unskippable - use exclude_paths instead
+  - hostvars
+  # load-failure is unskippable - use exclude_paths instead
+  - no-changed-when
+  - risky-shell-pipe
+  - risky-file-permissions
+  - meta-no-tags
+  - no-handler
+  - ignore-errors
+  - literal-compare
+  - no-free-form
+  - run-once[task]
+  - key-order[task]

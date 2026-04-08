@@ -1,3 +1,0 @@
-- name: laps server install
-  import_tasks: install.yml
-  when: laps_path != false and use_laps == true

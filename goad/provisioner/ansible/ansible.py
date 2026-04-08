@@ -51,7 +51,7 @@ class Ansible(Provisioner):
 
         # validate playbooks
         for playbook in playbook_datas:
-            playbook_path = GoadPath.get_provisioner_path() + playbook
+            playbook_path = GoadPath.get_provisioner_path() + 'playbooks' + os.path.sep + playbook
             if not os.path.isfile(playbook_path):
                 Log.error(f'{playbook} not valid, file {playbook_path} not found')
             else:

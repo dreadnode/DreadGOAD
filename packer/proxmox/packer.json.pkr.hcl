@@ -31,17 +31,17 @@ source "proxmox-iso" "windows" {
   communicator            = "winrm"
   cores                   = "${var.vm_cpu_cores}"
   disks {
-    disk_size         = "${var.vm_disk_size}"
-    format            = "${var.vm_disk_format}"
-    storage_pool      = "${var.proxmox_vm_storage}"
-    type              = "sata"
+    disk_size    = "${var.vm_disk_size}"
+    format       = "${var.vm_disk_format}"
+    storage_pool = "${var.proxmox_vm_storage}"
+    type         = "sata"
   }
   insecure_skip_tls_verify = "${var.proxmox_skip_tls_verify}"
   iso_file                 = "${var.iso_file}"
   memory                   = "${var.vm_memory}"
   network_adapters {
-    bridge = "vmbr3"
-    model  = "virtio"
+    bridge   = "vmbr3"
+    model    = "virtio"
     vlan_tag = "10"
   }
   node                 = "${var.proxmox_node}"

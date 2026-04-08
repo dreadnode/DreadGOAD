@@ -1,0 +1,31 @@
+---
+# MSSQL Audit Configuration
+# Enables SQL Server auditing for security monitoring
+
+# Audit name
+mssql_audit_name: "GOAD_SecurityAudit"
+
+# Audit specification name
+mssql_audit_spec_name: "GOAD_AuditSpec"
+
+# Audit file path (for file-based auditing)
+mssql_audit_file_path: "C:\\SQLAudit"
+
+# Maximum audit file size in MB
+mssql_audit_max_file_size: 100
+
+# Maximum number of rollover files
+mssql_audit_max_rollover_files: 10
+
+# Audit destination: APPLICATION_LOG, SECURITY_LOG, or FILE
+# Note: SECURITY_LOG requires additional permissions
+mssql_audit_destination: "APPLICATION_LOG"
+
+# Enable Extended Events session for Express edition
+mssql_enable_xevents: true
+
+# XEvents session name
+mssql_xevents_session_name: "GOAD_SecurityMonitoring"
+
+# XEvents file path
+mssql_xevents_file_path: "C:\\SQLAudit\\xevents"

@@ -1,0 +1,74 @@
+---
+# DC Audit SACL Configuration
+# Configures SACL entries on domain objects for attack detection (DCSync, etc.)
+# This role should only run on Domain Controllers AFTER they have been promoted
+
+- name: Configure auditpol for Directory Service Access
+  ansible.windows.win_shell: |
+    auditpol /set /subcategory:"{{ item }}" /success:enable
+  loop: "{{ dc_audit_sacl_subcategories }}"
+  when: dc_audit_sacl_ensure_auditpol
+  register: dc_audit_sacl_auditpol_result
+  changed_when: dc_audit_sacl_auditpol_result.rc == 0
+
+- name: Get current domain DN
+  ansible.windows.win_shell: |
+    Import-Module ActiveDirectory
+    (Get-ADDomain).DistinguishedName
+  register: dc_audit_sacl_domain_dn
+  changed_when: false
+
+- name: Configure SACL for replication GUIDs (DCSync detection)
+  ansible.windows.win_shell: |
+    Import-Module ActiveDirectory
+    $domainDN = "{{ dc_audit_sacl_domain_dn.stdout | trim }}"
+    $guid = [GUID]"{{ item.guid }}"
+    $principal = New-Object System.Security.Principal.SecurityIdentifier("{{ dc_audit_sacl_principal }}")
+
+    # Get current ACL with audit rules
+    $acl = Get-Acl -Path "AD:\$domainDN" -Audit
+
+    # Check if rule already exists
+    $existingRule = $acl.Audit | Where-Object {
+      $_.ObjectType -eq $guid -and
+      $_.IdentityReference.Translate([System.Security.Principal.SecurityIdentifier]) -eq $principal
+    }
+
+    if ($existingRule) {
+      Write-Host "SACL_EXISTS: {{ item.name }}"
+      exit 0
+    }
+
+    # Create and add audit rule
+    $auditRule = New-Object System.DirectoryServices.ActiveDirectoryAuditRule(
+      $principal,
+      [System.DirectoryServices.ActiveDirectoryRights]::ExtendedRight,
+      [System.Security.AccessControl.AuditFlags]::{{ dc_audit_sacl_flags }},
+      $guid
+    )
+    $acl.AddAuditRule($auditRule)
+    Set-Acl -Path "AD:\$domainDN" -AclObject $acl
+    Write-Host "SACL_ADDED: {{ item.name }}"
+  loop: "{{ dc_audit_sacl_replication_guids }}"
+  register: dc_audit_sacl_result
+  changed_when: "'SACL_ADDED' in dc_audit_sacl_result.stdout"
+
+- name: Verify SACL configuration
+  ansible.windows.win_shell: |
+    Import-Module ActiveDirectory
+    $domainDN = "{{ dc_audit_sacl_domain_dn.stdout | trim }}"
+    $acl = Get-Acl -Path "AD:\$domainDN" -Audit
+    $replicationGuids = @(
+      "1131f6aa-9c07-11d1-f79f-00c04fc2dcd2",
+      "1131f6ad-9c07-11d1-f79f-00c04fc2dcd2",
+      "89e95b76-444d-4c62-991a-0facbeda640c"
+    )
+    $configured = $acl.Audit | Where-Object { $replicationGuids -contains $_.ObjectType.ToString() }
+    Write-Host "Configured SACL entries for DCSync detection: $($configured.Count)"
+    $configured | ForEach-Object { Write-Host "  - $($_.ObjectType)" }
+  register: dc_audit_sacl_verify_result
+  changed_when: false
+
+- name: Display verification result
+  ansible.builtin.debug:
+    msg: "{{ dc_audit_sacl_verify_result.stdout_lines }}"

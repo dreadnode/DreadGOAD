@@ -1,26 +1,179 @@
-- name: "Reboot and wait for the AD system to restart"
-  win_reboot:
+---
+- name: Reboot and wait for the AD system to restart
+  ansible.windows.win_reboot:
     test_command: "Get-ADUser -Identity Administrator -Properties *"
     post_reboot_delay: 100
 
-- name: "synchronizes all domains"
-  win_shell: repadmin /syncall /Ade
-  become: yes
-  become_method: runas
-  become_user: "{{domain_username}}"
-  vars:
-    ansible_become_pass: "{{domain_password}}"
+- name: Synchronize all domains with proper credentials
+  ansible.windows.win_powershell:
+    script: |
+      # Create credentials for domain admin
+      $adminUser = "{{ domain_username }}"
+      $adminPassword = ConvertTo-SecureString "{{ domain_password }}" -AsPlainText -Force
+      $adminCred = New-Object System.Management.Automation.PSCredential($adminUser, $adminPassword)
 
-- name: "Add a domain user/group from another Domain in the multi-domain forest to a domain group : {{domain_server}}"
-  community.windows.win_domain_group_membership:
-    domain_server: "{{domain_server}}"
-    domain_username: "{{domain_username}}"
-    domain_password: "{{domain_password}}"
-    name: "{{item.key}}"
-    members: "{{ item.value }}"
-    state: Present
-  with_dict: "{{ domain_groups_members }}"
-  register: group_membership
-  until: "group_membership is not failed"
-  retries: 3
-  delay: 60
+      # Create script block to run with elevated privileges
+      $scriptBlock = {
+        # Try using repadmin with the Domain Admin privileges
+        try {
+          $output = repadmin /syncall /APeD
+          Write-Output "Replication initiated with repadmin: $output"
+          return $true
+        } catch {
+          $errorMsg = $_.Exception.Message
+          Write-Output "Error with repadmin: $errorMsg"
+
+          # Alternative method using PowerShell AD cmdlets
+          try {
+            Import-Module ActiveDirectory
+            $domainControllers = Get-ADDomainController -Filter *
+
+            foreach ($dc in $domainControllers) {
+              Write-Output "Synchronizing DC: $($dc.HostName)"
+              $result = Sync-ADObject -Server $dc.HostName -Object (Get-ADDomain).DistinguishedName -Scope Subtree
+              Write-Output "Sync result: $result"
+            }
+
+            return $true
+          } catch {
+            $errorMsg = $_.Exception.Message
+            Write-Output "Error with AD sync: $errorMsg"
+            return $false
+          }
+        }
+      }
+
+      # Execute with credentials
+      $result = Invoke-Command -ScriptBlock $scriptBlock -Credential $adminCred -ComputerName localhost
+
+      return $result
+    error_action: continue
+  register: sync_result
+  failed_when: sync_result.output is defined and sync_result.output | length > 0 and sync_result.output[0] == false
+  vars:
+    ansible_become: no
+
+- name: Add cross-domain users/groups using PowerShell Direct
+  ansible.windows.win_powershell:
+    script: |
+      $domainServer = "{{ domain_server }}"
+      $domainUsername = "{{ domain_username }}"
+      $domainPassword = ConvertTo-SecureString "{{ domain_password }}" -AsPlainText -Force
+      $domainCred = New-Object System.Management.Automation.PSCredential($domainUsername, $domainPassword)
+
+      # Convert dictionary to PowerShell object
+      $groupMemberships = @{
+        {% for group_name, members in domain_groups_members.items() %}
+        "{{ group_name }}" = @(
+          {% for member in members %}
+          "{{ member }}"{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ){% if not loop.last %};{% endif %}
+        {% endfor %}
+      }
+
+      $scriptBlock = {
+        param($groupMemberships)
+
+        Import-Module ActiveDirectory
+        $results = @{}
+
+        foreach ($groupName in $groupMemberships.Keys) {
+          $groupResult = @{
+            "name" = $groupName
+            "members_added" = @()
+            "members_failed" = @()
+            "success" = $true
+          }
+
+          try {
+            # Get the group
+            $group = Get-ADGroup -Identity $groupName -ErrorAction Stop
+            Write-Output "Processing group: $groupName"
+
+            foreach ($member in $groupMemberships[$groupName]) {
+              try {
+                # Parse the domain and username/group
+                if ($member -match "(.+)\\(.+)") {
+                  $memberDomain = $matches[1]
+                  $memberName = $matches[2]
+
+                  # First, try to get the member as a user
+                  try {
+                    Write-Output "Looking up user: $memberName in domain $memberDomain"
+                    # Try to get the member directly from its domain
+                    $adObject = Get-ADUser -Identity $memberName -Server "$memberDomain" -ErrorAction Stop
+                    Write-Output "Found as user: $($adObject.DistinguishedName)"
+                  } catch {
+                    $errorMsg = $_.Exception.Message
+                    # If not a user, try as a group
+                    try {
+                      Write-Output "Looking up group: $memberName in domain $memberDomain"
+                      $adObject = Get-ADGroup -Identity $memberName -Server "$memberDomain" -ErrorAction Stop
+                      Write-Output "Found as group: $($adObject.DistinguishedName)"
+                    } catch {
+                      $errorMsg = $_.Exception.Message
+                      throw "Could not find $member as either a user or group. Error: $errorMsg"
+                    }
+                  }
+
+                  # Add the member to the group
+                  Add-ADGroupMember -Identity $group -Members $adObject -ErrorAction Stop
+                  Write-Output "Successfully added $member to group $groupName"
+                  $groupResult.members_added += $member
+                } else {
+                  throw "Invalid member format. Expected 'domain\\username' but got '$member'"
+                }
+              } catch {
+                $errorMsg = $_.Exception.Message
+                Write-Output "Error adding $member to $groupName. Error: $errorMsg"
+                $groupResult.members_failed += "$member (Error: $errorMsg)"
+                $groupResult.success = $false
+              }
+            }
+          } catch {
+            $errorMsg = $_.Exception.Message
+            Write-Output "Error processing group $groupName. Error: $errorMsg"
+            $groupResult.success = $false
+          }
+
+          $results[$groupName] = $groupResult
+        }
+
+        return $results | ConvertTo-Json -Depth 5
+      }
+
+      $jsonResults = Invoke-Command -ScriptBlock $scriptBlock -ArgumentList $groupMemberships -Credential $domainCred -ComputerName localhost
+
+      try {
+        $resultsObj = $jsonResults | ConvertFrom-Json
+
+        # Check if any group failed
+        $success = $true
+        foreach ($groupName in $resultsObj.PSObject.Properties.Name) {
+          $groupResult = $resultsObj.$groupName
+          if (-not $groupResult.success) {
+            $success = $false
+            Write-Output "Failed to add some or all members to group $groupName"
+            foreach ($failedMember in $groupResult.members_failed) {
+              Write-Output "  - Failed to add: $failedMember"
+            }
+          } else {
+            Write-Output "Successfully added all members to group $groupName"
+            foreach ($addedMember in $groupResult.members_added) {
+              Write-Output "  - Added: $addedMember"
+            }
+          }
+        }
+
+        return $success
+      } catch {
+        $errorMsg = $_.Exception.Message
+        Write-Output "Error processing results: $errorMsg"
+        Write-Output "Raw results: $jsonResults"
+        return $false
+      }
+    error_action: continue
+  register: cross_domain_result
+  failed_when: cross_domain_result.output is defined and cross_domain_result.output | length > 0 and cross_domain_result.output[0] == false
+  when: domain_groups_members is defined and domain_groups_members | length > 0

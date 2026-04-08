@@ -1,0 +1,20 @@
+---
+galaxy_info:
+  role_name: settings_windows_defender
+  namespace: dreadnode
+  author: Dreadnode
+  company: Dreadnode
+  description: Install and configure Windows Defender antivirus settings
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Windows
+      versions:
+        - all
+  galaxy_tags:
+    - windows
+    - security
+    - defender
+    - antivirus
+
+dependencies: []

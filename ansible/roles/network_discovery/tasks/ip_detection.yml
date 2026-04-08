@@ -1,0 +1,66 @@
+---
+- name: Get all network information
+  ansible.windows.win_powershell:
+    script: |
+      $ProgressPreference = 'SilentlyContinue'
+      $ErrorActionPreference = 'Stop'
+
+      # Set a timeout for the entire script
+      $timeout = New-TimeSpan -Seconds 30
+      $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+
+      try {
+        $primaryAdapter = $null
+        $adapters = @()
+
+        try {
+          $adapters = @(Get-NetAdapter -ErrorAction Stop | Where-Object {$_.Status -eq "Up"})
+          $primaryAdapter = $adapters | Select-Object -First 1
+        } catch {
+          # Fallback to WMI if Get-NetAdapter fails
+          $adapters = @(Get-WmiObject Win32_NetworkAdapter | Where-Object {$_.NetEnabled -eq $true})
+          if ($adapters.Count -gt 0) {
+            $primaryAdapter = @{Name = $adapters[0].NetConnectionID}
+          }
+        }
+
+        # Get IP quickly using WMI
+        $primaryIP = ""
+        try {
+          $networkConfigs = Get-WmiObject Win32_NetworkAdapterConfiguration | Where-Object {$_.IPEnabled -eq $true -and $_.IPAddress[0] -notmatch '^127\.' -and $_.IPAddress[0] -notmatch '^169\.254\.'}
+          if ($networkConfigs) {
+            $primaryIP = $networkConfigs[0].IPAddress[0]
+          }
+        } catch {
+          $primaryIP = ""
+        }
+
+        Write-Output "DOMAIN_ADAPTER:$(if ($primaryAdapter) { $primaryAdapter.Name } else { 'Ethernet' })"
+        Write-Output "NAT_ADAPTER:$(if ($adapters.Count -gt 1) { $adapters[1].Name } else { if ($primaryAdapter) { $primaryAdapter.Name } else { 'Ethernet' } })"
+        Write-Output "ADAPTER_COUNT:$($adapters.Count)"
+        Write-Output "PRIMARY_IP:$primaryIP"
+        $Ansible.Changed = $false
+      } catch {
+        # Quick fallback
+        Write-Output "DOMAIN_ADAPTER:Ethernet"
+        Write-Output "NAT_ADAPTER:Ethernet"
+        Write-Output "ADAPTER_COUNT:1"
+        Write-Output "PRIMARY_IP:"
+        $Ansible.Changed = $false
+      }
+  async: 60
+  poll: 5
+  register: network_info
+  ignore_errors: true
+
+- name: Set all network facts from full detection
+  ansible.builtin.set_fact:
+    domain_adapter: "{{ network_info.output | select('match', '^DOMAIN_ADAPTER:') | first | regex_replace('^DOMAIN_ADAPTER:', '') | default('Ethernet') }}"
+    nat_adapter: "{{ network_info.output | select('match', '^NAT_ADAPTER:') | first | regex_replace('^NAT_ADAPTER:', '') | default('Ethernet') }}"
+    number_of_interfaces: "{{ network_info.output | select('match', '^ADAPTER_COUNT:') | first | regex_replace('^ADAPTER_COUNT:', '') | default('1') }}"
+    two_adapters: "{{ (network_info.output | select('match', '^ADAPTER_COUNT:') | first | regex_replace('^ADAPTER_COUNT:', '') | default('1') | int) > 1 }}"
+    host_ipv4: "{{ network_info.output | select('match', '^PRIMARY_IP:') | first | regex_replace('^PRIMARY_IP:', '') | default(ansible_default_ipv4.address | default('')) }}"
+    cacheable: true
+  when:
+    - network_info is defined
+    - network_info.output is defined

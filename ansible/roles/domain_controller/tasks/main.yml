@@ -1,88 +1,366 @@
+---
 # DNSCHANGE
 # - name: "disable interface {{nat_adapter}} before join domain"
 #   win_shell: netsh interface set interface "{{nat_adapter}}" disable
-
-- name: "disable the registration of the {{nat_adapter}} interface (NAT address) in DNS"
+- name: Disable the registration of the NAT interface in DNS
   ansible.windows.win_shell:
-    Get-NetAdapter '{{nat_adapter}}' | Set-DNSClient -RegisterThisConnectionsAddress $False
+    Get-NetAdapter -Name "{{ nat_adapter }}" | Set-DNSClient -RegisterThisConnectionsAddress $False
+  register: disable_dns_reg
+  failed_when:
+    - disable_dns_reg.rc != 0
+    - "'Cannot find network adapter' not in disable_dns_reg.stderr"
   when: two_adapters
 
 - name: Ensure that domain exists
-  win_domain:
-    domain_netbios_name: "{{netbios_name}}"
-    dns_domain_name: "{{domain}}"
-    safe_mode_password: "{{domain_password}}"
+  microsoft.ad.domain:
+    dns_domain_name: "{{ domain }}"
+    safe_mode_password: "{{ domain_password }}"
+    domain_netbios_name: "{{ netbios_name }}"
   register: check_domain
+  async: 3600
+  poll: 60
+  failed_when: false
 
-- name: Reboot to complete domain creation
-  win_reboot:
+# Async tasks don't reliably return reboot_required - check explicitly
+- name: Check if reboot is pending after domain creation
+  ansible.windows.win_powershell:
+    script: |
+      $ProgressPreference = 'SilentlyContinue'
+      # Check multiple reboot indicators
+      $pending = $false
+      $reason = @()
+
+      # Component Based Servicing
+      if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending") {
+          $pending = $true
+          $reason += "CBS"
+      }
+      # Windows Update
+      if (Test-Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired") {
+          $pending = $true
+          $reason += "WindowsUpdate"
+      }
+      # Pending File Rename
+      $pfro = Get-ItemProperty "HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager" -Name PendingFileRenameOperations -EA SilentlyContinue
+      if ($pfro) {
+          $pending = $true
+          $reason += "FileRename"
+      }
+      # DC promo pending (NTDS not running but AD DS installed)
+      $adFeature = Get-WindowsFeature AD-Domain-Services -EA SilentlyContinue
+      $ntds = Get-Service NTDS -EA SilentlyContinue
+      if ($adFeature.InstallState -eq 'Installed' -and $ntds.Status -ne 'Running') {
+          $pending = $true
+          $reason += "DCPromo"
+      }
+
+      $Ansible.Result = @{
+          pending = $pending
+          reasons = $reason -join ","
+      }
+  register: reboot_check
+  when: check_domain is changed
+  changed_when: false
+
+- name: Reboot if domain creation requires it
+  ansible.windows.win_reboot:
     reboot_timeout: 900
-    post_reboot_delay: 300
-  when: check_domain.changed
+    post_reboot_delay: 120
+    test_command: powershell.exe -Command "((Get-Service -Name Netlogon -EA SilentlyContinue).Status -eq 'Running') -and ((Get-Service -Name ADWS -EA SilentlyContinue).Status -eq 'Running')"
+  when: >-
+    check_domain.reboot_required | default(false) or
+    (check_domain is failed and "needs to be restarted" in check_domain.msg | default('')) or
+    (check_domain is changed) or
+    (reboot_check.result.pending | default(false))
+
+- name: Re-attempt domain creation
+  microsoft.ad.domain:
+    dns_domain_name: "{{ domain }}"
+    safe_mode_password: "{{ domain_password }}"
+    domain_netbios_name: "{{ netbios_name }}"
+  register: retry_domain
+  async: 3600
+  poll: 60
+  when: check_domain is failed
+  failed_when:
+    - retry_domain is failed
+    - '"needs to be restarted" not in retry_domain.msg | default("")'
+    - '"already exists" not in retry_domain.msg | default("")'
+
+- name: Reboot after retry if needed
+  ansible.windows.win_reboot:
+    reboot_timeout: 900
+    post_reboot_delay: 120
+    test_command: powershell.exe -Command "((Get-Service -Name Netlogon -EA SilentlyContinue).Status -eq 'Running') -and ((Get-Service -Name ADWS -EA SilentlyContinue).Status -eq 'Running')"
+  when: >-
+    retry_domain.reboot_required | default(false) or
+    (retry_domain is failed and "needs to be restarted" in retry_domain.msg | default('')) or
+    (retry_domain is changed)
+
+- name: Wait for domain to fully initialize
+  ansible.windows.win_powershell:
+    script: |
+      $ProgressPreference = 'SilentlyContinue'
+      $ErrorActionPreference = "Stop"
+      try {
+        $domain = Get-ADDomain -ErrorAction Stop
+        Write-Output "Domain $($domain.Name) is accessible"
+        $Ansible.Changed = $false
+      } catch {
+        $Ansible.Failed = $true
+        Write-Error "Domain not yet accessible: $_"
+      }
+  register: domain_check
+  until: domain_check is not failed
+  retries: 10
+  delay: 30
+  changed_when: false
 
 - name: Ensure the server is a domain controller
-  win_domain_controller:
-    dns_domain_name: "{{domain}}"
-    domain_admin_user: "{{domain_username}}"
-    domain_admin_password: "{{domain_password}}"
-    safe_mode_password: "{{domain_password}}"
+  microsoft.ad.domain_controller:
+    dns_domain_name: "{{ domain }}"
+    domain_admin_user: "{{ domain_username }}"
+    domain_admin_password: "{{ domain_password }}"
+    safe_mode_password: "{{ domain_password }}"
     state: domain_controller
   register: check_domain_controller
+  async: 3600
+  poll: 60
+  failed_when:
+    - check_domain_controller is failed
+    - '"needs to be restarted" not in check_domain_controller.msg | default("")'
+    - '"already a domain controller" not in check_domain_controller.msg | default("")'
 
-- name: Reboot to complete domain controller setup
-  win_reboot:
+- name: Reboot if domain controller promotion requires it
+  ansible.windows.win_reboot:
     reboot_timeout: 900
-    post_reboot_delay: 100
-  when: check_domain_controller.changed
+    post_reboot_delay: 120
+    test_command: powershell.exe -Command "((Get-Service -Name Netlogon -EA SilentlyContinue).Status -eq 'Running') -and ((Get-Service -Name ADWS -EA SilentlyContinue).Status -eq 'Running')"
+  when: >-
+    check_domain_controller.reboot_required | default(false) or
+    (check_domain_controller is failed and "needs to be restarted" in check_domain_controller.msg | default('')) or
+    (check_domain_controller is changed)
 
-# DNSCHANGE
-# - name: "enable interface {{nat_adapter}} after domain joined"
-#   win_shell: netsh interface set interface "{{nat_adapter}}" enable
-#   register: enable_interface_dc
-#   until: "enable_interface_dc is not failed"
-#   retries: 3
-#   delay: 120
+- name: Re-attempt domain controller promotion if needed
+  microsoft.ad.domain_controller:
+    dns_domain_name: "{{ domain }}"
+    domain_admin_user: "{{ domain_username }}"
+    domain_admin_password: "{{ domain_password }}"
+    safe_mode_password: "{{ domain_password }}"
+    state: domain_controller
+  register: retry_dc_promotion
+  async: 3600
+  poll: 60
+  when: check_domain_controller is failed and "needs to be restarted" in check_domain_controller.msg | default('')
+  failed_when:
+    - retry_dc_promotion is defined
+    - retry_dc_promotion is failed
+    - '"needs to be restarted" not in retry_dc_promotion.msg | default("")'
+    - '"already a domain controller" not in retry_dc_promotion.msg | default("")'
 
-- name: Be sure DNS feature is installed
-  win_feature:
+- name: Reboot after DC promotion retry if needed
+  ansible.windows.win_reboot:
+    reboot_timeout: 900
+    post_reboot_delay: 120
+    test_command: powershell.exe -Command "((Get-Service -Name Netlogon -EA SilentlyContinue).Status -eq 'Running') -and ((Get-Service -Name ADWS -EA SilentlyContinue).Status -eq 'Running')"
+  when: >-
+    retry_dc_promotion.reboot_required | default(false) or
+    (retry_dc_promotion is defined and retry_dc_promotion is failed and "needs to be restarted" in retry_dc_promotion.msg | default('')) or
+    (retry_dc_promotion is defined and retry_dc_promotion is changed)
+
+- name: Check domain controller status
+  ansible.windows.win_powershell:
+    script: |
+      $ProgressPreference = 'SilentlyContinue'
+      $ErrorActionPreference = "Stop"
+      try {
+        $dc = Get-ADDomainController
+        Write-Output "Domain Controller $($dc.HostName) is functioning properly"
+        $Ansible.Changed = $false
+      } catch {
+        $Ansible.Failed = $true
+        Write-Error "Domain Controller verification failed: $_"
+      }
+  register: dc_verification
+  until: dc_verification is not failed
+  retries: 10
+  delay: 30
+  changed_when: false
+
+- name: Ensure DNS feature is installed
+  ansible.windows.win_feature:
     name: DNS
     state: present
+  register: dns_feature
 
-- name: Check for xDnsServer Powershell module
-  win_psmodule:
+- name: Reboot if DNS feature installation requires it
+  ansible.windows.win_reboot:
+    reboot_timeout: 900
+    post_reboot_delay: 120
+    test_command: powershell.exe -Command "(Get-Service -Name DNS -ErrorAction SilentlyContinue).Status -eq 'Running'"
+  when: dns_feature.reboot_required | default(false)
+
+- name: Check if xDnsServer exists
+  ansible.windows.win_shell: |
+    if (Get-Module -ListAvailable -Name xDnsServer) {
+      exit 0
+    } else {
+      exit 1
+    }
+  register: xdnsserver_check
+  failed_when: false
+  changed_when: false
+
+- name: Install xDnsServer PowerShell module
+  community.windows.win_psmodule:
     name: xDnsServer
     state: present
+  when: xdnsserver_check.rc != 0
 
-- name: enable only the {{domain_adapter}} interface (local) for DNS client requests
-  ansible.windows.win_shell: dnscmd . /resetlistenaddresses {{ hostvars[dict_key].ansible_host }}
+- name: Configure DNS listener addresses
+  ansible.windows.win_powershell:
+    script: |
+      $ProgressPreference = 'SilentlyContinue'
+      $ErrorActionPreference = "Stop"
+      try {
+        dnscmd . /resetlistenaddresses {{ host_ipv4 | default(instance_to_ip[hostvars[dict_key]['ansible_host']] if hostvars[dict_key]['ansible_host'] in instance_to_ip else hostvars[dict_key].ansible_host) }}
+        Write-Output "DNS listener addresses configured successfully"
+      } catch {
+        $Ansible.Failed = $true
+        Write-Error "Failed to configure DNS listener addresses: $_"
+      }
+  register: dns_listener
   when: two_adapters
 
 - name: Configure DNS Forwarders
-  win_dsc:
-    resource_name: xDnsServerForwarder
-    IsSingleInstance: "yes"
-    UseRootHint: false
-    IPAddresses:
-      - "{{dns_server_forwarder}}"
+  ansible.windows.win_powershell:
+    script: |
+      $ProgressPreference = 'SilentlyContinue'
+      $ErrorActionPreference = "Stop"
+      try {
+        Add-DnsServerForwarder -IPAddress "{{ dns_server_forwarder }}" -PassThru
+        Set-DnsServerForwarder -UseRootHint $false
+        Write-Output "DNS forwarders configured successfully"
+      } catch {
+        $Ansible.Failed = $true
+        Write-Error "Failed to configure DNS forwarders: $_"
+      }
+  register: dns_forwarders
+  when: dns_server_forwarder is defined
 
-#- name: install nuget
-#  win_shell: install-packageprovider -name nuget -force
+- name: Check if ActiveDirectoryDSC exists
+  ansible.windows.win_shell: |
+    if (Get-Module -ListAvailable -Name ActiveDirectoryDSC) {
+      exit 0
+    } else {
+      exit 1
+    }
+  register: ad_dsc_check
+  failed_when: false
+  changed_when: false
 
-- name: "Install XactiveDirectory"
-  win_psmodule:
+- name: Install ActiveDirectoryDSC only if needed
+  community.windows.win_psmodule:
     name: ActiveDirectoryDSC
     state: present
+  register: ad_dsc_module
+  when: ad_dsc_check.rc != 0
 
-- name: Ensure Administrator is part of Enterprise Admins
-  win_domain_group_membership:
-    name: "Enterprise Admins"
-    members:
-      - Administrator
-    state: present
+- name: Enable the Active Directory Web Services
+  ansible.windows.win_service:
+    name: adws
+    start_mode: auto
+    state: started
 
-- name: Ensure Administrator is part of Domain Admins
-  win_domain_group_membership:
-    name: "Domain Admins"
-    members:
-      - Administrator
-    state: present
+- name: Ensure admin groups are properly configured
+  block:
+    - name: Ensure admin user is part of Enterprise Admins
+      microsoft.ad.group:
+        name: "Enterprise Admins"
+        members:
+          add:
+            - "{{ admin_user }}"
+        state: present
+        domain_username: "{{ domain_username }}"
+        domain_password: "{{ domain_password }}"
+
+    - name: Ensure admin user is part of Domain Admins
+      microsoft.ad.group:
+        name: "Domain Admins"
+        members:
+          add:
+            - "{{ admin_user }}"
+        state: present
+        domain_username: "{{ domain_username }}"
+        domain_password: "{{ domain_password }}"
+  rescue:
+    - name: Wait for AD services to become fully operational
+      ansible.windows.win_powershell:
+        script: |
+          $ProgressPreference = 'SilentlyContinue'
+          $ErrorActionPreference = "Stop"
+          $maxAttempts = 30
+          $retryInterval = 30
+          $ready = $false
+
+          for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+            Write-Output "Attempt ${attempt}/${maxAttempts}: Checking AD DS services..."
+
+            # Check if ADWS service is running
+            $adwsService = Get-Service ADWS -ErrorAction SilentlyContinue
+            if ($adwsService.Status -ne 'Running') {
+                Write-Output "Attempt ${attempt}: ADWS service not running yet, status: $($adwsService.Status)"
+                Start-Sleep -Seconds $retryInterval
+                continue
+            }
+
+            # Check if DNS service is running
+            $dnsService = Get-Service DNS -ErrorAction SilentlyContinue
+            if ($dnsService.Status -ne 'Running') {
+                Write-Output "Attempt ${attempt}: DNS service not running yet, status: $($dnsService.Status)"
+                Start-Sleep -Seconds $retryInterval
+                continue
+            }
+
+            # Verify AD is operational using cmdlets
+            try {
+                # Test AD connectivity with lightweight operation
+                $domain = Get-ADDomain -ErrorAction Stop
+                $dc = Get-ADDomainController -ErrorAction Stop
+                Write-Output "Active Directory is fully operational!"
+                $ready = $true
+                break
+            } catch {
+                Write-Output "Attempt ${attempt}: Active Directory not fully operational yet. Error: $_"
+                Start-Sleep -Seconds $retryInterval
+            }
+          }
+
+          if (-not $ready) {
+              $Ansible.Failed = $true
+              throw "Active Directory DS services did not become fully operational after $maxAttempts attempts"
+          }
+          $Ansible.Changed = $false
+      register: ad_services_wait
+
+    - name: Retry admin group configuration
+      block:
+        - name: Ensure admin user is part of Enterprise Admins (retry)
+          microsoft.ad.group:
+            name: "Enterprise Admins"
+            members:
+              add:
+                - "{{ admin_user }}"
+            state: present
+            domain_username: "{{ domain_username }}"
+            domain_password: "{{ domain_password }}"
+
+        - name: Ensure admin user is part of Domain Admins (retry)
+          microsoft.ad.group:
+            name: "Domain Admins"
+            members:
+              add:
+                - "{{ admin_user }}"
+            state: present
+            domain_username: "{{ domain_username }}"
+            domain_password: "{{ domain_password }}"

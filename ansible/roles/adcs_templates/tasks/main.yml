@@ -1,20 +1,30 @@
+---
 - name: Refresh
   ansible.windows.win_command: gpupdate /force
 
-- name: Install ADCSTemplate Module
-  win_copy:
-    src: files/ADCSTemplate
-    dest: "C:\\Program Files\\WindowsPowerShell\\Modules"
+- name: Copy ADCSTemplate zip to remote
+  ansible.windows.win_copy:
+    src: files/ADCSTemplate.zip
+    dest: "C:\\Windows\\Temp\\ADCSTemplate.zip"
 
-- name: create a directory for templates
-  win_file: 
+- name: Extract ADCSTemplate module
+  ansible.windows.win_shell: |
+    $destPath = "C:\Program Files\WindowsPowerShell\Modules\ADCSTemplate"
+    if (Test-Path $destPath) {
+        Remove-Item -Path $destPath -Recurse -Force
+    }
+    Expand-Archive -Path "C:\Windows\Temp\ADCSTemplate.zip" -DestinationPath "C:\Program Files\WindowsPowerShell\Modules" -Force
+    Remove-Item -Path "C:\Windows\Temp\ADCSTemplate.zip" -Force
+
+- name: Create a template directory
+  ansible.windows.win_file:
     path: c:\setup
     state: directory
 
 - name: Copy templates json
-  win_copy:
-    src: "files/{{item}}.json"
-    dest: "C:\\setup\\{{item}}.json"
+  ansible.windows.win_copy:
+    src: "files/{{ item }}.json"
+    dest: "C:\\setup\\{{ item }}.json"
   with_items:
     - ESC1
     - ESC2
@@ -25,14 +35,14 @@
     - ESC13
 
 - name: Install templates
-  win_shell: |
-    if (-not(Get-ADCSTemplate -DisplayName "{{item}}")) { New-ADCSTemplate -DisplayName "{{item}}" -JSON (Get-Content c:\setup\{{item}}.json -Raw) -Identity "{{domain_name}}\Domain Users" -Publish }
+  ansible.windows.win_shell: |
+    if (-not(Get-ADCSTemplate -DisplayName "{{ item }}")) { New-ADCSTemplate -DisplayName "{{ item }}" -JSON (Get-Content c:\setup\{{ item }}.json -Raw) -Identity "{{ domain_name }}\Domain Users" -Publish }
   vars:
-    ansible_become: yes
-    ansible_become_method: runas
-    domain_name: "{{domain}}"
-    ansible_become_user: "{{domain_username}}"
-    ansible_become_password: "{{domain_password}}"
+    ansible_become: true
+    ansible_become_method: ansible.builtin.runas
+    domain_name: "{{ domain }}"
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
   with_items:
     - ESC1
     - ESC2

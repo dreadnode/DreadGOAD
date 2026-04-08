@@ -12,12 +12,14 @@
 ## prerequisites
 
 - You need `sshpass` for the elk installation
+
 ```bash
 sudo apt install sshpass
 ```
 
 - On ludus prepare template :
-```
+
+```bash
 ludus templates add -d ubuntu-22.04-x64-server
 ludus templates build
 ```
@@ -25,13 +27,13 @@ ludus templates build
 ## Install
 
 - select your instance
-```
+
+```bash
 load <instance_id>
 ```
 
 - install the elk extension
-```
+
+```bash
 install_extension elk
 ```
-
-

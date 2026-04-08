@@ -1,0 +1,29 @@
+---
+- name: Retrieve LAPS Password on server
+  ansible.windows.win_shell: |
+    try {
+      $server = Get-AdComputer -Identity "{{ hostname }}" -ErrorAction Stop
+      $obj = Get-ADObject -Identity $server.DistinguishedName -Properties ms-Mcs-AdmPwd
+      Write-Output "{{ hostname }}" $obj."ms-Mcs-AdmPwd"
+    } catch {
+      # Try with FQDN
+      try {
+        $fqdn = "{{ hostname }}.{{ item.value.domain }}"
+        $server = Get-AdComputer -Identity $fqdn -ErrorAction Stop
+        $obj = Get-ADObject -Identity $server.DistinguishedName -Properties ms-Mcs-AdmPwd
+        Write-Output "{{ hostname }}" $obj."ms-Mcs-AdmPwd"
+      } catch {
+        Write-Output "Error: Could not find computer object for {{ hostname }} or {{ hostname }}.{{ item.value.domain }}"
+        $_
+      }
+    }
+  register: powershell_password
+  vars:
+    hostname: "{{ item.value.hostname }}"
+  when: item.value.use_laps is defined and item.value.use_laps == true and item.value.domain == domain
+  with_dict: "{{ hosts_dict }}"
+
+- name: Show new laps password
+  ansible.builtin.debug: msg="{{ item.stdout_lines }}"
+  when: item.stdout_lines is defined
+  with_items: "{{ powershell_password.results }}"

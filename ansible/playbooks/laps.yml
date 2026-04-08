@@ -1,0 +1,37 @@
+---
+
+- name: Configure laps on DCs
+  hosts: laps_dc
+  roles:
+    - { role: 'dreadnode.goad.laps_dc', tags: 'laps-dc'}
+  vars:
+    domain: "{{ lab.hosts[dict_key].domain }}"
+    laps_path: "{{ lab.domains[domain].laps_path if lab.domains[domain].laps_path is defined else false }}"
+    hosts_dict: "{{ lab.hosts }}"
+
+- name: Configure laps on servers
+  hosts: laps_server, laps_workstation
+  roles:
+    - { role: 'dreadnode.goad.laps_server', tags: 'laps-server'}
+  vars:
+    domain: "{{ lab.hosts[dict_key].domain }}"
+    laps_path: "{{ lab.domains[domain].laps_path if lab.domains[domain].laps_path is defined else false }}"
+    use_laps: "{{ lab.hosts[dict_key].use_laps if lab.hosts[dict_key].use_laps is defined else false }}"
+
+- name: Verify and show laps passwords
+  hosts: laps_dc
+  roles:
+    - { role: 'dreadnode.goad.laps_verify', tags: 'laps-verify'}
+  vars:
+    domain: "{{ lab.hosts[dict_key].domain }}"
+    laps_path: "{{ lab.domains[domain].laps_path if lab.domains[domain].laps_path is defined else false }}"
+    hosts_dict: "{{ lab.hosts }}"
+
+- name: Set laps users and groups permission
+  hosts: laps_dc
+  roles:
+    - { role: 'dreadnode.goad.laps_permissions', tags: 'laps-permissions'}
+  vars:
+    domain: "{{ lab.hosts[dict_key].domain }}"
+    laps_path: "{{ lab.domains[domain].laps_path if lab.domains[domain].laps_path is defined else false }}"
+    laps_readers: "{{ lab.domains[domain].laps_readers  | default([]) }}"

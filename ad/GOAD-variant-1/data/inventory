@@ -1,0 +1,149 @@
+; GLOBAL CONFIG
+[all:vars]
+; domain_name : folder inside ad/
+domain_name=GOAD
+
+; administrator user
+admin_user=administrator
+
+; global settings inventory default value
+keyboard_layouts=["en-US", "da-DK", "fr-FR"]
+
+; modify this to add a default route
+add_route=no
+route_gateway=192.168.56.1
+route_network=10.0.0.0/8
+
+; modify this to enable http proxy
+enable_http_proxy=no
+ad_http_proxy=http://x.x.x.x:xxxx
+ad_https_proxy=http://x.x.x.x:xxxx
+
+;force_dns_server
+force_dns_server=no
+dns_server=1.1.1.1
+
+;dns server forwarder
+dns_server_forwarder=1.1.1.1
+
+; winrm connection (windows)
+ansible_user=vagrant
+ansible_password=vagrant
+ansible_connection=winrm
+ansible_winrm_server_cert_validation=ignore
+ansible_winrm_operation_timeout_sec=400
+ansible_winrm_read_timeout_sec=500
+# ansible_winrm_transport=basic
+# ansible_port=5985
+
+; LAB SCENARIO CONFIGURATION -----------------------------
+
+; computers inside domain (mandatory)
+; usage : build.yml, ad-relations.yml, ad-servers.yml, vulnerabilities.yml
+[domain]
+dc01
+dc02
+dc03
+srv02
+srv03
+
+; domain controller (mandatory)
+; usage : ad-acl.yml, ad-data.yml, ad-relations.yml, laps.yml
+[dc]
+dc01
+dc02
+dc03
+
+; domain server to enroll (mandatory if you want servers)
+; usage : ad-data.yml, ad-servers.yml, laps.yml
+[server]
+srv02
+srv03
+
+; workstation to enroll (mandatory if you want workstation)
+; usage : ad-servers.yml, laps.yml
+[workstation]
+
+; parent domain controller (mandatory)
+; usage : ad-servers.yml
+[parent_dc]
+dc01
+dc03
+
+; child domain controller (need a fqdn child_name.parent_name)
+; usage : ad-servers.yml
+[child_dc]
+dc02
+
+; external trust, need domain trust entry in config (bidirectionnal)
+; usage : ad-trusts.yml
+[trust]
+dc01
+dc03
+
+; install adcs
+; usage : adcs.yml
+[adcs]
+dc01
+srv03
+
+; install custom template (dc)
+; usage : adcs.yml
+[adcs_customtemplates]
+dc03
+
+; install iis with default website asp upload on 80
+; usage : servers.yml
+[iis]
+srv02
+
+; install mssql
+; usage : servers.yml
+[mssql]
+srv02
+srv03
+
+; install mssql gui
+; usage : servers.yml
+[mssql_ssms]
+srv02
+
+; install webdav
+[webdav]
+srv02
+srv03
+
+[laps_dc]
+dc03
+[laps_server]
+srv03
+[laps_workstation]
+
+; allow computer update
+; usage : update.yml
+[update]
+srv02
+
+; disable update
+; usage : update.yml
+[no_update]
+dc01
+dc02
+dc03
+srv03
+
+; allow defender
+; usage : security.yml
+[defender_on]
+dc01
+dc02
+dc03
+srv03
+
+; disable defender
+; usage : security.yml
+[defender_off]
+srv02
+
+;stay empty until override
+[extensions]

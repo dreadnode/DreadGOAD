@@ -18,7 +18,7 @@
 <#
 .DESCRIPTION
 The script will install the WinRM hotfix KB2842230 which fixes the memory
-issues that occur when running over WinRM with WMF 3.0. 
+issues that occur when running over WinRM with WMF 3.0.
 The script will;
     1. Detect if running on PS version 3.0 and exit if it is not
     2. Check if KB2842230 is already installed and exit if it is

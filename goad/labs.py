@@ -50,7 +50,7 @@ class Lab:
                 self.providers[provider_name] = provider
 
     def _load_extensions(self, lab_name):
-        for extension_name in Utils.list_folders(GoadPath.get_extensions_path()):
+        for extension_name in Utils.list_folders(GoadPath.get_extensions_ansible_path()):
             extension = Extension(extension_name)
             if extension.is_available(lab_name):
                 self.extensions[extension_name] = extension

@@ -1,55 +1,135 @@
-<div align="center">
-  <h1><img alt="GOAD (Game Of Active Directory)" src="./docs/mkdocs/docs/img/logo_GOAD3.png"></h1>
-  <br>
-</div>
+# DreadGOAD
 
-**GOAD (v3)**
+A heavily modified fork of [GOAD (Game of Active Directory)](https://github.com/Orange-Cyberdefense/GOAD)
+by Orange Cyberdefense. DreadGOAD deploys vulnerable Active Directory lab
+environments for penetration testing and security research.
 
-:bookmark: Documentation : [https://orange-cyberdefense.github.io/GOAD/](https://orange-cyberdefense.github.io/GOAD/)
+> **Warning:** This lab is extremely vulnerable by design. Do not deploy it on
+> the internet without proper network isolation, and do not reuse any of these
+> configurations in production environments.
 
-## Description
-GOAD is a pentest active directory LAB project.
-The purpose of this lab is to give pentesters a vulnerable Active directory environment ready to use to practice usual attack techniques.
+## What's Different from GOAD?
 
-> [!CAUTION]
-> This lab is extremely vulnerable, do not reuse recipe to build your environment and do not deploy this environment on internet without isolation (this is a recommendation, use it as your own risk).<br>
-> This repository was build for pentest practice.
+DreadGOAD extends the upstream GOAD project with:
 
-![goad_screenshot](./docs/img/goad_screenshot.png)
+- **Go CLI (`dreadgoad`)** -- single binary for provisioning, health checks, trust verification, and vulnerability validation
+- **AWS infrastructure automation** -- Terragrunt/Terraform modules for deploying labs in AWS with SSM-based management (no open ports)
+- **Modular extension system** -- plug-in extensions for ELK, Exchange, Wazuh, Guacamole, and more
+- **Variant generator** -- create graph-isomorphic lab copies with randomized entity names while preserving all attack paths
+- **Ansible collection (`dreadnode.goad`)** -- 80+ roles packaged as a reusable collection
+- **Multi-provider support** -- VirtualBox, VMware, Proxmox, AWS, Azure, and Ludus
 
-## Licenses
-This lab use free Windows VM only (180 days). After that delay enter a license on each server or rebuild all the lab (may be it's time for an update ;))
+## Lab Environments
 
-## Available labs
+| Lab | VMs | Forests | Domains | Description |
+|-----|-----|---------|---------|-------------|
+| [GOAD](ad/GOAD/) | 5 | 2 | 3 | Full lab -- the complete Game of Active Directory experience |
+| [GOAD-Light](ad/GOAD-Light/) | 3 | 1 | 2 | Lighter variant for resource-constrained setups |
+| [GOAD-Mini](ad/GOAD-Mini/) | 1 | 1 | 1 | Minimal single-DC lab |
+| [MINILAB](ad/MINILAB/) | 2 | 1 | 1 | One DC + one workstation |
+| [SCCM](ad/SCCM/) | 4 | 1 | 1 | MECM/SCCM attack scenarios |
+| [NHA](ad/NHA/) | 5 | 2 | 3 | Ninja Hacker Academy -- challenge mode |
+| [DRACARYS](ad/DRACARYS/) | 4 | 1 | 2 | Training challenge variant |
 
-- GOAD Lab family and extensions overview
-<div align="center">
-<img alt="GOAD" width="800" src="./docs/img/diagram-GOADv3-full.png">
-</div>
+All labs feature 50+ intentional vulnerabilities including Kerberoasting, AS-REP
+roasting, ACL abuse chains, ADCS misconfigurations (ESC1-8), MSSQL attacks,
+delegation abuse, and more. See [docs/GOAD-vulnerabilities-comprehensive.md](docs/GOAD-vulnerabilities-comprehensive.md)
+for the full catalog.
 
-- [GOAD](https://orange-cyberdefense.github.io/GOAD/labs/GOAD/) : 5 vms, 2 forests, 3 domains (full goad lab)
-<div align="center">
-<img alt="GOAD" width="800" src="./docs/img/GOAD_schema.png">
-</div>
+## Quick Start
 
-- [GOAD-Light](https://orange-cyberdefense.github.io/GOAD/labs/GOAD-Light/) : 3 vms, 1 forest, 2 domains (smaller goad lab for those with a smaller pc)
-<div align="center">
-<img alt="GOAD Light" width="600" src="./docs/img/GOAD-Light_schema.png">
-</div>
+### Prerequisites
 
-- [MINILAB](https://orange-cyberdefense.github.io/GOAD/labs/MINILAB/): 2 vms, 1 forest, 1 domain (basic lab with one DC (windows server 2019) and one Workstation (windows 10))
+- Ansible >= 2.15
+- Go 1.21+ (for building the CLI)
+- A supported infrastructure provider (VirtualBox, VMware, Proxmox, AWS, Azure, or Ludus)
 
-- [SCCM](https://orange-cyberdefense.github.io/GOAD/labs/SCCM/) : 4 vms, 1 forest, 1 domain, with microsoft configuration manager installed
-<div align="center">
-<img alt="SCCM" width="600" src="./docs/img/SCCMLAB_overview.png">
-</div>
+### Install
 
-- [NHA](https://orange-cyberdefense.github.io/GOAD/labs/NHA/) : A challenge with 5 vms and 2 domains. no schema provided, you will have to find out how break it.
-<div align="center">
-<img alt="SCCM" width="600" src="./docs/img/logo_NHA.jpeg">
-</div>
+```bash
+# Clone the repo
+git clone https://github.com/dreadnode/DreadGOAD.git
+cd DreadGOAD
 
-- [DRACARYS](https://orange-cyberdefense.github.io/GOAD/labs/DRACARYS/) : A challenge with 3 vms and 1 domains. no schema provided, you will have to find out how break it.
-<div align="center">
-<img alt="SCCM" width="600" src="./docs/img/dracarys_logo.png">
-</div>
+# Install Ansible dependencies
+ansible-galaxy collection install -r ansible/requirements.yml
+
+# Build the CLI
+cd cli && go build -o dreadgoad . && cd ..
+```
+
+### Deploy a Lab
+
+```bash
+# Provision the full GOAD lab
+./cli/dreadgoad provision
+
+# Health check all instances
+./cli/dreadgoad health-check
+
+# Validate vulnerabilities are configured
+./cli/dreadgoad validate --quick
+```
+
+For provider-specific setup instructions, see the [provider documentation](docs/mkdocs/docs/providers/).
+
+### Generate a Variant
+
+Create a randomized copy of any lab with unique names but identical attack paths:
+
+```bash
+./cli/dreadgoad variant generate --source ad/GOAD --target ad/my-variant --name my-variant
+```
+
+See [tools/variant_generator/](tools/variant_generator/) for details.
+
+## Documentation
+
+- [CLI configuration](docs/cli.md) -- Viper-based config, environment variables, per-environment settings
+- [Domains and users](docs/domains-and-users.md) -- full network topology, credentials, and attack paths
+- [Vulnerability catalog](docs/GOAD-vulnerabilities-comprehensive.md) -- all 50+ vulnerabilities with exploitation techniques
+- [Validation guide](docs/validation.md) -- automated vulnerability validation
+- [Provider guides](docs/mkdocs/docs/providers/) -- VirtualBox, VMware, Proxmox, AWS, Azure, Ludus
+- [AWS AMI build & deploy workflow](docs/mkdocs/docs/providers/aws-ami-workflow.md) -- end-to-end warpgate + Terragrunt + Ansible
+- [Extension guides](docs/mkdocs/docs/extensions/) -- ELK, Exchange, Wazuh, hardened workstation
+- [Architecture diagram](docs/architecture.svg)
+- [Upstream GOAD docs](https://orange-cyberdefense.github.io/GOAD/) -- original project documentation
+
+## Project Structure
+
+```text
+DreadGOAD/
+├── ad/                    # Lab definitions (GOAD, GOAD-Light, MINILAB, SCCM, NHA, ...)
+├── ansible/               # Ansible collection with 80+ roles and custom modules
+├── cli/                   # Go CLI source (dreadgoad)
+├── docs/                  # Documentation and architecture diagrams
+├── extensions/            # Pluggable lab extensions (ELK, Exchange, Wazuh, ...)
+├── infra/                 # Terragrunt configurations for AWS deployments
+├── modules/               # Terraform modules (AWS networking, instance factory)
+├── packer/                # VM templating (Vagrant, Proxmox)
+├── tools/                 # Variant generator and utilities
+├── warpgate-templates/    # Golden AMI build templates (warpgate)
+└── template/              # Provider templates
+```
+
+## Contributing
+
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## Acknowledgments
+
+DreadGOAD is built on the excellent work of the [GOAD](https://github.com/Orange-Cyberdefense/GOAD)
+project by [Mayfly](https://github.com/Mayfly277) and [Orange Cyberdefense](https://github.com/Orange-Cyberdefense).
+If you find this useful, consider [sponsoring the original creator](https://github.com/sponsors/Mayfly277).
+
+Additional references and credits can be found in the [upstream documentation](https://orange-cyberdefense.github.io/GOAD/).
+
+## License
+
+GPL-3.0-or-later -- see [LICENSE](LICENSE).
+
+## Disclaimer
+
+This project deploys intentionally vulnerable configurations for security
+research and penetration testing training. **Do not use in production
+environments.** Use at your own risk.

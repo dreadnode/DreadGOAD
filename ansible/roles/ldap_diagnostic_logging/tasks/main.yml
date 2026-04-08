@@ -1,0 +1,187 @@
+---
+# LDAP Diagnostic Logging Configuration
+# Enables LDAP query auditing on Domain Controllers for detecting
+# attacks like "Credential in User Description" enumeration
+
+- name: Enable LDAP Interface Events logging (16 LDAP Interface Events)
+  ansible.windows.win_regedit:
+    path: 'HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Diagnostics'
+    name: '16 LDAP Interface Events'
+    data: "{{ ldap_interface_events_level }}"
+    type: dword
+  notify: Restart NTDS service
+
+- name: Enable Field Engineering diagnostics (for Event ID 1644)
+  ansible.windows.win_regedit:
+    path: 'HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Diagnostics'
+    name: '15 Field Engineering'
+    data: "{{ field_engineering_level }}"
+    type: dword
+  notify: Restart NTDS service
+
+# Event ID 1644 configuration - logs ALL LDAP search queries
+# This is critical for detecting reconnaissance via LDAP
+- name: Set Expensive Search Results Threshold
+  ansible.windows.win_regedit:
+    path: 'HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters'
+    name: 'Expensive Search Results Threshold'
+    data: "{{ ldap_expensive_search_threshold }}"
+    type: dword
+  notify: Restart NTDS service
+
+- name: Set Inefficient Search Results Threshold
+  ansible.windows.win_regedit:
+    path: 'HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters'
+    name: 'Inefficient Search Results Threshold'
+    data: "{{ ldap_inefficient_search_threshold }}"
+    type: dword
+  notify: Restart NTDS service
+
+- name: Set Search Time Threshold
+  ansible.windows.win_regedit:
+    path: 'HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters'
+    name: 'Search Time Threshold (msecs)'
+    data: "{{ ldap_search_time_threshold }}"
+    type: dword
+  notify: Restart NTDS service
+
+# Additional diagnostics for comprehensive coverage
+- name: Enable additional NTDS diagnostics
+  ansible.windows.win_regedit:
+    path: 'HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Diagnostics'
+    name: "{{ item.name }}"
+    data: "{{ item.level }}"
+    type: dword
+  loop:
+    - { name: '1 Knowledge Consistency Checker (KCC)', level: 0 }
+    - { name: '2 Security Events', level: 2 }
+    - { name: '3 ExDS Interface Events', level: 0 }
+    - { name: '4 MAPI Interface Events', level: 0 }
+    - { name: '5 Replication Events', level: 0 }
+    - { name: '6 Garbage Collection', level: 0 }
+    - { name: '7 Internal Configuration', level: 0 }
+    - { name: '8 Directory Access', level: 2 }
+    - { name: '9 Internal Processing', level: 0 }
+    - { name: '10 Performance Counters', level: 0 }
+    - { name: '11 Initialization/Termination', level: 0 }
+    - { name: '12 Service Control', level: 0 }
+    - { name: '13 Name Resolution', level: 0 }
+    - { name: '14 Backup', level: 0 }
+    - { name: '17 Setup', level: 0 }
+    - { name: '18 Global Catalog', level: 0 }
+    - { name: '19 Inter-site Messaging', level: 0 }
+    - { name: '20 Group Caching', level: 0 }
+    - { name: '21 Linked-Value Replication', level: 0 }
+    - { name: '22 DS RPC Client', level: 0 }
+    - { name: '23 DS RPC Server', level: 0 }
+    - { name: '24 DS Schema', level: 0 }
+  when: ldap_enable_all_diagnostics
+  notify: Restart NTDS service
+
+# Configure Directory Service event log size
+- name: Set Directory Service event log maximum size
+  ansible.windows.win_shell: |
+    $logName = "Directory Service"
+    $log = Get-WinEvent -ListLog $logName
+    $log.MaximumSizeInBytes = {{ directory_service_log_max_size_kb }} * 1024
+    $log.SaveChanges()
+  register: log_size_result
+  changed_when: log_size_result.rc == 0
+  failed_when: false
+
+# Enable auditing of Directory Service Access in security policy
+- name: Enable Directory Service Access auditing via auditpol
+  ansible.windows.win_shell: |
+    # Enable success and failure auditing for Directory Service Access
+    auditpol /set /subcategory:"Directory Service Access" /success:enable /failure:enable
+    auditpol /set /subcategory:"Directory Service Changes" /success:enable /failure:enable
+    auditpol /set /subcategory:"Directory Service Replication" /success:enable /failure:enable
+    auditpol /set /subcategory:"Detailed Directory Service Replication" /success:enable /failure:enable
+  register: auditpol_result
+  changed_when: auditpol_result.rc == 0
+
+# Create event source for custom LDAP audit events
+- name: Create custom event source for LDAP security events
+  ansible.windows.win_shell: |
+    $source = "GOAD-LDAPAudit"
+    if (-not [System.Diagnostics.EventLog]::SourceExists($source)) {
+        [System.Diagnostics.EventLog]::CreateEventSource($source, "Application")
+        Write-Output "Created event source: $source"
+    } else {
+        Write-Output "Event source already exists: $source"
+    }
+  register: event_source_result
+  changed_when: "'Created event source' in event_source_result.stdout"
+
+- name: Ensure Scripts directory exists
+  ansible.windows.win_file:
+    path: 'C:\Scripts'
+    state: directory
+
+# Create a script to monitor for suspicious LDAP queries
+- name: Create LDAP monitoring script
+  ansible.windows.win_copy:
+    dest: 'C:\Scripts\Monitor-LDAPQueries.ps1'
+    content: |
+      # Monitor LDAP queries for security-relevant patterns
+      # This script watches for Event ID 1644 and alerts on suspicious patterns
+
+      $suspiciousPatterns = @(
+          'description=*',           # Looking for passwords in descriptions
+          'userPassword=*',          # Password attribute queries
+          'unixUserPassword=*',      # Unix password queries
+          'unicodePwd=*',            # Unicode password queries
+          'msDS-ManagedPassword=*',  # gMSA password queries
+          'ms-Mcs-AdmPwd=*',         # LAPS password queries
+          'servicePrincipalName=*',  # SPN enumeration (Kerberoasting recon)
+          'msDS-AllowedToDelegateTo=*',  # Delegation queries
+          'msDS-AllowedToActOnBehalfOfOtherIdentity=*',  # RBCD queries
+          'userAccountControl:1.2.840.113556.1.4.803:=4194304',  # DONT_REQ_PREAUTH (AS-REP roasting)
+          'adminCount=1'             # Admin account enumeration
+      )
+
+      $eventSource = "GOAD-LDAPAudit"
+
+      # Get recent 1644 events
+      $events = Get-WinEvent -FilterHashtable @{
+          LogName = 'Directory Service'
+          Id = 1644
+          StartTime = (Get-Date).AddMinutes(-5)
+      } -ErrorAction SilentlyContinue
+
+      foreach ($event in $events) {
+          $message = $event.Message
+          foreach ($pattern in $suspiciousPatterns) {
+              if ($message -match [regex]::Escape($pattern)) {
+                  $alertMessage = @"
+      Suspicious LDAP Query Detected!
+      Pattern: $pattern
+      Time: $($event.TimeCreated)
+      Full Query: $message
+      "@
+                  [System.Diagnostics.EventLog]::WriteEntry(
+                      $eventSource,
+                      $alertMessage,
+                      [System.Diagnostics.EventLogEntryType]::Warning,
+                      4001
+                  )
+                  break
+              }
+          }
+      }
+
+- name: Create scheduled task to monitor LDAP queries
+  community.windows.win_scheduled_task:
+    name: "Monitor LDAP Security Queries"
+    description: "Monitors LDAP queries for security-relevant patterns"
+    actions:
+      - path: powershell.exe
+        arguments: "-ExecutionPolicy Bypass -File C:\\Scripts\\Monitor-LDAPQueries.ps1"
+    triggers:
+      - type: time
+        start_boundary: "2024-01-01T00:00:00"
+        repetition:
+          interval: PT5M
+    username: SYSTEM
+    state: present
+    enabled: true

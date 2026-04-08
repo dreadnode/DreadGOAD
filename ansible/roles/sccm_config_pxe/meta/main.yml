@@ -1,0 +1,21 @@
+---
+galaxy_info:
+  role_name: sccm_config_pxe
+  namespace: dreadnode
+  author: Dreadnode
+  company: Dreadnode
+  description: Configure SCCM PXE distribution point settings
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Windows
+      versions:
+        - all
+  galaxy_tags:
+    - windows
+    - sccm
+    - mecm
+    - pxe
+    - deployment
+
+dependencies: []

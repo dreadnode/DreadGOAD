@@ -1,3 +1,0 @@
-- name: "Enable wsman credssp "
-  ansible.windows.win_shell:
-    Enable-WSManCredSSP -Role "Client" -DelegateComputer "*" -Force

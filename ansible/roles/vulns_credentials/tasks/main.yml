@@ -1,0 +1,26 @@
+---
+- name: Store a password in Credential Manager
+  ansible.windows.win_shell: |
+    try {
+      $output = cmdkey.exe /add:{{ item.key }} /user:{{ item.value.username }} /pass:{{ item.value.secret }} 2>&1
+      # Check if the output contains a success message
+      if ($output -match "added successfully") {
+        # Success!
+        Write-Output "SUCCESS: Credential added successfully"
+        exit 0
+      } else {
+        Write-Output "FAILED: Unexpected output - $output"
+        exit 1
+      }
+    } catch {
+      Write-Output "FAILED: Exception occurred - $_"
+      exit 1
+    }
+  vars:
+    ansible_become: true
+    ansible_become_method: ansible.builtin.runas
+    ansible_become_user: "{{ item.value.runas | default(domain_username) }}"
+    ansible_become_password: "{{ item.value.runas_password | default(domain_password) }}"
+  with_dict: "{{ vulns_vars }}"
+  register: cmdkey_result
+  failed_when: cmdkey_result.rc != 0

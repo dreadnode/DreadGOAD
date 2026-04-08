@@ -87,11 +87,11 @@
             }
         },
         "lx01" : {
-              "hostname" : "syrax", 
+              "hostname" : "syrax",
               "type" : "server",
               "os": "linux",
               "local_admin_password": "HGLXaxQSP@ssw_rd$",
-              "domain" : "dracarys.lab", 
+              "domain" : "dracarys.lab",
               "path" : "DC=dracarys,DC=lab",
               "local_groups" : {
                   "sudoers" : ["LinuxAdmins"],
@@ -125,13 +125,13 @@
             },
             "multi_domain_groups_member" : {},
             "acls" : {
-                "WriteSPN_viserion_vhagar": {"for": "viserion", "to": "vhagar$", "right": "Ext-Write-SPN", "inheritance": "None"},
+                "WriteSPN_viserion_vhagar": {"for": "viserion", "to": "vhagar$", "right": "Ext-Write-SPN", "inheritance": "None"}
             },
             "users" : {
                 "drogon" : {
                     "firstname"   : "drogon",
                     "surname"     : "-",
-                    "password"    : "sUIjHxs1i0yxZsGBreh0", 
+                    "password"    : "sUIjHxs1i0yxZsGBreh0",
                     "city"        : "-",
                     "description" : "Domain admin",
                     "groups"      : ["LinuxAdmins", "Domain Admins"],

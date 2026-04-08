@@ -1,0 +1,191 @@
+---
+# MSSQL Configuration Tasks
+# These tasks configure SQL Server after installation
+# They should ALWAYS run to ensure proper configuration (idempotent)
+#
+# The golden AMI build grants ssm-user an explicit SQL sysadmin login
+# (BUILTIN\Administrators alone is not sufficient due to UAC token
+# filtering on non-elevated SSM sessions).  Config tasks run as
+# ssm-user with that explicit login — no become/runas SYSTEM needed.
+#
+# The bootstrap task tries Windows auth first, then falls back to sa
+# auth (available after the first provision) so that re-runs work even
+# if ssm-user's SQL login was previously dropped.
+#
+# ssm-user's SQL sysadmin is intentionally kept across runs so that
+# re-provisioning remains idempotent without a bootstrap problem.
+
+- name: Ensure BUILTIN\Administrators has SQL sysadmin
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = "Continue"
+
+    # Test if current session already has SQL sysadmin via Windows auth
+    $test = SqlCmd {{ connection_type }} -Q "SET NOCOUNT ON; SELECT CASE WHEN IS_SRVROLEMEMBER('sysadmin')=1 THEN 'HAS_SYSADMIN' ELSE 'NO_SYSADMIN' END" 2>&1
+    $hasSysadmin = ($LASTEXITCODE -eq 0) -and ($test -match 'HAS_SYSADMIN')
+
+    if (-not $hasSysadmin) {
+      # Current session lacks sysadmin - bootstrap via sa auth (enabled by prior provision).
+      # Grant sysadmin to BUILTIN\Administrators so any admin user (ssm-user, ansible, etc.) works.
+      $saArgs = @("-b", "-U", "sa", "-P", "{{ sa_password }}", "-S", "localhost\{{ sql_instance_name }}")
+      $r1 = & SqlCmd @saArgs -Q "IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = 'BUILTIN\Administrators') CREATE LOGIN [BUILTIN\Administrators] FROM WINDOWS WITH DEFAULT_DATABASE=[master]" 2>&1
+      if ($LASTEXITCODE -ne 0) { Write-Error "CREATE LOGIN BUILTIN\Administrators failed: $r1"; exit 1 }
+      $r2 = & SqlCmd @saArgs -Q "IF IS_SRVROLEMEMBER('sysadmin', 'BUILTIN\Administrators') = 0 EXEC sp_addsrvrolemember 'BUILTIN\Administrators', 'sysadmin'" 2>&1
+      if ($LASTEXITCODE -ne 0) { Write-Error "sp_addsrvrolemember failed: $r2"; exit 1 }
+    }
+    Write-Output "SQL sysadmin access verified (had_sysadmin=$hasSysadmin)"
+
+- name: Add MSSQL admin
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = "Continue"
+    $errors = @()
+
+    # Create login if not exists
+    $result1 = SqlCmd {{ connection_type }} -Q "IF NOT EXISTS (SELECT * FROM sys.server_principals WHERE name = '{{ item }}') CREATE LOGIN [{{ item }}] FROM WINDOWS" 2>&1
+    if ($LASTEXITCODE -ne 0) { $errors += "CREATE LOGIN failed: $result1" }
+
+    # Add to sysadmin if not already member
+    $result2 = SqlCmd {{ connection_type }} -Q "IF IS_SRVROLEMEMBER('sysadmin', '{{ item }}') = 0 EXEC SP_ADDSRVROLEMEMBER '{{ item }}','SYSADMIN'" 2>&1
+    if ($LASTEXITCODE -ne 0) { $errors += "SP_ADDSRVROLEMEMBER failed: $result2" }
+
+    if ($errors.Count -gt 0) {
+      Write-Error ($errors -join "`n")
+      exit 1
+    }
+    Write-Output "Successfully configured sysadmin: {{ item }}"
+  loop: "{{ sql_sysadmins }}"
+  register: admin_result
+
+- name: Log MSSQL admin errors
+  ansible.builtin.debug:
+    msg: "WARNING: MSSQL admin config had stderr: {{ item.stderr }}"
+  loop: "{{ admin_result.results | default([]) }}"
+  when: item.stderr is defined and item.stderr | length > 0
+  loop_control:
+    label: "{{ item.item | default('unknown') }}"
+
+- name: Add IMPERSONATE on login
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = "Continue"
+    $errors = @()
+
+    # Create login if not exists
+    $result1 = SqlCmd {{ connection_type }} -Q "IF NOT EXISTS (SELECT * FROM sys.server_principals WHERE name = '{{ item.key }}') CREATE LOGIN [{{ item.key }}] FROM WINDOWS" 2>&1
+    if ($LASTEXITCODE -ne 0) { $errors += "CREATE LOGIN failed: $result1" }
+
+    # Grant impersonate permission
+    $result2 = SqlCmd {{ connection_type }} -Q "GRANT IMPERSONATE ON LOGIN::[{{ item.value }}] TO [{{ item.key }}]" 2>&1
+    if ($LASTEXITCODE -ne 0) { $errors += "GRANT IMPERSONATE failed: $result2" }
+
+    if ($errors.Count -gt 0) {
+      Write-Error ($errors -join "`n")
+      exit 1
+    }
+    Write-Output "Successfully granted IMPERSONATE ON LOGIN::[{{ item.value }}] TO [{{ item.key }}]"
+  with_dict: "{{ executeaslogin }}"
+  register: impersonate_login_result
+
+- name: Log IMPERSONATE login errors
+  ansible.builtin.debug:
+    msg: "WARNING: IMPERSONATE login config had stderr: {{ item.stderr }}"
+  loop: "{{ impersonate_login_result.results | default([]) }}"
+  when: item.stderr is defined and item.stderr | length > 0
+  loop_control:
+    label: "{{ item.item.key | default('unknown') }}"
+
+- name: Add IMPERSONATE on user
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = "Continue"
+    $errors = @()
+
+    # Create login if not exists
+    $result1 = SqlCmd {{ connection_type }} -Q "IF NOT EXISTS (SELECT * FROM sys.server_principals WHERE name = '{{ item.value.user }}') CREATE LOGIN [{{ item.value.user }}] FROM WINDOWS" 2>&1
+    if ($LASTEXITCODE -ne 0) { $errors += "CREATE LOGIN failed: $result1" }
+
+    # Create user if not exists
+    $result2 = SqlCmd {{ connection_type }} -Q "USE {{ item.value.db }};IF NOT EXISTS (SELECT * FROM sys.database_principals WHERE name = '{{ item.value.user }}') CREATE USER [{{ item.value.user }}] FOR LOGIN [{{ item.value.user }}]" 2>&1
+    if ($LASTEXITCODE -ne 0) { $errors += "CREATE USER failed: $result2" }
+
+    # Grant impersonate on user
+    $result3 = SqlCmd {{ connection_type }} -Q "USE {{ item.value.db }};GRANT IMPERSONATE ON USER::[{{ item.value.impersonate }}] TO [{{ item.value.user }}]" 2>&1
+    if ($LASTEXITCODE -ne 0) { $errors += "GRANT IMPERSONATE ON USER failed: $result3" }
+
+    if ($errors.Count -gt 0) {
+      Write-Error ($errors -join "`n")
+      exit 1
+    }
+    Write-Output "Successfully granted IMPERSONATE ON USER::[{{ item.value.impersonate }}] TO [{{ item.value.user }}] in {{ item.value.db }}"
+  with_dict: "{{ executeasuser }}"
+  register: impersonate_user_result
+
+- name: Log IMPERSONATE user errors
+  ansible.builtin.debug:
+    msg: "WARNING: IMPERSONATE user config had stderr: {{ item.stderr }}"
+  loop: "{{ impersonate_user_result.results | default([]) }}"
+  when: item.stderr is defined and item.stderr | length > 0
+  loop_control:
+    label: "{{ item.item.key | default('unknown') }}"
+
+- name: Enable sa account
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = "Continue"
+    $errors = @()
+
+    # Enable sa login
+    $result1 = SqlCmd {{ connection_type }} -Q "ALTER LOGIN sa ENABLE" 2>&1
+    if ($LASTEXITCODE -ne 0) { $errors += "ALTER LOGIN sa ENABLE failed: $result1" }
+
+    # Set sa password
+    $result2 = SqlCmd {{ connection_type }} -Q "ALTER LOGIN sa WITH PASSWORD = '{{ sa_password }}' , CHECK_POLICY=OFF" 2>&1
+    if ($LASTEXITCODE -ne 0) { $errors += "ALTER LOGIN sa WITH PASSWORD failed: $result2" }
+
+    if ($errors.Count -gt 0) {
+      Write-Error ($errors -join "`n")
+      exit 1
+    }
+    Write-Output "Successfully enabled sa account"
+  register: sa_result
+
+- name: Log sa account errors
+  ansible.builtin.debug:
+    msg: "WARNING: sa account config had stderr: {{ sa_result.stderr }}"
+  when: sa_result.stderr is defined and sa_result.stderr | length > 0
+
+- name: Enable MSSQL authentication and windows authent
+  ansible.windows.win_shell: |
+    $result = SqlCmd {{ connection_type }} -Q "EXEC xp_instance_regwrite N'HKEY_LOCAL_MACHINE', N'Software\Microsoft\MSSQLServer\MSSQLServer', N'LoginMode', REG_DWORD, 2" 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      Write-Error "Failed to enable mixed mode auth: $result"
+      exit 1
+    }
+    Write-Output "Successfully enabled mixed mode authentication (LoginMode=2)"
+  register: auth_mode_result
+
+- name: Enable xp_cmdshell
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = "Continue"
+    $errors = @()
+
+    $result1 = SqlCmd {{ connection_type }} -Q "EXEC sp_configure 'show advanced options', 1; RECONFIGURE" 2>&1
+    if ($LASTEXITCODE -ne 0) { $errors += "show advanced options failed: $result1" }
+
+    $result2 = SqlCmd {{ connection_type }} -Q "EXEC sp_configure 'xp_cmdshell', 1; RECONFIGURE" 2>&1
+    if ($LASTEXITCODE -ne 0) { $errors += "xp_cmdshell enable failed: $result2" }
+
+    if ($errors.Count -gt 0) {
+      Write-Error ($errors -join "`n")
+      exit 1
+    }
+    Write-Output "Successfully enabled xp_cmdshell"
+  register: xp_cmdshell_result
+
+- name: Log xp_cmdshell errors
+  ansible.builtin.debug:
+    msg: "WARNING: xp_cmdshell config had stderr: {{ xp_cmdshell_result.stderr }}"
+  when: xp_cmdshell_result.stderr is defined and xp_cmdshell_result.stderr | length > 0
+
+- name: Restart service MSSQL
+  ansible.windows.win_service:
+    name: "{{ mssql_service_name }}"
+    force_dependent_services: true
+    state: restarted
+  when: auth_mode_result.changed or (sa_result.changed | default(false))

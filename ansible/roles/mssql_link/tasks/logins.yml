@@ -1,11 +1,68 @@
-- name: Create logins mapping to specific users
-  win_shell: |
-    SqlCmd -E -Q "EXEC master.dbo.sp_addlinkedsrvlogin @rmtsrvname = N'{{linked_server}}', @locallogin = N'{{user_mapping.local_login}}', @useself = N'False', @rmtuser = N'{{user_mapping.remote_login}}', @rmtpassword = N'{{user_mapping.remote_password}}'"
-  become: yes
-  become_method: runas
-  become_user: "{{SQLSVCACCOUNT}}"
+---
+- name: Ensure SQL Server is in multi-user mode before creating logins
+  ansible.windows.win_powershell:
+    script: |
+      try {
+        # Try to force SQL Server out of single-user mode
+        $sqlcmd = "C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn\SQLCMD.EXE"
+
+        # Try the most direct approach first - restart the service
+        Write-Output "Restarting SQL Server service..."
+        Stop-Service -Name 'MSSQL$SQLEXPRESS' -Force
+        Start-Sleep -Seconds 5
+        Start-Service -Name 'MSSQL$SQLEXPRESS'
+        Start-Sleep -Seconds 10
+
+        # Try to use dedicated admin connection to set multi-user mode
+        & $sqlcmd -E -S "localhost\SQLEXPRESS" -A -Q "ALTER DATABASE master SET MULTI_USER WITH ROLLBACK IMMEDIATE"
+
+        # Test if we can connect normally now
+        $testOutput = & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q "SELECT 1 AS ConnectionTest" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+          Write-Error "Still cannot connect to SQL Server: $testOutput"
+          exit 1
+        }
+
+        Write-Output "SQL Server is now in multi-user mode"
+      } catch {
+        Write-Error "Error fixing SQL Server mode: $_"
+        exit 1
+      }
+  become: true
+  become_method: ansible.builtin.runas
+  become_user: "{{ SQLSVCACCOUNT }}"
   vars:
-    ansible_become_pass: "{{SQLSVCPASSWORD}}"
-  loop: "{{users_mapping}}"
+    ansible_become_pass: "{{ SQLSVCPASSWORD }}"
+
+- name: Configure logins mapping to specific users
+  ansible.windows.win_powershell:
+    script: |
+      $sqlcmd = "C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn\SQLCMD.EXE"
+      if (-not (Test-Path $sqlcmd)) {
+        Write-Error "SQLCMD.EXE not found at $sqlcmd"
+        exit 1
+      }
+
+      # Always drop and recreate the login mapping to ensure password is correct
+      # This is necessary because sp_addlinkedsrvlogin doesn't update passwords
+      $dropQuery = "EXEC master.dbo.sp_droplinkedsrvlogin @rmtsrvname = N'{{ linked_server }}', @locallogin = N'{{ mapping_item.local_login }}'"
+      $addQuery = "EXEC master.dbo.sp_addlinkedsrvlogin @rmtsrvname = N'{{ linked_server }}', @locallogin = N'{{ mapping_item.local_login }}', @useself = N'False', @rmtuser = N'{{ mapping_item.remote_login }}', @rmtpassword = N'{{ mapping_item.remote_password }}'"
+
+      # Drop existing mapping (ignore errors if it doesn't exist)
+      & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q $dropQuery 2>&1 | Out-Null
+
+      # Add the login mapping with correct password
+      $result = & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q $addQuery 2>&1
+      if ($LASTEXITCODE -ne 0) {
+        Write-Error "Failed to add linked server login: $result"
+        exit 1
+      }
+      Write-Output "Configured login mapping: {{ mapping_item.local_login }} -> {{ mapping_item.remote_login }}@{{ linked_server }}"
+  become: true
+  become_method: ansible.builtin.runas
+  become_user: "{{ SQLSVCACCOUNT }}"
+  vars:
+    ansible_become_pass: "{{ SQLSVCPASSWORD }}"
+  with_items: "{{ users_mapping }}"
   loop_control:
-    loop_var: user_mapping
+    loop_var: mapping_item

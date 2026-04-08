@@ -1,0 +1,21 @@
+---
+galaxy_info:
+  role_name: dc_audit_sacl
+  namespace: dreadnode
+  author: Dreadnode
+  company: Dreadnode
+  description: Configure SACL auditing on Domain Controllers for attack detection
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Windows
+      versions:
+        - all
+  galaxy_tags:
+    - windows
+    - active_directory
+    - security
+    - auditing
+    - dcsync
+
+dependencies: []

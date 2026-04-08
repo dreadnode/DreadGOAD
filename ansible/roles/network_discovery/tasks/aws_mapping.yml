@@ -1,0 +1,48 @@
+---
+- name: Load AWS instance_to_ip mapping from file for SSM connections
+  ansible.builtin.include_vars:
+    file: "/tmp/aws_instance_mapping_{{ env }}.json"
+    name: aws_mapping
+  run_once: true
+  when: ansible_connection is search('aws_ssm')
+  ignore_errors: true
+
+- name: Display AWS instance to IP mappings
+  ansible.builtin.debug:
+    msg: "Instance {{ item.key }} -> IP {{ item.value }}"
+  loop: "{{ aws_mapping.instance_to_ip | dict2items }}"
+  run_once: true
+  when:
+    - ansible_connection is search('aws_ssm')
+    - aws_mapping is defined
+
+- name: Set instance_to_ip mapping for all hosts
+  ansible.builtin.set_fact:
+    instance_to_ip: "{{ aws_mapping.instance_to_ip | default({}) }}"
+    cacheable: true
+  run_once: true
+  delegate_facts: true
+  delegate_to: "{{ item }}"
+  loop: "{{ groups['all'] }}"
+  loop_control:
+    label: "{{ item }} ({{ hostvars[item].ansible_host | default('no instance_id') }})"
+  when:
+    - ansible_connection is search('aws_ssm')
+    - aws_mapping is defined
+
+- name: Set host_ipv4 from AWS instance mapping for SSM connections
+  ansible.builtin.set_fact:
+    host_ipv4: "{{ instance_to_ip[ansible_host] | default('') }}"
+    cacheable: true
+  when:
+    - ansible_connection is search('aws_ssm')
+    - instance_to_ip is defined
+    - ansible_host in instance_to_ip
+
+- name: Display host IP assignment from AWS mapping
+  ansible.builtin.debug:
+    msg: "Host {{ inventory_hostname }} ({{ ansible_host }}) assigned IP: {{ host_ipv4 }}"
+  when:
+    - ansible_connection is search('aws_ssm')
+    - host_ipv4 is defined
+    - host_ipv4 != ''

@@ -1,0 +1,19 @@
+---
+galaxy_info:
+  role_name: vulns_administrator_folder
+  namespace: dreadnode
+  author: Dreadnode
+  company: Dreadnode
+  description: Configure administrator profile folder for attack simulation
+  license: GPL-3.0-or-later
+  min_ansible_version: "2.15"
+  platforms:
+    - name: Windows
+      versions:
+        - all
+  galaxy_tags:
+    - windows
+    - vulnerability
+    - pentest
+
+dependencies: []
