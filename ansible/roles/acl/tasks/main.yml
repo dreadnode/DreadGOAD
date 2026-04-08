@@ -94,8 +94,23 @@
         if ($for.StartsWith("NT AUTHORITY")) {
           $forSID = New-Object System.Security.Principal.NTAccount "$for"
         } else {
-          # Get only the objectSID property we need
-          $forObj = Get-ADObject -Filter "SamAccountName -eq '$for'" -Properties objectSID -ErrorAction Stop
+          $forObj = Get-ADObject -Filter "SamAccountName -eq '$for'" -Properties objectSID -ErrorAction SilentlyContinue
+          # Fallback for gMSA/computer accounts whose trailing $ may be
+          # stripped during parameter serialisation over SSM.  Try the
+          # type-specific cmdlets which resolve by CN (no $ needed).
+          if (-not $forObj -and $for.EndsWith('$')) {
+            $baseName = $for.TrimEnd('$')
+            $forObj = Get-ADServiceAccount -Identity $baseName -Properties objectSID -ErrorAction SilentlyContinue
+            if (-not $forObj) {
+              $forObj = Get-ADComputer -Identity $baseName -Properties objectSID -ErrorAction SilentlyContinue
+            }
+          }
+          # If $ was stripped before reaching us, $for won't end with $
+          # but the AD object's SamAccountName does — try appending it.
+          if (-not $forObj) {
+            $withDollar = $for + '$'
+            $forObj = Get-ADObject -Filter "SamAccountName -eq '$withDollar'" -Properties objectSID -ErrorAction SilentlyContinue
+          }
           if (-not $forObj) {
             throw "Cannot find object with SamAccountName: $for"
           }

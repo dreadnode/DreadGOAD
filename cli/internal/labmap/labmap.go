@@ -30,14 +30,20 @@ type HostConfig struct {
 	Vulns     []string                   `json:"vulns"`
 	VulnsVars map[string]json.RawMessage `json:"vulns_vars"`
 	Security  []string                   `json:"security"`
+	UseLAPS   bool                       `json:"use_laps"`
 	MSSQL     *MSSQLConfig               `json:"mssql"`
 }
 
-// MSSQLConfig holds MSSQL configuration for a host.
+type MSSQLLinkedServer struct {
+	DataSrc string `json:"data_src"`
+}
+
 type MSSQLConfig struct {
-	SAPassword     string   `json:"sa_password"`
-	ServiceAccount string   `json:"svcaccount"`
-	SysAdmins      []string `json:"sysadmins"`
+	SAPassword     string                       `json:"sa_password"`
+	ServiceAccount string                       `json:"svcaccount"`
+	SysAdmins      []string                     `json:"sysadmins"`
+	ExecuteAsLogin map[string]string            `json:"executeaslogin"`
+	LinkedServers  map[string]MSSQLLinkedServer `json:"linked_servers"`
 }
 
 // UserConfig represents a user from config.json domains[*].users[*].
@@ -60,6 +66,13 @@ type ACLConfig struct {
 	Inheritance string `json:"inheritance"`
 }
 
+type GMSAConfig struct {
+	Name      string   `json:"gMSA_Name"`
+	FQDN      string   `json:"gMSA_FQDN"`
+	SPNs      []string `json:"gMSA_SPNs"`
+	HostNames []string `json:"gMSA_HostNames"`
+}
+
 // DomainConfig represents a domain from config.json lab.domains.
 type DomainConfig struct {
 	DC              string                `json:"dc"` // host role key
@@ -67,6 +80,8 @@ type DomainConfig struct {
 	Trust           string                `json:"trust"`
 	CAServer        string                `json:"ca_server"`
 	CAWebEnrollment *bool                 `json:"ca_web_enrollment"`
+	LAPSReaders     []string              `json:"laps_readers"`
+	GMSA            map[string]GMSAConfig `json:"gmsa"`
 	Users           map[string]UserConfig `json:"users"`
 	ACLs            map[string]ACLConfig  `json:"acls"`
 }
@@ -379,6 +394,79 @@ func (m *LabMap) AllACLs() []ACLFact {
 		}
 	}
 	return facts
+}
+
+type GMSAFact struct {
+	Domain string
+	DCRole string
+	GMSA   GMSAConfig
+}
+
+type LAPSFact struct {
+	Domain  string
+	DCRole  string
+	Readers []string
+}
+
+type MSSQLFact struct {
+	HostRole string
+	Hostname string
+	MSSQL    *MSSQLConfig
+}
+
+func (m *LabMap) DomainsWithGMSA() []GMSAFact {
+	var facts []GMSAFact
+	for domain, dc := range m.DomainConfigs {
+		for _, gmsa := range dc.GMSA {
+			if gmsa.Name != "" {
+				facts = append(facts, GMSAFact{
+					Domain: domain,
+					DCRole: dc.DC,
+					GMSA:   gmsa,
+				})
+			}
+		}
+	}
+	return facts
+}
+
+func (m *LabMap) DomainsWithLAPSReaders() []LAPSFact {
+	var facts []LAPSFact
+	for domain, dc := range m.DomainConfigs {
+		if len(dc.LAPSReaders) > 0 {
+			facts = append(facts, LAPSFact{
+				Domain:  domain,
+				DCRole:  dc.DC,
+				Readers: dc.LAPSReaders,
+			})
+		}
+	}
+	return facts
+}
+
+func (m *LabMap) HostsWithMSSQLConfig() []MSSQLFact {
+	var facts []MSSQLFact
+	roles := m.HostsWithMSSQL()
+	for _, role := range roles {
+		hc := m.HostConfigs[role]
+		facts = append(facts, MSSQLFact{
+			HostRole: role,
+			Hostname: hc.Hostname,
+			MSSQL:    hc.MSSQL,
+		})
+	}
+	return facts
+}
+
+func (m *LabMap) HostsWithLAPS() []string {
+	var hosts []string
+	for role, hc := range m.HostConfigs {
+		if hc.UseLAPS {
+			hosts = append(hosts, role)
+		}
+	}
+	sort.Strings(hosts)
+	return hosts
 }
 
 // --- Config parsing ---

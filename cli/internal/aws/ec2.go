@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
@@ -17,13 +18,17 @@ type Instance struct {
 	State      string
 }
 
-// DiscoverInstances finds running GOAD instances by tag pattern.
-func (c *Client) DiscoverInstances(ctx context.Context, env string) ([]Instance, error) {
+// DiscoverInstances finds GOAD instances by tag pattern.
+// By default only running instances are returned. Pass additional states
+// (e.g. "stopped") to include them.
+func (c *Client) DiscoverInstances(ctx context.Context, env string, extraStates ...string) ([]Instance, error) {
 	pattern := fmt.Sprintf("*%s*dreadgoad*", env)
+	states := []string{"running"}
+	states = append(states, extraStates...)
 	out, err := c.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		Filters: []types.Filter{
 			{Name: Ptr("tag:Name"), Values: []string{pattern}},
-			{Name: Ptr("instance-state-name"), Values: []string{"running"}},
+			{Name: Ptr("instance-state-name"), Values: states},
 		},
 	})
 	if err != nil {
@@ -131,6 +136,14 @@ func (c *Client) FindInstanceByHostnameAll(ctx context.Context, env, hostname st
 		}
 	}
 	return nil, fmt.Errorf("instance not found for hostname %s", hostname)
+}
+
+// WaitForInstanceStopped polls until the given instance reaches the "stopped" state.
+func (c *Client) WaitForInstanceStopped(ctx context.Context, instanceID string) error {
+	waiter := ec2.NewInstanceStoppedWaiter(c.EC2)
+	return waiter.Wait(ctx, &ec2.DescribeInstancesInput{
+		InstanceIds: []string{instanceID},
+	}, 5*time.Minute)
 }
 
 // TerminateInstances terminates the given EC2 instances.

@@ -2,6 +2,7 @@
 - name: Wait
   hosts: localhost
   connection: local
+  gather_facts: false
   tasks:
     - name: Wait 5 minutes to finish
       ansible.builtin.pause:

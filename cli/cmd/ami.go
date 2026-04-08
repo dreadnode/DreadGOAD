@@ -364,11 +364,15 @@ func runAMIPurge(cmd *cobra.Command, args []string) error {
 	var resources []ami.ResourceInfo
 	if len(args) > 0 {
 		resources, err = cleaner.ListResourcesForBuild(ctx, args[0])
+		if err != nil {
+			return fmt.Errorf("list resources: %w", err)
+		}
+		resources = filterExactBuild(resources, args[0])
 	} else {
 		resources, err = cleaner.ListWarpgateResources(ctx)
-	}
-	if err != nil {
-		return fmt.Errorf("list resources: %w", err)
+		if err != nil {
+			return fmt.Errorf("list resources: %w", err)
+		}
 	}
 
 	if len(resources) == 0 {
@@ -484,6 +488,26 @@ func loadWarpgateTemplate(path, projectRoot string) (*builder.Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// filterExactBuild removes resources that don't belong to the specified build.
+// This works around warpgate's HasPrefix matching in ListResourcesForBuild
+// which incorrectly includes e.g. "goad-dc-base-2016" when filtering for "goad-dc-base".
+func filterExactBuild(resources []ami.ResourceInfo, buildName string) []ami.ResourceInfo {
+	var exact []ami.ResourceInfo
+	for _, r := range resources {
+		if r.BuildName == buildName {
+			exact = append(exact, r)
+			continue
+		}
+		// Also match resources that have no BuildName tag but whose name
+		// matches exactly (e.g. infra configs named just "goad-dc-base").
+		if r.BuildName == "" && r.Name == buildName {
+			exact = append(exact, r)
+			continue
+		}
+	}
+	return exact
 }
 
 func printBuildSummary(results []amiBuildResult) {

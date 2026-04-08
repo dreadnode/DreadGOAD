@@ -1,29 +1,31 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/cowdogmoo/warpgate/main/schema/warpgate-template.json
 metadata:
-  name: goad-mssql-base
+  name: goad-mssql-base-2025
   version: 1.0.0
-  description: Windows Server 2019 with updates and MSSQL Express 2019 pre-installed for GOAD member servers
+  description: Windows Server 2025 with updates and MSSQL Express 2022 pre-installed for GOAD member servers
   author: Dreadnode <info@dreadnode.io>
   license: MIT
   tags:
     - goad
     - windows
+    - windows-2025
     - mssql
     - sql-server
+    - dracarys
   requires:
     warpgate: ">=1.0.0"
 
-name: goad-mssql-base
+name: goad-mssql-base-2025
 version: latest
 
 base:
-  image: "arn:aws:ssm:us-west-1::parameter/aws/service/ami-windows-latest/Windows_Server-2019-English-Full-Base"
+  image: "arn:aws:ssm:us-west-1::parameter/aws/service/ami-windows-latest/Windows_Server-2025-English-Full-Base"
 
 variables:
   aws_region: us-west-1
   instance_type: t3.medium
   ami_owner: "801119661308"
-  ami_name_filter: "Windows_Server-2019-English-Full-Base-*"
+  ami_name_filter: "Windows_Server-2025-English-Full-Base-*"
 
 provisioners:
   - type: ansible
@@ -46,12 +48,12 @@ targets:
   - type: ami
     region: "${aws_region}"
     instance_type: "${instance_type}"
-    ami_name: "goad-mssql-base-{{timestamp}}"
+    ami_name: "goad-mssql-base-2025-{{timestamp}}"
     volume_size: 100
     ami_tags:
-      Name: goad-mssql-base
+      Name: goad-mssql-base-2025
       Lab: GOAD
       Role: MemberServer
-      Software: MSSQL-Express-2019
+      Software: MSSQL-Express-2022
       ManagedBy: warpgate
-      BaseOS: WindowsServer2019
+      BaseOS: WindowsServer2025

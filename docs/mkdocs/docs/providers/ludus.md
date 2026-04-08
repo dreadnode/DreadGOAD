@@ -9,8 +9,8 @@
 </div>
 
 !!! warning "Install on ludus server only"
-    To add GOAD on Ludus please use goad directly on the server.
-    By now goad can work only directly on the server and not from a workstation client.
+    To add DreadGOAD on Ludus please use the CLI directly on the server.
+    By now DreadGOAD can work only directly on the server and not from a workstation client.
 
 - Install Ludus : [https://docs.ludus.cloud/docs/quick-start/install-ludus/](https://docs.ludus.cloud/docs/quick-start/install-ludus/)
 
@@ -18,45 +18,39 @@
 - Once your installation is complete on ludus server (debian 12) and your user is created do :
 
 ```bash
-git clone https://github.com/Orange-Cyberdefense/GOAD.git
-cd GOAD
-sudo apt install python3.11-venv        # because by default ludus use debian 12 with python3.11
+git clone https://github.com/dreadnode/DreadGOAD.git
+cd DreadGOAD
 export LUDUS_API_KEY='myapikey'         # put your api key here
-./goad.sh -p ludus
-GOAD/ludus/local > check
-GOAD/ludus/local > set_lab XXX # GOAD/GOAD-Light/NHA/SCCM
-GOAD/ludus/local > install
+dreadgoad doctor                        # check prerequisites
+dreadgoad provision                     # provision the lab
 ```
 
-And goad launch the installation ;)
+## DreadGOAD configuration
 
-## Goad configuration
+- If you don't want to do the export LUDUS_API_KEY before running the CLI you can also add the API key in the configuration file
+- Initialize the configuration file with `dreadgoad config init`
+- Ludus-specific settings are configured in `dreadgoad.yaml`:
 
-- If you don't want to do the export LUDUS_API_KEY before using goad you can also add the api_key in the goad.ini configuration file
-- The goad configuration file as some options for ludus:
-
-```ini
-# ~/.goad/goad.ini
-...
-[ludus]
-ludus_api_key = changeme
-use_impersonation = yes
+```yaml
+# dreadgoad.yaml
+ludus:
+  api_key: changeme
+  use_impersonation: true
 ```
 
-- change the api_key with the one of your admin user
+- Change the api_key with the one of your admin user
 
 ## Install
 
 ```bash
-./goad.sh -p ludus
-GOAD/ludus/local > set_lab XXX # GOAD/GOAD-Light/NHA/SCCM
-GOAD/ludus/local > install
+dreadgoad doctor       # check prerequisites
+dreadgoad provision    # provision the lab (GOAD/GOAD-Light/NHA/SCCM)
 ```
 
 - The installation will create a new simple_user to generate the pool we will call him "lab_user" the id of this user will be `lab_name<6alphanumeric_digit>`
 - Next this "lab_user" will be impersonate to launch all the ludus deployment command
 - At the end the "lab_user" will share access to our user
-- This way we can manage multiple lab instance with goad on the same ludus server.
+- This way we can manage multiple lab instances with DreadGOAD on the same ludus server.
 
 !!! info
     On ludus the config ip_range is not used and is ignored. The ips will be setup automatically during the lab installation

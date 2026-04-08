@@ -128,7 +128,12 @@ func runLabAction(action string) func(*cobra.Command, []string) error {
 			return err
 		}
 
-		instances, err := client.DiscoverInstances(ctx, cfg.Env)
+		var instances []daws.Instance
+		if action == "start" {
+			instances, err = client.DiscoverInstances(ctx, cfg.Env, "stopped")
+		} else {
+			instances, err = client.DiscoverInstances(ctx, cfg.Env)
+		}
 		if err != nil {
 			return err
 		}
@@ -176,7 +181,11 @@ func execVMAction(ctx context.Context, client *daws.Client, inst *daws.Instance,
 			if err := client.StopInstances(ctx, ids); err != nil {
 				return fmt.Errorf("stop VM: %w", err)
 			}
-			fmt.Printf("Stop initiated for %s, waiting for stop...\n", inst.Name)
+			fmt.Printf("Stop initiated for %s, waiting for stopped state...\n", inst.Name)
+			if err := client.WaitForInstanceStopped(ctx, inst.InstanceID); err != nil {
+				return fmt.Errorf("wait for stop: %w", err)
+			}
+			fmt.Printf("%s is now stopped\n", inst.Name)
 		}
 		if err := client.StartInstances(ctx, ids); err != nil {
 			return fmt.Errorf("start VM: %w", err)

@@ -1,7 +1,38 @@
 # Usage
 
-- Goad script can be run in two ways.
-    - [argument_mode](goad_args.md) : launch goad.sh with arguments to launch one task
-    - [interactive_mode](goad_console.md) : launch an interactive console to manage multiple labs and instances.
+DreadGOAD is managed through the `dreadgoad` CLI. All operations are available as commands and subcommands.
 
-- The easy way to use goad is just launch `./goad.sh` and use `?` in the interactive console to get some help.
+```bash
+dreadgoad --help
+```
+
+See the [CLI Reference](../cli-reference.md) for the full command listing.
+
+## Common workflows
+
+### First-time setup
+
+```bash
+dreadgoad config init          # Create default config
+dreadgoad doctor               # Verify dependencies
+dreadgoad env create dev       # Create an environment
+```
+
+### Deploy a lab
+
+```bash
+dreadgoad infra init           # Initialize Terragrunt
+dreadgoad infra apply          # Provision infrastructure
+dreadgoad inventory sync       # Sync inventory with AWS
+dreadgoad provision            # Run Ansible provisioning
+dreadgoad validate             # Validate vulnerabilities
+```
+
+### Day-to-day operations
+
+```bash
+dreadgoad lab status           # Check lab state
+dreadgoad lab stop             # Stop all instances
+dreadgoad lab start            # Start all instances
+dreadgoad health-check         # Verify lab health
+```

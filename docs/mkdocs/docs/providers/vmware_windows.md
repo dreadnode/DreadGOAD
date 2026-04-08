@@ -25,9 +25,7 @@ Use VMware Workstation's Virtual Network Editor to configure the host-only netwo
 Inside the controller VM, install dependencies:
 
 ```bash
-pip install --upgrade pip
-pip install ansible-core pywinrm
-sudo apt install sshpass lftp rsync openssh-client
+sudo apt install sshpass lftp rsync openssh-client ansible
 
 # Install Ansible requirements
 cd DreadGOAD
@@ -52,11 +50,6 @@ Once the VMs are running, switch to your Kali/Ubuntu controller VM and run the p
 ```bash
 cd DreadGOAD
 
-# Using the CLI
-./cli/dreadgoad provision
-
-# Or using the legacy script
-./goad.sh -t install -l GOAD -p vmware -m local -a
+# Using the DreadGOAD CLI
+dreadgoad provision
 ```
-
-The `-a` flag skips interactive prompts and runs with defaults.

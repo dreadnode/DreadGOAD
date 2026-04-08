@@ -34,7 +34,7 @@ Ansible work with inventories. Inventories files contains all the hosts declarat
 
 - The lab inventory file (`ad/<lab>/data/inventory`) is not modified/moved and contain all the main variables and hosts association, this file stay as this and is not modified. It contains the lab building logic.
 
-- The provider inventory file (`ad/<lab>/provider/<provider>/inventory`) is modified with the settings and copied into the workspace folder (`workspace/<instance_id>/inventory`) , this file contains variable specific to the provider and the host ip declaration
+- The provider inventory file (`ad/<lab>/providers/<provider>/inventory`) is modified with the settings and copied into the workspace folder (`workspace/<instance_id>/inventory`) , this file contains variable specific to the provider and the host ip declaration
 
 - The extension(s) inventory file(s) (`extensions/<extension>/inventory`) is modified with the settings and copied into the workspace folder (`workspace/<instance_id>/inventory_<extension>`) , this file contains variable specific to the extension and the extension host ip declaration
 

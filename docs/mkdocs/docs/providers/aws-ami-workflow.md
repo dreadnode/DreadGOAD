@@ -68,13 +68,16 @@ For full details on all config options, see [CLI configuration](../../cli.md).
 
 ### Choosing an environment
 
-The repo ships with a `staging` directory tree. To use a different environment (e.g., `dev`), duplicate the directory structure:
+The repo ships with a `staging` directory tree. To create a new environment (e.g., `dev`), use the CLI:
 
 ```bash
-cp -r infra/goad-deployment/staging infra/goad-deployment/dev
+dreadgoad env create dev
 ```
 
-Then edit `dev/env.hcl` to set `env = "dev"` and adjust the account ID, VPC CIDR, or other settings as needed. Each environment gets its own Terraform state, so you can run multiple labs in parallel.
+This scaffolds the full Terragrunt tree, pulling the VPC CIDR from your
+`dreadgoad.yaml` config (`environments.dev.vpc_cidr`). You can also pass
+`--vpc-cidr` explicitly. Each environment gets its own Terraform state,
+so you can run multiple labs in parallel.
 
 Throughout this guide, examples use `staging` and `us-west-1` to match the defaults. Replace with your chosen env and region as needed.
 
@@ -87,43 +90,39 @@ DreadGOAD provides four warpgate templates under `warpgate-templates/`:
 | `goad-dc-base` | DC01, DC02 | Windows Server 2019 | ~25 min/host |
 | `goad-dc-base-2016` | DC03 | Windows Server 2016 | ~25 min/host |
 | `goad-mssql-base` | SRV02 | Windows Server 2019 | ~48 min/host |
-| `goad-member-base-2016` | SRV03 (optional) | Windows Server 2016 | ~20 min/host |
+| `goad-mssql-base-2016` | SRV03 (optional) | Windows Server 2016 | ~20 min/host |
 
 ### Build all AMIs
 
 ```bash
-# Domain Controllers (Windows 2019)
-warpgate build goad-dc-base --target ami
+# Build all templates in parallel
+dreadgoad ami build --all
 
-# Domain Controller (Windows 2016, for DC03/meereen)
-warpgate build goad-dc-base-2016 --target ami
-
-# Member Server with MSSQL (Windows 2019, for SRV02/castelblack)
-warpgate build goad-mssql-base --target ami
-
-# Member Server (Windows 2016, for SRV03/braavos -- optional)
-warpgate build goad-member-base-2016 --target ami
+# Or build individually
+dreadgoad ami build goad-dc-base
+dreadgoad ami build goad-dc-base-2016
+dreadgoad ami build goad-mssql-base
+dreadgoad ami build goad-mssql-base-2016
 ```
 
 To build for a specific region:
 
 ```bash
+dreadgoad ami build goad-dc-base --region us-west-1
+```
+
+You can also call `warpgate` directly for more control:
+
+```bash
 warpgate build goad-dc-base --target ami --region us-west-1
 ```
 
-### Record the AMI IDs
+### AMI resolution is automatic
 
-Each build outputs an AMI ID (e.g., `ami-0abc1234def56789`). Record these -- you'll need them in the next step:
-
-| Template | AMI ID | Used By |
-|----------|--------|---------|
-| `goad-dc-base` | `ami-xxxxxxxxx` | DC01 (kingslanding), DC02 (winterfell) |
-| `goad-dc-base-2016` | `ami-xxxxxxxxx` | DC03 (meereen) |
-| `goad-mssql-base` | `ami-xxxxxxxxx` | SRV02 (castelblack) |
-| `goad-member-base-2016` | `ami-xxxxxxxxx` | SRV03 (braavos) -- optional |
+Each warpgate template tags its output AMI with `Name: <template-name>` (e.g., `Name: goad-dc-base`). The terragrunt host configurations filter by this tag with `most_recent = true`, so they always pick up the latest build automatically. No manual AMI ID tracking is needed.
 
 !!! note "SRV03 (braavos)"
-    SRV03 runs Windows Server 2016 as a member server. You can use the dedicated `goad-member-base-2016` AMI, or alternatively `goad-dc-base-2016` (the extra AD DS role won't interfere) or a vanilla Windows Server 2016 AMI.
+    SRV03 runs Windows Server 2016 as a member server. You can use the dedicated `goad-mssql-base-2016` AMI, or alternatively `goad-dc-base-2016` (the extra AD DS role won't interfere) or a vanilla Windows Server 2016 AMI.
 
 ### What's pre-baked vs. runtime
 
@@ -164,69 +163,29 @@ locals {
 }
 ```
 
-### Insert AMI IDs into host configurations
+### How AMI selection works
 
-Each host has a `terragrunt.hcl` under `infra/goad-deployment/staging/us-west-1/goad/`. Update the `additional_windows_ami_filters` block in each:
-
-**DC01 and DC02** (`dc01/terragrunt.hcl`, `dc02/terragrunt.hcl`) -- use `goad-dc-base` AMI:
+Each host's `terragrunt.hcl` already contains the correct AMI filter. For example, `dc01/terragrunt.hcl`:
 
 ```hcl
+windows_ami_owners = ["self"]
+
 additional_windows_ami_filters = [
   {
-    name   = "image-id"
-    values = ["ami-xxxxxxxxx"]  # goad-dc-base AMI ID
+    name   = "tag:Name"
+    values = ["goad-dc-base"]
   }
 ]
-
-windows_os         = "Windows_Server"
-windows_os_version = "2019-English-Full-Base"
-windows_ami_owners = ["self"]
 ```
 
-**DC03** (`dc03/terragrunt.hcl`) -- use `goad-dc-base-2016` AMI:
+The instance-factory module uses `most_recent = true`, so after building a new AMI with `dreadgoad ami build`, the next `dreadgoad infra apply` automatically picks it up.
 
-```hcl
-additional_windows_ami_filters = [
-  {
-    name   = "image-id"
-    values = ["ami-xxxxxxxxx"]  # goad-dc-base-2016 AMI ID
-  }
-]
-
-windows_os         = "Windows_Server"
-windows_os_version = "2016-English-Full-Base"
-windows_ami_owners = ["self"]
-```
-
-**SRV02** (`srv02/terragrunt.hcl`) -- use `goad-mssql-base` AMI:
-
-```hcl
-additional_windows_ami_filters = [
-  {
-    name   = "image-id"
-    values = ["ami-xxxxxxxxx"]  # goad-mssql-base AMI ID
-  }
-]
-
-windows_os         = "Windows_Server"
-windows_os_version = "2019-English-Full-Base"
-windows_ami_owners = ["self"]
-```
-
-**SRV03** (`srv03/terragrunt.hcl`) -- use `goad-member-base-2016` AMI (optional):
-
-```hcl
-additional_windows_ami_filters = [
-  {
-    name   = "image-id"
-    values = ["ami-xxxxxxxxx"]  # goad-member-base-2016 AMI ID
-  }
-]
-
-windows_os         = "Windows_Server"
-windows_os_version = "2016-English-Full-Base"
-windows_ami_owners = ["self"]
-```
+| Template | Hosts | Filter Tag |
+|----------|-------|------------|
+| `goad-dc-base` | DC01, DC02 | `tag:Name = goad-dc-base` |
+| `goad-dc-base-2016` | DC03 | `tag:Name = goad-dc-base-2016` |
+| `goad-mssql-base` | SRV02 | `tag:Name = goad-mssql-base` |
+| `goad-mssql-base-2016` | SRV03 | `tag:Name = goad-mssql-base-2016` |
 
 ### Set admin passwords
 
@@ -245,6 +204,13 @@ export TF_VAR_goad_srv03_password="YourSecurePassword5"
 ### Initialize and apply
 
 ```bash
+dreadgoad infra init --env staging --region us-west-1
+dreadgoad infra apply --env staging --region us-west-1
+```
+
+Or with raw Terragrunt for more control:
+
+```bash
 cd infra/goad-deployment/staging/us-west-1
 
 # Deploy networking first
@@ -260,14 +226,20 @@ terragrunt run-all apply
 ```
 
 !!! tip
-    `terragrunt run-all` deploys DC01-DC03, SRV02, and SRV03 in parallel. The dependency on the network module is resolved automatically.
+    `terragrunt run-all` (and `dreadgoad infra apply`) deploys DC01-DC03, SRV02, and SRV03 in parallel. The dependency on the network module is resolved automatically.
 
 ### Verify instances
 
 All instances use SSM for management -- no SSH keys or open ports required:
 
 ```bash
-# Check instance status via AWS CLI
+dreadgoad health-check --env staging --region us-west-1
+```
+
+Or with the AWS CLI directly:
+
+```bash
+# Check instance status
 aws ec2 describe-instances \
   --filters "Name=tag:Project,Values=DreadGOAD" \
   --query "Reservations[].Instances[].[Tags[?Key=='Name'].Value|[0],State.Name,InstanceId]" \
@@ -275,12 +247,6 @@ aws ec2 describe-instances \
 
 # Connect to an instance via SSM
 aws ssm start-session --target <instance-id>
-```
-
-Or use the DreadGOAD CLI:
-
-```bash
-dreadgoad health-check --env staging --region us-west-1
 ```
 
 ## Step 4: Provision with Ansible
@@ -352,7 +318,7 @@ dreadgoad validate --env staging --region us-west-1
 | winterfell | DC02 | dc02 | north.sevenkingdoms.local | 2019 | goad-dc-base |
 | meereen | DC03 | dc03 | essos.local | 2016 | goad-dc-base-2016 |
 | castelblack | SRV02 | srv02 | north.sevenkingdoms.local | 2019 | goad-mssql-base |
-| braavos | SRV03 | srv03 | essos.local | 2016 | goad-member-base-2016 (optional) |
+| braavos | SRV03 | srv03 | essos.local | 2016 | goad-mssql-base-2016 (optional) |
 
 ## Rebuilding AMIs
 
