@@ -131,7 +131,7 @@ func (v *Validator) RunAllChecks(ctx context.Context) {
 
 // GetReport returns the current report.
 func (v *Validator) GetReport() *Report {
-	v.report.Total = len(v.report.Results)
+	v.report.Total = v.report.Passed + v.report.Failed + v.report.Warnings
 	return &v.report
 }
 
