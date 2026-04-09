@@ -316,7 +316,10 @@ func copyBaseConfig(projectRoot, envName string) error {
 }
 
 func generateInventory(projectRoot, envName, region, reference string) error {
-	refInvPath := filepath.Join(projectRoot, reference+"-inventory")
+	refInvPath, err := resolveReferenceInventory(projectRoot, reference)
+	if err != nil {
+		return err
+	}
 	dstInvPath := filepath.Join(projectRoot, envName+"-inventory")
 
 	data, err := os.ReadFile(refInvPath)
@@ -363,6 +366,26 @@ func generateInventory(projectRoot, envName, region, reference string) error {
 	content = ipFieldRe.ReplaceAllString(content, "")
 
 	return os.WriteFile(dstInvPath, []byte(content), 0o644)
+}
+
+func resolveReferenceInventory(projectRoot, reference string) (string, error) {
+	candidates := []string{
+		filepath.Join(projectRoot, reference+"-inventory"),
+		filepath.Join(projectRoot, reference+"-inventory.example"),
+	}
+
+	for _, candidate := range candidates {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		}
+	}
+
+	return "", fmt.Errorf(
+		"reference inventory %q not found; expected %s or %s",
+		reference,
+		filepath.Base(candidates[0]),
+		filepath.Base(candidates[1]),
+	)
 }
 
 func generateVariantConfig(projectRoot, envName string) error {

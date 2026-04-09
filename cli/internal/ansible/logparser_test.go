@@ -124,6 +124,20 @@ DC01                       : ok=10   changed=2    unreachable=0    failed=0    s
 DC01                       : ok=5    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0`,
 			want: []string{"DC01"},
 		},
+		{
+			name: "unreachable host included",
+			output: `PLAY RECAP *********************************************************************
+dc01                       : ok=4    changed=2    unreachable=0    failed=1    skipped=3    rescued=0    ignored=0
+dc02                       : ok=3    changed=1    unreachable=1    failed=0    skipped=3    rescued=0    ignored=0
+dc03                       : ok=10   changed=6    unreachable=0    failed=0    skipped=4    rescued=0    ignored=0`,
+			want: []string{"dc01", "dc02"},
+		},
+		{
+			name: "only unreachable no failed",
+			output: `PLAY RECAP *********************************************************************
+dc02                       : ok=0    changed=0    unreachable=1    failed=0    skipped=0    rescued=0    ignored=0`,
+			want: []string{"dc02"},
+		},
 	}
 
 	for _, tt := range tests {

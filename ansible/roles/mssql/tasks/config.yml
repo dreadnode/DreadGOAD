@@ -18,21 +18,54 @@
 - name: Ensure BUILTIN\Administrators has SQL sysadmin
   ansible.windows.win_shell: |
     $ErrorActionPreference = "Continue"
+    $instanceName = "{{ sql_instance_name }}"
+    $serviceName = "{{ mssql_service_name }}"
+    $saPassword = "{{ sa_password }}"
 
     # Test if current session already has SQL sysadmin via Windows auth
     $test = SqlCmd {{ connection_type }} -Q "SET NOCOUNT ON; SELECT CASE WHEN IS_SRVROLEMEMBER('sysadmin')=1 THEN 'HAS_SYSADMIN' ELSE 'NO_SYSADMIN' END" 2>&1
     $hasSysadmin = ($LASTEXITCODE -eq 0) -and ($test -match 'HAS_SYSADMIN')
 
     if (-not $hasSysadmin) {
-      # Current session lacks sysadmin - bootstrap via sa auth (enabled by prior provision).
-      # Grant sysadmin to BUILTIN\Administrators so any admin user (ssm-user, ansible, etc.) works.
-      $saArgs = @("-b", "-U", "sa", "-P", "{{ sa_password }}", "-S", "localhost\{{ sql_instance_name }}")
-      $r1 = & SqlCmd @saArgs -Q "IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = 'BUILTIN\Administrators') CREATE LOGIN [BUILTIN\Administrators] FROM WINDOWS WITH DEFAULT_DATABASE=[master]" 2>&1
-      if ($LASTEXITCODE -ne 0) { Write-Error "CREATE LOGIN BUILTIN\Administrators failed: $r1"; exit 1 }
-      $r2 = & SqlCmd @saArgs -Q "IF IS_SRVROLEMEMBER('sysadmin', 'BUILTIN\Administrators') = 0 EXEC sp_addsrvrolemember 'BUILTIN\Administrators', 'sysadmin'" 2>&1
-      if ($LASTEXITCODE -ne 0) { Write-Error "sp_addsrvrolemember failed: $r2"; exit 1 }
+      # Try sa auth first (available after prior provision or if SECURITYMODE=SQL was used at install)
+      $saArgs = @("-b", "-U", "sa", "-P", $saPassword, "-S", "localhost\$instanceName")
+      $r1 = & SqlCmd @saArgs -Q "SELECT 1" 2>&1
+      $saWorks = ($LASTEXITCODE -eq 0)
+
+      if (-not $saWorks) {
+        # Neither Windows auth nor sa auth works - bootstrap via single-user mode
+        Write-Output "Bootstrapping SQL Server via single-user mode..."
+        Stop-Service $serviceName -Force
+        Start-Sleep -Seconds 3
+
+        # Find sqlservr.exe path
+        $sqlVer = if ($instanceName -eq "SQLEXPRESS") { (Get-ChildItem "C:\Program Files\Microsoft SQL Server" -Directory | Where-Object { $_.Name -match "^MSSQL\d+" } | Sort-Object Name -Descending | Select-Object -First 1).Name } else { "MSSQL15.$instanceName" }
+        $sqlServerExe = "C:\Program Files\Microsoft SQL Server\$sqlVer\MSSQL\Binn\sqlservr.exe"
+
+        $proc = Start-Process -FilePath $sqlServerExe -ArgumentList "-s$instanceName", "-m" -PassThru -NoNewWindow
+        Start-Sleep -Seconds 12
+
+        # In single-user mode, current user gets sysadmin
+        & SqlCmd -E -S "localhost\$instanceName" -Q "EXEC xp_instance_regwrite N'HKEY_LOCAL_MACHINE', N'SOFTWARE\Microsoft\Microsoft SQL Server\$sqlVer\MSSQLServer', N'LoginMode', REG_DWORD, 2" 2>&1 | Out-Null
+        & SqlCmd -E -S "localhost\$instanceName" -Q "ALTER LOGIN sa ENABLE; ALTER LOGIN sa WITH PASSWORD = N'$saPassword', CHECK_POLICY=OFF" 2>&1 | Out-Null
+        & SqlCmd -E -S "localhost\$instanceName" -Q "IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = 'BUILTIN\Administrators') CREATE LOGIN [BUILTIN\Administrators] FROM WINDOWS; IF IS_SRVROLEMEMBER('sysadmin', 'BUILTIN\Administrators') = 0 EXEC sp_addsrvrolemember 'BUILTIN\Administrators', 'sysadmin'" 2>&1 | Out-Null
+
+        Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 5
+        Start-Service $serviceName
+        Start-Sleep -Seconds 5
+        Write-Output "SQL Server bootstrapped via single-user mode"
+      } else {
+        # sa auth works - use it to grant BUILTIN\Administrators sysadmin
+        $r2 = & SqlCmd @saArgs -Q "IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = 'BUILTIN\Administrators') CREATE LOGIN [BUILTIN\Administrators] FROM WINDOWS WITH DEFAULT_DATABASE=[master]" 2>&1
+        if ($LASTEXITCODE -ne 0) { Write-Error "CREATE LOGIN BUILTIN\Administrators failed: $r2"; exit 1 }
+        $r3 = & SqlCmd @saArgs -Q "IF IS_SRVROLEMEMBER('sysadmin', 'BUILTIN\Administrators') = 0 EXEC sp_addsrvrolemember 'BUILTIN\Administrators', 'sysadmin'" 2>&1
+        if ($LASTEXITCODE -ne 0) { Write-Error "sp_addsrvrolemember failed: $r3"; exit 1 }
+        Write-Output "SQL sysadmin bootstrapped via sa auth"
+      }
+    } else {
+      Write-Output "SQL sysadmin access already available via Windows auth"
     }
-    Write-Output "SQL sysadmin access verified (had_sysadmin=$hasSysadmin)"
 
 - name: Add MSSQL admin
   ansible.windows.win_shell: |

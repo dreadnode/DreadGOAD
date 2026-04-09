@@ -6,9 +6,10 @@ import (
 )
 
 var (
-	failedRe      = regexp.MustCompile(`failed=[1-9][0-9]*`)
-	unreachableRe = regexp.MustCompile(`unreachable=[1-9][0-9]*`)
-	failedHostRe  = regexp.MustCompile(`(?m)^([a-zA-Z0-9_-]+)\s+:.*failed=[1-9]`)
+	failedRe          = regexp.MustCompile(`failed=[1-9][0-9]*`)
+	unreachableRe     = regexp.MustCompile(`unreachable=[1-9][0-9]*`)
+	failedHostRe      = regexp.MustCompile(`(?m)^([a-zA-Z0-9_-]+)\s+:.*failed=[1-9]`)
+	unreachableHostRe = regexp.MustCompile(`(?m)^([a-zA-Z0-9_-]+)\s+:.*unreachable=[1-9]`)
 )
 
 // CheckAnsibleSuccess analyzes Ansible output to determine if the run succeeded.
@@ -46,16 +47,18 @@ func CheckAnsibleSuccess(output string) bool {
 	return true
 }
 
-// ExtractFailedHosts parses PLAY RECAP to find hosts with failures.
+// ExtractFailedHosts parses PLAY RECAP to find hosts with failures or unreachable status.
 func ExtractFailedHosts(output string) []string {
-	matches := failedHostRe.FindAllStringSubmatch(output, -1)
-	var hosts []string
 	seen := make(map[string]bool)
-	for _, m := range matches {
-		host := m[1]
-		if !seen[host] {
-			seen[host] = true
-			hosts = append(hosts, host)
+	var hosts []string
+
+	for _, re := range []*regexp.Regexp{failedHostRe, unreachableHostRe} {
+		for _, m := range re.FindAllStringSubmatch(output, -1) {
+			host := m[1]
+			if !seen[host] {
+				seen[host] = true
+				hosts = append(hosts, host)
+			}
 		}
 	}
 	return hosts

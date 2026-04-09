@@ -1,26 +1,28 @@
 ; GLOBAL CONFIG ----------------------------
 [all:vars]
 ; domain_name : folder inside ad/
-domain_name=GOAD
+domain_name=GOAD-variant-1
 
 ; administrator user
 admin_user=administrator
 
 ; environment
-env=staging
+env=dev
 
 ; SSM connection (windows)
 ansible_become=false
 ansible_connection=amazon.aws.aws_ssm
-ansible_aws_ssm_bucket_name=dread-infra-alpha-operator-range-staging-us-west-1
-ansible_aws_ssm_region=us-west-1
+ansible_aws_ssm_bucket_name=example-dreadgoad-dev-us-west-2
+ansible_aws_ssm_region=us-west-2
 ansible_shell_type=powershell
 ansible_aws_ssm_s3_addressing_style=virtual
-ansible_aws_ssm_retries=3
 ansible_remote_tmp=C:\Windows\Temp
 
 ; miscellaneous
-data_path="{{ playbook_dir }}/../../ad/GOAD/data"
+data_path="{{ playbook_dir }}/../../ad/GOAD-variant-1/data"
+
+; AWS instances have a single network adapter (no NAT adapter)
+two_adapters=false
 
 ; global settings inventory default value
 keyboard_layouts=["en-US", "da-DK", "fr-FR"]
@@ -47,17 +49,17 @@ dns_server_forwarder=1.1.1.1
 ; ------------------------------------------------
 ; sevenkingdoms.local
 ; ------------------------------------------------
-dc01 ansible_host=i-014ce68c3bdbf888e dict_key=dc01 dns_domain=dc01 ansible_user=ansible
+dc01 ansible_host=PENDING dict_key=dc01 dns_domain=dc01 ansible_user=ansible
 ; ------------------------------------------------
 ; north.sevenkingdoms.local
 ; ------------------------------------------------
-dc02 ansible_host=i-01ef190a91a23eab1 dict_key=dc02 dns_domain=dc01 ansible_user=ansible
-srv02 ansible_host=i-0bd336a4bd9090496 dict_key=srv02 dns_domain=dc02 ansible_user=ansible
+dc02 ansible_host=PENDING dict_key=dc02 dns_domain=dc01 ansible_user=ansible
+srv02 ansible_host=PENDING dict_key=srv02 dns_domain=dc02 ansible_user=ansible
 ; ------------------------------------------------
 ; essos.local
 ; ------------------------------------------------
-dc03 ansible_host=i-0f03ae2e9dd3332d7 dict_key=dc03 dns_domain=dc03 ansible_user=ansible
-srv03 ansible_host=i-0692242788b6cb839 dict_key=srv03 dns_domain=dc03 ansible_user=ansible
+dc03 ansible_host=PENDING dict_key=dc03 dns_domain=dc03 ansible_user=ansible
+srv03 ansible_host=PENDING dict_key=srv03 dns_domain=dc03 ansible_user=ansible
 
 ; LAB SCENARIO CONFIGURATION -----------------------------
 

@@ -24,7 +24,14 @@
       try {
           Import-Module ActiveDirectory
           Set-Location AD:
-          Add-KDSRootKey -EffectiveTime (Get-Date).AddHours(-10) -ErrorAction SilentlyContinue
+
+          # Ensure KDS root key exists and is effective
+          $kdsKey = Get-KdsRootKey -ErrorAction SilentlyContinue
+          if (-not $kdsKey) {
+              Add-KDSRootKey -EffectiveTime (Get-Date).AddHours(-10)
+              Start-Sleep -Seconds 5
+              Write-Output "Created KDS root key"
+          }
 
           $existing = Get-ADServiceAccount -Identity $gMSA_Name -ErrorAction SilentlyContinue
           if ($existing) {
@@ -37,8 +44,22 @@
 
           $gMSA_HostsGroup = $gMSA_HostNames | ForEach-Object { Get-ADComputer -Identity $_ }
           New-ADServiceAccount -Name $gMSA_Name -DNSHostName $gMSA_FQDN -PrincipalsAllowedToRetrieveManagedPassword $gMSA_HostsGroup -ServicePrincipalNames $gMSA_SPNs
+
+          # Verify the account was actually created in AD
+          Start-Sleep -Seconds 3
+          $verify = Get-ADServiceAccount -Identity $gMSA_Name -ErrorAction SilentlyContinue
+          if (-not $verify) {
+              # Retry once after waiting for AD replication
+              Write-Output "GMSA not found after creation, waiting for AD replication..."
+              Start-Sleep -Seconds 10
+              $verify = Get-ADServiceAccount -Identity $gMSA_Name -ErrorAction SilentlyContinue
+              if (-not $verify) {
+                  throw "GMSA account $gMSA_Name was not found after creation - possible KDS root key or replication issue"
+              }
+          }
+
           $Ansible.Changed = $true
-          Write-Output "Created GMSA account $gMSA_Name successfully"
+          Write-Output "Created and verified GMSA account $gMSA_Name"
       }
       catch {
           Write-Error "Failed to create GMSA account: $_"
