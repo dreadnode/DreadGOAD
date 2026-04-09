@@ -60,6 +60,98 @@
           Import-Module ActiveDirectory -ErrorAction Stop
         }
 
+        function Get-EscapedLDAPValue {
+          param (
+            [Parameter(Mandatory = $true)]
+            [string]$Value
+          )
+
+          $escaped = $Value.Replace('\', '\5c').Replace('*', '\2a').Replace('(', '\28').Replace(')', '\29')
+          if ($escaped.StartsWith('#')) {
+            $escaped = '\23' + $escaped.Substring(1)
+          }
+          return $escaped.Replace([char]0, '\00')
+        }
+
+        function Resolve-ADPrincipal {
+          param (
+            [Parameter(Mandatory = $true)]
+            [string]$Identity
+          )
+
+          if ($Identity.StartsWith("NT AUTHORITY")) {
+            return New-Object System.Security.Principal.NTAccount $Identity
+          }
+
+          $candidates = [System.Collections.Generic.List[string]]::new()
+          $candidates.Add($Identity)
+
+          if ($Identity.EndsWith('$')) {
+            $trimmed = $Identity.TrimEnd('$')
+            if ($trimmed -and -not $candidates.Contains($trimmed)) {
+              $candidates.Add($trimmed)
+            }
+          } else {
+            $withDollar = $Identity + '$'
+            if (-not $candidates.Contains($withDollar)) {
+              $candidates.Add($withDollar)
+            }
+          }
+
+          foreach ($candidate in $candidates) {
+            $escaped = Get-EscapedLDAPValue -Value $candidate
+            $principal = Get-ADObject -LDAPFilter "(sAMAccountName=$escaped)" -Properties objectSID -ErrorAction SilentlyContinue
+            if ($principal -and $principal.objectSID) {
+              return New-Object System.Security.Principal.SecurityIdentifier $principal.objectSID
+            }
+          }
+
+          foreach ($candidate in $candidates) {
+            $serviceAccount = Get-ADServiceAccount -Identity $candidate -Properties objectSID -ErrorAction SilentlyContinue
+            if ($serviceAccount -and $serviceAccount.objectSID) {
+              return New-Object System.Security.Principal.SecurityIdentifier $serviceAccount.objectSID
+            }
+
+            $computer = Get-ADComputer -Identity $candidate -Properties objectSID -ErrorAction SilentlyContinue
+            if ($computer -and $computer.objectSID) {
+              return New-Object System.Security.Principal.SecurityIdentifier $computer.objectSID
+            }
+
+            $objectByName = Get-ADObject -Filter "Name -eq '$candidate'" -Properties objectSID -ErrorAction SilentlyContinue
+            if ($objectByName -and $objectByName.objectSID) {
+              return New-Object System.Security.Principal.SecurityIdentifier $objectByName.objectSID
+            }
+          }
+
+          throw "Cannot find principal: $Identity"
+        }
+
+        function Resolve-ADTarget {
+          param (
+            [Parameter(Mandatory = $true)]
+            [string]$Identity,
+
+            [hashtable]$ExtraArgs = @{}
+          )
+
+          if ($Identity -match "^(CN|OU|DC)=") {
+            return $Identity
+          }
+
+          $escaped = Get-EscapedLDAPValue -Value $Identity
+          $targetObj = Get-ADObject -LDAPFilter "(sAMAccountName=$escaped)" -Properties DistinguishedName @ExtraArgs -ErrorAction SilentlyContinue
+          if ($targetObj -and $targetObj.DistinguishedName) {
+            return $targetObj.DistinguishedName
+          }
+
+          $targetObj = Get-ADObject -Filter "Name -eq '$Identity'" -Properties DistinguishedName @ExtraArgs -ErrorAction SilentlyContinue
+          if ($targetObj -and $targetObj.DistinguishedName) {
+            return $targetObj.DistinguishedName
+          }
+
+          throw "Cannot find object with identity: $Identity"
+        }
+
         # Define valid ACL values as hash tables for faster lookup
         $aclValues = @{
           'AccessSystemSecurity' = $true
@@ -91,39 +183,18 @@
           "Ext-Write-SPN" = @("WriteProperty","f3a64788-5306-11d1-a9c5-0000f80367c1")
         }
 
-        # Get the SID for the principal
-        if ($for.StartsWith("NT AUTHORITY")) {
-          $forSID = New-Object System.Security.Principal.NTAccount "$for"
-        } else {
-          $forObj = Get-ADObject -Filter "SamAccountName -eq '$for'" -Properties objectSID -ErrorAction SilentlyContinue
-          # Fallback for gMSA/computer accounts whose trailing $ may be
-          # stripped during parameter serialisation over SSM.  Try the
-          # type-specific cmdlets which resolve by CN (no $ needed).
-          if (-not $forObj -and $for.EndsWith('$')) {
-            $baseName = $for.TrimEnd('$')
-            $forObj = Get-ADServiceAccount -Identity $baseName -Properties objectSID -ErrorAction SilentlyContinue
-            if (-not $forObj) {
-              $forObj = Get-ADComputer -Identity $baseName -Properties objectSID -ErrorAction SilentlyContinue
-            }
+        # Retry principal resolution to handle AD replication lag
+        # (e.g. gMSA accounts created moments before by the gmsa role).
+        $forSID = $null
+        $resolveMaxAttempts = 6
+        for ($resolveAttempt = 1; $resolveAttempt -le $resolveMaxAttempts; $resolveAttempt++) {
+          try {
+            $forSID = Resolve-ADPrincipal -Identity $for
+            break
+          } catch {
+            if ($resolveAttempt -eq $resolveMaxAttempts) { throw }
+            Start-Sleep -Seconds 5
           }
-          # If $ was stripped before reaching us, $for won't end with $
-          # but the AD object's SamAccountName does — try appending it.
-          if (-not $forObj) {
-            $withDollar = $for + '$'
-            $forObj = Get-ADObject -Filter "SamAccountName -eq '$withDollar'" -Properties objectSID -ErrorAction SilentlyContinue
-            # Get-ADObject -Filter can choke on trailing $ in filter strings;
-            # fall back to type-specific cmdlets that use -Identity instead.
-            if (-not $forObj) {
-              $forObj = Get-ADServiceAccount -Identity $for -Properties objectSID -ErrorAction SilentlyContinue
-            }
-            if (-not $forObj) {
-              $forObj = Get-ADComputer -Identity $for -Properties objectSID -ErrorAction SilentlyContinue
-            }
-          }
-          if (-not $forObj) {
-            throw "Cannot find object with SamAccountName: $for"
-          }
-          $forSID = New-Object System.Security.Principal.SecurityIdentifier $forObj.objectSID
         }
 
         # Resolve target object and get ACL
@@ -137,24 +208,8 @@
           $to = $parts[1]
         }
 
-        # Try to get object as DN first, then as SamAccountName
-        try {
-          # Test if it's already a DN
-          if ($to -match "^(CN|OU|DC)=") {
-            $objOU = $to
-            $objAcl = Get-Acl -Path "AD:\$objOU" -ErrorAction Stop
-          } else {
-            # Get object by SamAccountName
-            $toObj = Get-ADObject -Filter "SamAccountName -eq '$to'" -Properties DistinguishedName @extra_args -ErrorAction Stop
-            if (-not $toObj) {
-              throw "Cannot find object with SamAccountName: $to"
-            }
-            $objOU = $toObj.DistinguishedName
-            $objAcl = Get-Acl -Path "AD:\$objOU" -ErrorAction Stop
-          }
-        } catch {
-          throw "Failed to get ACL for object: $_"
-        }
+        # Resolve target DN
+        $objOU = Resolve-ADTarget -Identity $to -ExtraArgs $extra_args
 
         $type = [System.Security.AccessControl.AccessControlType]::Allow
         # CORRECT - Using cast syntax for variable
@@ -184,10 +239,34 @@
           return
         }
 
-        # Apply the ACE if created
+        # Apply the ACE via DirectoryEntry (ADSI) which writes directly over
+        # LDAP.  The AD: PSDrive + Set-Acl path can silently drop writes under
+        # Ansible's runas become context for certain principal types (gMSA).
         if ($ace) {
-          $objAcl.AddAccessRule($ace)
-          Set-Acl -AclObject $objAcl -Path "AD:\$objOU" -ErrorAction Stop
+          $de = [ADSI]"LDAP://$objOU"
+          $de.PSBase.ObjectSecurity.AddAccessRule($ace)
+          $de.PSBase.CommitChanges()
+
+          # Verify the ACE was persisted
+          $de.PSBase.RefreshCache('nTSecurityDescriptor')
+          $sidValue = if ($forSID -is [System.Security.Principal.SecurityIdentifier]) { $forSID.Value } else { $forSID.ToString() }
+          $verified = $false
+          foreach ($entry in $de.PSBase.ObjectSecurity.Access) {
+            try {
+              $entrySid = $entry.IdentityReference
+              if ($entrySid -is [System.Security.Principal.SecurityIdentifier]) {
+                if ($entrySid.Value -eq $sidValue) { $verified = $true; break }
+              } else {
+                $translated = $entrySid.Translate([System.Security.Principal.SecurityIdentifier])
+                if ($translated.Value -eq $sidValue) { $verified = $true; break }
+              }
+            } catch { continue }
+          }
+
+          if (-not $verified) {
+            throw "ACL for $for on $objOU was written but not persisted — verify AD permissions for the become user"
+          }
+
           $Ansible.Changed = $true
           $Ansible.Result = @{
             status = "success"

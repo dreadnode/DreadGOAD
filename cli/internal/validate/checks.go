@@ -410,21 +410,45 @@ $ErrorActionPreference = 'Stop'
 Import-Module ActiveDirectory
 Set-Location AD:
 $target = '%s'
+$sourceSam = '%s'
 $sourceMatch = '*%s*'
 try {
   if ($target -match '=') {
     $objDN = $target
     $objAcl = Get-Acl -Path $objDN -ErrorAction Stop
   } else {
-    $obj = Get-ADObject -Filter "SamAccountName -eq '$target'" -Properties nTSecurityDescriptor -ErrorAction Stop
+    $obj = Get-ADObject -Filter "SamAccountName -eq '$target'" -ErrorAction Stop
     if (-not $obj) { Write-Output 'TARGET_NOT_FOUND'; exit }
-    $objAcl = $obj.nTSecurityDescriptor
+    $objAcl = Get-Acl -Path $obj.DistinguishedName -ErrorAction Stop
   }
+  # Try name-based match first
   $ace = $objAcl.Access | Where-Object { $_.IdentityReference -like $sourceMatch }
+  if (-not $ace) {
+    # Resolve source to SID and match ACEs stored as SID references
+    $srcSID = $null
+    foreach ($sam in @($sourceSam, ($sourceSam + '$'))) {
+      $srcObj = Get-ADObject -LDAPFilter "(sAMAccountName=$sam)" -Properties objectSID -ErrorAction SilentlyContinue
+      if ($srcObj -and $srcObj.objectSID) { $srcSID = $srcObj.objectSID.Value; break }
+    }
+    if (-not $srcSID) {
+      $svc = Get-ADServiceAccount -Identity $sourceSam -Properties objectSID -ErrorAction SilentlyContinue
+      if ($svc) { $srcSID = $svc.objectSID.Value }
+    }
+    if ($srcSID) {
+      $ace = $objAcl.Access | Where-Object {
+        $ref = $_.IdentityReference
+        ($ref.Value -eq $srcSID) -or (
+          $ref -is [System.Security.Principal.NTAccount] -and $(
+            try { $ref.Translate([System.Security.Principal.SecurityIdentifier]).Value -eq $srcSID } catch { $false }
+          )
+        )
+      }
+    }
+  }
   if ($ace) { Write-Output 'ACL_FOUND' } else { Write-Output 'ACL_NOT_FOUND' }
 } catch {
   Write-Output "CHECK_ERROR: $_"
-}`, target, sourceFirst)
+}`, target, sourceFirst, sourceFirst)
 
 		output := v.runPS(ctx, dcRole, script)
 
