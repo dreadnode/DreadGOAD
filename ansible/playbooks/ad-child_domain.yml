@@ -28,7 +28,6 @@
   roles:
     - { role: 'dreadnode.goad.parent_child_dns', tags: 'parent_child_dns'}
   vars:
-    lab: "{{ lab }}"
     domains: "{{ lab.domains.keys() }}"
     domain: "{{ lab.hosts[dict_key].domain }}"
     dc_hostname_to_ip: "{{ hostvars[groups['dc'][0]]['dc_hostname_to_ip'] | default({}) }}"
