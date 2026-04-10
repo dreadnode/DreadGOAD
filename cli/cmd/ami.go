@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -271,7 +272,7 @@ func buildSingleAMI(ctx context.Context, cfg *config.Config, templatePath string
 		warpLogger.ConsoleWriter = os.Stderr
 	} else {
 		warpLogger = warplog.NewCustomLoggerWithOptions("error", "plain", true, false)
-		warpLogger.ConsoleWriter = os.Stderr
+		warpLogger.ConsoleWriter = io.Discard
 		bar.Update("Initializing", 0.01, 0, 0)
 	}
 
