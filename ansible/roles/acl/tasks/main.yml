@@ -185,15 +185,16 @@
 
         # Retry principal resolution to handle AD replication lag
         # (e.g. gMSA accounts created moments before by the gmsa role).
+        # Cloud environments with cross-domain replication can take 2+ minutes.
         $forSID = $null
-        $resolveMaxAttempts = 6
+        $resolveMaxAttempts = 12
         for ($resolveAttempt = 1; $resolveAttempt -le $resolveMaxAttempts; $resolveAttempt++) {
           try {
             $forSID = Resolve-ADPrincipal -Identity $for
             break
           } catch {
             if ($resolveAttempt -eq $resolveMaxAttempts) { throw }
-            Start-Sleep -Seconds 5
+            Start-Sleep -Seconds 10
           }
         }
 
