@@ -209,8 +209,19 @@
           $to = $parts[1]
         }
 
-        # Resolve target DN
-        $objOU = Resolve-ADTarget -Identity $to -ExtraArgs $extra_args
+        # Retry target resolution to handle AD replication lag
+        # (e.g. users created moments before by the ad-data role).
+        # Cloud environments with cross-domain replication can take 2+ minutes.
+        $targetMaxAttempts = 12
+        for ($targetAttempt = 1; $targetAttempt -le $targetMaxAttempts; $targetAttempt++) {
+          try {
+            $objOU = Resolve-ADTarget -Identity $to -ExtraArgs $extra_args
+            break
+          } catch {
+            if ($targetAttempt -eq $targetMaxAttempts) { throw }
+            Start-Sleep -Seconds 10
+          }
+        }
 
         $type = [System.Security.AccessControl.AccessControlType]::Allow
         # CORRECT - Using cast syntax for variable

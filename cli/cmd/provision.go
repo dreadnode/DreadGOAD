@@ -110,6 +110,29 @@ func ensureVariant(cfg *config.Config) error {
 	return nil
 }
 
+// preflightChecks validates tooling, builds the Ansible collection, and
+// prepares artifacts needed before provisioning playbooks run.
+func preflightChecks(ctx context.Context, cfg *config.Config) error {
+	if err := doctor.CheckAnsibleCoreVersion(); err != nil {
+		return fmt.Errorf("ansible-core version check failed: %w", err)
+	}
+	if err := ansible.BuildCollection(cfg.ProjectRoot); err != nil {
+		return fmt.Errorf("collection build failed: %w", err)
+	}
+	if err := ansible.PrepareADCSZips(cfg.ProjectRoot); err != nil {
+		slog.Warn("ADCS zip preparation failed", "error", err)
+	}
+	if err := ensureVariant(cfg); err != nil {
+		return err
+	}
+	// Generate instance-to-IP mapping so Ansible can resolve host IPs
+	// without slow runtime network detection over SSM.
+	if err := generateInstanceMapping(ctx, ""); err != nil {
+		slog.Warn("instance mapping generation failed, playbooks will use runtime detection", "error", err)
+	}
+	return nil
+}
+
 func runProvision(cmd *cobra.Command, args []string) error {
 	cfg, err := config.Get()
 	if err != nil {
@@ -132,20 +155,8 @@ func runProvision(cmd *cobra.Command, args []string) error {
 	logFile := filepath.Join(cfg.LogDir, fmt.Sprintf("%s-dreadgoad-%s.log",
 		cfg.Env, time.Now().Format("20060102_150405")))
 
-	if err := doctor.CheckAnsibleCoreVersion(); err != nil {
-		return fmt.Errorf("ansible-core version check failed: %w", err)
-	}
-	if err := ansible.PrepareADCSZips(cfg.ProjectRoot); err != nil {
-		slog.Warn("ADCS zip preparation failed", "error", err)
-	}
-	if err := ensureVariant(cfg); err != nil {
+	if err := preflightChecks(ctx, cfg); err != nil {
 		return err
-	}
-
-	// Generate instance-to-IP mapping so Ansible can resolve host IPs
-	// without slow runtime network detection over SSM.
-	if err := generateInstanceMapping(ctx, ""); err != nil {
-		slog.Warn("instance mapping generation failed, playbooks will use runtime detection", "error", err)
 	}
 
 	fmt.Println("===============================================")

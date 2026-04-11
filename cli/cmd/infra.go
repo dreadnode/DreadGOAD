@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	daws "github.com/dreadnode/dreadgoad/internal/aws"
 	"github.com/dreadnode/dreadgoad/internal/config"
@@ -129,33 +130,62 @@ func discoverHostMap(ctx context.Context, client *daws.Client, env string, expec
 	return hostMap, nil
 }
 
+// ssmRetryAttempts is the number of times to re-check offline SSM agents before giving up.
+const ssmRetryAttempts = 6
+
+// ssmRetryInterval is the delay between SSM status re-checks.
+const ssmRetryInterval = 15 * time.Second
+
 // checkSSMOnline verifies that SSM agents are online for all discovered instances.
+// Instances with a transient status (e.g. ConnectionLost) are retried with backoff.
 func checkSSMOnline(ctx context.Context, client *daws.Client, hostMap map[string]string) error {
-	var instanceIDs []string
-	for _, id := range hostMap {
-		instanceIDs = append(instanceIDs, id)
-	}
-
-	statuses, err := client.CheckSSMStatus(ctx, instanceIDs)
-	if err != nil {
-		return fmt.Errorf("check SSM status: %w", err)
-	}
-
 	idToHost := make(map[string]string, len(hostMap))
 	for h, id := range hostMap {
 		idToHost[id] = h
 	}
 
-	var offline []string
-	for _, s := range statuses {
-		if s.PingStatus != "Online" {
-			offline = append(offline, fmt.Sprintf("%s (%s)", idToHost[s.InstanceID], s.PingStatus))
-		}
+	pending := make([]string, 0, len(hostMap))
+	for _, id := range hostMap {
+		pending = append(pending, id)
 	}
 
-	if len(offline) > 0 {
-		return fmt.Errorf("SSM agent not online: %s", strings.Join(offline, ", "))
+	totalInstances := len(pending)
+
+	for attempt := range ssmRetryAttempts {
+		statuses, err := client.CheckSSMStatus(ctx, pending)
+		if err != nil {
+			return fmt.Errorf("check SSM status: %w", err)
+		}
+
+		var offline []string
+		var nextPending []string
+		for _, s := range statuses {
+			if s.PingStatus != "Online" {
+				offline = append(offline, fmt.Sprintf("%s (%s)", idToHost[s.InstanceID], s.PingStatus))
+				nextPending = append(nextPending, s.InstanceID)
+			}
+		}
+
+		if len(offline) == 0 {
+			color.Green("  SSM agents online: %d/%d instances", totalInstances, totalInstances)
+			return nil
+		}
+
+		if attempt == ssmRetryAttempts-1 {
+			return fmt.Errorf("SSM agent not online: %s", strings.Join(offline, ", "))
+		}
+
+		color.Yellow("  SSM agent not ready: %s — retrying in %s (%d/%d)",
+			strings.Join(offline, ", "), ssmRetryInterval, attempt+1, ssmRetryAttempts)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(ssmRetryInterval):
+		}
+
+		pending = nextPending
 	}
-	color.Green("  SSM agents online: %d/%d instances", len(statuses), len(statuses))
-	return nil
+
+	return nil // unreachable
 }

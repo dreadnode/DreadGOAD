@@ -70,18 +70,31 @@
 - name: Add MSSQL admin
   ansible.windows.win_shell: |
     $ErrorActionPreference = "Continue"
-    $errors = @()
 
-    # Create login if not exists
-    $result1 = SqlCmd {{ connection_type }} -Q "IF NOT EXISTS (SELECT * FROM sys.server_principals WHERE name = '{{ item }}') CREATE LOGIN [{{ item }}] FROM WINDOWS" 2>&1
-    if ($LASTEXITCODE -ne 0) { $errors += "CREATE LOGIN failed: $result1" }
+    # Retry CREATE LOGIN FROM WINDOWS to handle AD replication lag.
+    # SQL Server must resolve the Windows principal's SID from AD,
+    # which can fail if the account was just created and hasn't
+    # replicated yet (cloud environments can take 2+ minutes).
+    $loginCreated = $false
+    $maxAttempts = 12
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+      $result1 = SqlCmd {{ connection_type }} -Q "IF NOT EXISTS (SELECT * FROM sys.server_principals WHERE name = '{{ item }}') CREATE LOGIN [{{ item }}] FROM WINDOWS" 2>&1
+      if ($LASTEXITCODE -eq 0) {
+        $loginCreated = $true
+        break
+      }
+      if ($attempt -eq $maxAttempts) {
+        Write-Error "CREATE LOGIN failed after $maxAttempts attempts: $result1"
+        exit 1
+      }
+      Write-Output "CREATE LOGIN attempt $attempt failed (AD replication lag?), retrying in 10s..."
+      Start-Sleep -Seconds 10
+    }
 
     # Add to sysadmin if not already member
     $result2 = SqlCmd {{ connection_type }} -Q "IF IS_SRVROLEMEMBER('sysadmin', '{{ item }}') = 0 EXEC SP_ADDSRVROLEMEMBER '{{ item }}','SYSADMIN'" 2>&1
-    if ($LASTEXITCODE -ne 0) { $errors += "SP_ADDSRVROLEMEMBER failed: $result2" }
-
-    if ($errors.Count -gt 0) {
-      Write-Error ($errors -join "`n")
+    if ($LASTEXITCODE -ne 0) {
+      Write-Error "SP_ADDSRVROLEMEMBER failed: $result2"
       exit 1
     }
     Write-Output "Successfully configured sysadmin: {{ item }}"
