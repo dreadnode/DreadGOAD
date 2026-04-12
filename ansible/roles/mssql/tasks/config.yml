@@ -91,10 +91,14 @@
       Start-Sleep -Seconds 10
     }
 
-    # Add to sysadmin if not already member
-    $result2 = SqlCmd {{ connection_type }} -Q "IF IS_SRVROLEMEMBER('sysadmin', '{{ item }}') = 0 EXEC SP_ADDSRVROLEMEMBER '{{ item }}','SYSADMIN'" 2>&1
+    # Add to sysadmin if not a direct member of the role.
+    # We check sys.server_role_members for direct membership rather than
+    # IS_SRVROLEMEMBER(), because IS_SRVROLEMEMBER() returns 1 for indirect
+    # membership through Windows groups (e.g. BUILTIN\Administrators), which
+    # would silently skip the direct grant the lab configuration requires.
+    $result2 = SqlCmd {{ connection_type }} -Q "IF NOT EXISTS (SELECT 1 FROM sys.server_role_members srm JOIN sys.server_principals r ON srm.role_principal_id = r.principal_id JOIN sys.server_principals m ON srm.member_principal_id = m.principal_id WHERE r.name = 'sysadmin' AND m.name = '{{ item }}') ALTER SERVER ROLE [sysadmin] ADD MEMBER [{{ item }}]" 2>&1
     if ($LASTEXITCODE -ne 0) {
-      Write-Error "SP_ADDSRVROLEMEMBER failed: $result2"
+      Write-Error "ALTER SERVER ROLE sysadmin ADD MEMBER failed: $result2"
       exit 1
     }
     Write-Output "Successfully configured sysadmin: {{ item }}"

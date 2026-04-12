@@ -70,7 +70,7 @@
           if ($escaped.StartsWith('#')) {
             $escaped = '\23' + $escaped.Substring(1)
           }
-          return $escaped.Replace([char]0, '\00')
+          return $escaped.Replace(([string][char]0), '\00')
         }
 
         function Resolve-ADPrincipal {
@@ -251,19 +251,28 @@
           return
         }
 
-        # Apply the ACE via DirectoryEntry (ADSI) which writes directly over
-        # LDAP.  The AD: PSDrive + Set-Acl path can silently drop writes under
-        # Ansible's runas become context for certain principal types (gMSA).
+        # Apply the ACE via the AD: PSDrive (Get-Acl/Set-Acl) which uses
+        # AD Web Services.  ADSI DirectoryEntry + CommitChanges() silently
+        # fails to persist ACEs under Ansible's runas become context.
         if ($ace) {
-          $de = [ADSI]"LDAP://$objOU"
-          $de.PSBase.ObjectSecurity.AddAccessRule($ace)
-          $de.PSBase.CommitChanges()
+          $adPath = "AD:\$objOU"
+          $acl = Get-Acl -Path $adPath
+          $acl.AddAccessRule($ace)
+          Set-Acl -Path $adPath -AclObject $acl
 
-          # Verify the ACE was persisted
-          $de.PSBase.RefreshCache('nTSecurityDescriptor')
-          $sidValue = if ($forSID -is [System.Security.Principal.SecurityIdentifier]) { $forSID.Value } else { $forSID.ToString() }
+          # Verify the ACE was persisted by comparing SIDs.
+          # Always resolve $forSID to a SID string for reliable comparison
+          # (NTAccount identities like NT AUTHORITY\ANONYMOUS LOGON must be
+          # translated to their SID first).
+          $verifyAcl = Get-Acl -Path $adPath
+          if ($forSID -is [System.Security.Principal.SecurityIdentifier]) {
+            $sidValue = $forSID.Value
+          } else {
+            try { $sidValue = $forSID.Translate([System.Security.Principal.SecurityIdentifier]).Value }
+            catch { $sidValue = $forSID.ToString() }
+          }
           $verified = $false
-          foreach ($entry in $de.PSBase.ObjectSecurity.Access) {
+          foreach ($entry in $verifyAcl.Access) {
             try {
               $entrySid = $entry.IdentityReference
               if ($entrySid -is [System.Security.Principal.SecurityIdentifier]) {
@@ -277,6 +286,18 @@
 
           if (-not $verified) {
             throw "ACL for $for on $objOU was written but not persisted — verify AD permissions for the become user"
+          }
+
+          # If the target has adminCount=1, AdminSDHolder's SDProp will reset
+          # its DACL every ~60 minutes, stripping our ACE.  To make the ACE
+          # survive SDProp, also apply it to the AdminSDHolder template object.
+          $targetADObj = Get-ADObject -LDAPFilter "(distinguishedName=$objOU)" -Properties adminCount -ErrorAction SilentlyContinue
+          if ($targetADObj -and $targetADObj.adminCount -eq 1) {
+            $domainDN = (($objOU -split ',') | Where-Object { $_ -match '^DC=' }) -join ','
+            $sdHolderDN = "CN=AdminSDHolder,CN=System,$domainDN"
+            $sdAcl = Get-Acl -Path "AD:\$sdHolderDN"
+            $sdAcl.AddAccessRule($ace)
+            Set-Acl -Path "AD:\$sdHolderDN" -AclObject $sdAcl
           }
 
           $Ansible.Changed = $true
