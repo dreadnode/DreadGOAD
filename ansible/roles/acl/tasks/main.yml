@@ -288,11 +288,37 @@
             throw "ACL for $for on $objOU was written but not persisted — verify AD permissions for the become user"
           }
 
-          # If the target has adminCount=1, AdminSDHolder's SDProp will reset
-          # its DACL every ~60 minutes, stripping our ACE.  To make the ACE
-          # survive SDProp, also apply it to the AdminSDHolder template object.
+          # If the target is protected by SDProp, also apply the ACE to the
+          # AdminSDHolder template object.  SDProp resets the DACL on
+          # protected objects every ~60 minutes to match AdminSDHolder,
+          # stripping any ACEs we add directly.
+          #
+          # We check both adminCount=1 (already flagged by a previous
+          # SDProp cycle) AND transitive membership in protected groups
+          # (handles the case where groups were just created and SDProp
+          # hasn't run yet to set adminCount).
+          $needsAdminSDHolder = $false
           $targetADObj = Get-ADObject -LDAPFilter "(distinguishedName=$objOU)" -Properties adminCount -ErrorAction SilentlyContinue
-          if ($targetADObj -and $targetADObj.adminCount -eq 1) {
+          if ($targetADObj) {
+            if ($targetADObj.adminCount -eq 1) {
+              $needsAdminSDHolder = $true
+            } else {
+              $pgNames = @(
+                'Domain Admins','Enterprise Admins','Schema Admins',
+                'Administrators','Account Operators','Server Operators',
+                'Print Operators','Backup Operators','Replicator',
+                'Key Admins','Enterprise Key Admins'
+              )
+              $pgFilter = '(|' + (($pgNames | ForEach-Object { "(sAMAccountName=$_)" }) -join '') + ')'
+              $memberFilter = "(&$pgFilter(member:1.2.840.113556.1.4.1941:=$objOU))"
+              $protectedMatch = Get-ADObject -LDAPFilter $memberFilter -ErrorAction SilentlyContinue
+              if ($protectedMatch) {
+                $needsAdminSDHolder = $true
+              }
+            }
+          }
+
+          if ($needsAdminSDHolder) {
             $domainDN = (($objOU -split ',') | Where-Object { $_ -match '^DC=' }) -join ','
             $sdHolderDN = "CN=AdminSDHolder,CN=System,$domainDN"
             $sdAcl = Get-Acl -Path "AD:\$sdHolderDN"

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -78,7 +79,7 @@ func requireInfra(ctx context.Context) (*infraContext, error) {
 		return nil, err
 	}
 
-	if err := checkSSMOnline(ctx, client, hostMap); err != nil {
+	if err := checkSSMOnline(ctx, client, hostMap, lab); err != nil {
 		return nil, err
 	}
 	fmt.Println()
@@ -138,7 +139,9 @@ const ssmRetryInterval = 15 * time.Second
 
 // checkSSMOnline verifies that SSM agents are online for all discovered instances.
 // Instances with a transient status (e.g. ConnectionLost) are retried with backoff.
-func checkSSMOnline(ctx context.Context, client *daws.Client, hostMap map[string]string) error {
+// If retries are exhausted, it attempts to remotely restart the SSM agent on
+// offline instances via a working instance before giving up.
+func checkSSMOnline(ctx context.Context, client *daws.Client, hostMap map[string]string, lab *labmap.LabMap) error {
 	idToHost := make(map[string]string, len(hostMap))
 	for h, id := range hostMap {
 		idToHost[id] = h
@@ -172,6 +175,10 @@ func checkSSMOnline(ctx context.Context, client *daws.Client, hostMap map[string
 		}
 
 		if attempt == ssmRetryAttempts-1 {
+			// Last retry exhausted — attempt remote SSM agent restart.
+			if recovered := recoverSSMAgents(ctx, client, hostMap, idToHost, nextPending, lab); recovered {
+				return nil
+			}
 			return fmt.Errorf("SSM agent not online: %s", strings.Join(offline, ", "))
 		}
 
@@ -188,4 +195,130 @@ func checkSSMOnline(ctx context.Context, client *daws.Client, hostMap map[string
 	}
 
 	return nil // unreachable
+}
+
+// recoverSSMAgents attempts to restart SSM agents on offline instances by
+// running Invoke-Command from a working instance. This handles the case where
+// the SSM agent has a stale DNS cache (e.g. resolving SSM endpoint to a public
+// IP instead of the VPC endpoint after a DC promotion changed DNS settings).
+// hostConfigByRole looks up a HostConfig by role name, trying the given case
+// first then falling back to a case-insensitive scan.
+func hostConfigByRole(lab *labmap.LabMap, role string) (labmap.HostConfig, bool) {
+	if hc, ok := lab.HostConfigs[role]; ok {
+		return hc, true
+	}
+	lower := strings.ToLower(role)
+	for k, hc := range lab.HostConfigs {
+		if strings.ToLower(k) == lower {
+			return hc, true
+		}
+	}
+	return labmap.HostConfig{}, false
+}
+
+// pickRecoveryHelper selects an online instance to use for remote recovery.
+// Prefers DCs (more likely to have WinRM connectivity), then sorts alphabetically
+// by role for deterministic selection.
+func pickRecoveryHelper(hostMap, idToHost map[string]string, offlineIDs []string, lab *labmap.LabMap) string {
+	offlineSet := make(map[string]bool, len(offlineIDs))
+	for _, id := range offlineIDs {
+		offlineSet[id] = true
+	}
+
+	type candidate struct {
+		role string
+		id   string
+		isDC bool
+	}
+	var candidates []candidate
+	for _, id := range hostMap {
+		if offlineSet[id] {
+			continue
+		}
+		role := strings.ToLower(idToHost[id])
+		hc, ok := hostConfigByRole(lab, role)
+		candidates = append(candidates, candidate{role: role, id: id, isDC: ok && hc.Type == "dc"})
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		if candidates[i].isDC != candidates[j].isDC {
+			return candidates[i].isDC // DCs first
+		}
+		return candidates[i].role < candidates[j].role
+	})
+	if len(candidates) == 0 {
+		return ""
+	}
+	return candidates[0].id
+}
+
+// restartOfflineAgents attempts to restart SSM agents on each offline instance
+// via PowerShell remoting from the helper. Returns the IDs that were successfully restarted.
+func restartOfflineAgents(ctx context.Context, client *daws.Client, helperID string, idToHost map[string]string, offlineIDs []string, lab *labmap.LabMap) []string {
+	var restartedIDs []string
+	for _, offID := range offlineIDs {
+		role := strings.ToLower(idToHost[offID])
+		hc, ok := hostConfigByRole(lab, role)
+		if !ok {
+			continue
+		}
+
+		dc, ok := lab.DomainConfigs[hc.Domain]
+		if !ok || dc.DomainPassword == "" {
+			continue
+		}
+
+		fqdn := hc.Hostname + "." + hc.Domain
+		color.Yellow("    Restarting SSM agent on %s (%s)...", strings.ToUpper(role), fqdn)
+
+		if err := client.RemoteRestartSSMAgent(ctx, helperID, fqdn, dc.NetBIOSName, dc.DomainPassword); err != nil {
+			color.Red("    Failed: %v", err)
+			continue
+		}
+		color.Green("    SSM agent restarted on %s", strings.ToUpper(role))
+		restartedIDs = append(restartedIDs, offID)
+	}
+	return restartedIDs
+}
+
+func recoverSSMAgents(ctx context.Context, client *daws.Client, hostMap, idToHost map[string]string, offlineIDs []string, lab *labmap.LabMap) bool {
+	if lab == nil {
+		return false
+	}
+
+	helperID := pickRecoveryHelper(hostMap, idToHost, offlineIDs, lab)
+	if helperID == "" {
+		return false
+	}
+
+	color.Yellow("  Attempting remote SSM agent restart via %s...", idToHost[helperID])
+
+	restartedIDs := restartOfflineAgents(ctx, client, helperID, idToHost, offlineIDs, lab)
+	if len(restartedIDs) == 0 {
+		return false
+	}
+
+	// Wait for the restarted agents to register.
+	color.Yellow("  Waiting %s for SSM agents to reconnect...", ssmRetryInterval)
+	select {
+	case <-ctx.Done():
+		color.Red("  Context cancelled while waiting for SSM agents")
+		return false
+	case <-time.After(ssmRetryInterval):
+	}
+
+	// Check only the instances we actually restarted.
+	statuses, err := client.CheckSSMStatus(ctx, restartedIDs)
+	if err != nil {
+		color.Red("  Failed to check SSM status after restart: %v", err)
+		return false
+	}
+	for _, s := range statuses {
+		if s.PingStatus != "Online" {
+			return false
+		}
+	}
+
+	color.Green("  SSM agents online: %d/%d instances (recovered via remote restart)",
+		len(hostMap), len(hostMap))
+	return true
 }

@@ -30,6 +30,21 @@
     - ansible_connection is search('aws_ssm')
     - aws_mapping is defined
 
+- name: Set vpc_dns_resolver for all hosts
+  ansible.builtin.set_fact:
+    vpc_dns_resolver: "{{ aws_mapping.vpc_dns_resolver | default('') }}"
+    cacheable: true
+  run_once: true
+  delegate_facts: true
+  delegate_to: "{{ item }}"
+  loop: "{{ groups['all'] }}"
+  loop_control:
+    label: "{{ item }}"
+  when:
+    - ansible_connection is search('aws_ssm')
+    - aws_mapping is defined
+    - aws_mapping.vpc_dns_resolver is defined
+
 - name: Set host_ipv4 from AWS instance mapping for SSM connections
   ansible.builtin.set_fact:
     host_ipv4: "{{ instance_to_ip[ansible_host] | default('') }}"

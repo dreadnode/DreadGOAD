@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 	"time"
 
@@ -218,6 +219,41 @@ Write-Output "SSM Agent restarted - ssm-user fix complete"`
 	}
 	if result.Status != "Success" {
 		return fmt.Errorf("fix ssm-user failed: %s %s", result.Stdout, result.Stderr)
+	}
+	return nil
+}
+
+// RemoteRestartSSMAgent uses a helper instance to restart the SSM agent on a
+// target instance via PowerShell remoting (Invoke-Command). This is useful when
+// the target's SSM agent is offline (e.g. due to stale DNS cache) but the host
+// is otherwise reachable from other domain members.
+// validHostname checks that a string contains only characters valid in DNS names.
+var validHostname = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+
+func (c *Client) RemoteRestartSSMAgent(ctx context.Context, helperInstanceID, targetFQDN, domain, password string) error {
+	if !validHostname.MatchString(targetFQDN) {
+		return fmt.Errorf("invalid target FQDN: %q", targetFQDN)
+	}
+	if !validHostname.MatchString(domain) {
+		return fmt.Errorf("invalid domain: %q", domain)
+	}
+	// Escape single quotes in password for PowerShell string literal.
+	escapedPw := strings.ReplaceAll(password, "'", "''")
+
+	script := fmt.Sprintf(
+		`$cred = New-Object PSCredential('%s\administrator', `+
+			`(ConvertTo-SecureString '%s' -AsPlainText -Force))`+"\n"+
+			`Invoke-Command -ComputerName %s -Credential $cred -ScriptBlock {`+
+			` Restart-Service AmazonSSMAgent -Force;`+
+			` Write-Output 'SSM agent restarted' } -ErrorAction Stop`,
+		domain, escapedPw, targetFQDN)
+
+	result, err := c.RunPowerShellCommand(ctx, helperInstanceID, script, 2*time.Minute)
+	if err != nil {
+		return fmt.Errorf("remote restart via %s: %w", helperInstanceID, err)
+	}
+	if result.Status != "Success" {
+		return fmt.Errorf("remote restart failed (status=%s): %s %s", result.Status, result.Stdout, result.Stderr)
 	}
 	return nil
 }

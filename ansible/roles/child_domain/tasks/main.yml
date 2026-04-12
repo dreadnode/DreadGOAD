@@ -91,8 +91,7 @@
     resource_name: xDnsServerForwarder
     IsSingleInstance: "yes"
     UseRootHint: false
-    IPAddresses:
-      - "{{ dns_server_forwarder }}"
+    IPAddresses: "{{ ([vpc_dns_resolver] if vpc_dns_resolver | default('') != '' else []) + [dns_server_forwarder] }}"
 
 - name: Check if ActiveDirectoryDSC exists
   ansible.windows.win_shell: |

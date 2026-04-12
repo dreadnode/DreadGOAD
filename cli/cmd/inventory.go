@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -263,6 +264,9 @@ func generateInstanceMapping(ctx context.Context, outputPath string) error {
 	output := map[string]interface{}{
 		"instance_to_ip": mapping,
 	}
+	if dnsIP := vpcDNSResolver(cfg.VpcCIDR(cfg.Env)); dnsIP != "" {
+		output["vpc_dns_resolver"] = dnsIP
+	}
 	data, err := json.MarshalIndent(output, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal mapping: %w", err)
@@ -274,4 +278,22 @@ func generateInstanceMapping(ctx context.Context, outputPath string) error {
 	fmt.Printf("Mapping generated: %s\n", outputPath)
 	fmt.Printf("Mapped %d instances\n", len(mapping))
 	return nil
+}
+
+// vpcDNSResolver returns the Amazon-provided DNS resolver IP for a VPC,
+// which is always the VPC CIDR base address + 2 (e.g. 10.8.0.2 for 10.8.0.0/16).
+func vpcDNSResolver(cidr string) string {
+	ip, _, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return ""
+	}
+	ip = ip.To4()
+	if ip == nil {
+		return ""
+	}
+	if ip[3] > 253 {
+		return ""
+	}
+	ip[3] += 2
+	return ip.String()
 }

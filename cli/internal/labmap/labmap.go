@@ -76,6 +76,7 @@ type GMSAConfig struct {
 // DomainConfig represents a domain from config.json lab.domains.
 type DomainConfig struct {
 	DC              string                `json:"dc"` // host role key
+	DomainPassword  string                `json:"domain_password"`
 	NetBIOSName     string                `json:"netbios_name"`
 	Trust           string                `json:"trust"`
 	CAServer        string                `json:"ca_server"`

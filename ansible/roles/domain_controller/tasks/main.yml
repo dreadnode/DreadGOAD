@@ -238,9 +238,22 @@
       $ProgressPreference = 'SilentlyContinue'
       $ErrorActionPreference = "Stop"
       try {
-        Add-DnsServerForwarder -IPAddress "{{ dns_server_forwarder }}" -PassThru
-        Set-DnsServerForwarder -UseRootHint $false
-        Write-Output "DNS forwarders configured successfully"
+        {% if vpc_dns_resolver | default('') != '' %}
+        $desired = @("{{ vpc_dns_resolver }}", "{{ dns_server_forwarder }}")
+        {% else %}
+        $desired = @("{{ dns_server_forwarder }}")
+        {% endif %}
+        $current = (Get-DnsServerForwarder).IPAddress.IPAddressToString
+        $currentRoot = (Get-DnsServerForwarder).UseRootHint
+        if ((@(Compare-Object -ReferenceObject $desired -DifferenceObject @($current) -SyncWindow 0).Count -eq 0) -and (-not $currentRoot)) {
+          $Ansible.Changed = $false
+          Write-Output "DNS forwarders already configured"
+        } else {
+          # VPC DNS resolver must be first so VPC endpoint private DNS names
+          # resolve correctly instead of racing with the external forwarder.
+          Set-DnsServerForwarder -IPAddress $desired -UseRootHint $false
+          Write-Output "DNS forwarders configured successfully"
+        }
       } catch {
         $Ansible.Failed = $true
         Write-Error "Failed to configure DNS forwarders: $_"

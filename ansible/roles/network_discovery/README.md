@@ -30,6 +30,7 @@ Discover network adapters, IPs, and AWS instance mappings on lab hosts
 - **Load AWS instance_to_ip mapping from file for SSM connections** (ansible.builtin.include_vars) - Conditional
 - **Display AWS instance to IP mappings** (ansible.builtin.debug) - Conditional
 - **Set instance_to_ip mapping for all hosts** (ansible.builtin.set_fact) - Conditional
+- **Set vpc_dns_resolver for all hosts** (ansible.builtin.set_fact) - Conditional
 - **Set host_ipv4 from AWS instance mapping for SSM connections** (ansible.builtin.set_fact) - Conditional
 - **Display host IP assignment from AWS mapping** (ansible.builtin.debug) - Conditional
 
