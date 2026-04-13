@@ -7,7 +7,6 @@
     two_adapters: "{{ two_adapters | default(false) }}"
     host_ipv4: "{{ host_ipv4 | default(ansible_default_ipv4.address | default('')) }}"
     cacheable: true
-  when: domain_adapter is not defined
 
 - name: Show host network configuration
   ansible.builtin.debug:

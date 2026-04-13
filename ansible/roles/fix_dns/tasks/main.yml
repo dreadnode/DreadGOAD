@@ -6,7 +6,7 @@
     dns_servers:
       - "{{ hostvars[dns_domain]['dc_ipv4'] | default(instance_to_ip[hostvars[dns_domain]['ansible_host']] if hostvars[dns_domain]['ansible_host'] in instance_to_ip else hostvars[dns_domain].ansible_host) }}"
       - "{{ dns_server }}"
-  when: force_dns_server == "yes" and not two_adapters
+  when: force_dns_server == "yes" and not (two_adapters | default(false) | bool)
 
 - name: "Change DNS on the adapter {{ nat_adapter }}"
   ansible.windows.win_dns_client:
@@ -14,7 +14,7 @@
     dns_servers:
       - "{{ hostvars[dns_domain]['dc_ipv4'] | default(instance_to_ip[hostvars[dns_domain]['ansible_host']] if hostvars[dns_domain]['ansible_host'] in instance_to_ip else hostvars[dns_domain].ansible_host) }}"
       - "{{ dns_server_forwarder }}"
-  when: force_dns_server != "yes" and not two_adapters
+  when: force_dns_server != "yes" and not (two_adapters | default(false) | bool)
 
 
 # TWO INTERFACES
@@ -39,4 +39,4 @@
     adapter_names: "{{ domain_adapter }}"
     dns_servers:
       - "{{ hostvars[dns_domain]['dc_ipv4'] | default(instance_to_ip[hostvars[dns_domain]['ansible_host']] if hostvars[dns_domain]['ansible_host'] in instance_to_ip else hostvars[dns_domain].ansible_host) }}"
-  when: two_adapters
+  when: two_adapters | default(false) | bool

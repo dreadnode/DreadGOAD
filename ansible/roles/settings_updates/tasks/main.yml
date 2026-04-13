@@ -1,4 +1,26 @@
 ---
+- name: Reset Windows Update components
+  ansible.windows.win_shell: |
+    $ErrorActionPreference = 'SilentlyContinue'
+    Stop-Service -Name wuauserv -Force
+    Stop-Service -Name cryptSvc -Force
+    Stop-Service -Name bits -Force
+    Stop-Service -Name msiserver -Force
+    Remove-Item -Path "C:\Windows\SoftwareDistribution" -Recurse -Force
+    Remove-Item -Path "C:\Windows\System32\catroot2" -Recurse -Force
+    regsvr32.exe /s atl.dll
+    regsvr32.exe /s urlmon.dll
+    regsvr32.exe /s mshtml.dll
+    netsh winsock reset
+    Start-Service -Name cryptSvc
+    Start-Service -Name bits
+    Start-Service -Name msiserver
+
+- name: Reboot to clear pending registry operations
+  ansible.windows.win_reboot:
+    reboot_timeout: 600
+    post_reboot_delay: 30
+
 - name: Enable update service
   ansible.windows.win_service:
     name: Windows Update
@@ -9,3 +31,8 @@
   ansible.windows.win_updates:
     category_names: '*'
     reboot: true
+    reboot_timeout: 1200
+  register: update_result
+  retries: 3
+  delay: 60
+  until: update_result is not failed

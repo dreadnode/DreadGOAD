@@ -26,9 +26,14 @@
 - name: Upgrade module PowerShellGet to fix accept license issue
   ansible.windows.win_shell: |
     $ProgressPreference = 'SilentlyContinue'
+    $ErrorActionPreference = 'Stop'
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-    Install-PackageProvider -Name NuGet -Force
-    Install-Module PowerShellGet -Force
+    Install-PackageProvider -Name NuGet -Force -Confirm:$false
+    Install-Module PowerShellGet -Force -Confirm:$false
+  register: powershellget_install
+  retries: 3
+  delay: 10
+  until: powershellget_install is not failed
 
 - name: Check all required modules
   ansible.windows.win_shell: |

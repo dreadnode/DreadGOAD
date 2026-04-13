@@ -40,7 +40,7 @@ Discover network adapters, IPs, and AWS instance mappings on lab hosts
 
 ### fallbacks.yml
 
-- **Set fallback network facts** (ansible.builtin.set_fact) - Conditional
+- **Set fallback network facts** (ansible.builtin.set_fact)
 - **Show host network configuration** (ansible.builtin.debug)
 
 ### ip_detection.yml

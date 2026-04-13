@@ -9,7 +9,7 @@
   failed_when:
     - disable_dns_reg.rc != 0
     - "'Cannot find network adapter' not in disable_dns_reg.stderr"
-  when: two_adapters
+  when: two_adapters | default(false) | bool
 
 - name: Ensure that domain exists
   microsoft.ad.domain:
@@ -230,7 +230,7 @@
         Write-Error "Failed to configure DNS listener addresses: $_"
       }
   register: dns_listener
-  when: two_adapters
+  when: two_adapters | default(false) | bool
 
 - name: Configure DNS Forwarders
   ansible.windows.win_powershell:

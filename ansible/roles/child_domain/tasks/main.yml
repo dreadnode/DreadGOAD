@@ -1,7 +1,7 @@
 ---
 - name: Disable the registration of the NAT interface in DNS
   ansible.windows.win_shell: Get-NetAdapter {{ nat_adapter }} | Set-DNSClient -RegisterThisConnectionsAddress $False
-  when: two_adapters
+  when: two_adapters | default(false) | bool
 
 - name: Set configure DNS to parent domain
   ansible.windows.win_dns_client:
@@ -57,7 +57,7 @@
         Write-Error "Failed to configure DNS listener addresses: $_"
       }
   register: dns_listener
-  when: two_adapters
+  when: two_adapters | default(false) | bool
 
 - name: Enable TLS 1.2 permanently via registry
   ansible.windows.win_regedit:

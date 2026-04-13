@@ -20,6 +20,8 @@ Install Windows updates on managed hosts
 
 ### main.yml
 
+- **Reset Windows Update components** (ansible.windows.win_shell)
+- **Reboot to clear pending registry operations** (ansible.windows.win_reboot)
 - **Enable update service** (ansible.windows.win_service)
 - **Install all updates and reboot as many times as needed** (ansible.windows.win_updates)
 
