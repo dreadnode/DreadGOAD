@@ -32,7 +32,11 @@
           $existing = Get-ADServiceAccount -Identity $gMSA_Name -ErrorAction SilentlyContinue
           if ($existing) {
               $gMSA_HostsGroup = $gMSA_HostNames | ForEach-Object { Get-ADComputer -Identity $_ }
-              Set-ADServiceAccount -Identity $gMSA_Name -DNSHostName $gMSA_FQDN -ServicePrincipalNames @{Replace=$gMSA_SPNs} -PrincipalsAllowedToRetrieveManagedPassword $gMSA_HostsGroup
+              Set-ADServiceAccount -Identity $gMSA_Name -DNSHostName $gMSA_FQDN -PrincipalsAllowedToRetrieveManagedPassword $gMSA_HostsGroup
+              # Update SPNs via Set-ADObject to avoid type coercion issues with
+              # win_powershell deserialized parameters and Set-ADServiceAccount's
+              # hashtable-based -ServicePrincipalNames parameter.
+              Set-ADObject -Identity $existing.DistinguishedName -Replace @{servicePrincipalName=$gMSA_SPNs}
               $Ansible.Changed = $false
               Write-Output "GMSA account $gMSA_Name already exists, updated configuration"
               return
