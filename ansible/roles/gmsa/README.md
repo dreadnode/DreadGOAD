@@ -16,6 +16,7 @@ Create and configure Group Managed Service Accounts
 ### main.yml
 
 - **Create GMSA Account** (ansible.windows.win_powershell)
+- **Verify GMSA accounts exist** (ansible.windows.win_powershell)
 
 ## Example Playbook
 

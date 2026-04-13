@@ -9,21 +9,17 @@
     script: |
       [CmdletBinding()]
       param (
-          [String]
-          $gMSA_Name,
-
-          [String]
-          $gMSA_FQDN,
-
-          [String[]]
-          $gMSA_SPNs,
-
-          [String[]]
-          $gMSA_HostNames
+          [String]$gMSA_Name,
+          [String]$gMSA_FQDN,
+          [String]$gMSA_SPNs_csv,
+          [String]$gMSA_HostNames_csv
       )
       try {
           Import-Module ActiveDirectory
           Set-Location AD:
+
+          [string[]]$gMSA_SPNs = $gMSA_SPNs_csv -split ','
+          [string[]]$gMSA_HostNames = $gMSA_HostNames_csv -split ','
 
           # Ensure KDS root key exists and is effective
           $kdsKey = Get-KdsRootKey -ErrorAction SilentlyContinue
@@ -62,15 +58,18 @@
           Write-Output "Created and verified GMSA account $gMSA_Name"
       }
       catch {
-          Write-Error "Failed to create GMSA account: $_"
-          $Ansible.Changed = $false
-          exit 1
+          $Ansible.Failed = $true
+          $Ansible.Result = @{
+            status = "error"
+            message = "Failed to create GMSA account: $_"
+            name = $gMSA_Name
+          }
       }
     parameters:
       gMSA_Name: "{{ item.value.gMSA_Name }}"
       gMSA_FQDN: "{{ item.value.gMSA_FQDN }}"
-      gMSA_SPNs: "{{ item.value.gMSA_SPNs }}"
-      gMSA_HostNames: "{{ item.value.gMSA_HostNames }}"
+      gMSA_SPNs_csv: "{{ item.value.gMSA_SPNs | join(',') }}"
+      gMSA_HostNames_csv: "{{ item.value.gMSA_HostNames | join(',') }}"
     error_action: stop
   vars:
     ansible_become: true
@@ -78,5 +77,38 @@
     ansible_become_user: "{{ domain_username }}"
     ansible_become_password: "{{ domain_password }}"
   with_dict: "{{ ad_gmsa }}"
-  register: gmsa_result
-  failed_when: gmsa_result.host_err is defined and gmsa_result.host_err != '' or gmsa_result.stderr is defined and gmsa_result.stderr != ''
+
+- name: Verify GMSA accounts exist
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param (
+          [String]$gMSA_Name
+      )
+      Import-Module ActiveDirectory
+      $maxAttempts = 6
+      for ($i = 1; $i -le $maxAttempts; $i++) {
+        $account = Get-ADServiceAccount -Identity $gMSA_Name -ErrorAction SilentlyContinue
+        if ($account) {
+          $Ansible.Changed = $false
+          $Ansible.Result = @{ status = "verified"; name = $gMSA_Name }
+          return
+        }
+        if ($i -lt $maxAttempts) {
+          Start-Sleep -Seconds 10
+        }
+      }
+      $Ansible.Failed = $true
+      $Ansible.Result = @{
+        status = "error"
+        message = "GMSA account $gMSA_Name does not exist after creation - check KDS root key and AD replication"
+        name = $gMSA_Name
+      }
+    parameters:
+      gMSA_Name: "{{ item.value.gMSA_Name }}"
+  vars:
+    ansible_become: true
+    ansible_become_method: ansible.builtin.runas
+    ansible_become_user: "{{ domain_username }}"
+    ansible_become_password: "{{ domain_password }}"
+  with_dict: "{{ ad_gmsa }}"

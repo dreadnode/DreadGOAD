@@ -292,7 +292,8 @@
                 "WriteProperty_petyer_domadmin" : {"for": "viserys.targaryen", "to": "jorah.mormont", "right": "WriteProperty", "inheritance": "All"},
                 "GenericWrite_DragonsFriends_braavos" : {"for": "DragonsFriends", "to": "braavos$", "right": "GenericWrite", "inheritance": "None"},
                 "GenericAll_missandei_khal" : {"for": "missandei", "to": "khal.drogo", "right": "GenericAll", "inheritance": "None"},
-                "GenericAll_gmsaDragon_drogo" : {"for": "gmsaDragon$", "to": "drogon", "right": "GenericAll", "inheritance": "None"}
+                "GenericAll_gmsaDragon_drogo" : {"for": "gmsaDragon$", "to": "drogon", "right": "GenericAll", "inheritance": "None"},
+                "GenericWrite_missandei_viserys" : {"for": "missandei", "to": "viserys.targaryen", "right": "GenericWrite", "inheritance": "None"}
             },
             "users" : {
                 "daenerys.targaryen" : {
