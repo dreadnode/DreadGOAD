@@ -34,6 +34,7 @@ display = Display()
 # regardless of how many hosts or plays trigger get_vars().
 _cache: dict | None = None
 _cache_path: str | None = None
+_not_found_logged: set = set()
 
 
 class VarsModule(BaseVarsPlugin):
@@ -102,9 +103,18 @@ class VarsModule(BaseVarsPlugin):
             # The inventory file sits at the project root, so its parent
             # directory IS the project root.
             if os.path.isfile(path):
+                # Inventory file lives at the project root — strip
+                # relative segments since they're relative to playbook_dir.
                 project_root = os.path.dirname(os.path.abspath(path))
+                while tail.startswith("../"):
+                    tail = tail[3:]
+                data_path = os.path.join(project_root, tail)
             elif os.path.isdir(path):
-                project_root = os.path.abspath(path)
+                # path is a directory (e.g. playbooks dir) — resolve
+                # the ../ segments naturally via normpath.
+                data_path = os.path.normpath(
+                    os.path.join(os.path.abspath(path), tail)
+                )
             else:
                 # Fallback: try __file__-based resolution (works when
                 # the plugin lives in the project's ansible/plugins/vars/)
@@ -112,12 +122,9 @@ class VarsModule(BaseVarsPlugin):
                 project_root = os.path.normpath(
                     os.path.join(plugin_dir, "..", "..", "..", "..")
                 )
-
-            # Strip leading "../" segments from the tail since we're
-            # resolving from the project root directly.
-            while tail.startswith("../"):
-                tail = tail[3:]
-            data_path = os.path.join(project_root, tail)
+                while tail.startswith("../"):
+                    tail = tail[3:]
+                data_path = os.path.join(project_root, tail)
 
         config_file = os.path.join(str(data_path), f"{env}-config.json")
 
@@ -127,7 +134,9 @@ class VarsModule(BaseVarsPlugin):
             if os.path.isfile(config_file_alt):
                 config_file = config_file_alt
             else:
-                display.vvv(f"lab_config: no config file found at {config_file}")
+                if config_file not in _not_found_logged:
+                    _not_found_logged.add(config_file)
+                    display.vvv(f"lab_config: no config file found at {config_file}")
                 return {}
 
         # Return cached result if we already parsed this file

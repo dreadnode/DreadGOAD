@@ -12,8 +12,10 @@ import (
 	"slices"
 
 	"github.com/dreadnode/dreadgoad/internal/ansible"
+	daws "github.com/dreadnode/dreadgoad/internal/aws"
 	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/dreadnode/dreadgoad/internal/doctor"
+	inv "github.com/dreadnode/dreadgoad/internal/inventory"
 	"github.com/dreadnode/dreadgoad/internal/lab"
 	"github.com/dreadnode/dreadgoad/internal/variant"
 	"github.com/spf13/cobra"
@@ -125,12 +127,75 @@ func preflightChecks(ctx context.Context, cfg *config.Config) error {
 	if err := ensureVariant(cfg); err != nil {
 		return err
 	}
+	// Ensure inventory instance IDs match live AWS state. After infra
+	// apply the IDs change, and provisioning against stale IDs fails
+	// with confusing SSM connection errors.
+	if err := ensureInventorySynced(ctx, cfg); err != nil {
+		slog.Warn("inventory sync check failed", "error", err)
+	}
 	// Generate instance-to-IP mapping so Ansible can resolve host IPs
 	// without slow runtime network detection over SSM.
 	if err := generateInstanceMapping(ctx, ""); err != nil {
 		slog.Warn("instance mapping generation failed, playbooks will use runtime detection", "error", err)
 	}
 	return nil
+}
+
+// ensureInventorySynced compares inventory instance IDs against live EC2
+// state and auto-syncs if they diverge. This prevents provisioning against
+// stale instance IDs after an infra destroy/apply cycle.
+func ensureInventorySynced(ctx context.Context, cfg *config.Config) error {
+	invPath := cfg.InventoryPath()
+	parsed, err := inv.Parse(invPath)
+	if err != nil {
+		return fmt.Errorf("parse inventory: %w", err)
+	}
+
+	region, err := cfg.ResolveRegionWithInventory(parsed)
+	if err != nil {
+		return fmt.Errorf("resolve region: %w", err)
+	}
+	client, err := daws.NewClient(ctx, region)
+	if err != nil {
+		return fmt.Errorf("create AWS client: %w", err)
+	}
+
+	awsInstances, err := client.DiscoverInstances(ctx, cfg.Env)
+	if err != nil {
+		return fmt.Errorf("discover instances: %w", err)
+	}
+	if len(awsInstances) == 0 {
+		return fmt.Errorf("no running instances found for env=%s", cfg.Env)
+	}
+
+	// Build a set of live instance IDs from AWS.
+	liveIDs := make(map[string]struct{}, len(awsInstances))
+	for _, inst := range awsInstances {
+		liveIDs[inst.InstanceID] = struct{}{}
+	}
+
+	// Check if every inventory instance ID exists in the live set.
+	stale := false
+	for _, host := range parsed.Hosts {
+		if host.InstanceID == "" {
+			continue
+		}
+		if _, ok := liveIDs[host.InstanceID]; !ok {
+			stale = true
+			break
+		}
+	}
+
+	if !stale {
+		return nil
+	}
+
+	slog.Info("inventory has stale instance IDs, auto-syncing from AWS")
+	var instances []instanceInfo
+	for _, i := range awsInstances {
+		instances = append(instances, instanceInfo{InstanceID: i.InstanceID, Name: i.Name})
+	}
+	return applyInstanceUpdates(invPath, instances)
 }
 
 func runProvision(cmd *cobra.Command, args []string) error {

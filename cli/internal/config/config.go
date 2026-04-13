@@ -135,6 +135,11 @@ func (c *Config) InventoryPath() string {
 	return filepath.Join(c.ProjectRoot, c.Env+"-inventory")
 }
 
+// LabConfigPath returns the path to the environment's lab config JSON.
+func (c *Config) LabConfigPath() string {
+	return filepath.Join(c.ProjectRoot, "ad", "GOAD", "data", c.Env+"-config.json")
+}
+
 // AnsibleCfgPath returns the path to the ansible.cfg file.
 func (c *Config) AnsibleCfgPath() string {
 	return filepath.Join(c.ProjectRoot, "ansible", "ansible.cfg")

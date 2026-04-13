@@ -198,6 +198,12 @@ func buildArgs(opts RunOptions, cfg *config.Config) []string {
 		args = append(args, "-i", inv)
 	}
 
+	// Pass the lab config JSON directly so Ansible doesn't need the vars
+	// plugin to resolve Jinja template paths from the inventory.
+	if labConfig := cfg.LabConfigPath(); fileExists(labConfig) {
+		args = append(args, "-e", "@"+labConfig)
+	}
+
 	args = append(args, "-e", "ansible_facts_gathering_timeout=60", playbookPath)
 
 	if opts.Debug {
@@ -236,6 +242,11 @@ func buildEnv(opts RunOptions, cfg *config.Config) ([]string, error) {
 	}
 
 	return env, nil
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 func killProcessGroup(pid int) {
