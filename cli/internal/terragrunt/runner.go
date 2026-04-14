@@ -59,7 +59,8 @@ func Run(ctx context.Context, opts Options) error {
 }
 
 func RunAll(ctx context.Context, opts Options) error {
-	args := []string{"run", "--all", opts.Action}
+	// Terragrunt flags go before --, tofu flags go after the action.
+	args := []string{"run", "--all"}
 	// terragrunt v0.97+ auto-appends -auto-approve for run --all.
 	// Only add --no-auto-approve when the caller explicitly wants a prompt.
 	if !opts.AutoApprove && (opts.Action == "apply" || opts.Action == "destroy") {
@@ -67,6 +68,10 @@ func RunAll(ctx context.Context, opts Options) error {
 	}
 	if opts.NonInteractive {
 		args = append(args, "--non-interactive")
+	}
+	args = append(args, "--", opts.Action)
+	if opts.Action == "init" {
+		args = append(args, "-upgrade")
 	}
 
 	slog.Info("running terragrunt run --all",
@@ -175,6 +180,9 @@ func Output(ctx context.Context, opts Options) ([]byte, error) {
 
 func buildArgs(opts Options) []string {
 	args := []string{opts.Action}
+	if opts.Action == "init" {
+		args = append(args, "-upgrade")
+	}
 	if opts.AutoApprove && (opts.Action == "apply" || opts.Action == "destroy") {
 		args = append(args, "-auto-approve")
 	}
