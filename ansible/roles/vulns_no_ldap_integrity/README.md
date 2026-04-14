@@ -1,9 +1,9 @@
 <!-- DOCSIBLE START -->
-# gmsa
+# vulns_no_ldap_integrity
 
 ## Description
 
-Create and configure Group Managed Service Accounts
+Disable LDAP server integrity requirement
 
 ## Requirements
 
@@ -15,16 +15,14 @@ Create and configure Group Managed Service Accounts
 
 ### main.yml
 
-- **Ensure KDS root key exists and is effective** (ansible.windows.win_powershell) - Conditional
-- **Create GMSA Account** (ansible.windows.win_powershell)
-- **Verify GMSA accounts exist** (ansible.windows.win_powershell)
+- **Disable LDAP Server Integrity (LDAPServerIntegrity = 0)** (ansible.windows.win_regedit)
 
 ## Example Playbook
 
 ```yaml
 - hosts: servers
   roles:
-    - gmsa
+    - vulns_no_ldap_integrity
 ```
 
 ## Author Information

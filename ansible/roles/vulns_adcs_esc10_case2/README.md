@@ -1,9 +1,9 @@
 <!-- DOCSIBLE START -->
-# gmsa
+# vulns_adcs_esc10_case2
 
 ## Description
 
-Create and configure Group Managed Service Accounts
+ADCS ESC10 Case 2 - Set UPN certificate mapping method
 
 ## Requirements
 
@@ -15,16 +15,14 @@ Create and configure Group Managed Service Accounts
 
 ### main.yml
 
-- **Ensure KDS root key exists and is effective** (ansible.windows.win_powershell) - Conditional
-- **Create GMSA Account** (ansible.windows.win_powershell)
-- **Verify GMSA accounts exist** (ansible.windows.win_powershell)
+- **Set CertificateMappingMethods to 0x4 (UPN)** (ansible.windows.win_regedit)
 
 ## Example Playbook
 
 ```yaml
 - hosts: servers
   roles:
-    - gmsa
+    - vulns_adcs_esc10_case2
 ```
 
 ## Author Information

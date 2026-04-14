@@ -17,6 +17,14 @@ Create SMB file shares for attack simulation
 
 - **Create directory if not exist** (ansible.windows.win_file)
 - **Create share** (ansible.windows.win_share)
+- **Set full control permissions** (ansible.builtin.include_tasks)
+- **Set change permissions** (ansible.builtin.include_tasks)
+- **Set read permissions** (ansible.builtin.include_tasks)
+- **Set deny permissions** (ansible.builtin.include_tasks)
+
+### perm.yml
+
+- **Add share folder users {{ type }} : {{ perm }} rights** (ansible.windows.win_acl)
 
 ## Example Playbook
 

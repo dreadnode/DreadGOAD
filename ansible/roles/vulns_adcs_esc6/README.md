@@ -1,9 +1,9 @@
 <!-- DOCSIBLE START -->
-# gmsa
+# vulns_adcs_esc6
 
 ## Description
 
-Create and configure Group Managed Service Accounts
+ADCS ESC6 - Enable EDITF_ATTRIBUTESUBJECTALTNAME2 on CA
 
 ## Requirements
 
@@ -15,16 +15,14 @@ Create and configure Group Managed Service Accounts
 
 ### main.yml
 
-- **Ensure KDS root key exists and is effective** (ansible.windows.win_powershell) - Conditional
-- **Create GMSA Account** (ansible.windows.win_powershell)
-- **Verify GMSA accounts exist** (ansible.windows.win_powershell)
+- **Configure ATTRIBUTESUBJECTALTNAME2 on CA - ESC6** (ansible.windows.win_shell)
 
 ## Example Playbook
 
 ```yaml
 - hosts: servers
   roles:
-    - gmsa
+    - vulns_adcs_esc6
 ```
 
 ## Author Information

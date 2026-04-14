@@ -51,7 +51,7 @@
                 "rdp_scheduler.ps1",
                 "unconstrained_delegation_user.ps1"
             ],
-            "vulns" : ["disable_firewall","directory", "credentials", "autologon", "files", "enable_llmnr", "enable_nbt_ns", "shares", "anonymous_enum"],
+            "vulns" : ["disable_firewall","directory", "credentials", "autologon", "files", "enable_llmnr", "enable_nbt_ns", "anonymous_enum"],
             "vulns_vars" : {
                 "directory": {
                     "setup": "C:\\setup"
@@ -105,7 +105,7 @@
                 ]
             },
             "scripts" : [],
-            "vulns" : ["directory", "disable_firewall", "openshares", "files", "permissions"],
+            "vulns" : ["directory", "disable_firewall", "openshares", "shares", "files", "permissions"],
             "vulns_vars" : {
                 "directory": {
                     "shares": "C:\\shares",
@@ -126,6 +126,15 @@
                         "path" : "C:\\inetpub\\wwwroot\\upload",
                         "user" : "IIS_IUSRS",
                         "rights" : "FullControl"
+                    }
+                },
+                "shares" : {
+                    "thewall" : {
+                        "path"   : "C:\\thewall",
+                        "list"   : "yes",
+                        "full"   : "NORTH\\Stark",
+                        "change" : "NORTH\\jon.snow,NORTH\\samwell.tarly",
+                        "read"   : "Users"
                     }
                 }
             },
@@ -244,16 +253,16 @@
                         "path" : "CN=Users,DC=essos,DC=local"
                     },
                     "Dragons":{
-                        "managed_by" : "Administrator",
+                        "managed_by" : "goadmin",
                         "path" : "CN=Users,DC=essos,DC=local"
                     },
                     "QueenProtector":{
-                        "managed_by" : "Administrator",
+                        "managed_by" : "goadmin",
                         "path" : "CN=Users,DC=essos,DC=local",
                         "members" : ["ESSOS\\Dragons"]
                     },
                     "Domain Admins":{
-                        "managed_by" : "Administrator",
+                        "managed_by" : "goadmin",
                         "path" : "CN=Users,DC=essos,DC=local",
                         "members" : ["ESSOS\\QueenProtector"]
                     }

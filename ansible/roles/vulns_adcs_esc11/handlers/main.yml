@@ -1,0 +1,2 @@
+- name: restart-adcs
+  ansible.windows.win_shell: Restart-Service certsvc

@@ -1,9 +1,9 @@
 <!-- DOCSIBLE START -->
-# gmsa
+# vulns_adcs_esc13
 
 ## Description
 
-Create and configure Group Managed Service Accounts
+ADCS ESC13 - Issuance policy OID group link abuse
 
 ## Requirements
 
@@ -15,16 +15,15 @@ Create and configure Group Managed Service Accounts
 
 ### main.yml
 
-- **Ensure KDS root key exists and is effective** (ansible.windows.win_powershell) - Conditional
-- **Create GMSA Account** (ansible.windows.win_powershell)
-- **Verify GMSA accounts exist** (ansible.windows.win_powershell)
+- **Copy ESC13 script to remote host** (ansible.windows.win_copy)
+- **Run ESC13 script** (ansible.windows.win_shell)
 
 ## Example Playbook
 
 ```yaml
 - hosts: servers
   roles:
-    - gmsa
+    - vulns_adcs_esc13
 ```
 
 ## Author Information

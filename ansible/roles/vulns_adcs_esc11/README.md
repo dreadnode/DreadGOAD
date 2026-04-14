@@ -1,9 +1,9 @@
 <!-- DOCSIBLE START -->
-# gmsa
+# vulns_adcs_esc11
 
 ## Description
 
-Create and configure Group Managed Service Accounts
+ADCS ESC11 - Disable encrypted certificate request enforcement
 
 ## Requirements
 
@@ -15,16 +15,14 @@ Create and configure Group Managed Service Accounts
 
 ### main.yml
 
-- **Ensure KDS root key exists and is effective** (ansible.windows.win_powershell) - Conditional
-- **Create GMSA Account** (ansible.windows.win_powershell)
-- **Verify GMSA accounts exist** (ansible.windows.win_powershell)
+- **Disable IF_ENFORCEENCRYPTICERTREQUEST flag (ESC11)** (ansible.windows.win_shell)
 
 ## Example Playbook
 
 ```yaml
 - hosts: servers
   roles:
-    - gmsa
+    - vulns_adcs_esc11
 ```
 
 ## Author Information

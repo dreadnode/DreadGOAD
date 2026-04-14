@@ -1,9 +1,9 @@
 <!-- DOCSIBLE START -->
-# gmsa
+# vulns_adcs_esc7
 
 ## Description
 
-Create and configure Group Managed Service Accounts
+ADCS ESC7 - Grant ManageCA rights for CA officer abuse
 
 ## Requirements
 
@@ -15,16 +15,15 @@ Create and configure Group Managed Service Accounts
 
 ### main.yml
 
-- **Ensure KDS root key exists and is effective** (ansible.windows.win_powershell) - Conditional
-- **Create GMSA Account** (ansible.windows.win_powershell)
-- **Verify GMSA accounts exist** (ansible.windows.win_powershell)
+- **Install module PSPKI** (ansible.windows.win_shell)
+- **ADD ManageCA rights** (ansible.windows.win_powershell)
 
 ## Example Playbook
 
 ```yaml
 - hosts: servers
   roles:
-    - gmsa
+    - vulns_adcs_esc7
 ```
 
 ## Author Information

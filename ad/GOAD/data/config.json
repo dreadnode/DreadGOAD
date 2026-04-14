@@ -50,7 +50,7 @@
                 "gpo_abuse.ps1",
                 "rdp_scheduler.ps1"
             ],
-            "vulns" : ["disable_firewall","directory", "credentials", "autologon", "files", "enable_llmnr", "enable_nbt_ns", "shares"],
+            "vulns" : ["disable_firewall","directory", "credentials", "autologon", "files", "enable_llmnr", "enable_nbt_ns"],
             "vulns_vars" : {
                 "directory": {
                     "setup": "C:\\setup"
@@ -104,7 +104,7 @@
                 ]
             },
             "scripts" : [],
-            "vulns" : ["directory", "disable_firewall", "openshares", "files", "permissions"],
+            "vulns" : ["directory", "disable_firewall", "openshares", "shares", "files", "permissions"],
             "vulns_vars" : {
                 "directory": {
                     "shares": "C:\\shares",

@@ -37,7 +37,9 @@ func BuildCollection(projectRoot string) error {
 	}
 
 	// Clean up tarball
-	os.Remove(tarball)
+	if err := os.Remove(tarball); err != nil {
+		slog.Warn("failed to remove collection tarball", "path", tarball, "error", err)
+	}
 	return nil
 }
 

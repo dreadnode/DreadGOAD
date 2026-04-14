@@ -1,9 +1,9 @@
 <!-- DOCSIBLE START -->
-# gmsa
+# vulns_adcs_esc15
 
 ## Description
 
-Create and configure Group Managed Service Accounts
+ADCS ESC15 - Grant Domain Users enroll rights on Web Server template
 
 ## Requirements
 
@@ -15,16 +15,14 @@ Create and configure Group Managed Service Accounts
 
 ### main.yml
 
-- **Ensure KDS root key exists and is effective** (ansible.windows.win_powershell) - Conditional
-- **Create GMSA Account** (ansible.windows.win_powershell)
-- **Verify GMSA accounts exist** (ansible.windows.win_powershell)
+- **Run ESC15** (ansible.windows.win_powershell)
 
 ## Example Playbook
 
 ```yaml
 - hosts: servers
   roles:
-    - gmsa
+    - vulns_adcs_esc15
 ```
 
 ## Author Information
