@@ -27,6 +27,7 @@
     perm: "FullControl"
     type: "allow"
   with_dict: "{{ vulns_vars }}"
+  when: item.value.full is defined
 
 - name: Set change permissions
   ansible.builtin.include_tasks: perm.yml
@@ -36,6 +37,7 @@
     perm: " Read,Write,Modify,Delete"
     type: "allow"
   with_dict: "{{ vulns_vars }}"
+  when: item.value.change is defined
 
 - name: Set read permissions
   ansible.builtin.include_tasks: perm.yml
@@ -45,6 +47,7 @@
     perm: " Read"
     type: "allow"
   with_dict: "{{ vulns_vars }}"
+  when: item.value.read is defined
 
 - name: Set deny permissions
   ansible.builtin.include_tasks: perm.yml
@@ -54,3 +57,4 @@
     perm: "Read,Write,Modify,FullControl,Delete"
     type: "deny"
   with_dict: "{{ vulns_vars }}"
+  when: item.value.deny is defined

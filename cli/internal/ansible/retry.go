@@ -299,6 +299,15 @@ func fixSSMUsers(ctx context.Context, env string, failedHosts []string, log *slo
 			if err := client.FixSSMUserViaDomainAccount(ctx, host.InstanceID); err != nil {
 				log.Warn("ssm-user fix failed", "host", hostName, "error", err)
 			}
+			// FixSSMUserViaDomainAccount already restarts SSM Agent
+			continue
+		}
+
+		// EnableSSMUserLocal doesn't restart the SSM Agent, but a restart is
+		// needed to refresh S3 credentials that cause 403 transfer errors.
+		log.Info("restarting SSM Agent to refresh credentials", "host", hostName)
+		if err := client.RestartSSMAgent(ctx, host.InstanceID); err != nil {
+			log.Warn("SSM Agent restart failed", "host", hostName, "error", err)
 		}
 	}
 }

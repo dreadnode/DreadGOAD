@@ -158,6 +158,20 @@ func (c *Client) EnableSSMUserLocal(ctx context.Context, instanceID string) erro
 	return nil
 }
 
+// RestartSSMAgent restarts the Amazon SSM Agent on an instance to refresh
+// credentials and clear cached state (e.g. stale S3 presigned URLs).
+func (c *Client) RestartSSMAgent(ctx context.Context, instanceID string) error {
+	cmd := `Restart-Service AmazonSSMAgent -Force; Write-Output "SSM Agent restarted"`
+	result, err := c.RunPowerShellCommand(ctx, instanceID, cmd, 2*time.Minute)
+	if err != nil {
+		return err
+	}
+	if result.Status != "Success" {
+		return fmt.Errorf("restart SSM Agent failed: %s %s", result.Stdout, result.Stderr)
+	}
+	return nil
+}
+
 // FixSSMUserViaDomainAccount creates ssm-user as a domain account on DCs.
 func (c *Client) FixSSMUserViaDomainAccount(ctx context.Context, instanceID string) error {
 	script := `$ErrorActionPreference = "Continue"
