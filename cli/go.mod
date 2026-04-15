@@ -8,7 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.297.0
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.68.4
 	github.com/aws/aws-sdk-go-v2/service/sts v1.41.10
-	github.com/cowdogmoo/warpgate/v3 v3.2.1-0.20260410033519-66705fec0479
+	github.com/cowdogmoo/warpgate/v3 v3.2.1-0.20260414210202-4c156cd938f9
 	github.com/fatih/color v1.19.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
@@ -25,7 +25,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.6 // indirect
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.68.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/iam v1.53.7 // indirect
-	github.com/aws/aws-sdk-go-v2/service/imagebuilder v1.51.4 // indirect
+	github.com/aws/aws-sdk-go-v2/service/imagebuilder v1.52.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.7 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.21 // indirect
 	github.com/aws/aws-sdk-go-v2/service/signin v1.0.9 // indirect
@@ -37,7 +37,7 @@ require (
 	github.com/docker/docker-credential-helpers v0.9.5 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
-	github.com/google/go-containerregistry v0.21.4 // indirect
+	github.com/google/go-containerregistry v0.21.5 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/klauspost/compress v1.18.5 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
@@ -55,8 +55,8 @@ require (
 	github.com/vbatts/tar-split v0.12.2 // indirect
 	golang.org/x/sync v0.20.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
-	golang.org/x/term v0.41.0 // indirect
-	golang.org/x/text v0.35.0 // indirect
+	golang.org/x/term v0.42.0 // indirect
+	golang.org/x/text v0.36.0 // indirect
 	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
 	gotest.tools/v3 v3.5.2 // indirect
 )
