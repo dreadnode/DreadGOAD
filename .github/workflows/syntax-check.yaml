@@ -53,11 +53,13 @@ jobs:
 
       - name: Check event type
         id: check-event
+        env:
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          if [[ "${{ github.event_name }}" == "push" ]] || \
-             [[ "${{ github.event_name }}" == "schedule" ]] || \
-             [[ "${{ github.event_name }}" == "merge_group" ]] || \
-             [[ "${{ github.event_name }}" == "workflow_dispatch" && -z "${{ env.ROLE }}" ]]; then
+          if [[ "$EVENT_NAME" == "push" ]] || \
+             [[ "$EVENT_NAME" == "schedule" ]] || \
+             [[ "$EVENT_NAME" == "merge_group" ]] || \
+             [[ "$EVENT_NAME" == "workflow_dispatch" && -z "$ROLE" ]]; then
             echo "test_all=true" >> "$GITHUB_OUTPUT"
           else
             echo "test_all=false" >> "$GITHUB_OUTPUT"
@@ -67,10 +69,14 @@ jobs:
         id: detect
         if: steps.check-event.outputs.test_all == 'false'
         working-directory: ${{ env.COLLECTION_PATH }}
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
-            BASE="${{ github.event.pull_request.base.sha }}"
-            HEAD="${{ github.event.pull_request.head.sha }}"
+          if [[ "$EVENT_NAME" == "pull_request" ]]; then
+            BASE="$PR_BASE_SHA"
+            HEAD="$PR_HEAD_SHA"
           else
             BASE="origin/main"
             HEAD="HEAD"
@@ -94,14 +100,16 @@ jobs:
           path: ${{ env.COLLECTION_PATH }}
 
       - name: Validate inputs
+        env:
+          COLL_PATH: ${{ env.COLLECTION_PATH }}
         run: |
-          if [[ -n "${{ env.ROLE }}" ]]; then
-            if [[ ! -d "${{ env.COLLECTION_PATH }}/ansible/roles/${{ env.ROLE }}" ]]; then
-              echo "::error::Role '${{ env.ROLE }}' not found in ansible/roles/"
+          if [[ -n "$ROLE" ]]; then
+            if [[ ! -d "$COLL_PATH/ansible/roles/$ROLE" ]]; then
+              echo "::error::Role '$ROLE' not found in ansible/roles/"
               exit 1
             fi
-            if [[ ! -f "${{ env.COLLECTION_PATH }}/ansible/roles/${{ env.ROLE }}/tasks/main.yml" ]]; then
-              echo "::error::Role '${{ env.ROLE }}' has no tasks/main.yml"
+            if [[ ! -f "$COLL_PATH/ansible/roles/$ROLE/tasks/main.yml" ]]; then
+              echo "::error::Role '$ROLE' has no tasks/main.yml"
               exit 1
             fi
           fi
@@ -151,12 +159,13 @@ jobs:
           TEST_ALL: ${{ needs.detect-changes.outputs.test_all }}
           CHANGED_ROLES: ${{ needs.detect-changes.outputs.roles }}
           SINGLE_ROLE: ${{ env.ROLE }}
+          COLL_PATH: ${{ env.COLLECTION_PATH }}
         run: |
           set -e
           FAILED=0
           PASSED=0
           SKIPPED=0
-          ROLES_DIR="${{ env.COLLECTION_PATH }}/ansible/roles"
+          ROLES_DIR="$COLL_PATH/ansible/roles"
           TMPDIR=$(mktemp -d)
 
           for role_dir in "$ROLES_DIR"/*/; do
