@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // buildValidEnvDir creates a minimal valid environment directory structure.
@@ -84,7 +86,7 @@ func TestValidateEnvironment_MissingHostHCL(t *testing.T) {
 	base := buildValidEnvDir(t, env, region)
 
 	// Remove host.hcl
-	os.Remove(filepath.Join(base, "host.hcl"))
+	require.NoError(t, os.Remove(filepath.Join(base, "host.hcl")))
 
 	result := ValidateEnvironment(base, env, region)
 	if result.OK() {
@@ -106,7 +108,7 @@ func TestValidateEnvironment_MissingNetworkHCL(t *testing.T) {
 	region := "us-east-1"
 	base := buildValidEnvDir(t, env, region)
 
-	os.Remove(filepath.Join(base, env, region, "network", "terragrunt.hcl"))
+	require.NoError(t, os.Remove(filepath.Join(base, env, region, "network", "terragrunt.hcl")))
 
 	result := ValidateEnvironment(base, env, region)
 	if result.OK() {
@@ -201,7 +203,7 @@ func TestValidateEnvironment_MissingGOADHosts(t *testing.T) {
 
 	// Remove all GOAD host dirs
 	goadDir := filepath.Join(base, env, region, "goad")
-	os.RemoveAll(goadDir)
+	require.NoError(t, os.RemoveAll(goadDir))
 
 	result := ValidateEnvironment(base, env, region)
 	// Missing GOAD hosts produce warnings, not errors
