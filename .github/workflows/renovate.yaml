@@ -39,7 +39,6 @@ env:
 
 # Permissions block for GitHub App
 permissions:
-  actions: write
   contents: write
   issues: write
   pull-requests: write

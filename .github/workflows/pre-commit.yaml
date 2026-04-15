@@ -22,6 +22,9 @@ concurrency:
   cancel-in-progress: true
   group: pre-commit-${{ github.workflow }}-${{ github.ref }}
 
+permissions:
+  contents: read
+
 env:
   GO_VERSION: "1.26.2"
   PYTHON_VERSION: "3.14.3"
@@ -63,7 +66,7 @@ jobs:
       - name: Set up TFLint
         uses: terraform-linters/setup-tflint@b480b8fcdaa6f2c577f8e4fa799e89e756bb7c93 # v6
         with:
-          tflint_version: latest
+          tflint_version: v0.61.0
 
       - name: Init TFLint
         run: tflint --init --config .hooks/linters/.tflint.hcl
@@ -76,22 +79,24 @@ jobs:
       - name: Install Go tools
         run: |
           # Install shfmt
-          go install mvdan.cc/sh/v3/cmd/shfmt@latest
+          go install mvdan.cc/sh/v3/cmd/shfmt@v3.13.1
 
           # Install goimports
-          go install golang.org/x/tools/cmd/goimports@latest
+          go install golang.org/x/tools/cmd/goimports@v0.44.0
 
           # Install gocyclo
-          go install github.com/fzipp/gocyclo/cmd/gocyclo@latest
-
-          # Install golangci-lint
-          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh | sh -s -- -b "$(go env GOPATH)/bin"
+          go install github.com/fzipp/gocyclo/cmd/gocyclo@v0.6.0
 
           # Install gocritic
-          go install github.com/go-critic/go-critic/cmd/gocritic@latest
+          go install github.com/go-critic/go-critic/cmd/gocritic@v0.14.3
 
           # Add Go bin directory to PATH
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
+        with:
+          install-only: true
 
       - name: Run pre-commit
         run: |
