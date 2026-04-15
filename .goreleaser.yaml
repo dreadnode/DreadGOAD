@@ -37,4 +37,6 @@ builds:
       - v3
 
     hooks:
-      pre: go mod tidy
+      pre:
+        - cmd: go mod tidy
+          dir: ./cli
