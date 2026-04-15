@@ -4,7 +4,7 @@ psutil
 Jinja2
 pyyaml
 # AWS SDK
-boto3==1.42.88
+boto3==1.42.89
 botocore==1.42.88
 # Ansible
 # IMPORTANT: ansible-core >=2.19 breaks Windows module execution over AWS SSM.
