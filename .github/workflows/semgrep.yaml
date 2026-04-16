@@ -17,7 +17,7 @@ on:
 
 concurrency:
   group: semgrep-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   actions: read
@@ -31,7 +31,7 @@ jobs:
     name: Semgrep Analysis
     runs-on: ubuntu-latest
     container:
-      image: returntocorp/semgrep@sha256:a3d49dc967b8534a6a76628e50c51cbfe33eb7195dc2feab1fdc0f100852c8ef
+      image: returntocorp/semgrep@sha256:7810f1d7884974ab6dda7bef8f4a2c8e165ea2142fd8260515d380e4f1407263 # v1.160.0
 
     if: (github.actor != 'dependabot[bot]')
 
@@ -63,3 +63,9 @@ jobs:
             --config="${SEMGREP_RULES}" \
             --timeout="${SEMGREP_TIMEOUT}" \
             --sarif --output=semgrep-results.sarif
+
+      - name: Upload SARIF to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@ce64ddcb0d8d890d2df4a9d1c04ff297367dea2a # v3.35.2
+        with:
+          sarif_file: semgrep-results.sarif
