@@ -1,0 +1,226 @@
+---
+name: Terratest
+on:
+  merge_group:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+    paths:
+      - "modules/**/*.tf"
+      - "modules/**/*.go"
+      - "modules/**/go.mod"
+      - "modules/**/go.sum"
+  push:
+    branches:
+      - main
+    paths:
+      - "modules/**/*.tf"
+      - "modules/**/*.go"
+      - "modules/**/go.mod"
+      - "modules/**/go.sum"
+  schedule:
+    # Runs every Sunday at 4 AM UTC
+    - cron: "0 4 * * 0"
+  workflow_dispatch:
+
+env:
+  AWS_DEFAULT_REGION: us-east-2
+  GO_VERSION: 1.26
+  TF_VERSION: 1.9.7
+  TIMEOUT_MINUTES: 60
+
+permissions:
+  actions: read
+  checks: write
+  contents: read
+  id-token: write
+  pull-requests: write
+
+jobs:
+  detect-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      net: ${{ steps.filter.outputs.net }}
+      instance-factory: ${{ steps.filter.outputs.instance-factory }}
+    steps:
+      - name: Setup git repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed modules
+        id: filter
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_BRANCH: ${{ github.base_ref }}
+        run: |
+          # Always run all tests for schedule and workflow_dispatch
+          if [ "${EVENT_NAME}" = "schedule" ] || [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
+            echo "net=true" >> "${GITHUB_OUTPUT}"
+            echo "instance-factory=true" >> "${GITHUB_OUTPUT}"
+            echo "::notice::Running all module tests due to ${EVENT_NAME} event"
+            exit 0
+          fi
+
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            BASE_REF="origin/${BASE_BRANCH}"
+          else
+            BASE_REF="HEAD^"
+          fi
+
+          CHANGED_FILES=$(git diff --name-only "${BASE_REF}...HEAD" 2>/dev/null || echo "")
+
+          if echo "${CHANGED_FILES}" | grep -qE '^modules/terraform-aws-net/'; then
+            echo "net=true" >> "${GITHUB_OUTPUT}"
+            echo "::notice::terraform-aws-net changes detected"
+          else
+            echo "net=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+          if echo "${CHANGED_FILES}" | grep -qE '^modules/terraform-aws-instance-factory/'; then
+            echo "instance-factory=true" >> "${GITHUB_OUTPUT}"
+            echo "::notice::terraform-aws-instance-factory changes detected"
+          else
+            echo "instance-factory=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+  semaphore:
+    runs-on: ubuntu-latest
+    outputs:
+      queueGroup: ${{ steps.calc.outputs.queueGroup }}
+    steps:
+      - name: Calculate Queue Group
+        id: calc
+        env:
+          NUM: ${{ github.run_number }}
+          CONCURRENCY_LIMIT: 3
+        run: echo "queueGroup=$((NUM % CONCURRENCY_LIMIT))" >> "$GITHUB_OUTPUT"
+
+  terratest-net:
+    name: Terratest - terraform-aws-net
+    needs: [detect-changes, semaphore]
+    if: needs.detect-changes.outputs.net == 'true'
+    runs-on: ubuntu-latest
+    environment: terratest
+    timeout-minutes: 90
+    concurrency:
+      group: terratest-net-queue-${{ needs.semaphore.outputs.queueGroup }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Setup git repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends jq curl unzip
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          aws-region: ${{ env.AWS_DEFAULT_REGION }}
+          role-to-assume: ${{ secrets.OIDC_ROLE_ARN }}
+          role-session-name: TerraformAwsNetTester
+
+      - name: Set AWS_ACCOUNT_ID env var
+        run: |
+          AWS_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          echo "AWS_ACCOUNT_ID=${AWS_ACCOUNT_ID}" >> "$GITHUB_ENV"
+          echo "::add-mask::${AWS_ACCOUNT_ID}"
+
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+          cache: true
+          cache-dependency-path: modules/terraform-aws-net/test/go.sum
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85 # v4
+        with:
+          terraform_wrapper: false
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Run Terratest
+        working-directory: modules/terraform-aws-net/test
+        env:
+          TERRATEST_DESTROY: "true"
+          TEST_TIMEOUT: ${{ env.TIMEOUT_MINUTES }}
+        run: |
+          go test -v -timeout "${TEST_TIMEOUT}m" -failfast ./... 2>&1 | tee test.log
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: terratest-net-logs-${{ github.sha }}
+          path: modules/terraform-aws-net/test/test.log
+          retention-days: 5
+          if-no-files-found: warn
+
+  terratest-instance-factory:
+    name: Terratest - terraform-aws-instance-factory
+    needs: [detect-changes, semaphore]
+    if: needs.detect-changes.outputs.instance-factory == 'true'
+    runs-on: ubuntu-latest
+    environment: terratest
+    timeout-minutes: 90
+    concurrency:
+      group: terratest-factory-queue-${{ needs.semaphore.outputs.queueGroup }}
+      cancel-in-progress: false
+
+    steps:
+      - name: Setup git repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends jq curl unzip
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@ec61189d14ec14c8efccab744f656cffd0e33f37 # v6.1.0
+        with:
+          aws-region: ${{ env.AWS_DEFAULT_REGION }}
+          role-to-assume: ${{ secrets.OIDC_ROLE_ARN }}
+          role-session-name: TerraformInstanceFactoryTester
+
+      - name: Set AWS_ACCOUNT_ID env var
+        run: |
+          AWS_ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          echo "AWS_ACCOUNT_ID=${AWS_ACCOUNT_ID}" >> "$GITHUB_ENV"
+          echo "::add-mask::${AWS_ACCOUNT_ID}"
+
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          check-latest: true
+          cache: true
+          cache-dependency-path: modules/terraform-aws-instance-factory/test/go.sum
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85 # v4
+        with:
+          terraform_wrapper: false
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Run Terratest
+        working-directory: modules/terraform-aws-instance-factory/test
+        env:
+          TERRATEST_DESTROY: "true"
+          TEST_TIMEOUT: ${{ env.TIMEOUT_MINUTES }}
+        run: |
+          go test -v -timeout "${TEST_TIMEOUT}m" -failfast ./... 2>&1 | tee test.log
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: terratest-factory-logs-${{ github.sha }}
+          path: modules/terraform-aws-instance-factory/test/test.log
+          retention-days: 5
+          if-no-files-found: warn

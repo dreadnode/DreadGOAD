@@ -1,0 +1,71 @@
+---
+name: Semgrep Analysis
+on:
+  merge_group:
+  pull_request:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "0 0 * * *" # Run daily at midnight UTC
+
+concurrency:
+  group: semgrep-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  actions: read
+  checks: write
+  contents: read
+  pull-requests: write
+  security-events: write
+
+jobs:
+  semgrep:
+    name: Semgrep Analysis
+    runs-on: ubuntu-latest
+    container:
+      image: returntocorp/semgrep@sha256:7810f1d7884974ab6dda7bef8f4a2c8e165ea2142fd8260515d380e4f1407263 # v1.160.0
+
+    if: (github.actor != 'dependabot[bot]')
+
+    steps:
+      - name: Checkout git repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git Safe Directory
+        run: git config --global --add safe.directory "${GITHUB_WORKSPACE}"
+
+      - name: Semgrep Analysis
+        env:
+          SEMGREP_RULES: >-
+            p/terraform
+            p/github-actions
+            p/golang
+            p/python
+            p/docker
+            p/secrets
+            p/security-audit
+            p/owasp-top-ten
+            p/supply-chain
+          SEMGREP_TIMEOUT: 300
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          semgrep ci \
+            --config="${SEMGREP_RULES}" \
+            --timeout="${SEMGREP_TIMEOUT}" \
+            --sarif --output=semgrep-results.sarif
+
+      - name: Upload SARIF to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@ce64ddcb0d8d890d2df4a9d1c04ff297367dea2a # v3.35.2
+        with:
+          sarif_file: semgrep-results.sarif
