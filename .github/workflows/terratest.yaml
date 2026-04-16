@@ -102,6 +102,7 @@ jobs:
     needs: [detect-changes, semaphore]
     if: needs.detect-changes.outputs.net == 'true'
     runs-on: ubuntu-latest
+    environment: terratest
     timeout-minutes: 90
     concurrency:
       group: terratest-net-queue-${{ needs.semaphore.outputs.queueGroup }}
@@ -165,6 +166,7 @@ jobs:
     needs: [detect-changes, semaphore]
     if: needs.detect-changes.outputs.instance-factory == 'true'
     runs-on: ubuntu-latest
+    environment: terratest
     timeout-minutes: 90
     concurrency:
       group: terratest-factory-queue-${{ needs.semaphore.outputs.queueGroup }}
