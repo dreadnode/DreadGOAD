@@ -54,6 +54,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_BRANCH: ${{ github.base_ref }}
+          MERGE_GROUP_BASE_SHA: ${{ github.event.merge_group.base_sha }}
         run: |
           # Always run all tests for schedule and workflow_dispatch
           if [ "${EVENT_NAME}" = "schedule" ] || [ "${EVENT_NAME}" = "workflow_dispatch" ]; then
@@ -65,6 +66,8 @@ jobs:
 
           if [ "${EVENT_NAME}" = "pull_request" ]; then
             BASE_REF="origin/${BASE_BRANCH}"
+          elif [ "${EVENT_NAME}" = "merge_group" ]; then
+            BASE_REF="${MERGE_GROUP_BASE_SHA}"
           else
             BASE_REF="HEAD^"
           fi
