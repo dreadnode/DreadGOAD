@@ -2,6 +2,13 @@
 - name: Run Windows Updates (skip on prebaked AMIs)
   when: not ((goad_prebaked | default({})).windows_updated | default(false))
   block:
+    - name: Prevent forced user registry unload (fixes WUA 0x800703FA)
+      ansible.windows.win_regedit:
+        path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\System
+        name: DisableForceUnload
+        data: 1
+        type: dword
+
     - name: Reset Windows Update components
       ansible.windows.win_shell: |
         $ErrorActionPreference = 'SilentlyContinue'

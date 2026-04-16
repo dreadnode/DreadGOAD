@@ -125,6 +125,13 @@
       delay: 10
       until: firewall_result is not failed
 
+    - name: Prevent forced user registry unload (fixes WUA 0x800703FA)
+      ansible.windows.win_regedit:
+        path: HKLM:\SOFTWARE\Policies\Microsoft\Windows\System
+        name: DisableForceUnload
+        data: 1
+        type: dword
+
     - name: Enable Windows Update service
       ansible.windows.win_service:
         name: wuauserv

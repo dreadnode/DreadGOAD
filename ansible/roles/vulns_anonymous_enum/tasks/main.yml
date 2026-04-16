@@ -49,7 +49,8 @@
   tags: lsa_policy
 
 - name: Apply LSAAnonymousNameLookup security policy
-  ansible.windows.win_shell: secedit /configure /db C:\Windows\Security\Database\secedit.sdb /cfg C:\temp-anon-policy.inf /overwrite /areas SECURITYPOLICY /log C:\Windows\Temp\secedit-anon.log /quiet
+  ansible.windows.win_shell: |
+    secedit /configure /db C:\Windows\Temp\secedit-anon.sdb /cfg C:\temp-anon-policy.inf /areas SECURITYPOLICY /log C:\Windows\Temp\secedit-anon.log /quiet
   register: secedit_result
   # Note: This will fail on Domain Controllers because LSAAnonymousNameLookup is controlled by Group Policy
   # The GPO update task below will handle the DC case

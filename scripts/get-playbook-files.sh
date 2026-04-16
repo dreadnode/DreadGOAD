@@ -24,7 +24,7 @@ case "${PLAYBOOK}" in
             "ansible/roles/common/tasks/main.yml"
             "ansible/roles/settings_keyboard/tasks/main.yml"
             "ansible/roles/settings_no_updates/tasks/main.yml"
-            "ansible/roles/settings_updates/tasks/default.yml"
+            "ansible/roles/settings_updates/tasks/main.yml"
             "ad/GOAD/data/${ENV}-config.json"
             "ansible/playbooks/data.yml"
         )
