@@ -47,6 +47,8 @@
     } else {
       Write-Output "SYSVOL not found - skipping (not a DC or not yet configured)"
     }
+  async: 1800
+  poll: 30
   register: sacl_sysvol
   changed_when: "'SACL configured' in sacl_sysvol.stdout"
   failed_when: false
@@ -77,6 +79,8 @@
     } else {
       Write-Output "NETLOGON not found at expected path - skipping"
     }
+  async: 1800
+  poll: 30
   register: sacl_netlogon
   changed_when: "'SACL configured' in sacl_netlogon.stdout"
   failed_when: false
@@ -108,6 +112,8 @@
       Write-Output "Path not found: {{ item.path }} - skipping"
     }
   loop: "{{ security_vars.audit_folders | default([]) }}"
+  async: 1800
+  poll: 30
   register: sacl_custom
   changed_when: "'SACL configured' in sacl_custom.stdout"
   failed_when: false
