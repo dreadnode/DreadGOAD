@@ -23,6 +23,9 @@ on:
         default: ''
         type: string
 
+permissions:
+  contents: read
+
 concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.ref }}
@@ -135,11 +138,14 @@ jobs:
         uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
         with:
           path: ~/.ansible/collections
-          key: ${{ runner.os }}-ansible-${{ hashFiles('**/requirements.yml') }}
+          key: ${{ runner.os }}-ansible-${{ github.ref }}-${{ hashFiles('**/requirements.yml') }}
 
       - name: Install dependencies
+        env:
+          COLL_PATH: ${{ env.COLLECTION_PATH }}
+          REQS_FILE: ${{ env.REQUIREMENTS_FILE }}
         run: |
-          python3 -m pip install -r "${{ env.COLLECTION_PATH }}/${{ env.REQUIREMENTS_FILE }}"
+          python3 -m pip install -r "${COLL_PATH}/${REQS_FILE}"
 
       - name: Install galaxy dependencies
         working-directory: ${{ env.COLLECTION_PATH }}/ansible
@@ -148,9 +154,12 @@ jobs:
 
       - name: Build and install collection locally
         working-directory: ${{ env.COLLECTION_PATH }}/ansible
+        env:
+          COLL_NS: ${{ env.COLLECTION_NAMESPACE }}
+          COLL_NAME: ${{ env.COLLECTION_NAME }}
         run: |
           ansible-galaxy collection build --force
-          ansible-galaxy collection install ${{ env.COLLECTION_NAMESPACE }}-${{ env.COLLECTION_NAME }}-*.tar.gz -p ~/.ansible/collections --force --pre
+          ansible-galaxy collection install "${COLL_NS}-${COLL_NAME}"-*.tar.gz -p ~/.ansible/collections --force --pre
 
       - name: Syntax check roles
         env:

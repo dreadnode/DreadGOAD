@@ -176,3 +176,24 @@ repos:
         pass_filenames: true
         require_serial: true
         log_file: /tmp/go-vet.log
+
+      - id: module-go-fmt
+        name: Run gofmt on module tests
+        entry: bash -c 'for d in modules/*/test; do [ -f "$d/go.mod" ] && (cd "$d" && gofmt -l -w .); done'
+        language: system
+        files: '^modules/.*\.go$'
+        pass_filenames: false
+
+      - id: module-go-vet
+        name: Run go vet on module tests
+        entry: bash -c 'for d in modules/*/test; do [ -f "$d/go.mod" ] && (cd "$d" && go vet ./...); done'
+        language: system
+        files: '^modules/.*\.go$'
+        pass_filenames: false
+
+      - id: module-go-build
+        name: Build module tests
+        entry: bash -c 'for d in modules/*/test; do [ -f "$d/go.mod" ] && (cd "$d" && go build ./...); done'
+        language: system
+        files: '^modules/.*\.go$'
+        pass_filenames: false

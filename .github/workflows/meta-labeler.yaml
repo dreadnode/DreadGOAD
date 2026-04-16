@@ -1,5 +1,8 @@
 ---
 name: "Labeler"
+# SECURITY: This workflow uses pull_request_target and has access to secrets.
+# NEVER add an actions/checkout step here or run any code from the PR.
+# See: CVE-2025-30066, CVE-2025-30154, CVE-2026-33634
 on:
   pull_request_target:
     branches: ["main"]
