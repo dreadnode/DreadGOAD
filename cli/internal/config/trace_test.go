@@ -51,7 +51,9 @@ func TestResolveSource(t *testing.T) {
 				t.Setenv(tt.envVar, tt.envVal)
 			} else {
 				// Ensure the env var is not set from a prior test
-				os.Unsetenv("DREADGOAD_REGION")
+				if err := os.Unsetenv("DREADGOAD_REGION"); err != nil {
+					t.Fatalf("failed to unset env var: %v", err)
+				}
 			}
 			got := resolveSource(tt.key, tt.changedFlags, fileKeys, cfgFile)
 			if got == "" {
