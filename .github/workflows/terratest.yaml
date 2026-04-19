@@ -34,7 +34,6 @@ permissions:
   actions: read
   checks: write
   contents: read
-  id-token: write
   pull-requests: write
 
 jobs:
@@ -106,6 +105,9 @@ jobs:
     if: needs.detect-changes.outputs.net == 'true'
     runs-on: ubuntu-latest
     environment: terratest
+    permissions:
+      id-token: write
+      contents: read
     timeout-minutes: 90
     concurrency:
       group: terratest-net-queue-${{ needs.semaphore.outputs.queueGroup }}
@@ -170,6 +172,9 @@ jobs:
     if: needs.detect-changes.outputs.instance-factory == 'true'
     runs-on: ubuntu-latest
     environment: terratest
+    permissions:
+      id-token: write
+      contents: read
     timeout-minutes: 90
     concurrency:
       group: terratest-factory-queue-${{ needs.semaphore.outputs.queueGroup }}

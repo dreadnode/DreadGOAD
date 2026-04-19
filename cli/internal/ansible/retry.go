@@ -56,6 +56,7 @@ func RunPlaybookWithRetry(ctx context.Context, opts RetryOptions) error {
 		opts.RetryDelay = time.Duration(cfg.RetryDelay) * time.Second
 	}
 
+	retryForks := 2 // limit SSM concurrency to avoid session saturation
 	for attempt := range opts.MaxRetries {
 		if attempt > 0 {
 			log.Info("retry attempt", "attempt", attempt, "playbook", opts.Playbook)
@@ -78,11 +79,13 @@ func RunPlaybookWithRetry(ctx context.Context, opts RetryOptions) error {
 			Debug:       opts.Debug,
 			LogFile:     opts.LogFile,
 			ExtraVars:   opts.ExtraVars,
+			Forks:       retryForks,
 		})
 
 		if result.TimedOut {
 			log.Error("playbook timed out (idle timeout)", "playbook", opts.Playbook)
 			CleanupSSMSessions(ctx, opts.Env, log)
+			retryForks = 1
 			continue
 		}
 
