@@ -61,6 +61,7 @@ func RunPlaybook(ctx context.Context, opts RunOptions) *RunResult {
 	}
 
 	slog.Info("running playbook", "playbook", opts.Playbook, "args", strings.Join(args, " "))
+	logRunOptions(opts)
 
 	cmd := exec.CommandContext(ctx, "ansible-playbook", args...)
 	cmd.Env = env
@@ -243,6 +244,17 @@ func buildEnv(opts RunOptions, cfg *config.Config) ([]string, error) {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// logRunOptions emits debug-level logs for extra-vars and env vars being
+// passed to ansible-playbook, making it easy to trace variable sources.
+func logRunOptions(opts RunOptions) {
+	if len(opts.ExtraVars) > 0 {
+		slog.Debug("ansible extra-vars from Go", "vars", opts.ExtraVars)
+	}
+	if len(opts.ExtraEnv) > 0 {
+		slog.Debug("ansible extra env vars from Go", "vars", opts.ExtraEnv)
+	}
 }
 
 func killProcessGroup(pid int) {

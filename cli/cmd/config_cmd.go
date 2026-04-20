@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/dreadnode/dreadgoad/internal/config"
@@ -134,11 +135,116 @@ var configSetCmd = &cobra.Command{
 	},
 }
 
+var configTraceCmd = &cobra.Command{
+	Use:   "trace",
+	Short: "Show where each configuration value comes from",
+	Long: `Displays every configuration key with its effective value and the
+source that provided it (cli flag, env var, config file, or default).
+
+Also shows the Ansible environment variables and extra-vars that Go
+injects at runtime, highlighting overlaps with ansible.cfg.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.Get()
+		if err != nil {
+			return err
+		}
+
+		// Collect which persistent flags were explicitly set on the CLI.
+		changedFlags := make(map[string]bool)
+		for _, name := range []string{"env", "region", "debug", "config"} {
+			if f := cmd.Root().PersistentFlags().Lookup(name); f != nil && f.Changed {
+				changedFlags[name] = true
+			}
+		}
+
+		// --- Section 1: Go/Viper config ---
+		entries := config.TraceConfig(cfg, changedFlags)
+
+		fmt.Println("Go/Viper Configuration")
+		fmt.Println("======================")
+		if cfgFile := viper.ConfigFileUsed(); cfgFile != "" {
+			fmt.Printf("Config file: %s\n", cfgFile)
+		} else {
+			fmt.Println("Config file: (none found)")
+		}
+		fmt.Println("Precedence: cli flag > env var (DREADGOAD_*) > config file > default")
+		fmt.Println()
+
+		maxKey, maxVal := 0, 0
+		for _, e := range entries {
+			if len(e.Key) > maxKey {
+				maxKey = len(e.Key)
+			}
+			if len(e.Value) > maxVal {
+				maxVal = len(e.Value)
+			}
+		}
+		for _, e := range entries {
+			fmt.Printf("  %-*s  = %-*s  [%s]\n", maxKey, e.Key, maxVal, e.Value, e.Source)
+		}
+
+		// --- Section 2: Ansible env vars ---
+		fmt.Println()
+		fmt.Println("Ansible Environment Variables (injected by Go)")
+		fmt.Println("===============================================")
+		ansibleEnv, err := cfg.AnsibleEnv()
+		if err != nil {
+			return err
+		}
+		envKeys := make([]string, 0, len(ansibleEnv))
+		for k := range ansibleEnv {
+			envKeys = append(envKeys, k)
+		}
+		sort.Strings(envKeys)
+		for _, k := range envKeys {
+			origin := "hardcoded"
+			switch k {
+			case "ANSIBLE_CONFIG":
+				origin = "derived: project_root"
+			case "ANSIBLE_CACHE_PLUGIN_CONNECTION":
+				origin = "derived: env"
+			}
+			fmt.Printf("  %-38s = %-45s [%s]\n", k, ansibleEnv[k], origin)
+		}
+
+		// --- Section 3: Ansible extra-vars ---
+		fmt.Println()
+		fmt.Println("Ansible Extra-Vars (injected by Go at runtime)")
+		fmt.Println("===============================================")
+		labConfig := cfg.LabConfigPath()
+		if _, statErr := os.Stat(labConfig); statErr == nil {
+			fmt.Printf("  @%s\n", labConfig)
+			fmt.Println("    [derived: env + project_root]")
+		} else {
+			fmt.Printf("  @%s (not found)\n", labConfig)
+		}
+		fmt.Println("  ansible_facts_gathering_timeout=60  [hardcoded]")
+		fmt.Println()
+		fmt.Println("  Note: Error-specific retry logic may add extra-vars at runtime.")
+		fmt.Println("  Run with --debug to see exact ansible-playbook invocations.")
+
+		// --- Section 4: ansible.cfg overlaps ---
+		fmt.Println()
+		fmt.Println("ansible.cfg Overlaps")
+		fmt.Println("====================")
+		fmt.Printf("  Path: %s\n\n", cfg.AnsibleCfgPath())
+		fmt.Println("  ansible.cfg setting             overridden by")
+		fmt.Println("  ───────────────────────────────  ───────────────────────────────────────────")
+		fmt.Println("  fact_caching_connection          ANSIBLE_CACHE_PLUGIN_CONNECTION (always)")
+		fmt.Println("  host_key_checking                ANSIBLE_HOST_KEY_CHECKING (always)")
+		fmt.Println("  gathering                        ANSIBLE_GATHERING (retry: fact-gathering)")
+		fmt.Println("  timeout                          ANSIBLE_TIMEOUT (retry: SSM/reconnection)")
+
+		return nil
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(configCmd)
 	configCmd.AddCommand(configShowCmd)
 	configCmd.AddCommand(configInitCmd)
 	configCmd.AddCommand(configSetCmd)
+	configCmd.AddCommand(configTraceCmd)
 }
 
 func valueOrDefault(v, def string) string {
