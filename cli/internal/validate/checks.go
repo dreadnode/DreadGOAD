@@ -698,6 +698,35 @@ func (v *Validator) checkLAPS(ctx context.Context, w io.Writer) {
 			v.addResult(w, "FAIL", "LAPS", fmt.Sprintf("LAPS password NOT set for %s", hostname), "")
 		}
 	}
+
+	// Verify LAPS reader permissions — ensure configured accounts/groups
+	// can actually read the ms-Mcs-AdmPwd attribute on computer objects.
+	readerFacts := v.lab.DomainsWithLAPSReaders()
+	for _, lf := range readerFacts {
+		dc := strings.ToUpper(lf.DCRole)
+		if !v.hasHost(dc) {
+			continue
+		}
+		for _, reader := range lf.Readers {
+			output := v.runPS(ctx, dc, fmt.Sprintf(
+				`$computers = Get-ADComputer -Filter {ms-Mcs-AdmPwd -like '*'} -Properties ms-Mcs-AdmPwd -SearchBase (Get-ADDomain).DistinguishedName -ErrorAction SilentlyContinue; `+
+					`Import-Module ActiveDirectory; Set-Location AD:; `+
+					`$found = $false; foreach ($c in $computers) { `+
+					`$acl = Get-Acl -Path $c.DistinguishedName; `+
+					`$match = $acl.Access | Where-Object { $_.IdentityReference -like '*%s*' }; `+
+					`if ($match) { $found = $true; break } }; `+
+					`if ($found) { Write-Output 'READER_OK' } else { Write-Output 'READER_NOT_FOUND' }`,
+				reader))
+			switch {
+			case strings.Contains(output, "READER_OK"):
+				v.addResult(w, "PASS", "LAPS", fmt.Sprintf("%s has LAPS read permission in %s", reader, lf.Domain), "")
+			case strings.Contains(output, "READER_NOT_FOUND"):
+				v.addResult(w, "FAIL", "LAPS", fmt.Sprintf("%s does NOT have LAPS read permission in %s", reader, lf.Domain), "")
+			default:
+				v.addResult(w, "WARN", "LAPS", fmt.Sprintf("Could not verify LAPS reader %s in %s", reader, lf.Domain), "")
+			}
+		}
+	}
 }
 
 func (v *Validator) checkSIDFiltering(ctx context.Context, w io.Writer) {
