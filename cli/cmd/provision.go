@@ -145,11 +145,36 @@ func preflightChecks(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
+// bootstrapInventory copies the example inventory file to the target path if
+// the target does not exist. This allows provision and inventory commands to
+// work on a fresh environment without a manual copy step.
+func bootstrapInventory(invPath string) error {
+	if _, err := os.Stat(invPath); err == nil {
+		return nil
+	}
+	examplePath := invPath + ".example"
+	if _, err := os.Stat(examplePath); err != nil {
+		return fmt.Errorf("inventory file not found: %s (no .example template either)", invPath)
+	}
+	data, err := os.ReadFile(examplePath)
+	if err != nil {
+		return fmt.Errorf("read example inventory: %w", err)
+	}
+	if err := os.WriteFile(invPath, data, 0o644); err != nil {
+		return fmt.Errorf("write inventory from example: %w", err)
+	}
+	slog.Info("bootstrapped inventory from example template", "path", invPath)
+	return nil
+}
+
 // ensureInventorySynced compares inventory instance IDs against live EC2
 // state and auto-syncs if they diverge. This prevents provisioning against
 // stale instance IDs after an infra destroy/apply cycle.
 func ensureInventorySynced(ctx context.Context, cfg *config.Config) error {
 	invPath := cfg.InventoryPath()
+	if err := bootstrapInventory(invPath); err != nil {
+		return err
+	}
 	parsed, err := inv.Parse(invPath)
 	if err != nil {
 		return fmt.Errorf("parse inventory: %w", err)

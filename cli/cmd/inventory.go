@@ -63,8 +63,8 @@ func runInventorySync(cmd *cobra.Command, args []string) error {
 	}
 	invPath := cfg.InventoryPath()
 
-	if _, err := os.Stat(invPath); os.IsNotExist(err) {
-		return fmt.Errorf("inventory file not found: %s", invPath)
+	if err := bootstrapInventory(invPath); err != nil {
+		return err
 	}
 
 	backup, _ := cmd.Flags().GetBool("backup")
