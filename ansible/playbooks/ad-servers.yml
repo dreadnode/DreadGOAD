@@ -11,3 +11,6 @@
   vars:
     local_admin_password: "{{ lab.hosts[inventory_hostname].local_admin_password }}"
     hostname: "{{ lab.hosts[inventory_hostname].hostname }}"
+    domain: "{{ lab.hosts[inventory_hostname].domain }}"
+    domain_username: "{{ domain }}\\{{ admin_user }}"
+    domain_password: "{{ lab.domains[domain].domain_password }}"

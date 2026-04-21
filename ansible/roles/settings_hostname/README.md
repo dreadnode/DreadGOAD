@@ -16,11 +16,11 @@ Configure Windows hostname and scheduled maintenance tasks
 ### main.yml
 
 - **Check current hostname and domain state** (ansible.windows.win_powershell)
-- **Remove ADCS features before DC demotion** (ansible.windows.win_powershell) - Conditional
+- **Remove ADCS features before DC demotion** (ansible.windows.win_feature) - Conditional
 - **Reboot after ADCS removal (required before demotion)** (ansible.windows.win_reboot) - Conditional
-- **Demote domain controller before hostname change** (ansible.windows.win_powershell) - Conditional
+- **Demote domain controller before hostname change** (microsoft.ad.domain_controller) - Conditional
 - **Reboot after DC demotion** (ansible.windows.win_reboot) - Conditional
-- **Unjoin from domain before hostname change** (ansible.windows.win_powershell) - Conditional
+- **Unjoin from domain before hostname change** (microsoft.ad.membership) - Conditional
 - **Reboot after domain unjoin** (ansible.windows.win_reboot) - Conditional
 - **Create scheduled task to keep ssm-user enabled (survives GPO refresh)** (ansible.windows.win_powershell)
 - **Change the hostname** (ansible.windows.win_hostname)

@@ -15,23 +15,11 @@
 
 # -- ADCS removal: Certificate Services block DC demotion -------------------
 - name: Remove ADCS features before DC demotion
-  ansible.windows.win_powershell:
-    script: |
-      $adcs = Get-WindowsFeature ADCS* | Where-Object { $_.Installed }
-      if ($adcs) {
-        Write-Output "Removing ADCS features: $($adcs.Name -join ', ')"
-        # Remove in reverse-dependency order (sub-features first, CA last)
-        $adcs | Sort-Object -Property Name -Descending | ForEach-Object {
-          Write-Output "Removing $($_.Name)..."
-          Uninstall-WindowsFeature $_.Name -ErrorAction Continue
-        }
-        $Ansible.Changed = $true
-      } else {
-        Write-Output "No ADCS features installed"
-        $Ansible.Changed = $false
-      }
-  vars:
-    ansible_command_timeout: 600
+  ansible.windows.win_feature:
+    name: AD-Certificate
+    state: absent
+    include_sub_features: true
+    include_management_tools: true
   when:
     - host_state.result.is_dc
     - host_state.result.current_hostname | upper != hostname | upper
@@ -45,59 +33,42 @@
 
 # -- DC demotion: a promoted DC cannot be safely renamed in-place ------------
 - name: Demote domain controller before hostname change
-  ansible.windows.win_powershell:
-    script: |
-      Import-Module ADDSDeployment
-      $pw = ConvertTo-SecureString '{{ local_admin_password }}' -AsPlainText -Force
-      Uninstall-ADDSDomainController `
-        -LocalAdministratorPassword $pw `
-        -ForceRemoval `
-        -DemoteOperationMasterRole `
-        -NoRebootOnCompletion `
-        -Force `
-        -Confirm:$false
-      Write-Output "DC demotion completed - reboot required"
-  vars:
-    ansible_command_timeout: 600
+  microsoft.ad.domain_controller:
+    domain_admin_user: "{{ domain_username }}"
+    domain_admin_password: "{{ domain_password }}"
+    local_admin_password: "{{ local_admin_password }}"
+    state: member_server
+  register: dc_demote
+  async: 3600
+  poll: 60
   when:
     - host_state.result.is_dc
     - host_state.result.current_hostname | upper != hostname | upper
-  register: dc_demote
 
 - name: Reboot after DC demotion
   ansible.windows.win_reboot:
     reboot_timeout: 900
     post_reboot_delay: 120
-  when: dc_demote is changed
+  when: dc_demote is changed or (dc_demote.reboot_required | default(false))
 
 # -- Domain unjoin: domain-joined servers cannot be renamed by a local user --
 - name: Unjoin from domain before hostname change
-  ansible.windows.win_powershell:
-    script: |
-      try {
-        Remove-Computer -WorkgroupName WORKGROUP -Force -ErrorAction Stop
-        Write-Output "Unjoined from domain"
-      } catch {
-        Write-Output "Remove-Computer failed ($_), trying WMI fallback..."
-        $cs = Get-WmiObject Win32_ComputerSystem
-        $rc = $cs.UnjoinDomainOrWorkgroup($null, $null, 0).ReturnValue
-        if ($rc -ne 0) {
-          Write-Error "WMI unjoin failed (rc=$rc)"
-          exit 1
-        }
-        Write-Output "Unjoined via WMI"
-      }
+  microsoft.ad.membership:
+    state: workgroup
+    workgroup_name: WORKGROUP
+    domain_admin_user: "{{ domain_username }}"
+    domain_admin_password: "{{ domain_password }}"
+  register: domain_unjoin
   when:
     - host_state.result.is_domain_joined
     - not host_state.result.is_dc
     - host_state.result.current_hostname | upper != hostname | upper
-  register: domain_unjoin
 
 - name: Reboot after domain unjoin
   ansible.windows.win_reboot:
     reboot_timeout: 600
     post_reboot_delay: 60
-  when: domain_unjoin is changed
+  when: domain_unjoin is changed or (domain_unjoin.reboot_required | default(false))
 
 # -- SSM user persistence ----------------------------------------------------
 - name: Create scheduled task to keep ssm-user enabled (survives GPO refresh)
