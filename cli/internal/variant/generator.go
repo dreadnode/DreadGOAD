@@ -11,6 +11,129 @@ import (
 	"strings"
 )
 
+// LabConfig is the top-level structure of a GOAD config.json.
+// All known fields are modeled; if a config adds new top-level keys they
+// must be added here to survive the transform round-trip in transformFile.
+type LabConfig struct {
+	Lab struct {
+		Hosts   map[string]*HostConfig   `json:"hosts"`
+		Domains map[string]*DomainConfig `json:"domains"`
+	} `json:"lab"`
+}
+
+// HostConfig represents a single host entry in the lab config.
+type HostConfig struct {
+	Hostname           string              `json:"hostname"`
+	Type               string              `json:"type"`
+	LocalAdminPassword string              `json:"local_admin_password"`
+	Domain             string              `json:"domain"`
+	Path               string              `json:"path"`
+	UseLaps            *bool               `json:"use_laps,omitempty"`
+	LocalGroups        map[string][]string `json:"local_groups,omitempty"`
+	Scripts            []string            `json:"scripts,omitempty"`
+	Vulns              []string            `json:"vulns,omitempty"`
+	VulnsVars          map[string]any      `json:"vulns_vars,omitempty"`
+	Security           []string            `json:"security,omitempty"`
+	SecurityVars       map[string]any      `json:"security_vars,omitempty"`
+	MSSQL              *MSSQLConfig        `json:"mssql,omitempty"`
+	// RemoteDesktopUsers appears at host top-level in some upstream GOAD configs.
+	RemoteDesktopUsers []string `json:"Remote Desktop Users,omitempty"`
+}
+
+// MSSQLConfig holds MSSQL server configuration for a host.
+type MSSQLConfig struct {
+	SAPassword     string                        `json:"sa_password"`
+	SVCAccount     string                        `json:"svcaccount"`
+	SysAdmins      []string                      `json:"sysadmins"`
+	ExecuteAsLogin map[string]string             `json:"executeaslogin,omitempty"`
+	ExecuteAsUser  map[string]ExecuteAsUserEntry `json:"executeasuser,omitempty"`
+	LinkedServers  map[string]LinkedServerConfig `json:"linked_servers,omitempty"`
+}
+
+// ExecuteAsUserEntry describes an impersonation mapping in MSSQL.
+type ExecuteAsUserEntry struct {
+	User        string `json:"user"`
+	DB          string `json:"db"`
+	Impersonate string `json:"impersonate"`
+}
+
+// LinkedServerConfig describes a linked MSSQL server.
+type LinkedServerConfig struct {
+	DataSrc      string                `json:"data_src"`
+	UsersMapping []LinkedServerMapping `json:"users_mapping"`
+}
+
+// LinkedServerMapping maps a local login to a remote login on a linked server.
+type LinkedServerMapping struct {
+	LocalLogin     string `json:"local_login"`
+	RemoteLogin    string `json:"remote_login"`
+	RemotePassword string `json:"remote_password"`
+}
+
+// DomainConfig represents a single domain entry in the lab config.
+type DomainConfig struct {
+	DC                      string                 `json:"dc"`
+	DomainPassword          string                 `json:"domain_password"`
+	NetBIOSName             string                 `json:"netbios_name"`
+	CAServer                string                 `json:"ca_server,omitempty"`
+	Trust                   string                 `json:"trust"`
+	LapsPath                string                 `json:"laps_path,omitempty"`
+	OrganisationUnits       map[string]OUConfig    `json:"organisation_units"`
+	LapsReaders             []string               `json:"laps_readers,omitempty"`
+	Groups                  GroupsConfig           `json:"groups"`
+	MultiDomainGroupsMember map[string][]string    `json:"multi_domain_groups_member,omitempty"`
+	GMSA                    map[string]GMSAConfig  `json:"gmsa,omitempty"`
+	ACLs                    map[string]ACLConfig   `json:"acls"`
+	Users                   map[string]*UserConfig `json:"users"`
+}
+
+// OUConfig represents an organisational unit.
+type OUConfig struct {
+	Path string `json:"path"`
+}
+
+// GroupsConfig holds groups categorized by scope.
+type GroupsConfig struct {
+	Universal   map[string]GroupConfig `json:"universal"`
+	Global      map[string]GroupConfig `json:"global"`
+	DomainLocal map[string]GroupConfig `json:"domainlocal"`
+}
+
+// GroupConfig represents a single AD group.
+type GroupConfig struct {
+	ManagedBy string   `json:"managed_by,omitempty"`
+	Path      string   `json:"path"`
+	Members   []string `json:"members,omitempty"`
+}
+
+// GMSAConfig represents a group Managed Service Account.
+type GMSAConfig struct {
+	Name      string   `json:"gMSA_Name"`
+	FQDN      string   `json:"gMSA_FQDN"`
+	SPNs      []string `json:"gMSA_SPNs"`
+	HostNames []string `json:"gMSA_HostNames"`
+}
+
+// ACLConfig represents a single ACL entry.
+type ACLConfig struct {
+	For         string `json:"for"`
+	To          string `json:"to"`
+	Right       string `json:"right"`
+	Inheritance string `json:"inheritance"`
+}
+
+// UserConfig represents a single AD user.
+type UserConfig struct {
+	Firstname   string   `json:"firstname"`
+	Surname     string   `json:"surname"`
+	Password    string   `json:"password"`
+	City        string   `json:"city"`
+	Description string   `json:"description"`
+	Groups      []string `json:"groups"`
+	Path        string   `json:"path"`
+	SPNs        []string `json:"spns,omitempty"`
+}
+
 // Mappings holds all entity-to-entity name mappings.
 type Mappings struct {
 	Domains   map[string]string      `json:"domains"`
@@ -122,20 +245,20 @@ func (g *Generator) Run() error {
 }
 
 // loadConfig reads the source GOAD config.json.
-func (g *Generator) loadConfig() (map[string]any, error) {
+func (g *Generator) loadConfig() (*LabConfig, error) {
 	data, err := os.ReadFile(filepath.Join(g.SourcePath, "data", "config.json"))
 	if err != nil {
 		return nil, err
 	}
-	var config map[string]any
+	var config LabConfig
 	if err := json.Unmarshal(data, &config); err != nil {
 		return nil, err
 	}
-	return config, nil
+	return &config, nil
 }
 
 // generateMappings extracts entities and creates all mappings.
-func (g *Generator) generateMappings(config map[string]any) {
+func (g *Generator) generateMappings(config *LabConfig) {
 	fmt.Println("\n=== Generating Mappings ===")
 
 	fmt.Println("\nMapping domains...")
@@ -200,20 +323,10 @@ func (g *Generator) mapDomains() {
 	fmt.Printf("  essos.local -> %s\n", externalFull)
 }
 
-func (g *Generator) mapHosts(config map[string]any) {
-	hosts := jsonPath[map[string]any](config, "lab", "hosts")
-	if hosts == nil {
-		return
-	}
-
-	for hostID, hostData := range hosts {
-		info, ok := hostData.(map[string]any)
-		if !ok {
-			continue
-		}
-
-		oldHostname := jsonStr(info, "hostname")
-		oldDomain := jsonStr(info, "domain")
+func (g *Generator) mapHosts(config *LabConfig) {
+	for hostID, host := range config.Lab.Hosts {
+		oldHostname := host.Hostname
+		oldDomain := host.Domain
 		newHostname := g.nameGen.GenerateHostname()
 		newDomain := g.mappings.Domains[oldDomain]
 
@@ -238,23 +351,9 @@ func (g *Generator) mapHosts(config map[string]any) {
 	}
 }
 
-func (g *Generator) mapUsers(config map[string]any) {
-	domains := jsonPath[map[string]any](config, "lab", "domains")
-	if domains == nil {
-		return
-	}
-
-	for _, domainData := range domains {
-		info, ok := domainData.(map[string]any)
-		if !ok {
-			continue
-		}
-		users := jsonPath[map[string]any](info, "users")
-		if users == nil {
-			continue
-		}
-
-		for username, userData := range users {
+func (g *Generator) mapUsers(config *LabConfig) {
+	for _, domain := range config.Lab.Domains {
+		for username, user := range domain.Users {
 			if g.preservedUsers[username] {
 				g.mappings.Users[username] = username
 				fmt.Printf("  %s -> %s (preserved)\n", username, username)
@@ -264,18 +363,19 @@ func (g *Generator) mapUsers(config map[string]any) {
 			newUsername := g.nameGen.GenerateUsername()
 			g.mappings.Users[username] = newUsername
 
-			userInfo, _ := userData.(map[string]any)
-			if userInfo != nil {
-				g.mapUserNameComponents(userInfo, newUsername)
-			}
+			g.mapUserNameComponents(user, newUsername)
 
 			fmt.Printf("  %s -> %s\n", username, newUsername)
 		}
 	}
 }
 
-func (g *Generator) mapUserNameComponents(userInfo map[string]any, newUsername string) {
-	if firstname, ok := userInfo["firstname"].(string); ok {
+func (g *Generator) mapUserNameComponents(user *UserConfig, newUsername string) {
+	if user == nil {
+		return
+	}
+	if user.Firstname != "" {
+		firstname := user.Firstname
 		newFirst := strings.Split(newUsername, ".")[0]
 		g.mappings.Misc[firstname] = newFirst
 		if !isAllLower(firstname) && firstname != "sql" {
@@ -286,7 +386,8 @@ func (g *Generator) mapUserNameComponents(userInfo map[string]any, newUsername s
 		}
 	}
 
-	if surname, ok := userInfo["surname"].(string); ok && surname != "-" {
+	if user.Surname != "" && user.Surname != "-" {
+		surname := user.Surname
 		parts := strings.SplitN(newUsername, ".", 2)
 		newSurname := parts[0]
 		if len(parts) > 1 {
@@ -299,29 +400,17 @@ func (g *Generator) mapUserNameComponents(userInfo map[string]any, newUsername s
 	}
 }
 
-func (g *Generator) mapGroups(config map[string]any) {
-	domains := jsonPath[map[string]any](config, "lab", "domains")
-	if domains == nil {
-		return
-	}
-
+func (g *Generator) mapGroups(config *LabConfig) {
 	builtins := map[string]bool{"Domain Admins": true, "Protected Users": true}
 
-	for _, domainData := range domains {
-		info, ok := domainData.(map[string]any)
-		if !ok {
-			continue
-		}
-		groups := jsonPath[map[string]any](info, "groups")
-		if groups == nil {
-			continue
+	for _, domain := range config.Lab.Domains {
+		allGroups := []map[string]GroupConfig{
+			domain.Groups.Universal,
+			domain.Groups.Global,
+			domain.Groups.DomainLocal,
 		}
 
-		for _, groupType := range []string{"universal", "global", "domainlocal"} {
-			typeGroups := jsonPath[map[string]any](groups, groupType)
-			if typeGroups == nil {
-				continue
-			}
+		for _, typeGroups := range allGroups {
 			for groupName := range typeGroups {
 				if builtins[groupName] {
 					g.mappings.Groups[groupName] = groupName
@@ -335,22 +424,9 @@ func (g *Generator) mapGroups(config map[string]any) {
 	}
 }
 
-func (g *Generator) mapOUs(config map[string]any) {
-	domains := jsonPath[map[string]any](config, "lab", "domains")
-	if domains == nil {
-		return
-	}
-
-	for _, domainData := range domains {
-		info, ok := domainData.(map[string]any)
-		if !ok {
-			continue
-		}
-		ous := jsonPath[map[string]any](info, "organisation_units")
-		if ous == nil {
-			continue
-		}
-		for ouName := range ous {
+func (g *Generator) mapOUs(config *LabConfig) {
+	for _, domain := range config.Lab.Domains {
+		for ouName := range domain.OrganisationUnits {
 			newName := g.nameGen.GenerateOUName()
 			g.mappings.OUs[ouName] = newName
 			fmt.Printf("  %s -> %s\n", ouName, newName)
@@ -358,14 +434,11 @@ func (g *Generator) mapOUs(config map[string]any) {
 	}
 }
 
-func (g *Generator) mapPasswords(config map[string]any) {
+func (g *Generator) mapPasswords(config *LabConfig) {
 	passwords := make(map[string]bool)
 
-	domains := jsonPath[map[string]any](config, "lab", "domains")
-	hosts := jsonPath[map[string]any](config, "lab", "hosts")
-
-	collectDomainPasswords(domains, passwords)
-	collectHostPasswords(hosts, passwords)
+	collectDomainPasswords(config.Lab.Domains, passwords)
+	collectHostPasswords(config.Lab.Hosts, passwords)
 
 	for pw := range passwords {
 		newPW := g.nameGen.GeneratePassword(pw)
@@ -381,177 +454,118 @@ func (g *Generator) mapPasswords(config map[string]any) {
 		fmt.Printf("  %s... -> %s...\n", truncOld, truncNew)
 	}
 
-	g.buildUserPasswordMap(domains)
+	g.buildUserPasswordMap(config.Lab.Domains)
 }
 
-func collectDomainPasswords(domains map[string]any, passwords map[string]bool) {
-	for _, domainData := range domains {
-		info, _ := domainData.(map[string]any)
-		if info == nil {
-			continue
+func collectDomainPasswords(domains map[string]*DomainConfig, passwords map[string]bool) {
+	for _, domain := range domains {
+		if domain.DomainPassword != "" {
+			passwords[domain.DomainPassword] = true
 		}
-		if pw, ok := info["domain_password"].(string); ok {
-			passwords[pw] = true
+		for _, user := range domain.Users {
+			if user != nil && user.Password != "" {
+				passwords[user.Password] = true
+			}
 		}
-		users := jsonPath[map[string]any](info, "users")
-		for _, userData := range users {
-			userInfo, _ := userData.(map[string]any)
-			if userInfo == nil {
+	}
+}
+
+func collectHostPasswords(hosts map[string]*HostConfig, passwords map[string]bool) {
+	for _, host := range hosts {
+		if host.LocalAdminPassword != "" {
+			passwords[host.LocalAdminPassword] = true
+		}
+		collectMSSQLPasswords(host.MSSQL, passwords)
+		collectVulnPasswords(host.VulnsVars, passwords)
+	}
+}
+
+func collectMSSQLPasswords(mssql *MSSQLConfig, passwords map[string]bool) {
+	if mssql == nil {
+		return
+	}
+	if mssql.SAPassword != "" {
+		passwords[mssql.SAPassword] = true
+	}
+	for _, ls := range mssql.LinkedServers {
+		for _, mapping := range ls.UsersMapping {
+			if mapping.RemotePassword != "" {
+				passwords[mapping.RemotePassword] = true
+			}
+		}
+	}
+}
+
+// collectVulnPasswords extracts passwords from the variable-schema vulns_vars map.
+func collectVulnPasswords(vulnsVars map[string]any, passwords map[string]bool) {
+	if vulnsVars == nil {
+		return
+	}
+	if creds, ok := vulnsVars["credentials"].(map[string]any); ok {
+		for _, credData := range creds {
+			credInfo, ok := credData.(map[string]any)
+			if !ok {
 				continue
 			}
-			if pw, ok := userInfo["password"].(string); ok {
+			if pw, ok := credInfo["secret"].(string); ok {
+				passwords[pw] = true
+			}
+			if pw, ok := credInfo["runas_password"].(string); ok {
+				passwords[pw] = true
+			}
+		}
+	}
+	if autologon, ok := vulnsVars["autologon"].(map[string]any); ok {
+		for _, autoData := range autologon {
+			autoInfo, ok := autoData.(map[string]any)
+			if !ok {
+				continue
+			}
+			if pw, ok := autoInfo["password"].(string); ok {
 				passwords[pw] = true
 			}
 		}
 	}
 }
 
-func collectHostPasswords(hosts map[string]any, passwords map[string]bool) {
-	for _, hostData := range hosts {
-		info, _ := hostData.(map[string]any)
-		if info == nil {
-			continue
-		}
-		if pw, ok := info["local_admin_password"].(string); ok {
-			passwords[pw] = true
-		}
-		collectMSSQLPasswords(info, passwords)
-		collectVulnPasswords(info, passwords)
-	}
-}
-
-func collectMSSQLPasswords(hostInfo map[string]any, passwords map[string]bool) {
-	mssql := jsonPath[map[string]any](hostInfo, "mssql")
-	if mssql == nil {
-		return
-	}
-	if pw, ok := mssql["sa_password"].(string); ok {
-		passwords[pw] = true
-	}
-	linkedServers := jsonPath[map[string]any](mssql, "linked_servers")
-	for _, lsData := range linkedServers {
-		lsInfo, _ := lsData.(map[string]any)
-		if lsInfo == nil {
-			continue
-		}
-		if mappingsArr, ok := lsInfo["users_mapping"].([]any); ok {
-			for _, m := range mappingsArr {
-				mapping, _ := m.(map[string]any)
-				if mapping == nil {
-					continue
-				}
-				if pw, ok := mapping["remote_password"].(string); ok {
-					passwords[pw] = true
-				}
-			}
-		}
-	}
-}
-
-func collectVulnPasswords(hostInfo map[string]any, passwords map[string]bool) {
-	vulnsVars := jsonPath[map[string]any](hostInfo, "vulns_vars")
-	if vulnsVars == nil {
-		return
-	}
-	creds := jsonPath[map[string]any](vulnsVars, "credentials")
-	for _, credData := range creds {
-		credInfo, _ := credData.(map[string]any)
-		if credInfo == nil {
-			continue
-		}
-		if pw, ok := credInfo["secret"].(string); ok {
-			passwords[pw] = true
-		}
-		if pw, ok := credInfo["runas_password"].(string); ok {
-			passwords[pw] = true
-		}
-	}
-	autologon := jsonPath[map[string]any](vulnsVars, "autologon")
-	for _, autoData := range autologon {
-		autoInfo, _ := autoData.(map[string]any)
-		if autoInfo == nil {
-			continue
-		}
-		if pw, ok := autoInfo["password"].(string); ok {
-			passwords[pw] = true
-		}
-	}
-}
-
-func (g *Generator) buildUserPasswordMap(domains map[string]any) {
-	for _, domainData := range domains {
-		info, _ := domainData.(map[string]any)
-		if info == nil {
-			continue
-		}
-		users := jsonPath[map[string]any](info, "users")
-		for username, userData := range users {
-			userInfo, _ := userData.(map[string]any)
-			if userInfo == nil {
+func (g *Generator) buildUserPasswordMap(domains map[string]*DomainConfig) {
+	for _, domain := range domains {
+		for username, user := range domain.Users {
+			if user == nil || user.Password == "" {
 				continue
 			}
-			if pw, ok := userInfo["password"].(string); ok {
-				newUsername := g.mappings.Users[username]
-				if newUsername == "" {
-					newUsername = username
-				}
-				newPW := g.mappings.Passwords[pw]
-				if newPW == "" {
-					newPW = pw
-				}
-				g.userPasswordMap[newUsername] = newPW
+			newUsername := g.mappings.Users[username]
+			if newUsername == "" {
+				newUsername = username
 			}
+			newPW := g.mappings.Passwords[user.Password]
+			if newPW == "" {
+				newPW = user.Password
+			}
+			g.userPasswordMap[newUsername] = newPW
 		}
 	}
 }
 
-func (g *Generator) mapGMSAAccounts(config map[string]any) {
-	domains := jsonPath[map[string]any](config, "lab", "domains")
-	if domains == nil {
-		return
-	}
-
-	for _, domainData := range domains {
-		info, _ := domainData.(map[string]any)
-		if info == nil {
-			continue
-		}
-		gmsa := jsonPath[map[string]any](info, "gmsa")
-		for _, gmsaData := range gmsa {
-			gmsaInfo, _ := gmsaData.(map[string]any)
-			if gmsaInfo == nil {
-				continue
-			}
-			if oldName, ok := gmsaInfo["gMSA_Name"].(string); ok {
+func (g *Generator) mapGMSAAccounts(config *LabConfig) {
+	for _, domain := range config.Lab.Domains {
+		for _, gmsa := range domain.GMSA {
+			if gmsa.Name != "" {
 				newName := g.nameGen.GenerateGMSAName()
-				g.mappings.Misc[oldName] = newName
-				g.mappings.Misc[oldName+"$"] = newName + "$"
-				fmt.Printf("  %s -> %s\n", oldName, newName)
+				g.mappings.Misc[gmsa.Name] = newName
+				g.mappings.Misc[gmsa.Name+"$"] = newName + "$"
+				fmt.Printf("  %s -> %s\n", gmsa.Name, newName)
 			}
 		}
 	}
 }
 
-func (g *Generator) mapCities(config map[string]any) {
-	domains := jsonPath[map[string]any](config, "lab", "domains")
-	if domains == nil {
-		return
-	}
-
+func (g *Generator) mapCities(config *LabConfig) {
 	cities := make(map[string]bool)
-	for _, domainData := range domains {
-		info, _ := domainData.(map[string]any)
-		if info == nil {
-			continue
-		}
-		users := jsonPath[map[string]any](info, "users")
-		for _, userData := range users {
-			userInfo, _ := userData.(map[string]any)
-			if userInfo == nil {
-				continue
-			}
-			if city, ok := userInfo["city"].(string); ok && city != "" && city != "-" {
-				cities[city] = true
+	for _, domain := range config.Lab.Domains {
+		for _, user := range domain.Users {
+			if user != nil && user.City != "" && user.City != "-" {
+				cities[user.City] = true
 			}
 		}
 	}
@@ -727,34 +741,20 @@ func (g *Generator) isNameComponent(old string) bool {
 }
 
 // fixUserFirstnameSurname corrects firstname/surname fields to match generated usernames.
-func (g *Generator) fixUserFirstnameSurname(config map[string]any) {
-	domains := jsonPath[map[string]any](config, "lab", "domains")
-	if domains == nil {
-		return
-	}
-
-	for _, domainData := range domains {
-		info, _ := domainData.(map[string]any)
-		if info == nil {
-			continue
-		}
-		users := jsonPath[map[string]any](info, "users")
-		for username, userData := range users {
-			if g.preservedUsers[username] {
-				continue
-			}
-			userInfo, _ := userData.(map[string]any)
-			if userInfo == nil {
+func (g *Generator) fixUserFirstnameSurname(config *LabConfig) {
+	for _, domain := range config.Lab.Domains {
+		for username, user := range domain.Users {
+			if g.preservedUsers[username] || user == nil {
 				continue
 			}
 			if strings.Contains(username, ".") {
 				parts := strings.SplitN(username, ".", 2)
-				userInfo["firstname"] = parts[0]
+				user.Firstname = parts[0]
 				if len(parts) > 1 {
-					userInfo["surname"] = parts[1]
+					user.Surname = parts[1]
 				}
-				if _, ok := userInfo["description"]; ok {
-					userInfo["description"] = capitalize(parts[0]) + " " + capitalize(parts[1])
+				if user.Description != "" {
+					user.Description = capitalize(parts[0]) + " " + capitalize(parts[1])
 				}
 			}
 		}
@@ -762,60 +762,30 @@ func (g *Generator) fixUserFirstnameSurname(config map[string]any) {
 }
 
 // fixPasswords corrects password fields corrupted by global text replacement.
-func (g *Generator) fixPasswords(config map[string]any) {
-	domains := jsonPath[map[string]any](config, "lab", "domains")
-	if domains == nil {
-		return
-	}
-
-	for _, domainData := range domains {
-		info, _ := domainData.(map[string]any)
-		if info == nil {
-			continue
-		}
-		users := jsonPath[map[string]any](info, "users")
-		for username, userData := range users {
-			userInfo, _ := userData.(map[string]any)
-			if userInfo == nil {
+func (g *Generator) fixPasswords(config *LabConfig) {
+	for _, domain := range config.Lab.Domains {
+		for username, user := range domain.Users {
+			if user == nil {
 				continue
 			}
 			if newPW, ok := g.userPasswordMap[username]; ok {
-				userInfo["password"] = newPW
+				user.Password = newPW
 			}
 		}
 	}
 }
 
 // rebuildACLKeys rebuilds ACL dictionary keys using new entity names.
-func (g *Generator) rebuildACLKeys(config map[string]any) {
-	domains := jsonPath[map[string]any](config, "lab", "domains")
-	if domains == nil {
-		return
-	}
-
-	for _, domainData := range domains {
-		info, _ := domainData.(map[string]any)
-		if info == nil {
-			continue
-		}
-		acls := jsonPath[map[string]any](info, "acls")
-		if acls == nil {
+func (g *Generator) rebuildACLKeys(config *LabConfig) {
+	for _, domain := range config.Lab.Domains {
+		if domain.ACLs == nil {
 			continue
 		}
 
-		newACLs := make(map[string]any)
-		for oldKey, aclData := range acls {
-			aclInfo, _ := aclData.(map[string]any)
-			if aclInfo == nil {
-				newACLs[oldKey] = aclData
-				continue
-			}
-
-			forEntity, _ := aclInfo["for"].(string)
-			toEntity, _ := aclInfo["to"].(string)
-
-			forSimple := simplifyEntity(forEntity)
-			toSimple := simplifyEntity(toEntity)
+		newACLs := make(map[string]ACLConfig)
+		for oldKey, acl := range domain.ACLs {
+			forSimple := simplifyEntity(acl.For)
+			toSimple := simplifyEntity(acl.To)
 
 			keyParts := strings.SplitN(oldKey, "_", 3)
 			var newKey string
@@ -825,10 +795,10 @@ func (g *Generator) rebuildACLKeys(config map[string]any) {
 				newKey = oldKey
 			}
 
-			newACLs[newKey] = aclData
+			newACLs[newKey] = acl
 		}
 
-		info["acls"] = newACLs
+		domain.ACLs = newACLs
 	}
 }
 
@@ -877,11 +847,11 @@ func (g *Generator) transformFile(srcPath, relPath string) (transformed bool) {
 		newContent := g.applyReplacements(string(content))
 
 		if base == "config.json" || strings.HasSuffix(base, "-config.json") {
-			var configData map[string]any
+			var configData LabConfig
 			if err := json.Unmarshal([]byte(newContent), &configData); err == nil {
-				g.fixUserFirstnameSurname(configData)
-				g.fixPasswords(configData)
-				g.rebuildACLKeys(configData)
+				g.fixUserFirstnameSurname(&configData)
+				g.fixPasswords(&configData)
+				g.rebuildACLKeys(&configData)
 				if pretty, err := json.MarshalIndent(configData, "", "  "); err == nil {
 					newContent = string(pretty)
 				}
@@ -991,7 +961,7 @@ func (g *Generator) findNameViolations() ([]violation, int) {
 	filesChecked := 0
 	skipFiles := map[string]bool{"mapping.json": true, "README.md": true}
 
-	_ = filepath.WalkDir(g.TargetPath, func(path string, d fs.DirEntry, err error) error {
+	if err := filepath.WalkDir(g.TargetPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
@@ -1018,7 +988,9 @@ func (g *Generator) findNameViolations() ([]violation, int) {
 			}
 		}
 		return nil
-	})
+	}); err != nil {
+		fmt.Printf("Warning: error walking variant directory: %v\n", err)
+	}
 	return violations, filesChecked
 }
 
@@ -1049,14 +1021,14 @@ func (g *Generator) validateStructureCounts() {
 	if err != nil {
 		return
 	}
-	var varConfig map[string]any
+	var varConfig LabConfig
 	if json.Unmarshal(varData, &varConfig) != nil {
 		return
 	}
-	origHosts := len(jsonPath[map[string]any](origConfig, "lab", "hosts"))
-	varHosts := len(jsonPath[map[string]any](varConfig, "lab", "hosts"))
-	origDomains := len(jsonPath[map[string]any](origConfig, "lab", "domains"))
-	varDomains := len(jsonPath[map[string]any](varConfig, "lab", "domains"))
+	origHosts := len(origConfig.Lab.Hosts)
+	varHosts := len(varConfig.Lab.Hosts)
+	origDomains := len(origConfig.Lab.Domains)
+	varDomains := len(varConfig.Lab.Domains)
 
 	checkMark := func(a, b int) string {
 		if a == b {
@@ -1116,7 +1088,10 @@ Generated by GOAD Variant Generator
 `, strings.ToUpper(g.VariantName))
 
 	readmePath := filepath.Join(g.TargetPath, "README.md")
-	_ = os.WriteFile(readmePath, []byte(readme), 0o644)
+	if err := os.WriteFile(readmePath, []byte(readme), 0o644); err != nil {
+		fmt.Printf("Warning: failed to write documentation %s: %v\n", readmePath, err)
+		return
+	}
 	fmt.Printf("Documentation created at %s\n", readmePath)
 }
 
@@ -1140,25 +1115,4 @@ func capitalize(s string) string {
 
 func isAllLower(s string) bool {
 	return s == strings.ToLower(s)
-}
-
-// jsonPath traverses a nested map[string]any by keys and returns the result as type T.
-func jsonPath[T any](m map[string]any, keys ...string) T {
-	var zero T
-	current := any(m)
-	for _, k := range keys {
-		cm, ok := current.(map[string]any)
-		if !ok {
-			return zero
-		}
-		current = cm[k]
-	}
-	result, _ := current.(T)
-	return result
-}
-
-// jsonStr returns a string value from a map.
-func jsonStr(m map[string]any, key string) string {
-	s, _ := m[key].(string)
-	return s
 }

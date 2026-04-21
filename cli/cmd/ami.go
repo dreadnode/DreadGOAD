@@ -239,7 +239,7 @@ type amiBuildResult struct {
 	err      error
 }
 
-func buildSingleAMI(ctx context.Context, cfg *config.Config, templatePath string, bf buildFlags, bar *progress.Bar, verbose bool) (*amiBuildResult, error) {
+func buildSingleAMI(ctx context.Context, cfg *config.Config, templatePath string, bf buildFlags, bar *progress.Bar, verbose bool) (_ *amiBuildResult, err error) {
 	tmplName := templateName(templatePath)
 	buildCfg, err := loadWarpgateTemplate(templatePath, cfg.ProjectRoot)
 	if err != nil {
@@ -297,7 +297,11 @@ func buildSingleAMI(ctx context.Context, cfg *config.Config, templatePath string
 		bar.Fail()
 		return nil, fmt.Errorf("create AMI builder for %s: %w", tmplName, err)
 	}
-	defer func() { _ = imgBuilder.Close() }()
+	defer func() {
+		if cerr := imgBuilder.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close AMI builder: %w", cerr)
+		}
+	}()
 
 	result, err := imgBuilder.Build(ctx, *buildCfg)
 	if err != nil {
@@ -653,7 +657,9 @@ func loadWarpgateTemplate(path, projectRoot string) (*builder.Config, error) {
 	}
 
 	var tmpl templateWithVars
-	_ = yaml.Unmarshal(data, &tmpl)
+	if err := yaml.Unmarshal(data, &tmpl); err != nil {
+		return nil, fmt.Errorf("parse template variables from %s: %w", path, err)
+	}
 
 	content := string(data)
 

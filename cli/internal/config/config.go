@@ -136,7 +136,19 @@ func (c *Config) InventoryPath() string {
 }
 
 // LabConfigPath returns the path to the environment's lab config JSON.
+// When the active environment has variant enabled, it returns the config
+// from the variant target directory instead of the base GOAD directory.
 func (c *Config) LabConfigPath() string {
+	ec := c.ActiveEnvironment()
+	if ec.Variant {
+		_, target := c.ResolvedVariantPaths()
+		if target != "" {
+			variantConfig := filepath.Join(target, "data", c.Env+"-config.json")
+			if fileExists(variantConfig) {
+				return variantConfig
+			}
+		}
+	}
 	return filepath.Join(c.ProjectRoot, "ad", "GOAD", "data", c.Env+"-config.json")
 }
 
@@ -290,6 +302,11 @@ func (c *Config) InfraModulePath(module string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(workDir, module), nil
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 func findProjectRoot() (string, error) {

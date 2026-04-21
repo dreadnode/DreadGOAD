@@ -215,5 +215,9 @@ func outputWriter(logFile string) (io.Writer, func(), error) {
 	}
 
 	mw := io.MultiWriter(os.Stdout, f)
-	return mw, func() { _ = f.Close() }, nil
+	return mw, func() {
+		if err := f.Close(); err != nil {
+			slog.Warn("failed to close log file", "path", logFile, "error", err)
+		}
+	}, nil
 }

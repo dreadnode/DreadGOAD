@@ -37,69 +37,66 @@ func setupTestSource(t *testing.T) (sourceDir, targetDir string) {
 	return sourceDir, targetDir
 }
 
-func testConfig() map[string]any {
-	return map[string]any{
-		"lab": map[string]any{
-			"hosts": map[string]any{
-				"dc01": map[string]any{
-					"hostname":             "kingslanding",
-					"type":                 "dc",
-					"domain":               "sevenkingdoms.local",
-					"local_admin_password": "TestPass123!",
+func testConfig() *LabConfig {
+	config := &LabConfig{}
+	config.Lab.Hosts = map[string]*HostConfig{
+		"dc01": {
+			Hostname:           "kingslanding",
+			Type:               "dc",
+			Domain:             "sevenkingdoms.local",
+			LocalAdminPassword: "TestPass123!",
+		},
+		"dc03": {
+			Hostname:           "meereen",
+			Type:               "dc",
+			Domain:             "essos.local",
+			LocalAdminPassword: "TestPass456!",
+		},
+	}
+	config.Lab.Domains = map[string]*DomainConfig{
+		"sevenkingdoms.local": {
+			DomainPassword: "DomainPass1!",
+			Users: map[string]*UserConfig{
+				"arya.stark": {
+					Firstname: "arya",
+					Surname:   "stark",
+					Password:  "NeedleIsMySword!",
+					City:      "Winterfell",
 				},
-				"dc03": map[string]any{
-					"hostname":             "meereen",
-					"type":                 "dc",
-					"domain":               "essos.local",
-					"local_admin_password": "TestPass456!",
+				"sql_svc": {
+					Firstname: "sql",
+					Surname:   "-",
+					Password:  "SqlSvcPass1!",
 				},
 			},
-			"domains": map[string]any{
-				"sevenkingdoms.local": map[string]any{
-					"domain_password": "DomainPass1!",
-					"users": map[string]any{
-						"arya.stark": map[string]any{
-							"firstname": "arya",
-							"surname":   "stark",
-							"password":  "NeedleIsMySword!",
-							"city":      "Winterfell",
-						},
-						"sql_svc": map[string]any{
-							"firstname": "sql",
-							"surname":   "-",
-							"password":  "SqlSvcPass1!",
-						},
-					},
-					"groups": map[string]any{
-						"global": map[string]any{
-							"Stark":         map[string]any{},
-							"Domain Admins": map[string]any{},
-						},
-					},
-					"organisation_units": map[string]any{
-						"Vale": map[string]any{},
-					},
-					"acls": map[string]any{
-						"GenericAll_arya_stark": map[string]any{
-							"for":   "arya.stark",
-							"to":    "CN=SomeObject",
-							"right": "GenericAll",
-						},
-					},
-					"gmsa": map[string]any{
-						"gmsa1": map[string]any{
-							"gMSA_Name": "gmsaDragon",
-						},
-					},
+			Groups: GroupsConfig{
+				Global: map[string]GroupConfig{
+					"Stark":         {},
+					"Domain Admins": {},
 				},
-				"essos.local": map[string]any{
-					"domain_password": "EssosPass1!",
-					"users":           map[string]any{},
-					"groups":          map[string]any{},
+			},
+			OrganisationUnits: map[string]OUConfig{
+				"Vale": {},
+			},
+			ACLs: map[string]ACLConfig{
+				"GenericAll_arya_stark": {
+					For:   "arya.stark",
+					To:    "CN=SomeObject",
+					Right: "GenericAll",
+				},
+			},
+			GMSA: map[string]GMSAConfig{
+				"gmsa1": {
+					Name: "gmsaDragon",
 				},
 			},
 		},
+		"essos.local": {
+			DomainPassword: "EssosPass1!",
+			Users:          map[string]*UserConfig{},
+		},
 	}
+	return config
 }
 
 func TestGeneratorEndToEnd(t *testing.T) {

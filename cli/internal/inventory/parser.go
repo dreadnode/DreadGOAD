@@ -33,12 +33,16 @@ var (
 )
 
 // Parse reads and parses an Ansible INI-style inventory file.
-func Parse(path string) (*Inventory, error) {
+func Parse(path string) (_ *Inventory, err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open inventory %s: %w", path, err)
 	}
-	defer func() { _ = f.Close() }()
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close inventory %s: %w", path, cerr)
+		}
+	}()
 
 	inv := &Inventory{
 		Hosts:    make(map[string]*Host),
