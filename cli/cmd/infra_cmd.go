@@ -83,11 +83,40 @@ func init() {
 	infraCmd.PersistentFlags().StringP("deployment", "d", "", "Deployment name (default: from config)")
 }
 
+// materializeLabConfig ensures the merged lab config JSON exists at the path
+// terragrunt HCL expects (ad/GOAD/data/{env}-config.json). When an overlay
+// file exists, the base config.json is merged with the overlay and written
+// to disk so that terragrunt's file() function can read it directly.
+func materializeLabConfig(cfg *config.Config) error {
+	resolved, err := cfg.ResolvedLabConfigPath()
+	if err != nil {
+		return nil // no config to materialize — let terragrunt surface the error
+	}
+
+	dataDir := filepath.Join(cfg.ProjectRoot, "ad", "GOAD", "data")
+	expected := filepath.Join(dataDir, cfg.Env+"-config.json")
+
+	if resolved == expected {
+		return nil // already in the right place (legacy layout)
+	}
+
+	// Read the resolved (merged) config and write it where terragrunt expects.
+	data, err := os.ReadFile(resolved)
+	if err != nil {
+		return fmt.Errorf("read resolved config: %w", err)
+	}
+	return os.WriteFile(expected, data, 0o644)
+}
+
 func runInfraAction(action string) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Get()
 		if err != nil {
 			return err
+		}
+
+		if err := materializeLabConfig(cfg); err != nil {
+			return fmt.Errorf("materialize lab config: %w", err)
 		}
 
 		module, _ := cmd.Flags().GetString("module")
@@ -120,18 +149,7 @@ func runInfraAction(action string) func(*cobra.Command, []string) error {
 			return fmt.Errorf("infra working directory not found: %s\nRun 'dreadgoad infra validate' to check your setup", workDir)
 		}
 
-		logDir := cfg.LogDir
-		if logDir == "" {
-			home, _ := os.UserHomeDir()
-			logDir = filepath.Join(home, ".ansible", "logs", "goad")
-		}
-		timestamp := time.Now().Format("20060102_150405")
-		moduleSlug := "all"
-		if module != "" {
-			moduleSlug = strings.ReplaceAll(module, "/", "_")
-		}
-		opts.LogFile = filepath.Join(logDir, fmt.Sprintf("infra_%s_%s_%s_%s_%s.log",
-			action, deployment, cfg.Env, moduleSlug, timestamp))
+		opts.LogFile = infraLogPath(cfg, action, deployment, module)
 
 		fmt.Printf("Infra %s (%s/%s)\n", action, cfg.Env, region)
 		if module != "" {
@@ -232,6 +250,21 @@ func runInfraValidate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("validation failed")
 	}
 	return nil
+}
+
+func infraLogPath(cfg *config.Config, action, deployment, module string) string {
+	logDir := cfg.LogDir
+	if logDir == "" {
+		home, _ := os.UserHomeDir()
+		logDir = filepath.Join(home, ".ansible", "logs", "goad")
+	}
+	timestamp := time.Now().Format("20060102_150405")
+	moduleSlug := "all"
+	if module != "" {
+		moduleSlug = strings.ReplaceAll(module, "/", "_")
+	}
+	return filepath.Join(logDir, fmt.Sprintf("infra_%s_%s_%s_%s_%s.log",
+		action, deployment, cfg.Env, moduleSlug, timestamp))
 }
 
 func resolveDeployment(cmd *cobra.Command, cfg *config.Config) string {
