@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/dreadnode/dreadgoad/internal/inventory"
+	"github.com/dreadnode/dreadgoad/internal/jsonmerge"
 	"github.com/spf13/viper"
 )
 
@@ -136,8 +138,114 @@ func (c *Config) InventoryPath() string {
 }
 
 // LabConfigPath returns the path to the environment's lab config JSON.
+// It delegates to ResolvedLabConfigPath (which supports overlay merging)
+// and falls back to the legacy direct path on error.
 func (c *Config) LabConfigPath() string {
-	return filepath.Join(c.ProjectRoot, "ad", "GOAD", "data", c.Env+"-config.json")
+	if p, err := c.ResolvedLabConfigPath(); err == nil {
+		return p
+	}
+	return filepath.Join(c.labConfigDataDir(), c.Env+"-config.json")
+}
+
+// ResolvedLabConfigPath returns the path to a ready-to-use lab config JSON.
+// When an overlay file ({env}-overlay.json) exists alongside the base
+// config.json, it merges them using RFC 7386 JSON Merge Patch semantics
+// and caches the result under .dreadgoad/cache/. Falls back to a legacy
+// {env}-config.json if present, then to the base config.json.
+func (c *Config) ResolvedLabConfigPath() (string, error) {
+	dataDir := c.labConfigDataDir()
+
+	overlayPath := filepath.Join(dataDir, c.Env+"-overlay.json")
+	basePath := filepath.Join(dataDir, "config.json")
+
+	if fileExists(overlayPath) && fileExists(basePath) {
+		return c.mergedConfigPath(basePath, overlayPath)
+	}
+
+	// Legacy: full {env}-config.json exists.
+	legacyPath := filepath.Join(dataDir, c.Env+"-config.json")
+	if fileExists(legacyPath) {
+		return legacyPath, nil
+	}
+
+	// Fallback: base config.json.
+	if fileExists(basePath) {
+		return basePath, nil
+	}
+
+	return "", fmt.Errorf("no lab config found in %s", dataDir)
+}
+
+// labConfigDataDir returns the data directory for the active environment's
+// lab config (variant target or base GOAD).
+func (c *Config) labConfigDataDir() string {
+	ec := c.ActiveEnvironment()
+	if ec.Variant {
+		_, target := c.ResolvedVariantPaths()
+		if target != "" {
+			d := filepath.Join(target, "data")
+			if info, err := os.Stat(d); err == nil && info.IsDir() {
+				return d
+			}
+		}
+	}
+	return filepath.Join(c.ProjectRoot, "ad", "GOAD", "data")
+}
+
+// mergedConfigPath merges base + overlay and caches the result. Returns
+// the cached file path. The cache is invalidated when either source file
+// is newer than the cached output.
+func (c *Config) mergedConfigPath(basePath, overlayPath string) (string, error) {
+	cacheDir := filepath.Join(c.ProjectRoot, ".dreadgoad", "cache")
+	cachePath := filepath.Join(cacheDir, c.Env+"-config.json")
+
+	// Check if cache is fresh.
+	if cacheInfo, err := os.Stat(cachePath); err == nil {
+		cacheMod := cacheInfo.ModTime()
+		if cacheMod.After(fileMtime(basePath)) && cacheMod.After(fileMtime(overlayPath)) {
+			return cachePath, nil
+		}
+	}
+
+	base, err := os.ReadFile(basePath)
+	if err != nil {
+		return "", fmt.Errorf("read base config: %w", err)
+	}
+	overlay, err := os.ReadFile(overlayPath)
+	if err != nil {
+		return "", fmt.Errorf("read overlay: %w", err)
+	}
+
+	merged, err := jsonmerge.MergePatchBytes(base, overlay)
+	if err != nil {
+		return "", fmt.Errorf("merge config: %w", err)
+	}
+
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
+		return "", fmt.Errorf("create cache dir: %w", err)
+	}
+
+	// Atomic write: temp file + rename.
+	tmp := cachePath + ".tmp"
+	if err := os.WriteFile(tmp, merged, 0o644); err != nil {
+		return "", fmt.Errorf("write cache: %w", err)
+	}
+	if err := os.Rename(tmp, cachePath); err != nil {
+		if rmErr := os.Remove(tmp); rmErr != nil {
+			return "", fmt.Errorf("rename cache: %w; cleanup: %w", err, rmErr)
+		}
+		return "", fmt.Errorf("rename cache: %w", err)
+	}
+
+	return cachePath, nil
+}
+
+func fileMtime(path string) time.Time {
+	info, err := os.Stat(path)
+	if err != nil {
+		return time.Time{}
+	}
+	return info.ModTime()
 }
 
 // AnsibleCfgPath returns the path to the ansible.cfg file.
@@ -290,6 +398,11 @@ func (c *Config) InfraModulePath(module string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(workDir, module), nil
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 func findProjectRoot() (string, error) {

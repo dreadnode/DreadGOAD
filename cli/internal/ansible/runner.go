@@ -75,7 +75,11 @@ func RunPlaybook(ctx context.Context, opts RunOptions) *RunResult {
 	if opts.LogFile != "" {
 		if f, err := os.OpenFile(opts.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
 			writers = append(writers, f)
-			defer func() { _ = f.Close() }()
+			defer func() {
+				if err := f.Close(); err != nil {
+					slog.Warn("failed to close log file", "path", opts.LogFile, "error", err)
+				}
+			}()
 		}
 	}
 

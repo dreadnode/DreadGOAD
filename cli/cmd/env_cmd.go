@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -31,11 +30,11 @@ Creates:
   - infra/goad-deployment/{env}/{region}/region.hcl
   - infra/goad-deployment/{env}/{region}/network/terragrunt.hcl
   - infra/goad-deployment/{env}/{region}/goad/{host}/terragrunt.hcl + templates
-  - ad/GOAD/data/{env}-config.json
+  - ad/GOAD/data/{env}-overlay.json (or variant directory)
   - {env}-inventory (Ansible inventory with PENDING instance IDs)
 
-Use --variant to generate randomized entity names for the environment config.
-Without --variant, the base config (dev-config.json) is copied as-is.`,
+Use --variant to generate a full randomized variant in ad/GOAD-{env}/.
+Without --variant, an overlay config is created from the dev overlay.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runEnvCreate,
 }
@@ -124,17 +123,19 @@ func scaffoldEnv(cfg *config.Config, envName, region, vpcCIDR, reference string,
 	}
 	color.Green("  Copied infrastructure from %s", reference)
 
-	configPath := filepath.Join(cfg.ProjectRoot, "ad", "GOAD", "data", envName+"-config.json")
+	var configPath string
 	if useVariant {
 		if err := generateVariantConfig(cfg.ProjectRoot, envName); err != nil {
 			return fmt.Errorf("generate variant config: %w", err)
 		}
-		color.Green("  Generated variant config: %s-config.json", envName)
+		configPath = filepath.Join(cfg.ProjectRoot, "ad", "GOAD-"+envName, "data")
+		color.Green("  Generated variant config in %s", configPath)
 	} else {
 		if err := copyBaseConfig(cfg.ProjectRoot, envName); err != nil {
 			return fmt.Errorf("copy base config: %w", err)
 		}
-		color.Green("  Created config: %s-config.json", envName)
+		configPath = filepath.Join(cfg.ProjectRoot, "ad", "GOAD", "data", envName+"-overlay.json")
+		color.Green("  Created overlay: %s-overlay.json", envName)
 	}
 
 	invPath := filepath.Join(cfg.ProjectRoot, envName+"-inventory")
@@ -195,10 +196,20 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		configFile := filepath.Join(cfg.ProjectRoot, "ad", "GOAD", "data", name+"-config.json")
+		goadData := filepath.Join(cfg.ProjectRoot, "ad", "GOAD", "data")
 		hasConfig := false
-		if _, err := os.Stat(configFile); err == nil {
-			hasConfig = true
+		for _, suffix := range []string{"-overlay.json", "-config.json"} {
+			if _, err := os.Stat(filepath.Join(goadData, name+suffix)); err == nil {
+				hasConfig = true
+				break
+			}
+		}
+		// Also check variant target directory.
+		if !hasConfig {
+			variantData := filepath.Join(cfg.ProjectRoot, "ad", "GOAD-"+name, "data")
+			if _, err := os.Stat(filepath.Join(variantData, "config.json")); err == nil {
+				hasConfig = true
+			}
 		}
 
 		marker := " "
@@ -299,20 +310,16 @@ func copyInfrastructure(srcRegionDir, dstRegionDir string) error {
 }
 
 func copyBaseConfig(projectRoot, envName string) error {
-	srcPath := filepath.Join(projectRoot, "ad", "GOAD", "data", "dev-config.json")
-	dstPath := filepath.Join(projectRoot, "ad", "GOAD", "data", envName+"-config.json")
+	dstPath := filepath.Join(projectRoot, "ad", "GOAD", "data", envName+"-overlay.json")
 
-	data, err := os.ReadFile(srcPath)
-	if err != nil {
-		return fmt.Errorf("read base config: %w", err)
+	// Copy dev-overlay.json as starting template if it exists.
+	devOverlay := filepath.Join(projectRoot, "ad", "GOAD", "data", "dev-overlay.json")
+	if data, err := os.ReadFile(devOverlay); err == nil {
+		return os.WriteFile(dstPath, data, 0o644)
 	}
 
-	var parsed interface{}
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		return fmt.Errorf("invalid base config JSON: %w", err)
-	}
-
-	return os.WriteFile(dstPath, data, 0o644)
+	// Otherwise create an empty overlay (inherits base config as-is).
+	return os.WriteFile(dstPath, []byte("{}\n"), 0o644)
 }
 
 func generateInventory(projectRoot, envName, region, reference string) error {
@@ -387,17 +394,5 @@ func generateVariantConfig(projectRoot, envName string) error {
 	target := filepath.Join(projectRoot, "ad", "GOAD-"+envName)
 
 	gen := variant.NewGenerator(source, target, envName)
-	if err := gen.Run(); err != nil {
-		return fmt.Errorf("variant generation: %w", err)
-	}
-
-	srcConfig := filepath.Join(target, "data", "config.json")
-	dstConfig := filepath.Join(projectRoot, "ad", "GOAD", "data", envName+"-config.json")
-
-	data, err := os.ReadFile(srcConfig)
-	if err != nil {
-		return fmt.Errorf("read generated variant config: %w", err)
-	}
-
-	return os.WriteFile(dstConfig, data, 0o644)
+	return gen.Run()
 }

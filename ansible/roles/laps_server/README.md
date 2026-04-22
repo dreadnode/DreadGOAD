@@ -19,7 +19,8 @@ Install LAPS client on member servers
 - **Download LAPS Package** (ansible.windows.win_get_url)
 - **Install to Servers** (ansible.windows.win_package)
 - **Reboot after installing LAPS (if required)** (ansible.windows.win_reboot) - Conditional
-- **Refresh GPO on the Clients** (ansible.windows.win_shell)
+- **Refresh GPO on the Clients** (ansible.windows.win_powershell)
+- **Wait for LAPS CSE to process GPO** (ansible.windows.win_powershell)
 
 ### main.yml
 

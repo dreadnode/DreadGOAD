@@ -37,69 +37,72 @@ func setupTestSource(t *testing.T) (sourceDir, targetDir string) {
 	return sourceDir, targetDir
 }
 
-func testConfig() map[string]any {
-	return map[string]any{
-		"lab": map[string]any{
-			"hosts": map[string]any{
-				"dc01": map[string]any{
-					"hostname":             "kingslanding",
-					"type":                 "dc",
-					"domain":               "sevenkingdoms.local",
-					"local_admin_password": "TestPass123!",
+func testConfig() *LabConfig {
+	config := &LabConfig{}
+	config.Lab.Hosts = map[string]*HostConfig{
+		"dc01": {
+			Hostname:           "kingslanding",
+			Type:               "dc",
+			Domain:             "sevenkingdoms.local",
+			LocalAdminPassword: "TestPass123!",
+		},
+		"dc03": {
+			Hostname:           "meereen",
+			Type:               "dc",
+			Domain:             "essos.local",
+			LocalAdminPassword: "TestPass456!",
+		},
+	}
+	config.Lab.Domains = map[string]*DomainConfig{
+		"sevenkingdoms.local": {
+			DomainPassword: "DomainPass1!",
+			Users: map[string]*UserConfig{
+				"arya.stark": {
+					Firstname: "arya",
+					Surname:   "stark",
+					Password:  "NeedleIsMySword!",
+					City:      "Winterfell",
 				},
-				"dc03": map[string]any{
-					"hostname":             "meereen",
-					"type":                 "dc",
-					"domain":               "essos.local",
-					"local_admin_password": "TestPass456!",
+				"samwell.tarly": {
+					Firstname:   "samwell",
+					Surname:     "tarly",
+					Password:    "Heartsbane",
+					Description: "Samwell Tarly (Password : Heartsbane)",
+				},
+				"sql_svc": {
+					Firstname: "sql",
+					Surname:   "-",
+					Password:  "SqlSvcPass1!",
 				},
 			},
-			"domains": map[string]any{
-				"sevenkingdoms.local": map[string]any{
-					"domain_password": "DomainPass1!",
-					"users": map[string]any{
-						"arya.stark": map[string]any{
-							"firstname": "arya",
-							"surname":   "stark",
-							"password":  "NeedleIsMySword!",
-							"city":      "Winterfell",
-						},
-						"sql_svc": map[string]any{
-							"firstname": "sql",
-							"surname":   "-",
-							"password":  "SqlSvcPass1!",
-						},
-					},
-					"groups": map[string]any{
-						"global": map[string]any{
-							"Stark":         map[string]any{},
-							"Domain Admins": map[string]any{},
-						},
-					},
-					"organisation_units": map[string]any{
-						"Vale": map[string]any{},
-					},
-					"acls": map[string]any{
-						"GenericAll_arya_stark": map[string]any{
-							"for":   "arya.stark",
-							"to":    "CN=SomeObject",
-							"right": "GenericAll",
-						},
-					},
-					"gmsa": map[string]any{
-						"gmsa1": map[string]any{
-							"gMSA_Name": "gmsaDragon",
-						},
-					},
+			Groups: GroupsConfig{
+				Global: map[string]GroupConfig{
+					"Stark":         {},
+					"Domain Admins": {},
 				},
-				"essos.local": map[string]any{
-					"domain_password": "EssosPass1!",
-					"users":           map[string]any{},
-					"groups":          map[string]any{},
+			},
+			OrganisationUnits: map[string]OUConfig{
+				"Vale": {},
+			},
+			ACLs: map[string]ACLConfig{
+				"GenericAll_arya_stark": {
+					For:   "arya.stark",
+					To:    "CN=SomeObject",
+					Right: "GenericAll",
+				},
+			},
+			GMSA: map[string]GMSAConfig{
+				"gmsa1": {
+					Name: "gmsaDragon",
 				},
 			},
 		},
+		"essos.local": {
+			DomainPassword: "EssosPass1!",
+			Users:          map[string]*UserConfig{},
+		},
 	}
+	return config
 }
 
 func TestGeneratorEndToEnd(t *testing.T) {
@@ -147,6 +150,44 @@ func TestGeneratorEndToEnd(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(targetDir, "README.md")); err != nil {
 		t.Fatal("README.md not created")
 	}
+}
+
+func TestPasswordInDescriptionPreserved(t *testing.T) {
+	sourceDir, targetDir := setupTestSource(t)
+
+	gen := NewGenerator(sourceDir, targetDir, "test-pwd-desc")
+	if err := gen.Run(); err != nil {
+		t.Fatalf("generator failed: %v", err)
+	}
+
+	transformedData, err := os.ReadFile(filepath.Join(targetDir, "data", "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var config LabConfig
+	if err := json.Unmarshal(transformedData, &config); err != nil {
+		t.Fatal(err)
+	}
+
+	// Find the transformed user that was samwell.tarly
+	newUsername := gen.mappings.Users["samwell.tarly"]
+	if newUsername == "" {
+		t.Fatal("samwell.tarly not found in user mappings")
+	}
+
+	for _, domain := range config.Lab.Domains {
+		if user, ok := domain.Users[newUsername]; ok {
+			if !strings.Contains(user.Description, "(Password :") {
+				t.Errorf("password-in-description pattern lost for %s: got %q", newUsername, user.Description)
+			}
+			if !strings.Contains(user.Description, user.Password) {
+				t.Errorf("description should contain the new password for %s: desc=%q password=%q", newUsername, user.Description, user.Password)
+			}
+			return
+		}
+	}
+	t.Errorf("transformed user %s not found in any domain", newUsername)
 }
 
 func TestApplyReplacements(t *testing.T) {

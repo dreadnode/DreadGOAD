@@ -1,13 +1,44 @@
 - name: Move server to Laps OU
-  ansible.windows.win_shell: |
-    try {
-      Get-ADOrganizationalUnit -Identity "{{ laps_path }}" > $null
-      $server=Get-AdComputer -Identity "{{ hostname }}"
-      Move-ADObject -Identity $server.DistinguishedName -TargetPath "{{ laps_path }}"
-      $true
-    } catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] {
-      $false
-    }
+  ansible.windows.win_powershell:
+    script: |
+      $lapsPath = '{{ laps_path }}'
+      $hostname = '{{ hostname }}'
+
+      # Verify LAPS OU exists
+      try {
+        Get-ADOrganizationalUnit -Identity $lapsPath -ErrorAction Stop | Out-Null
+      } catch {
+        Write-Error "LAPS OU not found: $lapsPath - $_"
+        $Ansible.Failed = $true
+        return
+      }
+
+      # Find the computer object
+      try {
+        $server = Get-ADComputer -Identity $hostname -ErrorAction Stop
+      } catch {
+        Write-Error "Computer object not found for $hostname - $_"
+        $Ansible.Failed = $true
+        return
+      }
+
+      # Check if already in LAPS OU
+      $currentParent = ($server.DistinguishedName -split ',', 2)[1]
+      if ($currentParent -eq $lapsPath) {
+        Write-Output "$hostname is already in LAPS OU"
+        $Ansible.Changed = $false
+        return
+      }
+
+      # Move to LAPS OU
+      try {
+        Move-ADObject -Identity $server.DistinguishedName -TargetPath $lapsPath -ErrorAction Stop
+        Write-Output "Moved $hostname to LAPS OU"
+        $Ansible.Changed = $true
+      } catch {
+        Write-Error "Failed to move $hostname to LAPS OU: $_"
+        $Ansible.Failed = $true
+      }
   vars:
     hostname: "{{ item.value.hostname }}"
   when: item.value.use_laps is defined and item.value.use_laps == true and item.value.domain == domain

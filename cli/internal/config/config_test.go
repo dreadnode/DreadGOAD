@@ -134,6 +134,57 @@ func TestConfigAnsibleEnv(t *testing.T) {
 	}
 }
 
+func TestLabConfigPath(t *testing.T) {
+	t.Run("non-variant returns base GOAD path", func(t *testing.T) {
+		c := &Config{ProjectRoot: "/opt/goad", Env: "staging"}
+		got := c.LabConfigPath()
+		want := filepath.Join("/opt/goad", "ad", "GOAD", "data", "staging-config.json")
+		if got != want {
+			t.Errorf("LabConfigPath() = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("variant returns variant path when config exists", func(t *testing.T) {
+		dir := resolveSymlinks(t, t.TempDir())
+		variantData := filepath.Join(dir, "ad", "GOAD-variant-1", "data")
+		if err := os.MkdirAll(variantData, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		configFile := filepath.Join(variantData, "dev-config.json")
+		if err := os.WriteFile(configFile, []byte(`{}`), 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		c := &Config{
+			ProjectRoot: dir,
+			Env:         "dev",
+			Environments: map[string]EnvironmentConfig{
+				"dev": {Variant: true, VariantTarget: "ad/GOAD-variant-1"},
+			},
+		}
+		got := c.LabConfigPath()
+		if got != configFile {
+			t.Errorf("LabConfigPath() = %q, want %q", got, configFile)
+		}
+	})
+
+	t.Run("variant falls back to base when variant config missing", func(t *testing.T) {
+		dir := resolveSymlinks(t, t.TempDir())
+		c := &Config{
+			ProjectRoot: dir,
+			Env:         "dev",
+			Environments: map[string]EnvironmentConfig{
+				"dev": {Variant: true, VariantTarget: "ad/GOAD-variant-1"},
+			},
+		}
+		got := c.LabConfigPath()
+		want := filepath.Join(dir, "ad", "GOAD", "data", "dev-config.json")
+		if got != want {
+			t.Errorf("LabConfigPath() = %q, want %q", got, want)
+		}
+	})
+}
+
 func TestConfigInventoryPathDifferentEnvs(t *testing.T) {
 	tests := []struct {
 		env      string

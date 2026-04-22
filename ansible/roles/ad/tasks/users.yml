@@ -45,8 +45,16 @@
           Write-Output "Created user $Username"
           $Ansible.Changed = $true
         } else {
-          Write-Output "User $Username already exists"
-          $Ansible.Changed = $false
+          # Update description if it changed
+          $currentDesc = $userExists.Description
+          if ($Description -and $currentDesc -ne $Description) {
+            Set-ADUser -Identity $Username -Description $Description
+            Write-Output "Updated description for $Username"
+            $Ansible.Changed = $true
+          } else {
+            Write-Output "User $Username already exists"
+            $Ansible.Changed = $false
+          }
         }
 
         # Add user to groups

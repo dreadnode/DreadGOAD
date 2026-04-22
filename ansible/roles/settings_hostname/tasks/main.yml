@@ -1,4 +1,76 @@
 ---
+# -- Pre-flight: detect domain state so we can clean up before renaming ------
+- name: Check current hostname and domain state
+  ansible.windows.win_powershell:
+    script: |
+      $cs = Get-CimInstance Win32_ComputerSystem
+      $Ansible.Result = @{
+        current_hostname = $env:COMPUTERNAME
+        is_domain_joined = [bool]$cs.PartOfDomain
+        is_dc            = ($cs.DomainRole -ge 4)
+        domain           = $cs.Domain
+      }
+      $Ansible.Changed = $false
+  register: host_state
+
+# -- ADCS removal: Certificate Services block DC demotion -------------------
+- name: Remove ADCS features before DC demotion
+  ansible.windows.win_feature:
+    name: AD-Certificate
+    state: absent
+    include_sub_features: true
+    include_management_tools: true
+  when:
+    - host_state.result.is_dc
+    - host_state.result.current_hostname | upper != hostname | upper
+  register: adcs_removal
+
+- name: Reboot after ADCS removal (required before demotion)
+  ansible.windows.win_reboot:
+    reboot_timeout: 600
+    post_reboot_delay: 60
+  when: adcs_removal is changed
+
+# -- DC demotion: a promoted DC cannot be safely renamed in-place ------------
+- name: Demote domain controller before hostname change
+  microsoft.ad.domain_controller:
+    domain_admin_user: "{{ domain_username }}"
+    domain_admin_password: "{{ domain_password }}"
+    local_admin_password: "{{ local_admin_password }}"
+    state: member_server
+  register: dc_demote
+  async: 3600
+  poll: 60
+  when:
+    - host_state.result.is_dc
+    - host_state.result.current_hostname | upper != hostname | upper
+
+- name: Reboot after DC demotion
+  ansible.windows.win_reboot:
+    reboot_timeout: 900
+    post_reboot_delay: 120
+  when: dc_demote is changed
+
+# -- Domain unjoin: domain-joined servers cannot be renamed by a local user --
+- name: Unjoin from domain before hostname change
+  microsoft.ad.membership:
+    state: workgroup
+    workgroup_name: WORKGROUP
+    domain_admin_user: "{{ domain_username }}"
+    domain_admin_password: "{{ domain_password }}"
+  register: domain_unjoin
+  when:
+    - host_state.result.is_domain_joined
+    - not host_state.result.is_dc
+    - host_state.result.current_hostname | upper != hostname | upper
+
+- name: Reboot after domain unjoin
+  ansible.windows.win_reboot:
+    reboot_timeout: 600
+    post_reboot_delay: 60
+  when: domain_unjoin is changed
+
+# -- SSM user persistence ----------------------------------------------------
 - name: Create scheduled task to keep ssm-user enabled (survives GPO refresh)
   ansible.windows.win_powershell:
     script: |
@@ -17,6 +89,7 @@
       }
   failed_when: false
 
+# -- Hostname change ----------------------------------------------------------
 - name: Change the hostname
   ansible.windows.win_hostname:
     name: "{{ hostname }}"
