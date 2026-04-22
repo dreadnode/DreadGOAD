@@ -71,6 +71,13 @@ Key fields per host:
 
 See `ad/GOAD/data/config.json` for a complete reference example.
 
+### Environment overlays
+
+Rather than maintaining full config copies per environment, create small
+overlay files (`{env}-overlay.json`) that contain only the fields that
+differ from the base `config.json`. The CLI merges them at runtime using
+RFC 7386 JSON Merge Patch. See `docs/cli.md` in the repository for the overlay format and resolution order.
+
 ## Inventory files
 
 The `data/inventory` file is an Ansible inventory that defines host groups and connection variables (WinRM settings, credentials). Each provider also has its own `inventory` file under `providers/<provider>/` that overrides connection-specific values (IP addresses, ports) for that provider.

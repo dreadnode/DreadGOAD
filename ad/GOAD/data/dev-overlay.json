@@ -1,0 +1,87 @@
+{
+  "lab": {
+    "domains": {
+      "essos.local": {
+        "acls": {
+          "GenericWrite_missandei_viserys": null
+        },
+        "groups": {
+          "global": {
+            "Domain Admins": {
+              "managed_by": "Administrator"
+            },
+            "Dragons": {
+              "managed_by": "Administrator"
+            },
+            "QueenProtector": {
+              "managed_by": "Administrator"
+            }
+          },
+          "universal": {
+            "greatmaster": null
+          }
+        }
+      }
+    },
+    "hosts": {
+      "dc01": {
+        "vulns": [
+          "disable_firewall"
+        ]
+      },
+      "dc02": {
+        "scripts": [
+          "asrep_roasting.ps1",
+          "constrained_delegation_use_any.ps1",
+          "constrained_delegation_kerb_only.ps1",
+          "ntlm_relay.ps1",
+          "responder.ps1",
+          "gpo_abuse.ps1",
+          "rdp_scheduler.ps1",
+          "unconstrained_delegation_user.ps1"
+        ],
+        "vulns": [
+          "disable_firewall",
+          "directory",
+          "credentials",
+          "autologon",
+          "files",
+          "enable_llmnr",
+          "enable_nbt_ns",
+          "shares",
+          "anonymous_enum"
+        ]
+      },
+      "dc03": {
+        "local_groups": {
+          "Administrators": [
+            "essos\\daenerys.targaryen"
+          ]
+        },
+        "vulns": [
+          "ntlmdowngrade",
+          "disable_firewall"
+        ],
+        "vulns_vars": null
+      },
+      "srv02": {
+        "vulns": [
+          "directory",
+          "disable_firewall",
+          "openshares",
+          "files",
+          "permissions"
+        ],
+        "vulns_vars": {
+          "shares": null
+        }
+      },
+      "srv03": {
+        "vulns": [
+          "openshares",
+          "disable_firewall"
+        ]
+      }
+    }
+  }
+}

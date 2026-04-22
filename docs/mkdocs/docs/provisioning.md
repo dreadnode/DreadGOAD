@@ -7,7 +7,9 @@ The provisioning of the LABS is done with Ansible for all providers.
 
 ## Lab data
 
-The data of each lab are stored in the json file : `ad/<lab>/data/config.json`, this file is loaded by each playbook to get all the lab variables (this is done by the data.yml playbook call by all the over playbooks)
+Each lab stores its canonical configuration in `ad/<lab>/data/config.json`. This file is loaded by each playbook to get all the lab variables (via the `data.yml` playbook called by all other playbooks).
+
+Per-environment differences are stored as small **overlay** files (`{env}-overlay.json`) alongside `config.json`, rather than full duplicate copies. At runtime the CLI merges `config.json` + the overlay using RFC 7386 JSON Merge Patch semantics and passes the merged result to Ansible. See `docs/cli.md` in the repository for overlay format details and resolution order.
 
 ## Extension data
 

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/dreadnode/dreadgoad/internal/jsonmerge"
 )
 
 // HostInfo holds hostname and domain mappings for a single host (variant support).
@@ -484,26 +486,53 @@ type variantMapping struct {
 }
 
 // LoadFromSource reads the lab config and builds a fully populated LabMap.
-// If env is non-empty, it first tries {env}-config.json (matching the Ansible
-// vars plugin behaviour) and falls back to config.json.
+// If env is non-empty, it tries (in order): merging config.json with
+// {env}-overlay.json, then a legacy {env}-config.json, then config.json.
 func LoadFromSource(sourceDir, env string) (*LabMap, error) {
 	dataDir := filepath.Join(sourceDir, "data")
-	var path string
-	if env != "" {
-		envPath := filepath.Join(dataDir, env+"-config.json")
-		if _, err := os.Stat(envPath); err == nil {
-			path = envPath
-		}
+	data, err := resolveConfigData(dataDir, env)
+	if err != nil {
+		return nil, fmt.Errorf("read lab config: %w", err)
 	}
-	if path == "" {
-		path = filepath.Join(dataDir, "config.json")
-	}
+	return parseConfig(data)
+}
+
+// LoadFromPath reads a lab config JSON file directly and builds a LabMap.
+func LoadFromPath(path string) (*LabMap, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read lab config: %w", err)
 	}
-
 	return parseConfig(data)
+}
+
+// resolveConfigData returns the final config JSON for a given environment.
+func resolveConfigData(dataDir, env string) ([]byte, error) {
+	basePath := filepath.Join(dataDir, "config.json")
+
+	if env != "" {
+		// Prefer overlay merge.
+		overlayPath := filepath.Join(dataDir, env+"-overlay.json")
+		if _, err := os.Stat(overlayPath); err == nil {
+			base, err := os.ReadFile(basePath)
+			if err != nil {
+				return nil, fmt.Errorf("read base config: %w", err)
+			}
+			overlay, err := os.ReadFile(overlayPath)
+			if err != nil {
+				return nil, fmt.Errorf("read overlay: %w", err)
+			}
+			return jsonmerge.MergePatchBytes(base, overlay)
+		}
+
+		// Legacy full env config.
+		envPath := filepath.Join(dataDir, env+"-config.json")
+		if _, err := os.Stat(envPath); err == nil {
+			return os.ReadFile(envPath)
+		}
+	}
+
+	return os.ReadFile(basePath)
 }
 
 // LoadFromVariant reads mapping.json from a variant target directory.

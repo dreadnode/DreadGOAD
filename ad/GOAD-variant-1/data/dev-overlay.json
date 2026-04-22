@@ -1,0 +1,46 @@
+{
+  "lab": {
+    "domains": {
+      "vortexindustries.local": {
+        "groups": {
+          "global": {
+            "AdministrationGroup": {
+              "managed_by": "Administrator"
+            },
+            "Domain Admins": {
+              "managed_by": "Administrator"
+            },
+            "Services": {
+              "managed_by": "Administrator"
+            }
+          }
+        }
+      }
+    },
+    "hosts": {
+      "dc02": {
+        "scripts": [
+          "asrep_roasting.ps1",
+          "constrained_delegation_use_any.ps1",
+          "constrained_delegation_kerb_only.ps1",
+          "ntlm_relay.ps1",
+          "responder.ps1",
+          "gpo_abuse.ps1",
+          "rdp_scheduler.ps1",
+          "unconstrained_delegation_user.ps1"
+        ],
+        "vulns": [
+          "disable_firewall",
+          "directory",
+          "credentials",
+          "autologon",
+          "files",
+          "enable_llmnr",
+          "enable_nbt_ns",
+          "shares",
+          "anonymous_enum"
+        ]
+      }
+    }
+  }
+}

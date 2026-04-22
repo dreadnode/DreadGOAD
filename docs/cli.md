@@ -118,6 +118,63 @@ that preserve all structural relationships and vulnerabilities.
   `dreadgoad provision` or `dreadgoad variant generate` to get fresh
   randomized names.
 
+## Lab Config Overlays
+
+Each lab stores its canonical configuration in a single `config.json` file
+(e.g. `ad/GOAD/data/config.json`). Per-environment differences are captured
+in small **overlay** files rather than full copies:
+
+```text
+ad/GOAD/data/
+├── config.json              # Single source of truth (~32 KB)
+├── dev-overlay.json         # Only the dev-specific diffs (~1.8 KB)
+├── staging-overlay.json     # Only the staging-specific diffs
+└── test-overlay.json        # Only the test-specific diffs
+```
+
+Overlays use [RFC 7386 JSON Merge Patch](https://datatracker.ietf.org/doc/html/rfc7386)
+semantics:
+
+- **Objects** merge recursively — only changed keys need to appear.
+- **Arrays and scalars** in the overlay replace the base value wholesale.
+- **`null`** removes a key from the base.
+
+For example, a `dev-overlay.json` that removes ADCS vulns from `dc01` and
+adds a script to `dc02`:
+
+```json
+{
+  "lab": {
+    "hosts": {
+      "dc01": { "vulns": ["disable_firewall"] },
+      "dc02": { "scripts": ["...", "unconstrained_delegation_user.ps1"] }
+    }
+  }
+}
+```
+
+### Resolution order
+
+At runtime `dreadgoad` resolves the lab config for the active environment as:
+
+1. `{env}-overlay.json` exists → merge `config.json` + overlay, cache result
+   in `.dreadgoad/cache/{env}-config.json`
+2. Legacy `{env}-config.json` exists → use it directly (backward compatible)
+3. Neither exists → use `config.json` as-is
+
+Variant environments follow the same logic but read from the variant target
+directory (e.g. `ad/GOAD-variant-1/data/`).
+
+### Creating overlays for a new environment
+
+`dreadgoad env create <name>` creates an overlay file automatically:
+
+- **Without `--variant`**: copies `dev-overlay.json` as a starting template
+  (or creates an empty `{}` overlay).
+- **With `--variant`**: generates a full randomized variant; overlay files
+  in the source are also transformed through the variant's replacement
+  pipeline.
+
 ## Environment Variables
 
 All config keys can be set via environment variables with the

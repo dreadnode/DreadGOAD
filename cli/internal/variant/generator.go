@@ -174,6 +174,7 @@ type Generator struct {
 	replacements    []replacement
 	userPasswordMap map[string]string // new_username -> new_password
 	preservedUsers  map[string]bool
+	pwdInDescUsers  map[string]bool // new_username -> has password in description
 }
 
 // hostnameAliases maps canonical hostnames to known typos/aliases in upstream GOAD.
@@ -202,6 +203,7 @@ func NewGenerator(source, target, name string) *Generator {
 		},
 		userPasswordMap: make(map[string]string),
 		preservedUsers:  map[string]bool{"sql_svc": true},
+		pwdInDescUsers:  make(map[string]bool),
 	}
 }
 
@@ -362,6 +364,11 @@ func (g *Generator) mapUsers(config *LabConfig) {
 
 			newUsername := g.nameGen.GenerateUsername()
 			g.mappings.Users[username] = newUsername
+
+			if user != nil && user.Password != "" && user.Description != "" &&
+				strings.Contains(strings.ToLower(user.Description), strings.ToLower(user.Password)) {
+				g.pwdInDescUsers[newUsername] = true
+			}
 
 			g.mapUserNameComponents(user, newUsername)
 
@@ -754,7 +761,16 @@ func (g *Generator) fixUserFirstnameSurname(config *LabConfig) {
 					user.Surname = parts[1]
 				}
 				if user.Description != "" {
-					user.Description = capitalize(parts[0]) + " " + capitalize(parts[1])
+					displayName := capitalize(parts[0]) + " " + capitalize(parts[1])
+					if g.pwdInDescUsers[username] {
+						if pw, ok := g.userPasswordMap[username]; ok {
+							user.Description = displayName + " (Password : " + pw + ")"
+						} else {
+							user.Description = displayName
+						}
+					} else {
+						user.Description = displayName
+					}
 				}
 			}
 		}
@@ -846,7 +862,9 @@ func (g *Generator) transformFile(srcPath, relPath string) (transformed bool) {
 
 		newContent := g.applyReplacements(string(content))
 
-		if base == "config.json" || strings.HasSuffix(base, "-config.json") {
+		isFullConfig := (base == "config.json" || strings.HasSuffix(base, "-config.json")) &&
+			!strings.HasSuffix(base, "-overlay.json")
+		if isFullConfig {
 			var configData LabConfig
 			if err := json.Unmarshal([]byte(newContent), &configData); err == nil {
 				g.fixUserFirstnameSurname(&configData)

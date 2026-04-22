@@ -63,6 +63,12 @@ func testConfig() *LabConfig {
 					Password:  "NeedleIsMySword!",
 					City:      "Winterfell",
 				},
+				"samwell.tarly": {
+					Firstname:   "samwell",
+					Surname:     "tarly",
+					Password:    "Heartsbane",
+					Description: "Samwell Tarly (Password : Heartsbane)",
+				},
 				"sql_svc": {
 					Firstname: "sql",
 					Surname:   "-",
@@ -144,6 +150,44 @@ func TestGeneratorEndToEnd(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(targetDir, "README.md")); err != nil {
 		t.Fatal("README.md not created")
 	}
+}
+
+func TestPasswordInDescriptionPreserved(t *testing.T) {
+	sourceDir, targetDir := setupTestSource(t)
+
+	gen := NewGenerator(sourceDir, targetDir, "test-pwd-desc")
+	if err := gen.Run(); err != nil {
+		t.Fatalf("generator failed: %v", err)
+	}
+
+	transformedData, err := os.ReadFile(filepath.Join(targetDir, "data", "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var config LabConfig
+	if err := json.Unmarshal(transformedData, &config); err != nil {
+		t.Fatal(err)
+	}
+
+	// Find the transformed user that was samwell.tarly
+	newUsername := gen.mappings.Users["samwell.tarly"]
+	if newUsername == "" {
+		t.Fatal("samwell.tarly not found in user mappings")
+	}
+
+	for _, domain := range config.Lab.Domains {
+		if user, ok := domain.Users[newUsername]; ok {
+			if !strings.Contains(user.Description, "(Password :") {
+				t.Errorf("password-in-description pattern lost for %s: got %q", newUsername, user.Description)
+			}
+			if !strings.Contains(user.Description, user.Password) {
+				t.Errorf("description should contain the new password for %s: desc=%q password=%q", newUsername, user.Description, user.Password)
+			}
+			return
+		}
+	}
+	t.Errorf("transformed user %s not found in any domain", newUsername)
 }
 
 func TestApplyReplacements(t *testing.T) {

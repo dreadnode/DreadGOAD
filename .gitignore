@@ -14,6 +14,7 @@ __pycache__/
 
 # Build artifacts
 dreadgoad
+.dreadgoad/
 coverage.out
 ansible/roles/adcs_templates/files/ADCSTemplate.zip
 ansible/roles/vulns_adcs_templates/files/ADCSTemplate.zip
@@ -35,6 +36,7 @@ ad/MINILAB
 ad/*/providers/*/ssh_keys/*id_rsa*
 ad/*/providers/*/ssh_keys/*.pub
 ad/*/providers/*/extensions/*.rb
+.envrc
 
 # Terraform / Terragrunt
 .terraform/
