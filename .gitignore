@@ -23,6 +23,9 @@ ansible/roles/vulns_adcs_templates/files/ADCSTemplate.zip
 /*-inventory
 /*-inventory.bak.*
 
+# Generated merged lab configs (base + overlay)
+ad/GOAD/data/*-config.json
+
 # Scenario data (keep only tracked environments)
 ad/PURPLE
 ad/REDLAB
