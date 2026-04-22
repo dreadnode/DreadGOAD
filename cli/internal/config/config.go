@@ -231,7 +231,9 @@ func (c *Config) mergedConfigPath(basePath, overlayPath string) (string, error) 
 		return "", fmt.Errorf("write cache: %w", err)
 	}
 	if err := os.Rename(tmp, cachePath); err != nil {
-		os.Remove(tmp)
+		if rmErr := os.Remove(tmp); rmErr != nil {
+			return "", fmt.Errorf("rename cache: %w; cleanup: %w", err, rmErr)
+		}
 		return "", fmt.Errorf("rename cache: %w", err)
 	}
 
