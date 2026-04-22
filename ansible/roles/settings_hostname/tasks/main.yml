@@ -3,7 +3,7 @@
 - name: Check current hostname and domain state
   ansible.windows.win_powershell:
     script: |
-      $cs = Get-WmiObject Win32_ComputerSystem
+      $cs = Get-CimInstance Win32_ComputerSystem
       $Ansible.Result = @{
         current_hostname = $env:COMPUTERNAME
         is_domain_joined = [bool]$cs.PartOfDomain
@@ -49,7 +49,7 @@
   ansible.windows.win_reboot:
     reboot_timeout: 900
     post_reboot_delay: 120
-  when: dc_demote is changed or (dc_demote.reboot_required | default(false))
+  when: dc_demote is changed
 
 # -- Domain unjoin: domain-joined servers cannot be renamed by a local user --
 - name: Unjoin from domain before hostname change
@@ -68,7 +68,7 @@
   ansible.windows.win_reboot:
     reboot_timeout: 600
     post_reboot_delay: 60
-  when: domain_unjoin is changed or (domain_unjoin.reboot_required | default(false))
+  when: domain_unjoin is changed
 
 # -- SSM user persistence ----------------------------------------------------
 - name: Create scheduled task to keep ssm-user enabled (survives GPO refresh)

@@ -67,7 +67,7 @@ Install and configure LAPS on Domain Controllers
 
 ### move_server_to_ou.yml
 
-- **Move server to Laps OU** (ansible.windows.win_shell) - Conditional
+- **Move server to Laps OU** (ansible.windows.win_powershell) - Conditional
 
 ## Example Playbook
 
