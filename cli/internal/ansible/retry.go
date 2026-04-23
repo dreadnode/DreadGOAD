@@ -245,6 +245,7 @@ func buildRetryLimit(userLimit, failedHosts string) string {
 // saturation. It resolves the AWS region from the inventory, then calls
 // [daws.Client.CleanupStaleSessions] for all instances in the current
 // environment. Sessions idle for more than 15 minutes are terminated.
+// This is a no-op for non-SSM inventories (e.g. Ludus, Proxmox).
 func CleanupSSMSessions(ctx context.Context, env string, log *slog.Logger) {
 	cfg, err := config.Get()
 	if err != nil {
@@ -254,6 +255,10 @@ func CleanupSSMSessions(ctx context.Context, env string, log *slog.Logger) {
 	inv, err := inventory.Parse(cfg.InventoryPath())
 	if err != nil {
 		log.Warn("could not parse inventory for SSM cleanup", "error", err)
+		return
+	}
+
+	if !inv.IsSSM() {
 		return
 	}
 
@@ -292,6 +297,10 @@ func fixSSMUsers(ctx context.Context, env string, failedHosts []string, log *slo
 	inv, err := inventory.Parse(cfg.InventoryPath())
 	if err != nil {
 		log.Warn("could not parse inventory for ssm-user fix", "error", err)
+		return
+	}
+
+	if !inv.IsSSM() {
 		return
 	}
 

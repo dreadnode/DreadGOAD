@@ -113,6 +113,17 @@ func ensureVariant(cfg *config.Config) error {
 	return nil
 }
 
+// isSSMInventory checks whether the current inventory uses AWS SSM connections.
+// Returns false (non-SSM) if the inventory does not exist or cannot be parsed,
+// so that non-AWS providers are never blocked by AWS-specific operations.
+func isSSMInventory(cfg *config.Config) bool {
+	parsed, err := inv.Parse(cfg.InventoryPath())
+	if err != nil {
+		return false
+	}
+	return parsed.IsSSM()
+}
+
 // preflightChecks validates tooling, builds the Ansible collection, and
 // prepares artifacts needed before provisioning playbooks run.
 func preflightChecks(ctx context.Context, cfg *config.Config) error {
@@ -131,16 +142,17 @@ func preflightChecks(ctx context.Context, cfg *config.Config) error {
 	if err := ensureVariant(cfg); err != nil {
 		return err
 	}
-	// Ensure inventory instance IDs match live AWS state. After infra
-	// apply the IDs change, and provisioning against stale IDs fails
-	// with confusing SSM connection errors.
-	if err := ensureInventorySynced(ctx, cfg); err != nil {
-		slog.Warn("inventory sync check failed", "error", err)
-	}
-	// Generate instance-to-IP mapping so Ansible can resolve host IPs
-	// without slow runtime network detection over SSM.
-	if err := generateInstanceMapping(ctx, ""); err != nil {
-		slog.Warn("instance mapping generation failed, playbooks will use runtime detection", "error", err)
+
+	// AWS-specific preflight: sync inventory instance IDs and generate
+	// IP mappings. Skipped for non-SSM providers (Ludus, Proxmox, etc.)
+	// where the inventory is managed manually.
+	if isSSMInventory(cfg) {
+		if err := ensureInventorySynced(ctx, cfg); err != nil {
+			slog.Warn("inventory sync check failed", "error", err)
+		}
+		if err := generateInstanceMapping(ctx, ""); err != nil {
+			slog.Warn("instance mapping generation failed, playbooks will use runtime detection", "error", err)
+		}
 	}
 	return nil
 }
@@ -170,6 +182,7 @@ func bootstrapInventory(invPath string) error {
 // ensureInventorySynced compares inventory instance IDs against live EC2
 // state and auto-syncs if they diverge. This prevents provisioning against
 // stale instance IDs after an infra destroy/apply cycle.
+// This is a no-op for non-SSM inventories (e.g. Ludus, Proxmox).
 func ensureInventorySynced(ctx context.Context, cfg *config.Config) error {
 	invPath := cfg.InventoryPath()
 	if err := bootstrapInventory(invPath); err != nil {
@@ -178,6 +191,10 @@ func ensureInventorySynced(ctx context.Context, cfg *config.Config) error {
 	parsed, err := inv.Parse(invPath)
 	if err != nil {
 		return fmt.Errorf("parse inventory: %w", err)
+	}
+
+	if !parsed.IsSSM() {
+		return nil
 	}
 
 	region, err := cfg.ResolveRegionWithInventory(parsed)
@@ -265,11 +282,15 @@ func runProvision(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println("-----------------------------------------------")
 
+	log := slog.Default()
+	useSSM := isSSMInventory(cfg)
+
 	// Clean up stale SSM sessions before starting provisioning to prevent
 	// connection saturation from orphaned sessions of previous runs.
-	log := slog.Default()
-	log.Info("cleaning up stale SSM sessions before provisioning")
-	ansible.CleanupSSMSessions(ctx, cfg.Env, log)
+	if useSSM {
+		log.Info("cleaning up stale SSM sessions before provisioning")
+		ansible.CleanupSSMSessions(ctx, cfg.Env, log)
+	}
 
 	for i, playbook := range playbooks {
 		opts := ansible.RetryOptions{
@@ -293,9 +314,11 @@ func runProvision(cmd *cobra.Command, args []string) error {
 		// Between playbooks: clean up accumulated SSM sessions and wait
 		// after reboot-inducing playbooks for SSM agents to reconnect.
 		if i < len(playbooks)-1 {
-			ansible.CleanupSSMSessions(ctx, cfg.Env, log)
+			if useSSM {
+				ansible.CleanupSSMSessions(ctx, cfg.Env, log)
+			}
 
-			if slices.Contains(config.RebootPlaybooks, playbook) {
+			if useSSM && slices.Contains(config.RebootPlaybooks, playbook) {
 				log.Info("playbook may have caused reboots, waiting for SSM reconnection",
 					"playbook", playbook, "delay", "120s")
 				time.Sleep(120 * time.Second)

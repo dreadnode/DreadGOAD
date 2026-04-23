@@ -130,6 +130,11 @@ func loadInstances(ctx context.Context, jsonFile, invPath string, cfg *config.Co
 	if err != nil {
 		return nil, err
 	}
+
+	if !parsed.IsSSM() {
+		return nil, fmt.Errorf("inventory sync from AWS is only supported for SSM inventories; use --json to provide instance data manually")
+	}
+
 	region, err := cfg.ResolveRegionWithInventory(parsed)
 	if err != nil {
 		return nil, err
@@ -225,6 +230,7 @@ func runInventoryMapping(cmd *cobra.Command, args []string) error {
 // mapping to a JSON file that Ansible's network_discovery role uses to avoid
 // slow runtime detection over SSM. If outputPath is empty, it defaults to
 // /tmp/aws_instance_mapping_<env>.json.
+// This is a no-op for non-SSM inventories (e.g. Ludus, Proxmox).
 func generateInstanceMapping(ctx context.Context, outputPath string) error {
 	cfg, err := config.Get()
 	if err != nil {
@@ -234,6 +240,10 @@ func generateInstanceMapping(ctx context.Context, outputPath string) error {
 	parsed, err := inv.Parse(cfg.InventoryPath())
 	if err != nil {
 		return err
+	}
+
+	if !parsed.IsSSM() {
+		return nil
 	}
 
 	if outputPath == "" {

@@ -132,6 +132,17 @@ func (inv *Inventory) InstanceIDs() []string {
 	return ids
 }
 
+// IsSSM returns true if the inventory uses AWS SSM connections.
+// Non-SSM inventories (e.g. Ludus, Proxmox, WinRM, SSH) do not
+// need AWS-specific operations like session cleanup or instance sync.
+func (inv *Inventory) IsSSM() bool {
+	conn, ok := inv.Vars["ansible_connection"]
+	if !ok {
+		return false
+	}
+	return strings.Contains(conn, "aws_ssm")
+}
+
 // Region returns the AWS SSM region from inventory vars, or an empty string
 // if the inventory does not specify one. Callers should fall back to
 // config.Config.ResolveRegion() rather than hardcoding a default — silently

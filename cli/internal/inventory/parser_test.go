@@ -217,6 +217,57 @@ func TestHostByName(t *testing.T) {
 	}
 }
 
+func TestIsSSM(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{
+			"aws ssm connection",
+			"[all:vars]\nansible_connection=amazon.aws.aws_ssm\n",
+			true,
+		},
+		{
+			"short aws_ssm connection",
+			"[all:vars]\nansible_connection=aws_ssm\n",
+			true,
+		},
+		{
+			"winrm connection",
+			"[all:vars]\nansible_connection=winrm\n",
+			false,
+		},
+		{
+			"ssh connection",
+			"[all:vars]\nansible_connection=ssh\n",
+			false,
+		},
+		{
+			"no connection var",
+			"[all:vars]\nenv=staging\n",
+			false,
+		},
+		{
+			"empty inventory",
+			"",
+			false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTestInventory(t, tt.content)
+			inv, err := Parse(path)
+			if err != nil {
+				t.Fatalf("Parse() error = %v", err)
+			}
+			if got := inv.IsSSM(); got != tt.want {
+				t.Errorf("IsSSM() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestHostByInstanceID(t *testing.T) {
 	path := writeTestInventory(t, testInventory)
 	inv, _ := Parse(path)
