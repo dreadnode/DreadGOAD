@@ -135,6 +135,8 @@ func (v *Validator) RunQuickChecks(ctx context.Context) {
 		v.checkNetworkMisconfigs,
 		v.checkMSSQL,
 		v.checkADCS,
+		v.checkADCSESC7,
+		v.checkADCSESC6,
 		v.checkDomainTrusts,
 		v.checkServices,
 		v.checkScheduledTasks,
@@ -152,6 +154,11 @@ func (v *Validator) RunAllChecks(ctx context.Context) {
 		v.checkMachineAccountQuota,
 		v.checkMSSQL,
 		v.checkADCS,
+		v.checkADCSESC7,
+		v.checkADCSESC6,
+		v.checkADCSESC10,
+		v.checkADCSESC11,
+		v.checkADCSESC15,
 		v.checkACLPermissions,
 		v.checkDomainTrusts,
 		v.checkSIDFiltering,
@@ -164,6 +171,10 @@ func (v *Validator) RunAllChecks(ctx context.Context) {
 		v.checkSMBShares,
 		v.checkFirewallDisabled,
 		v.checkPasswordPolicy,
+		v.checkLDAPSigning,
+		v.checkRunAsPPL,
+		v.checkCertEnrollShare,
+		v.checkSIDHistory,
 	})
 }
 

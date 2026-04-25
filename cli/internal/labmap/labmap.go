@@ -486,6 +486,41 @@ func (m *LabMap) HostsWithLAPS() []string {
 	return hosts
 }
 
+// ESC7Fact holds the host role and CA manager identity for an ESC7 vulnerability.
+type ESC7Fact struct {
+	HostRole  string
+	Hostname  string
+	CAManager string // e.g. "essos\\viserys.targaryen"
+}
+
+// HostsWithESC7 returns ESC7 facts for hosts that have adcs_esc7 in their vulns_vars.
+func (m *LabMap) HostsWithESC7() []ESC7Fact {
+	var facts []ESC7Fact
+	for role, hc := range m.HostConfigs {
+		raw, ok := hc.VulnsVars["adcs_esc7"]
+		if !ok {
+			continue
+		}
+		// vulns_vars.adcs_esc7 is a map of arbitrary keys to objects with ca_manager.
+		var entries map[string]struct {
+			CAManager string `json:"ca_manager"`
+		}
+		if err := json.Unmarshal(raw, &entries); err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.CAManager != "" {
+				facts = append(facts, ESC7Fact{
+					HostRole:  role,
+					Hostname:  hc.Hostname,
+					CAManager: entry.CAManager,
+				})
+			}
+		}
+	}
+	return facts
+}
+
 // rawLabConfig mirrors the full config.json structure.
 type rawLabConfig struct {
 	Lab struct {

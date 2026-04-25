@@ -1,8 +1,21 @@
 # Code adapted from ludus adcs module : https://github.com/badsectorlabs/ludus_adcs/blob/main/files/esc7.ps1
 # RUN me on DC
-- name: Install module PSPKI
+- name: Ensure NuGet provider is installed
   ansible.windows.win_shell: |
-    Install-Module PSPKI -Force
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    if (-not (Get-PackageProvider -Name NuGet -ListAvailable -ErrorAction SilentlyContinue)) {
+      Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
+    }
+
+- name: Install module PSPKI
+  ansible.windows.win_powershell:
+    script: |
+      [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+      Install-Module PSPKI -Force -ErrorAction Stop
+      if (-not (Get-Module -ListAvailable -Name PSPKI)) {
+        throw "PSPKI module installation failed"
+      }
+    error_action: stop
 
 - name: ADD ManageCA rights
   ansible.windows.win_powershell:
@@ -12,18 +25,10 @@
           [String]
           $caManagerUser
       )
-      if (Get-Module -ListAvailable -Name PSPKI) {
-        Import-Module -Name PSPKI
-        $caHostname = Get-CertificationAuthority | Select-Object -ExpandProperty ComputerName
-        try {
-          Get-CertificationAuthority "$caHostname" | Get-CertificationAuthorityAcl | Add-CertificationAuthorityAcl -Identity "$caManagerUser" -AccessType "Allow" -AccessMask "ManageCa" | Set-CertificationAuthorityAcl -RestartCA
-          $Ansible.Changed = $true
-        } catch {
-          $Ansible.Changed = $false
-        }
-      } else {
-        $Ansible.Changed = $false
-      }
+      Import-Module -Name PSPKI -ErrorAction Stop
+      $caHostname = Get-CertificationAuthority | Select-Object -ExpandProperty ComputerName
+      Get-CertificationAuthority "$caHostname" | Get-CertificationAuthorityAcl | Add-CertificationAuthorityAcl -Identity "$caManagerUser" -AccessType "Allow" -AccessMask "ManageCa" | Set-CertificationAuthorityAcl -RestartCA
+      $Ansible.Changed = $true
     error_action: stop
     parameters:
       caManagerUser: "{{ item.value.ca_manager }}"

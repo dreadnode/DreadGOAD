@@ -20,7 +20,9 @@
       "dc01": {
         "local_admin_password": "ykRXQ@rWNV4znesz-h!c",
         "vulns": [
-          "disable_firewall"
+          "disable_firewall",
+          "adcs_esc10_case1",
+          "adcs_esc10_case2"
         ]
       },
       "dc02": {
@@ -55,9 +57,11 @@
         },
         "vulns": [
           "ntlmdowngrade",
-          "disable_firewall"
-        ],
-        "vulns_vars": null
+          "disable_firewall",
+          "adcs_esc7",
+          "adcs_esc13",
+          "adcs_esc15"
+        ]
       },
       "srv02": {
         "local_admin_password": "moydNed_wEKuP8KN6rUx"
@@ -66,7 +70,9 @@
         "local_admin_password": "-cwuyGW494yZnC_M8wLN",
         "vulns": [
           "openshares",
-          "disable_firewall"
+          "disable_firewall",
+          "adcs_esc6",
+          "adcs_esc11"
         ]
       }
     }
