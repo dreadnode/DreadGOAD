@@ -205,8 +205,9 @@ func (p *LudusProvider) DestroyInstances(ctx context.Context, ids []string) erro
 }
 
 // resolveHostname maps a Proxmox VMID to the Ansible inventory hostname
-// (e.g. "104" -> "dc01") by matching the VM name from range status against
-// known GOAD host patterns.
+// (e.g. "104" -> "dc01") by extracting the role suffix from the Ludus VM
+// name. Ludus VM names follow the pattern "{range_id}-{lab}-{ROLE}"
+// (e.g. "DG-GOAD-DC01"), so the role is the last hyphen-separated segment.
 func (p *LudusProvider) resolveHostname(ctx context.Context, instanceID string) (string, error) {
 	vms, err := p.getVMs(ctx)
 	if err != nil {
@@ -216,14 +217,17 @@ func (p *LudusProvider) resolveHostname(ctx context.Context, instanceID string) 
 	if !ok {
 		return "", fmt.Errorf("VM with Proxmox ID %s not found", instanceID)
 	}
-	name := strings.ToLower(vm.Name)
-	// Extract the GOAD host role from names like "DG-GOAD-DC01"
-	for _, role := range []string{"dc01", "dc02", "dc03", "srv02", "srv03"} {
-		if strings.Contains(name, role) {
-			return role, nil
-		}
+
+	// Extract role from the last segment: "DG-GOAD-DC01" -> "dc01"
+	parts := strings.Split(vm.Name, "-")
+	if len(parts) < 2 {
+		return "", fmt.Errorf("VM name %q does not follow expected naming pattern (RANGEID-LAB-ROLE)", vm.Name)
 	}
-	return "", fmt.Errorf("VM %s does not match a known GOAD host role", vm.Name)
+	role := strings.ToLower(parts[len(parts)-1])
+	if role == "" {
+		return "", fmt.Errorf("VM name %q has empty role suffix", vm.Name)
+	}
+	return role, nil
 }
 
 func (p *LudusProvider) RunCommand(ctx context.Context, instanceID, command string, timeout time.Duration) (*provider.CommandResult, error) {

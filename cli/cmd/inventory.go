@@ -53,6 +53,7 @@ func init() {
 type instanceInfo struct {
 	InstanceID string `json:"InstanceId"`
 	Name       string `json:"Name"`
+	PrivateIP  string `json:"PrivateIP,omitempty"`
 }
 
 func runInventorySync(cmd *cobra.Command, args []string) error {
@@ -131,7 +132,7 @@ func loadInstances(ctx context.Context, jsonFile, invPath string, cfg *config.Co
 	}
 
 	if !parsed.IsSSM() {
-		// For non-SSM inventories, use the provider to discover instances.
+		// For non-SSM inventories (Ludus, Proxmox), discover instances with IPs.
 		prov, err := cfg.NewProvider(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("inventory sync: use --json to provide instance data manually, or configure a provider: %w", err)
@@ -142,7 +143,7 @@ func loadInstances(ctx context.Context, jsonFile, invPath string, cfg *config.Co
 		}
 		var instances []instanceInfo
 		for _, i := range provInstances {
-			instances = append(instances, instanceInfo{InstanceID: i.ID, Name: i.Name})
+			instances = append(instances, instanceInfo{InstanceID: i.ID, Name: i.Name, PrivateIP: i.PrivateIP})
 		}
 		return instances, nil
 	}
@@ -163,6 +164,32 @@ func loadInstances(ctx context.Context, jsonFile, invPath string, cfg *config.Co
 	return instances, nil
 }
 
+// extractHostRole extracts the Ansible inventory hostname from a VM name.
+// Supports multiple naming conventions:
+//   - AWS: "dreadgoad-dc01" -> "dc01"
+//   - Ludus/Proxmox: "DG-GOAD-DC01" -> "dc01"
+//
+// Falls back to the last hyphen-separated segment for unknown patterns.
+func extractHostRole(vmName string) string {
+	lower := strings.ToLower(vmName)
+
+	// AWS convention: "dreadgoad-<role>"
+	if strings.Contains(lower, "dreadgoad-") {
+		parts := strings.SplitN(lower, "dreadgoad-", 2)
+		if len(parts) == 2 && parts[1] != "" {
+			return parts[1]
+		}
+	}
+
+	// Ludus/Proxmox convention: last segment is the role (e.g. "DG-GOAD-DC01" -> "dc01")
+	parts := strings.Split(lower, "-")
+	if len(parts) >= 2 {
+		return parts[len(parts)-1]
+	}
+
+	return ""
+}
+
 func applyInstanceUpdates(invPath string, instances []instanceInfo) error {
 	content, err := os.ReadFile(invPath)
 	if err != nil {
@@ -172,20 +199,25 @@ func applyInstanceUpdates(invPath string, instances []instanceInfo) error {
 	updates := 0
 
 	for _, inst := range instances {
-		if !strings.Contains(inst.Name, "dreadgoad-") {
+		hostname := extractHostRole(inst.Name)
+		if hostname == "" {
 			continue
 		}
-		parts := strings.SplitN(inst.Name, "dreadgoad-", 2)
-		if len(parts) < 2 {
-			continue
+
+		// Determine what value to write as ansible_host:
+		// - If the instance has a PrivateIP, use it (Ludus/Proxmox IP-based inventory)
+		// - Otherwise, use the InstanceID (AWS SSM-based inventory)
+		newValue := inst.InstanceID
+		if inst.PrivateIP != "" {
+			newValue = inst.PrivateIP
 		}
-		hostname := strings.ToLower(parts[1])
+
 		re := regexp.MustCompile(`(?mi)^(` + regexp.QuoteMeta(hostname) + `\s+ansible_host=)\S+`)
 		if re.MatchString(lines) {
-			newLines := re.ReplaceAllString(lines, "${1}"+inst.InstanceID)
+			newLines := re.ReplaceAllString(lines, "${1}"+newValue)
 			if newLines != lines {
 				lines = newLines
-				fmt.Printf("Updated %s with instance ID: %s\n", hostname, inst.InstanceID)
+				fmt.Printf("Updated %s with ansible_host: %s\n", hostname, newValue)
 				updates++
 			}
 		}
@@ -196,9 +228,9 @@ func applyInstanceUpdates(invPath string, instances []instanceInfo) error {
 	}
 
 	if updates == 0 {
-		fmt.Println("No instance ID updates needed. All IDs are current.")
+		fmt.Println("No inventory updates needed. All values are current.")
 	} else {
-		fmt.Printf("Updated %d instance IDs in %s\n", updates, invPath)
+		fmt.Printf("Updated %d entries in %s\n", updates, invPath)
 	}
 	return nil
 }
