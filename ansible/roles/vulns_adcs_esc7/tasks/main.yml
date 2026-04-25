@@ -13,8 +13,6 @@
           $caManagerUser
       )
       if (Get-Module -ListAvailable -Name PSPKI) {
-        $Ansible.Changed = $false
-      } else {
         Import-Module -Name PSPKI
         $caHostname = Get-CertificationAuthority | Select-Object -ExpandProperty ComputerName
         try {
@@ -23,6 +21,8 @@
         } catch {
           $Ansible.Changed = $false
         }
+      } else {
+        $Ansible.Changed = $false
       }
     error_action: stop
     parameters:

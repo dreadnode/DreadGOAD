@@ -51,7 +51,7 @@ func NewClient(ctx context.Context, apiURL, user, password, node, pool string) (
 	return c, nil
 }
 
-func (c *Client) authenticate(ctx context.Context, password string) error {
+func (c *Client) authenticate(ctx context.Context, password string) (err error) {
 	data := url.Values{
 		"username": {c.user},
 		"password": {password},
@@ -69,7 +69,11 @@ func (c *Client) authenticate(ctx context.Context, password string) error {
 	if err != nil {
 		return fmt.Errorf("connect to Proxmox at %s: %w", c.baseURL, err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -116,12 +120,16 @@ func (c *Client) doRequest(ctx context.Context, method, path string, body io.Rea
 	return c.httpClient.Do(req)
 }
 
-func (c *Client) get(ctx context.Context, path string) (json.RawMessage, error) {
+func (c *Client) get(ctx context.Context, path string) (_ json.RawMessage, err error) {
 	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
@@ -137,7 +145,7 @@ func (c *Client) get(ctx context.Context, path string) (json.RawMessage, error) 
 	return envelope.Data, nil
 }
 
-func (c *Client) post(ctx context.Context, path string, data url.Values) error {
+func (c *Client) post(ctx context.Context, path string, data url.Values) (err error) {
 	var body io.Reader
 	if data != nil {
 		body = strings.NewReader(data.Encode())
@@ -146,7 +154,11 @@ func (c *Client) post(ctx context.Context, path string, data url.Values) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
@@ -234,13 +246,17 @@ func (c *Client) StopVM(ctx context.Context, vmType string, vmid int) error {
 }
 
 // DestroyVM destroys a VM or container.
-func (c *Client) DestroyVM(ctx context.Context, vmType string, vmid int) error {
+func (c *Client) DestroyVM(ctx context.Context, vmType string, vmid int) (err error) {
 	resp, err := c.doRequest(ctx, http.MethodDelete,
 		fmt.Sprintf("/nodes/%s/%s/%d", url.PathEscape(c.node), vmType, vmid), nil)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("destroy VM %d: HTTP %d: %s", vmid, resp.StatusCode, string(b))
@@ -249,7 +265,7 @@ func (c *Client) DestroyVM(ctx context.Context, vmType string, vmid int) error {
 }
 
 // QEMUAgentExec runs a command via the QEMU guest agent.
-func (c *Client) QEMUAgentExec(ctx context.Context, vmid int, command string, timeout time.Duration) (string, string, error) {
+func (c *Client) QEMUAgentExec(ctx context.Context, vmid int, command string, timeout time.Duration) (stdout, stderr string, err error) {
 	path := fmt.Sprintf("/nodes/%s/qemu/%d/agent/exec", url.PathEscape(c.node), vmid)
 	data := url.Values{
 		"command":    {"powershell.exe"},
@@ -259,7 +275,11 @@ func (c *Client) QEMUAgentExec(ctx context.Context, vmid int, command string, ti
 	if err != nil {
 		return "", "", fmt.Errorf("agent exec on VM %d: %w", vmid, err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(resp.Body)
