@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	daws "github.com/dreadnode/dreadgoad/internal/aws"
 	"github.com/dreadnode/dreadgoad/internal/config"
 	inv "github.com/dreadnode/dreadgoad/internal/inventory"
 	"github.com/spf13/cobra"
@@ -24,7 +23,7 @@ var inventoryCmd = &cobra.Command{
 
 var inventorySyncCmd = &cobra.Command{
 	Use:   "sync",
-	Short: "Synchronize inventory with AWS instance IDs",
+	Short: "Synchronize inventory with provider instance IDs",
 	RunE:  runInventorySync,
 }
 
@@ -132,24 +131,34 @@ func loadInstances(ctx context.Context, jsonFile, invPath string, cfg *config.Co
 	}
 
 	if !parsed.IsSSM() {
-		return nil, fmt.Errorf("inventory sync from AWS is only supported for SSM inventories; use --json to provide instance data manually")
+		// For non-SSM inventories, use the provider to discover instances.
+		prov, err := cfg.NewProvider(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("inventory sync: use --json to provide instance data manually, or configure a provider: %w", err)
+		}
+		provInstances, err := prov.DiscoverInstances(ctx, cfg.Env)
+		if err != nil {
+			return nil, fmt.Errorf("discover instances: %w", err)
+		}
+		var instances []instanceInfo
+		for _, i := range provInstances {
+			instances = append(instances, instanceInfo{InstanceID: i.ID, Name: i.Name})
+		}
+		return instances, nil
 	}
 
-	region, err := cfg.ResolveRegionWithInventory(parsed)
+	// SSM inventory: use provider to discover.
+	prov, err := cfg.NewProvider(ctx)
 	if err != nil {
 		return nil, err
 	}
-	client, err := daws.NewClient(ctx, region)
-	if err != nil {
-		return nil, err
-	}
-	awsInstances, err := client.DiscoverInstances(ctx, cfg.Env)
+	provInstances, err := prov.DiscoverInstances(ctx, cfg.Env)
 	if err != nil {
 		return nil, fmt.Errorf("discover instances: %w", err)
 	}
 	var instances []instanceInfo
-	for _, i := range awsInstances {
-		instances = append(instances, instanceInfo{InstanceID: i.InstanceID, Name: i.Name})
+	for _, i := range provInstances {
+		instances = append(instances, instanceInfo{InstanceID: i.ID, Name: i.Name})
 	}
 	return instances, nil
 }
@@ -226,9 +235,9 @@ func runInventoryMapping(cmd *cobra.Command, args []string) error {
 	return generateInstanceMapping(context.Background(), outputPath)
 }
 
-// generateInstanceMapping queries AWS for instance private IPs and writes the
+// generateInstanceMapping queries the provider for instance IPs and writes the
 // mapping to a JSON file that Ansible's network_discovery role uses to avoid
-// slow runtime detection over SSM. If outputPath is empty, it defaults to
+// slow runtime detection. If outputPath is empty, it defaults to
 // /tmp/aws_instance_mapping_<env>.json.
 // This is a no-op for non-SSM inventories (e.g. Ludus, Proxmox).
 func generateInstanceMapping(ctx context.Context, outputPath string) error {
@@ -254,21 +263,23 @@ func generateInstanceMapping(ctx context.Context, outputPath string) error {
 		outputPath = filepath.Join("/tmp", fmt.Sprintf("aws_instance_mapping_%s.json", cfg.Env))
 	}
 
-	region, err := cfg.ResolveRegionWithInventory(parsed)
-	if err != nil {
-		return err
-	}
-	client, err := daws.NewClient(ctx, region)
+	prov, err := cfg.NewProvider(ctx)
 	if err != nil {
 		return err
 	}
 
-	instanceIDs := parsed.InstanceIDs()
-	fmt.Printf("Querying AWS for %d instance IPs...\n", len(instanceIDs))
-
-	mapping, err := client.GetInstancePrivateIPs(ctx, instanceIDs)
+	instances, err := prov.DiscoverInstances(ctx, cfg.Env)
 	if err != nil {
 		return err
+	}
+
+	fmt.Printf("Querying provider for %d instance IPs...\n", len(instances))
+
+	mapping := make(map[string]string, len(instances))
+	for _, inst := range instances {
+		if inst.PrivateIP != "" {
+			mapping[inst.ID] = inst.PrivateIP
+		}
 	}
 
 	output := map[string]interface{}{

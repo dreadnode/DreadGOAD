@@ -15,8 +15,8 @@ import (
 	"sync"
 	"time"
 
-	daws "github.com/dreadnode/dreadgoad/internal/aws"
 	"github.com/dreadnode/dreadgoad/internal/labmap"
+	"github.com/dreadnode/dreadgoad/internal/provider"
 	"github.com/fatih/color"
 )
 
@@ -41,28 +41,28 @@ type Report struct {
 
 // Validator runs vulnerability checks against GOAD instances.
 type Validator struct {
-	mu      sync.Mutex
-	client  *daws.Client
-	log     *slog.Logger
-	env     string
-	verbose bool
-	report  Report
-	hosts   map[string]string // hostname -> instance ID
-	lab     *labmap.LabMap
+	mu       sync.Mutex
+	provider provider.Provider
+	log      *slog.Logger
+	env      string
+	verbose  bool
+	report   Report
+	hosts    map[string]string // hostname -> instance ID
+	lab      *labmap.LabMap
 }
 
 // NewValidator creates a new Validator.
-func NewValidator(client *daws.Client, env string, verbose bool, log *slog.Logger, lab *labmap.LabMap) *Validator {
+func NewValidator(prov provider.Provider, env string, verbose bool, log *slog.Logger, lab *labmap.LabMap) *Validator {
 	if log == nil {
 		log = slog.Default()
 	}
 	return &Validator{
-		client:  client,
-		log:     log,
-		env:     env,
-		verbose: verbose,
-		hosts:   make(map[string]string),
-		lab:     lab,
+		provider: prov,
+		log:      log,
+		env:      env,
+		verbose:  verbose,
+		hosts:    make(map[string]string),
+		lab:      lab,
 		report: Report{
 			Date: time.Now().UTC().Format(time.RFC3339),
 			Env:  env,
@@ -73,7 +73,7 @@ func NewValidator(client *daws.Client, env string, verbose bool, log *slog.Logge
 // DiscoverHosts finds GOAD instances and maps hostnames to instance IDs.
 // Host roles are derived from the lab config, not hardcoded.
 func (v *Validator) DiscoverHosts(ctx context.Context) error {
-	instances, err := v.client.DiscoverInstances(ctx, v.env)
+	instances, err := v.provider.DiscoverInstances(ctx, v.env)
 	if err != nil {
 		return fmt.Errorf("discover instances: %w", err)
 	}
@@ -83,8 +83,8 @@ func (v *Validator) DiscoverHosts(ctx context.Context) error {
 		for _, role := range v.lab.HostRoles() {
 			host := strings.ToUpper(role)
 			if strings.Contains(name, host) {
-				v.hosts[host] = inst.InstanceID
-				v.addResult(os.Stdout, "PASS", "Discovery", fmt.Sprintf("Found %s", host), inst.InstanceID)
+				v.hosts[host] = inst.ID
+				v.addResult(os.Stdout, "PASS", "Discovery", fmt.Sprintf("Found %s", host), inst.ID)
 			}
 		}
 	}
@@ -191,7 +191,7 @@ func (v *Validator) runPS(ctx context.Context, host, command string) string {
 	if v.verbose {
 		v.log.Debug("running PS command", "host", host, "command", command)
 	}
-	result, err := v.client.RunPowerShellCommand(ctx, instanceID, command, 60*time.Second)
+	result, err := v.provider.RunCommand(ctx, instanceID, command, 60*time.Second)
 	if err != nil {
 		v.log.Warn("PS command failed", "host", host, "error", err)
 		return ""

@@ -78,6 +78,37 @@ func setDefaults() {
 	viper.SetDefault("extensions.ws01.playbook", "ext-ws01.yml")
 	viper.SetDefault("extensions.ws01.data_dir", "ws01/data")
 
+	viper.SetDefault("provider", "aws")
+
+	viper.SetDefault("proxmox.api_url", "https://192.168.20.80:8006")
+	viper.SetDefault("proxmox.user", "root@pam")
+	viper.SetDefault("proxmox.password", "")
+	viper.SetDefault("proxmox.node", "proxmox")
+	viper.SetDefault("proxmox.pool", "GOAD")
+	viper.SetDefault("proxmox.full_clone", "false")
+	viper.SetDefault("proxmox.storage", "local")
+	viper.SetDefault("proxmox.vlan", "10")
+	viper.SetDefault("proxmox.network_bridge", "vmbr3")
+	viper.SetDefault("proxmox.network_model", "e1000")
+	viper.SetDefault("proxmox.ip_range", "192.168.10")
+	viper.SetDefault("proxmox.lab", "GOAD")
+	viper.SetDefault("proxmox.template_ids", map[string]string{
+		"WinServer2019_x64":     "201900",
+		"WinServer2016_x64":     "201600",
+		"WinServer2022_x64":     "202201",
+		"WinServer2025_x64":     "202501",
+		"WinServer2019_x64_utd": "201901",
+		"Windows10_22h2_x64":    "102221",
+		"Windows11_23h2_x64":    "112321",
+		"Windows11_24h2_x64":    "112421",
+		"Windows11_25h2_x64":    "112521",
+		"Ubuntu_2204_x64":       "922040",
+		"Ubuntu_2404_x64":       "924040",
+	})
+
+	viper.SetDefault("ludus.api_key", "")
+	viper.SetDefault("ludus.use_impersonation", true)
+
 	viper.SetDefault("infra.deployment", "goad-deployment")
 	viper.SetDefault("infra.terragrunt_binary", "terragrunt")
 	viper.SetDefault("infra.terraform_binary", "tofu")

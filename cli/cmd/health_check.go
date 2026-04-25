@@ -14,7 +14,7 @@ import (
 var healthCheckCmd = &cobra.Command{
 	Use:   "health-check",
 	Short: "Verify all lab instances are healthy",
-	Long: `Runs health checks across all lab instances via SSM to verify:
+	Long: `Runs health checks across all lab instances to verify:
   - Domain controllers are responding
   - AD replication is working with no failures
   - Domain trusts are established
@@ -67,7 +67,7 @@ func runHealthCheck(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		result, err := infra.Client.RunPowerShellCommand(ctx, instanceID, check.command, 90*time.Second)
+		result, err := infra.Provider.RunCommand(ctx, instanceID, check.command, 90*time.Second)
 		if err != nil {
 			color.Red("%-40s %-10s %s", check.name, "FAIL", err.Error())
 			failed++

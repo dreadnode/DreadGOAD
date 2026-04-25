@@ -339,6 +339,22 @@ func (m *LabMap) ADCSHosts() []string {
 	return hosts
 }
 
+// ADCSDCRole returns the DC role for the domain that owns a given ADCS host.
+// This is needed because AD template queries must run against a DC, not a
+// member server where ADCS is installed.
+func (m *LabMap) ADCSDCRole(adcsRole string) string {
+	hc, ok := m.HostConfigs[adcsRole]
+	if !ok {
+		return ""
+	}
+	for _, dc := range m.DomainConfigs {
+		if strings.EqualFold(hc.Hostname, dc.CAServer) {
+			return dc.DC
+		}
+	}
+	return ""
+}
+
 // CAWebEnrollment returns true if any domain has CA web enrollment enabled.
 // Defaults to true unless explicitly set to false.
 func (m *LabMap) CAWebEnrollment() bool {

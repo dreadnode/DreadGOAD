@@ -12,7 +12,6 @@ import (
 	"slices"
 
 	"github.com/dreadnode/dreadgoad/internal/ansible"
-	daws "github.com/dreadnode/dreadgoad/internal/aws"
 	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/dreadnode/dreadgoad/internal/doctor"
 	inv "github.com/dreadnode/dreadgoad/internal/inventory"
@@ -143,6 +142,14 @@ func preflightChecks(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 
+	// Bootstrap the inventory file for all providers. For non-AWS providers
+	// (Ludus, Proxmox) this renders the provider-specific template. For AWS
+	// it copies from the .example template. This must happen before the
+	// SSM-specific checks below, which depend on the inventory existing.
+	if err := bootstrapInventory(cfg.InventoryPath()); err != nil {
+		return fmt.Errorf("inventory bootstrap failed: %w", err)
+	}
+
 	// AWS-specific preflight: sync inventory instance IDs and generate
 	// IP mappings. Skipped for non-SSM providers (Ludus, Proxmox, etc.)
 	// where the inventory is managed manually.
@@ -157,13 +164,75 @@ func preflightChecks(ctx context.Context, cfg *config.Config) error {
 	return nil
 }
 
-// bootstrapInventory copies the example inventory file to the target path if
-// the target does not exist. This allows provision and inventory commands to
-// work on a fresh environment without a manual copy step.
+// bootstrapInventory creates the inventory file if it does not exist.
+// For AWS, it copies from the .example template.
+// For Proxmox and other providers, it renders the provider-specific
+// inventory template from ad/LAB/providers/PROVIDER/inventory.
 func bootstrapInventory(invPath string) error {
 	if _, err := os.Stat(invPath); err == nil {
 		return nil
 	}
+
+	cfg, cfgErr := config.Get()
+	if cfgErr == nil && !cfg.IsAWS() {
+		if err := bootstrapFromProviderTemplate(invPath, cfg); err == nil {
+			return nil
+		}
+	}
+
+	return bootstrapFromExample(invPath)
+}
+
+func bootstrapFromProviderTemplate(invPath string, cfg *config.Config) error {
+	labName := "GOAD"
+	if cfg.ResolvedProvider() == "proxmox" {
+		labName = cfg.ProxmoxLab()
+	}
+	providerName := cfg.ResolvedProvider()
+	templatePath := filepath.Join(cfg.ProjectRoot, "ad", labName, "providers", providerName, "inventory")
+
+	data, err := os.ReadFile(templatePath)
+	if err != nil {
+		return err
+	}
+
+	ipRange, err := resolveIPRange(cfg, providerName)
+	if err != nil {
+		return err
+	}
+
+	rendered := strings.ReplaceAll(string(data), "{{ip_range}}", ipRange)
+	if err := os.WriteFile(invPath, []byte(rendered), 0o644); err != nil {
+		return fmt.Errorf("write inventory: %w", err)
+	}
+	slog.Info("bootstrapped inventory from provider template", "path", invPath, "provider", providerName)
+	return nil
+}
+
+func resolveIPRange(cfg *config.Config, providerName string) (string, error) {
+	if providerName == "ludus" {
+		ctx := context.Background()
+		if prov, err := cfg.NewProvider(ctx); err == nil {
+			type ipRanger interface {
+				IPRange(ctx context.Context) (string, error)
+			}
+			if lr, ok := prov.(ipRanger); ok {
+				if r, err := lr.IPRange(ctx); err == nil {
+					return r, nil
+				}
+			}
+		}
+		return "", fmt.Errorf("ludus range not deployed yet; run 'dreadgoad infra apply' first to get IP range")
+	}
+
+	ipRange := cfg.Proxmox.IPRange
+	if ipRange == "" {
+		ipRange = "192.168.10"
+	}
+	return ipRange, nil
+}
+
+func bootstrapFromExample(invPath string) error {
 	examplePath := invPath + ".example"
 	if _, err := os.Stat(examplePath); err != nil {
 		return fmt.Errorf("inventory file not found: %s (no .example template either)", invPath)
@@ -197,26 +266,22 @@ func ensureInventorySynced(ctx context.Context, cfg *config.Config) error {
 		return nil
 	}
 
-	region, err := cfg.ResolveRegionWithInventory(parsed)
+	prov, err := cfg.NewProvider(ctx)
 	if err != nil {
-		return fmt.Errorf("resolve region: %w", err)
-	}
-	client, err := daws.NewClient(ctx, region)
-	if err != nil {
-		return fmt.Errorf("create AWS client: %w", err)
+		return fmt.Errorf("create provider: %w", err)
 	}
 
-	awsInstances, err := client.DiscoverInstances(ctx, cfg.Env)
+	liveInstances, err := prov.DiscoverInstances(ctx, cfg.Env)
 	if err != nil {
 		return fmt.Errorf("discover instances: %w", err)
 	}
-	if len(awsInstances) == 0 {
+	if len(liveInstances) == 0 {
 		return fmt.Errorf("no running instances found for env=%s", cfg.Env)
 	}
 
-	liveIDs := make(map[string]struct{}, len(awsInstances))
-	for _, inst := range awsInstances {
-		liveIDs[inst.InstanceID] = struct{}{}
+	liveIDs := make(map[string]struct{}, len(liveInstances))
+	for _, inst := range liveInstances {
+		liveIDs[inst.ID] = struct{}{}
 	}
 
 	stale := false
@@ -234,10 +299,10 @@ func ensureInventorySynced(ctx context.Context, cfg *config.Config) error {
 		return nil
 	}
 
-	slog.Info("inventory has stale instance IDs, auto-syncing from AWS")
+	slog.Info("inventory has stale instance IDs, auto-syncing from provider")
 	var instances []instanceInfo
-	for _, i := range awsInstances {
-		instances = append(instances, instanceInfo{InstanceID: i.InstanceID, Name: i.Name})
+	for _, i := range liveInstances {
+		instances = append(instances, instanceInfo{InstanceID: i.ID, Name: i.Name})
 	}
 	return applyInstanceUpdates(invPath, instances)
 }

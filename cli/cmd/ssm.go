@@ -4,22 +4,29 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
-	"os/exec"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
-	daws "github.com/dreadnode/dreadgoad/internal/aws"
 	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/dreadnode/dreadgoad/internal/inventory"
+	"github.com/dreadnode/dreadgoad/internal/provider"
 	"github.com/spf13/cobra"
 )
 
 var ssmCmd = &cobra.Command{
 	Use:   "ssm",
 	Short: "Manage AWS SSM sessions",
+	Long:  "SSM commands are only available when provider is set to 'aws'.",
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := config.Get()
+		if err != nil {
+			return err
+		}
+		if !cfg.IsAWS() {
+			return fmt.Errorf("ssm commands are only available with the AWS provider (current: %s)", cfg.ResolvedProvider())
+		}
+		return nil
+	},
 }
 
 var ssmStatusCmd = &cobra.Command{
@@ -63,25 +70,32 @@ func init() {
 	_ = ssmRunCmd.MarkFlagRequired("cmd")
 }
 
-func runSSMStatus(cmd *cobra.Command, args []string) error {
+func getSessionManager(ctx context.Context) (provider.SessionManager, *config.Config, error) {
 	cfg, err := config.Get()
+	if err != nil {
+		return nil, nil, err
+	}
+	prov, err := cfg.NewProvider(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	sm, ok := prov.(provider.SessionManager)
+	if !ok {
+		return nil, nil, fmt.Errorf("provider %s does not support session management", prov.Name())
+	}
+	return sm, cfg, nil
+}
+
+func runSSMStatus(cmd *cobra.Command, args []string) error {
+	ctx := context.Background()
+	sm, cfg, err := getSessionManager(ctx)
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
 
 	inv, err := inventory.Parse(cfg.InventoryPath())
 	if err != nil {
 		return fmt.Errorf("parse inventory: %w", err)
-	}
-
-	region, err := cfg.ResolveRegionWithInventory(inv)
-	if err != nil {
-		return err
-	}
-	client, err := daws.NewClient(ctx, region)
-	if err != nil {
-		return err
 	}
 
 	fmt.Printf("Active SSM sessions for %s environment:\n\n", cfg.Env)
@@ -91,7 +105,7 @@ func runSSMStatus(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		sessions, err := client.DescribeActiveSessions(ctx, host.InstanceID)
+		sessions, err := sm.DescribeActiveSessions(ctx, host.InstanceID)
 		if err != nil {
 			fmt.Printf("[%s] %s: error: %v\n", host.Name, host.InstanceID, err)
 			continue
@@ -110,11 +124,11 @@ func runSSMStatus(cmd *cobra.Command, args []string) error {
 }
 
 func runSSMCleanup(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Get()
+	ctx := context.Background()
+	sm, cfg, err := getSessionManager(ctx)
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
 
 	maxAge, _ := cmd.Flags().GetInt("max-age")
 	dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -124,19 +138,10 @@ func runSSMCleanup(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("parse inventory: %w", err)
 	}
 
-	region, err := cfg.ResolveRegionWithInventory(inv)
-	if err != nil {
-		return err
-	}
-	client, err := daws.NewClient(ctx, region)
-	if err != nil {
-		return err
-	}
-
 	fmt.Printf("Checking for stale SSM sessions (older than %d minutes)...\n", maxAge)
 
-	terminated, err := client.CleanupStaleSessions(ctx, inv.InstanceIDs(),
-		time.Duration(maxAge)*time.Minute, dryRun, slog.Default())
+	terminated, err := sm.CleanupStaleSessions(ctx, inv.InstanceIDs(),
+		time.Duration(maxAge)*time.Minute, dryRun)
 	if err != nil {
 		return err
 	}
@@ -151,6 +156,12 @@ func runSSMCleanup(cmd *cobra.Command, args []string) error {
 
 func runSSMConnect(cmd *cobra.Command, args []string) error {
 	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+
+	sm, _, err := getSessionManager(ctx)
 	if err != nil {
 		return err
 	}
@@ -171,52 +182,21 @@ func runSSMConnect(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("Starting SSM session to %s (%s) in %s...\n", host.Name, host.InstanceID, region)
 
-	// Ignore SIGINT in the parent so Ctrl+C is forwarded to the SSM
-	// session process (which handles it as a remote command interrupt)
-	// rather than killing dreadgoad and tearing down the session.
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT)
-	defer signal.Stop(sigCh)
-
-	ssmCmd := exec.Command("aws", "ssm", "start-session",
-		"--target", host.InstanceID,
-		"--region", region)
-	ssmCmd.Stdin = os.Stdin
-	ssmCmd.Stdout = os.Stdout
-	ssmCmd.Stderr = os.Stderr
-	return ssmCmd.Run()
+	return sm.StartInteractiveSession(ctx, host.InstanceID, region)
 }
 
 func runSSMRun(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Get()
+	ctx := context.Background()
+
+	prov, cfg, err := getProvider(ctx)
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
 
 	hostsFlag, _ := cmd.Flags().GetString("hosts")
 	psCmd, _ := cmd.Flags().GetString("cmd")
 
-	// Parse the inventory so the region resolves consistently with the other
-	// ssm subcommands: prefer the inventory's ansible_aws_ssm_region, fall back
-	// to cfg.Region. Without this, a user with region in the inventory but not
-	// in dreadgoad.yaml would have ssm status/cleanup/connect work and only
-	// ssm run fail with "AWS region not configured".
-	inv, err := inventory.Parse(cfg.InventoryPath())
-	if err != nil {
-		return fmt.Errorf("parse inventory: %w", err)
-	}
-	region, err := cfg.ResolveRegionWithInventory(inv)
-	if err != nil {
-		return err
-	}
-
-	client, err := daws.NewClient(ctx, region)
-	if err != nil {
-		return err
-	}
-
-	instances, err := client.DiscoverInstances(ctx, cfg.Env)
+	instances, err := prov.DiscoverInstances(ctx, cfg.Env)
 	if err != nil {
 		return fmt.Errorf("discover instances: %w", err)
 	}
@@ -225,7 +205,7 @@ func runSSMRun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no running GOAD instances found for env=%s", cfg.Env)
 	}
 
-	targetIDs, targetNames := filterInstances(instances, hostsFlag)
+	targetIDs, targetNames := filterProviderInstances(instances, hostsFlag)
 	if len(targetIDs) == 0 {
 		return fmt.Errorf("no matching instances found")
 	}
@@ -233,7 +213,7 @@ func runSSMRun(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Running command on: %s\n", strings.Join(targetNames, ", "))
 	fmt.Printf("Command: %s\n\n", psCmd)
 
-	results, err := client.RunPowerShellOnMultiple(ctx, targetIDs, psCmd, 60*time.Second)
+	results, err := prov.RunCommandOnMultiple(ctx, targetIDs, psCmd, 60*time.Second)
 	if err != nil {
 		return err
 	}
@@ -256,11 +236,11 @@ func runSSMRun(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func filterInstances(instances []daws.Instance, hostsFlag string) ([]string, []string) {
+func filterProviderInstances(instances []provider.Instance, hostsFlag string) ([]string, []string) {
 	var ids, names []string
 	if hostsFlag == "all" {
 		for _, inst := range instances {
-			ids = append(ids, inst.InstanceID)
+			ids = append(ids, inst.ID)
 			names = append(names, inst.Name)
 		}
 		return ids, names
@@ -270,14 +250,14 @@ func filterInstances(instances []daws.Instance, hostsFlag string) ([]string, []s
 		found := false
 		for _, inst := range instances {
 			if strings.Contains(strings.ToUpper(inst.Name), strings.ToUpper(hostName)) {
-				ids = append(ids, inst.InstanceID)
+				ids = append(ids, inst.ID)
 				names = append(names, inst.Name)
 				found = true
 				break
 			}
 		}
 		if !found {
-			fmt.Printf("WARNING: Host %q not found\n", hostName)
+			slog.Warn("host not found", "host", hostName)
 		}
 	}
 	return ids, names

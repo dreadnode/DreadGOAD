@@ -345,7 +345,13 @@ func (v *Validator) checkADCS(ctx context.Context, w io.Writer) {
 			}
 		}
 
-		output = v.runPS(ctx, host,
+		// Query published templates from the domain's DC (not the ADCS member
+		// server) because ADWS is only reliable on domain controllers.
+		templateQueryHost := host
+		if dcRole := v.lab.ADCSDCRole(role); dcRole != "" {
+			templateQueryHost = strings.ToUpper(dcRole)
+		}
+		output = v.runPS(ctx, templateQueryHost,
 			`Get-ADObject -Filter {objectClass -eq 'pKIEnrollmentService'} -SearchBase ("CN=Enrollment Services,CN=Public Key Services,CN=Services," + (Get-ADRootDSE).configurationNamingContext) -Properties certificateTemplates | Select-Object -ExpandProperty certificateTemplates`)
 		if strings.TrimSpace(output) == "" {
 			continue

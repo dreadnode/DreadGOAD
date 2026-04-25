@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	daws "github.com/dreadnode/dreadgoad/internal/aws"
 	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/dreadnode/dreadgoad/internal/inventory"
+	"github.com/dreadnode/dreadgoad/internal/provider"
 )
 
 // RetryOptions configures the retry behavior for a [RunPlaybookWithRetry] call.
@@ -242,9 +242,8 @@ func buildRetryLimit(userLimit, failedHosts string) string {
 }
 
 // CleanupSSMSessions terminates stale SSM sessions to prevent connection
-// saturation. It resolves the AWS region from the inventory, then calls
-// [daws.Client.CleanupStaleSessions] for all instances in the current
-// environment. Sessions idle for more than 15 minutes are terminated.
+// saturation. It resolves the provider from config, checks if it supports
+// session management, and cleans up sessions older than 15 minutes.
 // This is a no-op for non-SSM inventories (e.g. Ludus, Proxmox).
 func CleanupSSMSessions(ctx context.Context, env string, log *slog.Logger) {
 	cfg, err := config.Get()
@@ -262,18 +261,18 @@ func CleanupSSMSessions(ctx context.Context, env string, log *slog.Logger) {
 		return
 	}
 
-	region, err := cfg.ResolveRegionWithInventory(inv)
+	prov, err := cfg.NewProvider(ctx)
 	if err != nil {
-		log.Warn("could not resolve AWS region for SSM cleanup", "error", err)
-		return
-	}
-	client, err := daws.NewClient(ctx, region)
-	if err != nil {
-		log.Warn("could not create AWS client for SSM cleanup", "error", err)
+		log.Warn("could not create provider for SSM cleanup", "error", err)
 		return
 	}
 
-	terminated, err := client.CleanupStaleSessions(ctx, inv.InstanceIDs(), 15*time.Minute, false, log)
+	sm, ok := prov.(provider.SessionManager)
+	if !ok {
+		return
+	}
+
+	terminated, err := sm.CleanupStaleSessions(ctx, inv.InstanceIDs(), 15*time.Minute, false)
 	if err != nil {
 		log.Warn("skipping stale SSM session cleanup", "error", err)
 		return
@@ -304,14 +303,14 @@ func fixSSMUsers(ctx context.Context, env string, failedHosts []string, log *slo
 		return
 	}
 
-	region, err := cfg.ResolveRegionWithInventory(inv)
+	prov, err := cfg.NewProvider(ctx)
 	if err != nil {
-		log.Warn("could not resolve AWS region for ssm-user fix", "error", err)
+		log.Warn("could not create provider for ssm-user fix", "error", err)
 		return
 	}
-	client, err := daws.NewClient(ctx, region)
-	if err != nil {
-		log.Warn("could not create AWS client for ssm-user fix", "error", err)
+
+	ssmRecovery, ok := prov.(provider.SSMRecovery)
+	if !ok {
 		return
 	}
 
@@ -324,11 +323,11 @@ func fixSSMUsers(ctx context.Context, env string, failedHosts []string, log *slo
 
 		log.Info("fixing ssm-user", "host", hostName, "instance", host.InstanceID)
 
-		if err := client.EnableSSMUserLocal(ctx, host.InstanceID); err != nil {
+		if err := ssmRecovery.EnableSSMUserLocal(ctx, host.InstanceID); err != nil {
 			log.Info("local enable failed, trying domain account fix", "host", hostName)
 			// Brief pause to avoid SSM SendCommand throttling on the same instance.
 			time.Sleep(5 * time.Second)
-			if err := client.FixSSMUserViaDomainAccount(ctx, host.InstanceID); err != nil {
+			if err := ssmRecovery.FixSSMUserViaDomainAccount(ctx, host.InstanceID); err != nil {
 				log.Warn("ssm-user fix failed", "host", hostName, "error", err)
 			}
 			// FixSSMUserViaDomainAccount already restarts SSM Agent
@@ -340,7 +339,7 @@ func fixSSMUsers(ctx context.Context, env string, failedHosts []string, log *slo
 		// Brief pause to avoid SSM SendCommand throttling on the same instance.
 		time.Sleep(5 * time.Second)
 		log.Info("restarting SSM Agent to refresh credentials", "host", hostName)
-		if err := client.RestartSSMAgent(ctx, host.InstanceID); err != nil {
+		if err := ssmRecovery.RestartSSMAgent(ctx, host.InstanceID); err != nil {
 			log.Warn("SSM Agent restart failed", "host", hostName, "error", err)
 		}
 	}
