@@ -433,11 +433,11 @@ Import-Module -Name PSPKI
 try {
   $ca = Get-CertificationAuthority
   $acl = Get-CertificationAuthority $ca.ComputerName | Get-CertificationAuthorityAcl
-  $match = $acl | Where-Object { $_.Identity -like '*%s*' -and $_.Rights -match 'ManageCa' }
+  $match = $acl.Access | Where-Object { $_.IdentityReference -like '*%s*' -and $_.Rights -match 'ManageCa' }
   if ($match) { Write-Output 'MANAGECA_FOUND' } else { Write-Output 'MANAGECA_NOT_FOUND' }
 } catch {
   Write-Output "CHECK_ERROR: $_"
-}`, strings.ReplaceAll(f.CAManager, `\`, `\\`))
+}`, f.CAManager)
 
 		output := v.runPS(ctx, host, script)
 
