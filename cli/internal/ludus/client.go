@@ -1,6 +1,7 @@
 package ludus
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -80,16 +81,23 @@ func (c *Client) MajorVersion() int { return c.majorVersion }
 func (c *Client) SetLabUser(user string) { c.labUser = user }
 
 // run executes a ludus CLI command and returns stdout.
+// Stdout and stderr are captured separately so that Ludus v2 informational
+// log lines (e.g. "[INFO]  Ludus client ...") written to stderr do not
+// pollute JSON output parsed by callers such as RangeStatusJSON.
 func (c *Client) run(ctx context.Context, args ...string) (string, error) {
 	cmdArgs := c.buildArgs(args)
 	cmd := exec.CommandContext(ctx, "ludus", cmdArgs...)
 	cmd.Env = append(cmd.Environ(), fmt.Sprintf("LUDUS_API_KEY=%s", c.apiKey))
 
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("ludus %s: %w\noutput: %s", strings.Join(args, " "), err, string(out))
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("ludus %s: %w\nstdout: %s\nstderr: %s",
+			strings.Join(args, " "), err, stdout.String(), stderr.String())
 	}
-	return strings.TrimSpace(string(out)), nil
+	return strings.TrimSpace(stdout.String()), nil
 }
 
 // buildArgs prepends version-specific flags and impersonation.
@@ -106,12 +114,19 @@ func (c *Client) buildArgs(args []string) []string {
 
 // VerifyConnection checks that the Ludus API is reachable and the key is valid.
 func (c *Client) VerifyConnection(ctx context.Context) (string, error) {
-	out, err := c.run(ctx, "version")
+	out, err := c.run(ctx, "version", "--json")
 	if err != nil {
 		return "", fmt.Errorf("cannot reach Ludus API: %w", err)
 	}
 	if strings.Contains(out, "No API key loaded") {
 		return "", fmt.Errorf("invalid or missing Ludus API key")
+	}
+	var info struct {
+		Version string `json:"version"`
+		Result  string `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(out), &info); err == nil && info.Result != "" {
+		return info.Result, nil
 	}
 	return out, nil
 }
