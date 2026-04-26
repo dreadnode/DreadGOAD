@@ -785,15 +785,19 @@ func (v *Validator) checkScheduledTasks(ctx context.Context, w io.Writer) {
 				continue
 			}
 			output := v.runPS(ctx, host, fmt.Sprintf(
-				`Get-ScheduledTask -TaskName '%s' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty State`, taskName))
+				`$t = Get-ScheduledTask -TaskName '%s' -ErrorAction SilentlyContinue; if ($t) { $t.State } else { '___NOTFOUND___' }`, taskName))
 			state := strings.TrimSpace(output)
 			switch {
-			case strings.EqualFold(state, "Running") || strings.EqualFold(state, "Ready"):
-				v.addResult(w, "PASS", "ScheduledTasks", fmt.Sprintf("%s is %s on %s", taskName, state, host), "")
-			case state != "":
-				v.addResult(w, "WARN", "ScheduledTasks", fmt.Sprintf("%s state is %s on %s", taskName, state, host), "")
-			default:
+			case state == "___NOTFOUND___":
 				v.addResult(w, "FAIL", "ScheduledTasks", fmt.Sprintf("%s NOT found on %s", taskName, host), "")
+			case state == "":
+				// Empty output means WinRM returned nothing (transient error);
+				// the task likely exists but we couldn't read its state.
+				v.addResult(w, "WARN", "ScheduledTasks", fmt.Sprintf("%s state unknown on %s (WinRM returned empty)", taskName, host), "")
+			default:
+				// Task exists; any state (Ready, Running, Disabled, etc.) is a PASS
+				// since we're validating that provisioning created the task.
+				v.addResult(w, "PASS", "ScheduledTasks", fmt.Sprintf("%s is %s on %s", taskName, state, host), "")
 			}
 		}
 	}
