@@ -260,6 +260,12 @@ func runProvision(cmd *cobra.Command, args []string) error {
 	maxRetries, _ := cmd.Flags().GetInt("max-retries")
 	retryDelay, _ := cmd.Flags().GetInt("retry-delay")
 
+	return provisionPlaybooks(ctx, cfg, playbooks, limit, maxRetries, retryDelay)
+}
+
+// provisionPlaybooks runs preflight checks then executes the given playbooks
+// with retry logic. Shared between `provision` and `lab reset`.
+func provisionPlaybooks(ctx context.Context, cfg *config.Config, playbooks []string, limit string, maxRetries, retryDelay int) error {
 	_ = os.MkdirAll(cfg.LogDir, 0o755)
 	logFile := filepath.Join(cfg.LogDir, fmt.Sprintf("%s-dreadgoad-%s.log",
 		cfg.Env, time.Now().Format("20060102_150405")))
@@ -317,7 +323,6 @@ func runProvision(cmd *cobra.Command, args []string) error {
 			if useSSM {
 				ansible.CleanupSSMSessions(ctx, cfg.Env, log)
 			}
-
 			if useSSM && slices.Contains(config.RebootPlaybooks, playbook) {
 				log.Info("playbook may have caused reboots, waiting for SSM reconnection",
 					"playbook", playbook, "delay", "120s")
