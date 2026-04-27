@@ -16,7 +16,8 @@ Configure Active Directory domain trust relationships
 ### main.yml
 
 - **Prepare to trust flush and renew dns** (ansible.windows.win_shell)
-- **Add trusts between domain** (ansible.windows.win_powershell)
+- **Check if trust to remote forest already exists** (ansible.windows.win_shell)
+- **Add trusts between domain** (ansible.windows.win_shell) - Conditional
 - **Reboot and wait for the AD system to restart** (ansible.windows.win_reboot) - Conditional
 
 ## Example Playbook
