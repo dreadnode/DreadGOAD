@@ -63,27 +63,30 @@ func NewClient(ctx context.Context, apiKey string, useImpersonate bool, ssh SSHC
 	c := &Client{
 		apiKey:         apiKey,
 		useImpersonate: useImpersonate,
-		majorVersion:   1,
+		majorVersion:   2,
 		ssh:            ssh,
 	}
 
 	// Only check for local ludus binary when not using SSH.
+	// If missing, attempt to download and install it transparently.
 	if !ssh.IsConfigured() {
-		if _, err := exec.LookPath("ludus"); err != nil {
-			return nil, fmt.Errorf("ludus CLI not found in PATH: %w", err)
+		if _, err := EnsureCLI(ctx); err != nil {
+			return nil, fmt.Errorf("ludus CLI setup failed: %w", err)
 		}
 	}
 
-	// Detect Ludus version.
+	// Detect Ludus version. If this fails, warn but default to v2 (current
+	// release) rather than blocking entirely (the server may be temporarily
+	// unreachable even though the CLI binary is fine).
 	out, err := c.run(ctx, "version", "--json")
-	if err == nil {
+	if err != nil {
+		fmt.Printf("warning: could not detect ludus version, defaulting to v2: %v\n", err)
+	} else {
 		var v VersionInfo
 		if json.Unmarshal([]byte(out), &v) == nil && v.Version != "" {
 			parts := strings.SplitN(v.Version, ".", 2)
-			if len(parts) > 0 {
-				if major := parts[0]; major == "2" || strings.HasPrefix(major, "2") {
-					c.majorVersion = 2
-				}
+			if len(parts) > 0 && parts[0] == "1" {
+				c.majorVersion = 1
 			}
 		}
 	}
@@ -353,29 +356,51 @@ func (c *Client) VMDestroy(ctx context.Context, proxmoxID int) error {
 // WaitForDeployment polls range status until SUCCESS, ERROR, or timeout.
 func (c *Client) WaitForDeployment(ctx context.Context, pollInterval, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
+	start := time.Now()
+	polls := 0
 	for time.Now().Before(deadline) {
 		status, err := c.RangeStatusJSON(ctx)
 		if err != nil {
 			return err
 		}
 
+		polls++
+		elapsed := time.Since(start).Truncate(time.Second)
+		vmSummary := formatVMProgress(status.VMs)
+
 		switch status.RangeState {
 		case "SUCCESS":
+			fmt.Printf("\r  [%s] deployment complete (%d VMs)          \n", elapsed, len(status.VMs))
 			return nil
 		case "ERROR":
 			errOut, _ := c.run(ctx, "range", "errors")
-			return fmt.Errorf("deployment failed: %s", errOut)
+			return fmt.Errorf("deployment failed after %s: %s", elapsed, errOut)
 		case "DEPLOYING":
-			// continue polling
+			fmt.Printf("\r  [%s] deploying... %s", elapsed, vmSummary)
 		default:
 			return fmt.Errorf("unknown range state: %s", status.RangeState)
 		}
 
 		select {
 		case <-ctx.Done():
+			fmt.Println() // newline after progress
 			return ctx.Err()
 		case <-time.After(pollInterval):
 		}
 	}
 	return fmt.Errorf("deployment timed out after %s", timeout)
+}
+
+// formatVMProgress summarizes VM power states for progress display.
+func formatVMProgress(vms []VM) string {
+	if len(vms) == 0 {
+		return "waiting for VMs..."
+	}
+	on := 0
+	for _, vm := range vms {
+		if vm.PoweredOn {
+			on++
+		}
+	}
+	return fmt.Sprintf("%d/%d VMs powered on", on, len(vms))
 }

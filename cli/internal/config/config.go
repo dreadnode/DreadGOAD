@@ -104,9 +104,15 @@ type Config struct {
 }
 
 var (
-	cfg  *Config
-	once sync.Once
+	cfg          *Config
+	once         sync.Once
+	configMissing bool
 )
+
+// ConfigMissing returns true if no dreadgoad.yaml was found during Init.
+// Commands that depend on provider configuration should check this and warn
+// the user (e.g. "no config found, using defaults; run 'dreadgoad init'").
+func ConfigMissing() bool { return configMissing }
 
 // Init initializes Viper configuration. Called from PersistentPreRunE.
 func Init() error {
@@ -138,6 +144,7 @@ func Init() error {
 		if !errors.As(err, &notFound) {
 			return fmt.Errorf("reading config: %w", err)
 		}
+		configMissing = true
 	}
 	return nil
 }

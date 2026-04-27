@@ -140,11 +140,8 @@ func runUpDoctor(cmd *cobra.Command, _ []string) error {
 				cfg.Ludus.SSHPort == 0,
 		},
 	})
-	doctor.PrintResults(results)
-	for _, r := range results {
-		if r.Status == "fail" {
-			return fmt.Errorf("one or more pre-flight checks failed (re-run 'dreadgoad doctor' for details, or pass --skip-doctor to bypass)")
-		}
+	if failed := doctor.PrintResults(results); failed > 0 {
+		return fmt.Errorf("%d pre-flight check(s) failed (re-run 'dreadgoad doctor' for details, or pass --skip-doctor to bypass)", failed)
 	}
 	return nil
 }

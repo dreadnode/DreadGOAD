@@ -1,6 +1,7 @@
 package doctor
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dreadnode/dreadgoad/internal/ludus"
 	"github.com/dreadnode/dreadgoad/internal/sshconfig"
 	"github.com/fatih/color"
 )
@@ -54,8 +56,8 @@ func RunChecks(opts Options) []CheckResult {
 	results = append(results, checkCommand("python3", "Python 3"))
 	results = append(results, checkCommand("jq", "jq"))
 	results = append(results, checkCommand("zip", "zip"))
-	results = append(results, checkInventoryFile(opts.InventoryPath))
-	results = append(results, checkAnsibleCollections()...)
+	results = append(results, checkInventoryFile(opts.InventoryPath, opts.Provider))
+	results = append(results, checkAnsibleCollections(opts.Provider)...)
 
 	switch opts.Provider {
 	case "ludus":
@@ -72,8 +74,8 @@ func RunChecks(opts Options) []CheckResult {
 	return results
 }
 
-// PrintResults displays check results with color.
-func PrintResults(results []CheckResult) {
+// PrintResults displays check results with color and returns the failure count.
+func PrintResults(results []CheckResult) int {
 	passed, failed, warned := 0, 0, 0
 
 	fmt.Println("DreadGOAD Pre-flight Checks")
@@ -95,6 +97,7 @@ func PrintResults(results []CheckResult) {
 
 	fmt.Println(strings.Repeat("=", 40))
 	fmt.Printf("Results: %d passed, %d failed, %d warnings\n", passed, failed, warned)
+	return failed
 }
 
 // CheckAnsibleCoreVersion verifies ansible-core is installed and within the
@@ -177,8 +180,17 @@ func checkAWSCredentials() CheckResult {
 	}
 }
 
-func checkInventoryFile(path string) CheckResult {
+func checkInventoryFile(path, provider string) CheckResult {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
+		// For Ludus, inventory is generated during provision from a template,
+		// so it won't exist yet on a fresh setup.
+		if provider == "ludus" {
+			return CheckResult{
+				Name:    "Inventory",
+				Status:  "warn",
+				Message: fmt.Sprintf("%s not found (will be generated during provision)", path),
+			}
+		}
 		return CheckResult{
 			Name:    "Inventory",
 			Status:  "fail",
@@ -222,14 +234,17 @@ func checkTerraformOrTofu() CheckResult {
 	}
 }
 
-func checkAnsibleCollections() []CheckResult {
+func checkAnsibleCollections(provider string) []CheckResult {
 	required := []string{
 		"ansible.windows",
 		"community.general",
 		"community.windows",
-		"amazon.aws",
 		"microsoft.ad",
 		"chocolatey.chocolatey",
+	}
+	// amazon.aws is only needed for the AWS provider.
+	if provider != "ludus" {
+		required = append(required, "amazon.aws")
 	}
 
 	out, _ := exec.Command("ansible-galaxy", "collection", "list", "--format", "yaml").CombinedOutput()
@@ -260,15 +275,30 @@ func runLudusChecks(opts LudusOptions) []CheckResult {
 	var results []CheckResult
 
 	if opts.SSHHost == "" {
-		// Local mode: ludus CLI must be on PATH.
-		results = append(results, checkCommand("ludus", "Ludus CLI"))
+		// Local mode: ludus CLI must be on PATH. If missing, attempt install.
+		results = append(results, checkLudusCLI())
 	} else {
 		results = append(results, checkLudusSSH(opts)...)
+		// SSH mode uses a SOCKS tunnel + psrp connection plugin, which
+		// requires pypsrp and requests[socks] Python packages.
+		results = append(results, checkPyPSRP())
 	}
 
 	results = append(results, checkLudusAPIKey(opts.APIKey))
 
 	return results
+}
+
+func checkLudusCLI() CheckResult {
+	path, err := ludus.EnsureCLI(context.Background())
+	if err != nil {
+		return CheckResult{
+			Name:    "Ludus CLI",
+			Status:  "fail",
+			Message: fmt.Sprintf("not found and auto-install failed: %v", err),
+		}
+	}
+	return CheckResult{Name: "Ludus CLI", Status: "pass", Message: path}
 }
 
 func checkLudusAPIKey(configured string) CheckResult {
@@ -283,6 +313,22 @@ func checkLudusAPIKey(configured string) CheckResult {
 		Status:  "fail",
 		Message: "not configured. Set ludus.api_key in dreadgoad.yaml or export LUDUS_API_KEY",
 	}
+}
+
+func checkPyPSRP() CheckResult {
+	// pypsrp provides the ansible psrp connection plugin. requests[socks]
+	// adds SOCKS proxy support so WinRM traffic can be routed through the
+	// SSH tunnel. Check both by trying to import them.
+	cmd := exec.Command("python3", "-c", "import pypsrp; import socks")
+	if err := cmd.Run(); err != nil {
+		return CheckResult{
+			Name:   "pypsrp + PySocks",
+			Status: "fail",
+			Message: "missing Python packages required for SSH-mode provisioning. " +
+				"Install with: pip install pypsrp requests[socks]",
+		}
+	}
+	return CheckResult{Name: "pypsrp + PySocks", Status: "pass", Message: "installed"}
 }
 
 func checkLudusSSH(opts LudusOptions) []CheckResult {

@@ -138,10 +138,24 @@ func (p *LudusProvider) FindInstanceByHostname(ctx context.Context, env, hostnam
 		return nil, err
 	}
 	hostname = strings.ToUpper(hostname)
+	var matches []provider.Instance
 	for _, inst := range instances {
-		if strings.Contains(strings.ToUpper(inst.Name), hostname) {
-			return &inst, nil
+		// Extract the role suffix (last segment after "-") for exact matching.
+		parts := strings.Split(inst.Name, "-")
+		role := strings.ToUpper(parts[len(parts)-1])
+		if role == hostname {
+			matches = append(matches, inst)
 		}
+	}
+	if len(matches) == 1 {
+		return &matches[0], nil
+	}
+	if len(matches) > 1 {
+		names := make([]string, len(matches))
+		for i, m := range matches {
+			names[i] = m.Name
+		}
+		return nil, fmt.Errorf("hostname %q matched multiple VMs: %s", hostname, strings.Join(names, ", "))
 	}
 	return nil, fmt.Errorf("VM not found for hostname %s", hostname)
 }
@@ -213,6 +227,7 @@ func (p *LudusProvider) DestroyInstances(ctx context.Context, ids []string) erro
 			return fmt.Errorf("destroy VM %d: %w", vmid, err)
 		}
 	}
+	p.invalidateCache()
 	return nil
 }
 
@@ -398,5 +413,12 @@ func (p *LudusProvider) IPRange(ctx context.Context) (string, error) {
 // Client returns the underlying Ludus client for range-level operations.
 func (p *LudusProvider) Client() *Client { return p.client }
 
-// Compile-time interface check.
+// IsSSH returns true when the provider is configured for remote execution.
+func (p *LudusProvider) IsSSH() bool { return p.client.SSH().IsConfigured() }
+
+// SSHConfig returns the SSH configuration for the underlying client.
+// This is used by the provision command to set up a SOCKS proxy tunnel.
+func (p *LudusProvider) SSHConfig() SSHConfig { return p.client.SSH() }
+
+// Compile-time interface checks.
 var _ provider.Provider = (*LudusProvider)(nil)

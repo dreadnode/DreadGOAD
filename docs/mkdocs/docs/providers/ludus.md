@@ -13,10 +13,13 @@
 
 ## Prerequisites
 
-- A working Ludus v2 installation: [https://docs.ludus.cloud/docs/quick-start/install-ludus/](https://docs.ludus.cloud/docs/quick-start/install-ludus/)
+- A working Ludus v2 server: [https://docs.ludus.cloud/docs/quick-start/install-ludus/](https://docs.ludus.cloud/docs/quick-start/install-ludus/)
 - An **admin** user created with an API key
 - `zip` package installed on the server (`apt-get install -y zip`)
 - Packer templates built in Ludus for the required VM images (see [Building Packer Templates](#building-packer-templates) below)
+
+!!! tip "Ludus CLI auto-install"
+    DreadGOAD automatically downloads and installs the Ludus CLI client if it is not already in your PATH. This happens transparently during `dreadgoad doctor`, `dreadgoad init`, or any command that needs the Ludus CLI. The binary is installed to `/usr/local/bin` (or `~/.local/bin` if `/usr/local/bin` is not writable) and its checksum is verified against the official release.
 
 ## Building Packer Templates
 
@@ -153,29 +156,30 @@ The orchestrator is just sugar for the per-step commands, which still work stand
 
 ```bash
 # Check prerequisites
-dreadgoad --provider ludus doctor
+dreadgoad doctor
 
 # Deploy VMs via Ludus range
-dreadgoad --provider ludus infra apply
+dreadgoad infra apply
 
 # Provision the AD lab
-dreadgoad --provider ludus provision
+dreadgoad provision
 ```
+
+!!! note
+    If your `dreadgoad.yaml` sets `provider: ludus`, you don't need `--provider ludus` on every command. The flag is only needed to override the config or when no config file exists.
 
 ### What happens during `infra apply`
 
-1. DreadGOAD creates a Ludus user for the lab (if impersonation is enabled)
-2. The Ludus range configuration is generated from the GOAD lab config (`ad/GOAD/providers/ludus/config.yml`)
-3. The config is pushed via `ludus range config set`
-4. VMs are deployed using `ludus range deploy`
-5. DreadGOAD polls `ludus range status` every 30 seconds until all VMs report SUCCESS
-6. Ludus handles sysprep, hostname configuration, and initial Windows setup
-7. A router VM (`debian-11-x64-server-template`) is deployed for network routing
+1. The Ludus range configuration (`ad/GOAD/providers/ludus/config.yml`) is pushed via `ludus range config set`
+2. VMs are deployed using `ludus range deploy`
+3. DreadGOAD polls `ludus range status` every 30 seconds, showing live progress (elapsed time and VM power-on count) until all VMs report SUCCESS
+4. Ludus handles sysprep, hostname configuration, and initial Windows setup
+5. A router VM (`debian-11-x64-server-template`) is deployed for network routing
 
 ### What happens during `provision`
 
 !!! note "Transport: WinRM"
-    Unlike the AWS provider (which uses SSM), Ludus provisioning runs Ansible over **WinRM** to the Windows VMs on the Ludus VLAN. All target VMs must be **powered on** for provisioning, `health-check`, and `validate` to succeed — `infra apply` leaves them running, but if you stop the lab between steps, run `dreadgoad --provider ludus lab start` first.
+    Unlike the AWS provider (which uses SSM), Ludus provisioning runs Ansible over **WinRM** to the Windows VMs on the Ludus VLAN. All target VMs must be **powered on** for provisioning, `health-check`, and `validate` to succeed — `infra apply` leaves them running, but if you stop the lab between steps, run `dreadgoad lab start` first.
 
 1. The inventory file is automatically bootstrapped from the Ludus provider template
 2. IP addresses are resolved from the deployed Ludus range (format: `10.{range_number}.10.x`)
@@ -214,24 +218,24 @@ LUDUS_API_KEY='YOUR_KEY' ludus range status
 Or use the DreadGOAD CLI:
 
 ```bash
-dreadgoad --provider ludus lab status
+dreadgoad lab status
 ```
 
 ## Verification
 
-`health-check` and `validate` connect to the Windows VMs over WinRM and run ad-hoc Ansible commands, so the VMs must be running. If they were stopped via `lab stop`, start them again with `dreadgoad --provider ludus lab start` (or `ludus range start`) before verifying.
+`health-check` and `validate` connect to the Windows VMs over WinRM and run ad-hoc Ansible commands, so the VMs must be running. If they were stopped via `lab stop`, start them again with `dreadgoad lab start` (or `ludus range start`) before verifying.
 
 After provisioning completes, verify the lab is working correctly:
 
 ```bash
 # Full health check (AD controllers, replication, DNS, trusts, services)
-dreadgoad --provider ludus health-check
+dreadgoad health-check
 
 # Verify AD forest trusts specifically
-dreadgoad --provider ludus verify-trusts
+dreadgoad verify-trusts
 
 # Run the full vulnerability validation suite
-dreadgoad --provider ludus validate
+dreadgoad validate
 ```
 
 ### Expected health-check output
@@ -259,13 +263,13 @@ You can manage the lab lifecycle:
 
 ```bash
 # Check lab status
-dreadgoad --provider ludus lab status
+dreadgoad lab status
 
 # Stop all VMs
-dreadgoad --provider ludus lab stop
+dreadgoad lab stop
 
 # Start all VMs
-dreadgoad --provider ludus lab start
+dreadgoad lab start
 ```
 
 ## Troubleshooting
@@ -294,7 +298,7 @@ idle_timeout: 3600
 If provisioning fails partway through, you can resume from a specific playbook:
 
 ```bash
-dreadgoad --provider ludus provision --from ad-servers.yml
+dreadgoad provision --from ad-servers.yml
 ```
 
 The playbooks run in order. Common resume points:
@@ -350,7 +354,7 @@ If health-check or verify-trusts reports no instances, make sure the VMs are pow
 ```bash
 ludus range status
 # or
-dreadgoad --provider ludus lab start
+dreadgoad lab start
 ```
 
 ## How It Works

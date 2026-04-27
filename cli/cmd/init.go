@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dreadnode/dreadgoad/internal/ludus"
 	"github.com/dreadnode/dreadgoad/internal/sshconfig"
 	"github.com/spf13/cobra"
 )
@@ -105,10 +106,11 @@ func runInitLudus(ctx context.Context, in *bufio.Reader, w io.Writer, out string
 			fmt.Fprintln(w, "  ok: ludus reachable")
 		}
 	} else {
-		if _, err := exec.LookPath("ludus"); err != nil {
-			fmt.Fprintln(w, "  warn: ludus CLI not found in PATH — install it before running 'dreadgoad up'")
+		path, err := ludus.EnsureCLI(ctx)
+		if err != nil {
+			fmt.Fprintf(w, "  warn: ludus CLI not available: %v\n", err)
 		} else {
-			fmt.Fprintln(w, "  ok: ludus CLI found in PATH")
+			fmt.Fprintf(w, "  ok: ludus CLI found at %s\n", path)
 		}
 	}
 

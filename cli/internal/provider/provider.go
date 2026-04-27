@@ -106,3 +106,4 @@ type SSMStatus struct {
 	InstanceID string
 	PingStatus string
 }
+

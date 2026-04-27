@@ -27,8 +27,26 @@
       )
       Import-Module -Name PSPKI -ErrorAction Stop
       $caHostname = Get-CertificationAuthority | Select-Object -ExpandProperty ComputerName
-      Get-CertificationAuthority "$caHostname" | Get-CertificationAuthorityAcl | Add-CertificationAuthorityAcl -Identity "$caManagerUser" -AccessType "Allow" -AccessMask "ManageCa" | Set-CertificationAuthorityAcl -RestartCA
-      $Ansible.Changed = $true
+      $acl = Get-CertificationAuthority "$caHostname" | Get-CertificationAuthorityAcl
+
+      # Skip the grant (and the CA service restart it triggers) when the
+      # identity already holds ManageCa. Match against the NTAccount string
+      # form, which is what Get-CertificationAuthorityAcl returns by default.
+      $manageCa = [PKI.CertificateServices.CertificationAuthorityRights]::ManageCA
+      $alreadyGranted = @($acl.Access | Where-Object {
+          $_.AccessType -eq 'Allow' -and
+          (($_.Rights -band $manageCa) -eq $manageCa) -and
+          ($_.IdentityReference.ToString() -ieq $caManagerUser)
+      }).Count -gt 0
+
+      if ($alreadyGranted) {
+          $Ansible.Changed = $false
+      } else {
+          $acl |
+              Add-CertificationAuthorityAcl -Identity "$caManagerUser" -AccessType "Allow" -AccessMask "ManageCa" |
+              Set-CertificationAuthorityAcl -RestartCA
+          $Ansible.Changed = $true
+      }
     error_action: stop
     parameters:
       caManagerUser: "{{ item.value.ca_manager }}"

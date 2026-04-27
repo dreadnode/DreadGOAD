@@ -119,17 +119,17 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 		Limit:       limit,
 		Debug:       opts.Debug,
 		LogFile:     opts.LogFile,
-		ExtraVars:   opts.ExtraVars,
+		ExtraVars:   copyVars(opts.ExtraVars),
 	}
 
 	switch failResult.ErrorType {
 	case ErrFactGathering:
 		log.Info("retrying with modified fact gathering settings")
 		baseOpts.Forks = 1
-		baseOpts.ExtraVars = map[string]string{
+		mergeVars(baseOpts.ExtraVars, map[string]string{
 			"ansible_facts_gathering_timeout": "60",
 			"gather_timeout":                  "60",
-		}
+		})
 		baseOpts.ExtraEnv = map[string]string{
 			"ANSIBLE_GATHERING": "explicit",
 		}
@@ -137,10 +137,10 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 
 	case ErrNetworkAdapter:
 		log.Info("retrying with network adapter fix")
-		baseOpts.ExtraVars = map[string]string{
+		mergeVars(baseOpts.ExtraVars, map[string]string{
 			"skip_network_adapter_config": "true",
 			"bypass_ethernet3_check":      "true",
-		}
+		})
 		return RunPlaybook(ctx, baseOpts)
 
 	case ErrSSMTransfer:
@@ -151,13 +151,13 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 		time.Sleep(30 * time.Second)
 
 		baseOpts.Forks = 1
-		baseOpts.ExtraVars = map[string]string{
+		mergeVars(baseOpts.ExtraVars, map[string]string{
 			"ansible_aws_ssm_retries":     "10",
 			"ansible_aws_ssm_retry_delay": "30",
 			"ansible_connection_timeout":  "300",
 			"ansible_command_timeout":     "300",
 			"ansible_aws_ssm_timeout":     "300",
-		}
+		})
 		baseOpts.ExtraEnv = map[string]string{"ANSIBLE_TIMEOUT": "300"}
 		return RunPlaybook(ctx, baseOpts)
 
@@ -171,21 +171,21 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 		time.Sleep(10 * time.Second)
 
 		baseOpts.Forks = 1
-		baseOpts.ExtraVars = map[string]string{
+		mergeVars(baseOpts.ExtraVars, map[string]string{
 			"ansible_connection_timeout":      "180",
 			"ansible_timeout":                 "180",
 			"ansible_facts_gathering_timeout": "60",
-		}
+		})
 		baseOpts.ExtraEnv = map[string]string{"ANSIBLE_TIMEOUT": "180"}
 		return RunPlaybook(ctx, baseOpts)
 
 	case ErrPowerShell:
 		log.Info("retrying with PowerShell interactive mode fix")
-		baseOpts.ExtraVars = map[string]string{
+		mergeVars(baseOpts.ExtraVars, map[string]string{
 			"ansible_shell_type": "powershell",
 			"force_ps_module":    "true",
 			"ansible_ps_version": "5.1",
-		}
+		})
 		return RunPlaybook(ctx, baseOpts)
 
 	case ErrSSMUserAccount:
@@ -195,11 +195,11 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 		time.Sleep(30 * time.Second)
 
 		baseOpts.Forks = 1
-		baseOpts.ExtraVars = map[string]string{
+		mergeVars(baseOpts.ExtraVars, map[string]string{
 			"ansible_connection_timeout": "180",
 			"ansible_timeout":            "180",
 			"ansible_aws_ssm_timeout":    "300",
-		}
+		})
 		baseOpts.ExtraEnv = map[string]string{"ANSIBLE_TIMEOUT": "180"}
 		return RunPlaybook(ctx, baseOpts)
 
@@ -376,3 +376,26 @@ func rebootFailedHosts(ctx context.Context, opts RetryOptions, log *slog.Logger)
 }
 
 var execCommand = exec.CommandContext
+
+// copyVars returns a shallow copy of a vars map (nil-safe).
+func copyVars(src map[string]string) map[string]string {
+	if src == nil {
+		return make(map[string]string)
+	}
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
+// mergeVars adds entries from src into dst without overwriting existing keys.
+// This preserves connection-level vars (like SOCKS proxy settings) while
+// allowing retry strategies to add their own vars.
+func mergeVars(dst, src map[string]string) {
+	for k, v := range src {
+		if _, exists := dst[k]; !exists {
+			dst[k] = v
+		}
+	}
+}
