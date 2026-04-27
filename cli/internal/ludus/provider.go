@@ -19,7 +19,15 @@ func init() {
 			return nil, fmt.Errorf("ludus API key is required (set ludus.api_key in dreadgoad.yaml or export LUDUS_API_KEY)")
 		}
 
-		client, err := NewClient(ctx, opts.LudusAPIKey, opts.LudusUseImpersonation)
+		sshCfg := SSHConfig{
+			Host:     opts.LudusSSHHost,
+			User:     opts.LudusSSHUser,
+			KeyPath:  opts.LudusSSHKeyPath,
+			Password: opts.LudusSSHPassword,
+			Port:     opts.LudusSSHPort,
+		}
+
+		client, err := NewClient(ctx, opts.LudusAPIKey, opts.LudusUseImpersonation, sshCfg)
 		if err != nil {
 			return nil, err
 		}
@@ -40,7 +48,7 @@ type LudusProvider struct {
 	statusStale time.Time     // refresh after this time
 }
 
-const statusCacheTTL = 2 * time.Minute
+const statusCacheTTL = 30 * time.Minute
 
 // refreshVMs fetches range status and populates the VM cache.
 func (p *LudusProvider) refreshVMs(ctx context.Context) error {
@@ -83,7 +91,11 @@ func (p *LudusProvider) VerifyCredentials(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("Ludus v%d (%s)", p.client.MajorVersion(), strings.TrimSpace(out)), nil
+	mode := "local"
+	if p.client.SSH().IsConfigured() {
+		mode = fmt.Sprintf("ssh:%s", p.client.SSH().Host)
+	}
+	return fmt.Sprintf("Ludus v%d (%s) [%s]", p.client.MajorVersion(), strings.TrimSpace(out), mode), nil
 }
 
 func (p *LudusProvider) DiscoverInstances(ctx context.Context, env string) ([]provider.Instance, error) {
@@ -230,7 +242,37 @@ func (p *LudusProvider) resolveHostname(ctx context.Context, instanceID string) 
 	return role, nil
 }
 
+// resolveVM returns both the hostname and IP for a given instance ID.
+func (p *LudusProvider) resolveVM(ctx context.Context, instanceID string) (hostname, ip string, err error) {
+	vms, err := p.getVMs(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	vm, ok := vms[instanceID]
+	if !ok {
+		return "", "", fmt.Errorf("VM with Proxmox ID %s not found", instanceID)
+	}
+
+	parts := strings.Split(vm.Name, "-")
+	if len(parts) < 2 {
+		return "", "", fmt.Errorf("VM name %q does not follow expected naming pattern (RANGEID-LAB-ROLE)", vm.Name)
+	}
+	role := strings.ToLower(parts[len(parts)-1])
+	if role == "" {
+		return "", "", fmt.Errorf("VM name %q has empty role suffix", vm.Name)
+	}
+	return role, vm.IP, nil
+}
+
 func (p *LudusProvider) RunCommand(ctx context.Context, instanceID, command string, timeout time.Duration) (*provider.CommandResult, error) {
+	if p.client.SSH().IsConfigured() {
+		return p.runCommandSSH(ctx, instanceID, command, timeout)
+	}
+	return p.runCommandLocal(ctx, instanceID, command, timeout)
+}
+
+// runCommandLocal executes a command via local ansible (original behavior).
+func (p *LudusProvider) runCommandLocal(ctx context.Context, instanceID, command string, timeout time.Duration) (*provider.CommandResult, error) {
 	hostname, err := p.resolveHostname(ctx, instanceID)
 	if err != nil {
 		return nil, err
@@ -239,14 +281,13 @@ func (p *LudusProvider) RunCommand(ctx context.Context, instanceID, command stri
 	if p.inventoryPath == "" {
 		return nil, fmt.Errorf("inventory path not configured; ensure provider was created with InventoryPath set")
 	}
-	invPath := p.inventoryPath
 
 	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
 	args := []string{
 		hostname,
-		"-i", invPath,
+		"-i", p.inventoryPath,
 		"-m", "win_shell",
 		"-a", command,
 	}
@@ -259,14 +300,56 @@ func (p *LudusProvider) RunCommand(ctx context.Context, instanceID, command stri
 	err = cmd.Run()
 	outStr := stdout.String()
 
-	// Parse Ansible output: strip the header line (e.g. "dc01 | CHANGED | rc=0 >>")
-	// and extract the actual command output.
-	result := &provider.CommandResult{
-		Status: "Success",
-		Stderr: stderr.String(),
+	return parseAnsibleOutput(outStr, stderr.String(), err), nil
+}
+
+// runCommandSSH executes a command on a VM via SSH to the Ludus host, using
+// an inline ansible inventory constructed from the VM's IP address. This
+// removes the need for an inventory file on the remote host.
+func (p *LudusProvider) runCommandSSH(ctx context.Context, instanceID, command string, timeout time.Duration) (*provider.CommandResult, error) {
+	_, ip, err := p.resolveVM(ctx, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	if ip == "" || ip == "null" {
+		return nil, fmt.Errorf("VM %s has no IP address; is it running?", instanceID)
 	}
 
-	lines := strings.SplitN(outStr, "\n", 2)
+	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	// Use ansible with an inline inventory (IP followed by comma) and
+	// pass WinRM connection variables directly. This avoids needing an
+	// inventory file on the remote Ludus host.
+	args := []string{
+		"all",
+		"-i", ip + ",",
+		"-m", "win_shell",
+		"-a", command,
+		"-e", "ansible_user=localuser",
+		"-e", "ansible_password=password",
+		"-e", "ansible_connection=winrm",
+		"-e", "ansible_winrm_server_cert_validation=ignore",
+		"-e", "ansible_winrm_transport=ntlm",
+		"-e", "ansible_winrm_scheme=http",
+		"-e", "ansible_port=5985",
+		"-e", "ansible_winrm_operation_timeout_sec=400",
+		"-e", "ansible_winrm_read_timeout_sec=500",
+	}
+
+	stdoutStr, stderrStr, runErr := p.client.RunSSHCommand(cmdCtx, "ansible", args...)
+
+	return parseAnsibleOutput(stdoutStr, stderrStr, runErr), nil
+}
+
+// parseAnsibleOutput extracts command results from ansible ad-hoc output.
+func parseAnsibleOutput(stdoutStr, stderrStr string, runErr error) *provider.CommandResult {
+	result := &provider.CommandResult{
+		Status: "Success",
+		Stderr: stderrStr,
+	}
+
+	lines := strings.SplitN(stdoutStr, "\n", 2)
 	if len(lines) > 0 {
 		header := lines[0]
 		if strings.Contains(header, "FAILED") || strings.Contains(header, "UNREACHABLE") {
@@ -277,14 +360,14 @@ func (p *LudusProvider) RunCommand(ctx context.Context, instanceID, command stri
 		}
 	}
 
-	if err != nil && result.Status == "Success" {
+	if runErr != nil && result.Status == "Success" {
 		result.Status = "Failed"
 		if result.Stdout == "" {
-			result.Stdout = outStr
+			result.Stdout = stdoutStr
 		}
 	}
 
-	return result, nil
+	return result
 }
 
 func (p *LudusProvider) RunCommandOnMultiple(ctx context.Context, instanceIDs []string, command string, timeout time.Duration) (map[string]*provider.CommandResult, error) {

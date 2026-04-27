@@ -32,9 +32,14 @@ idle_timeout: 1200
 #     Ubuntu_2404_x64: "924040"
 
 # Ludus settings (used when provider: ludus)
-ludus:
-  # api_key: ""  # Or set LUDUS_API_KEY env var
-  use_impersonation: true
+# ludus:
+#   api_key: ""  # Or set LUDUS_API_KEY env var
+#   use_impersonation: true
+#   ssh_host: ""  # Remote Ludus host for SSH-based execution
+#   ssh_user: "root"
+#   ssh_password: ""  # Or set LUDUS_SSH_PASSWORD env var
+#   ssh_key_path: ""  # Path to SSH private key
+#   ssh_port: 22
 
 # Per-environment settings
 environments:

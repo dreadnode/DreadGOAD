@@ -108,6 +108,11 @@ func setDefaults() {
 
 	viper.SetDefault("ludus.api_key", "")
 	viper.SetDefault("ludus.use_impersonation", true)
+	viper.SetDefault("ludus.ssh_host", "")
+	viper.SetDefault("ludus.ssh_user", "root")
+	viper.SetDefault("ludus.ssh_key_path", "")
+	viper.SetDefault("ludus.ssh_password", "")
+	viper.SetDefault("ludus.ssh_port", 22)
 
 	viper.SetDefault("infra.deployment", "goad-deployment")
 	viper.SetDefault("infra.terragrunt_binary", "terragrunt")

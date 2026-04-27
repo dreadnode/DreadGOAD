@@ -51,6 +51,15 @@ func (c *Config) NewProvider(ctx context.Context) (provider.Provider, error) {
 			return nil, fmt.Errorf("ludus API key not configured: set ludus.api_key in dreadgoad.yaml or export LUDUS_API_KEY")
 		}
 		opts.LudusUseImpersonation = c.Ludus.UseImpersonation
+		opts.LudusSSHHost = c.Ludus.SSHHost
+		opts.LudusSSHUser = c.Ludus.SSHUser
+		opts.LudusSSHKeyPath = c.Ludus.SSHKeyPath
+		opts.LudusSSHPassword = c.Ludus.SSHPassword
+		// Allow environment variable override for SSH password.
+		if envPass := os.Getenv("LUDUS_SSH_PASSWORD"); envPass != "" {
+			opts.LudusSSHPassword = envPass
+		}
+		opts.LudusSSHPort = c.Ludus.SSHPort
 		opts.InventoryPath = c.InventoryPath()
 
 	default:

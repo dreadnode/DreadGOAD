@@ -61,6 +61,11 @@ type ProxmoxConfig struct {
 type LudusConfig struct {
 	APIKey           string `mapstructure:"api_key"`
 	UseImpersonation bool   `mapstructure:"use_impersonation"`
+	SSHHost          string `mapstructure:"ssh_host"`     // Remote Ludus host for SSH-based execution
+	SSHUser          string `mapstructure:"ssh_user"`     // SSH user (default: root)
+	SSHKeyPath       string `mapstructure:"ssh_key_path"` // Path to SSH private key
+	SSHPassword      string `mapstructure:"ssh_password"` // SSH password (uses sshpass)
+	SSHPort          int    `mapstructure:"ssh_port"`     // SSH port (default: 22)
 }
 
 // Config holds all CLI configuration.

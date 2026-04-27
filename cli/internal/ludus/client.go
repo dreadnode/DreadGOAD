@@ -37,24 +37,41 @@ type VersionInfo struct {
 	Version string `json:"version"`
 }
 
+// SSHConfig holds SSH connection parameters for remote Ludus execution.
+type SSHConfig struct {
+	Host     string // Remote Ludus host
+	User     string // SSH user (default: root)
+	KeyPath  string // Path to SSH private key
+	Password string // SSH password (uses sshpass when set)
+	Port     int    // SSH port (default: 22)
+}
+
+// IsConfigured returns true if SSH remote execution is enabled.
+func (s SSHConfig) IsConfigured() bool { return s.Host != "" }
+
 // Client wraps the Ludus CLI binary for API interaction.
 type Client struct {
 	apiKey         string
 	labUser        string
 	useImpersonate bool
 	majorVersion   int
+	ssh            SSHConfig
 }
 
 // NewClient creates a Ludus client with the given API key.
-func NewClient(ctx context.Context, apiKey string, useImpersonate bool) (*Client, error) {
-	if _, err := exec.LookPath("ludus"); err != nil {
-		return nil, fmt.Errorf("ludus CLI not found in PATH: %w", err)
-	}
-
+func NewClient(ctx context.Context, apiKey string, useImpersonate bool, ssh SSHConfig) (*Client, error) {
 	c := &Client{
 		apiKey:         apiKey,
 		useImpersonate: useImpersonate,
 		majorVersion:   1,
+		ssh:            ssh,
+	}
+
+	// Only check for local ludus binary when not using SSH.
+	if !ssh.IsConfigured() {
+		if _, err := exec.LookPath("ludus"); err != nil {
+			return nil, fmt.Errorf("ludus CLI not found in PATH: %w", err)
+		}
 	}
 
 	// Detect Ludus version.
@@ -80,12 +97,26 @@ func (c *Client) MajorVersion() int { return c.majorVersion }
 // SetLabUser sets the lab user for impersonation.
 func (c *Client) SetLabUser(user string) { c.labUser = user }
 
+// SSH returns the SSH configuration.
+func (c *Client) SSH() SSHConfig { return c.ssh }
+
 // run executes a ludus CLI command and returns stdout.
+// When SSH is configured, the command is executed on the remote host.
 // Stdout and stderr are captured separately so that Ludus v2 informational
 // log lines (e.g. "[INFO]  Ludus client ...") written to stderr do not
 // pollute JSON output parsed by callers such as RangeStatusJSON.
 func (c *Client) run(ctx context.Context, args ...string) (string, error) {
 	cmdArgs := c.buildArgs(args)
+
+	if c.ssh.IsConfigured() {
+		return c.runSSH(ctx, "ludus", cmdArgs...)
+	}
+
+	return c.runLocal(ctx, cmdArgs...)
+}
+
+// runLocal executes a ludus command on the local machine.
+func (c *Client) runLocal(ctx context.Context, cmdArgs ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "ludus", cmdArgs...)
 	cmd.Env = append(cmd.Environ(), fmt.Sprintf("LUDUS_API_KEY=%s", c.apiKey))
 
@@ -95,9 +126,104 @@ func (c *Client) run(ctx context.Context, args ...string) (string, error) {
 
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("ludus %s: %w\nstdout: %s\nstderr: %s",
-			strings.Join(args, " "), err, stdout.String(), stderr.String())
+			strings.Join(cmdArgs, " "), err, stdout.String(), stderr.String())
 	}
 	return strings.TrimSpace(stdout.String()), nil
+}
+
+// runSSH executes a command on the remote Ludus host via SSH.
+func (c *Client) runSSH(ctx context.Context, binary string, args ...string) (string, error) {
+	// Build the remote command with proper quoting.
+	// Single-quote each argument to prevent shell interpretation on the remote side.
+	quotedArgs := make([]string, len(args))
+	for i, a := range args {
+		quotedArgs[i] = shellQuote(a)
+	}
+	remoteCmd := fmt.Sprintf("LUDUS_API_KEY=%s %s %s",
+		shellQuote(c.apiKey), binary, strings.Join(quotedArgs, " "))
+
+	bin, cmdArgs := buildSSHCommand(c.ssh, remoteCmd)
+
+	cmd := exec.CommandContext(ctx, bin, cmdArgs...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("ssh %s %s: %w\nstdout: %s\nstderr: %s",
+			c.ssh.Host, binary, err, stdout.String(), stderr.String())
+	}
+	return strings.TrimSpace(stdout.String()), nil
+}
+
+// RunSSHCommand executes an arbitrary command on the remote Ludus host via SSH.
+// This is used by the provider for running ansible commands remotely.
+func (c *Client) RunSSHCommand(ctx context.Context, binary string, args ...string) (string, string, error) {
+	quotedArgs := make([]string, len(args))
+	for i, a := range args {
+		quotedArgs[i] = shellQuote(a)
+	}
+	remoteCmd := fmt.Sprintf("%s %s", binary, strings.Join(quotedArgs, " "))
+
+	bin, cmdArgs := buildSSHCommand(c.ssh, remoteCmd)
+
+	cmd := exec.CommandContext(ctx, bin, cmdArgs...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	return stdout.String(), stderr.String(), err
+}
+
+// buildSSHCommand constructs the full command (binary + args) for SSH execution.
+// When a password is configured, the command is wrapped with sshpass.
+func buildSSHCommand(cfg SSHConfig, remoteCmd string) (string, []string) {
+	sshArgs := buildSSHArgs(cfg, remoteCmd)
+
+	if cfg.Password != "" {
+		// Wrap with sshpass for password-based auth.
+		return "sshpass", append([]string{"-p", cfg.Password, "ssh"}, sshArgs...)
+	}
+	return "ssh", sshArgs
+}
+
+// buildSSHArgs constructs the ssh command arguments from SSHConfig.
+func buildSSHArgs(cfg SSHConfig, remoteCmd string) []string {
+	var sshArgs []string
+
+	// Disable strict host key checking for convenience (Ludus servers
+	// are typically on local/trusted networks with self-signed certs).
+	sshArgs = append(sshArgs, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null")
+
+	// Suppress the "Warning: Permanently added..." messages.
+	sshArgs = append(sshArgs, "-o", "LogLevel=ERROR")
+
+	if cfg.Password != "" {
+		// When using password auth, skip agent keys to avoid
+		// "too many authentication failures" from the agent.
+		sshArgs = append(sshArgs, "-o", "IdentitiesOnly=yes")
+	}
+
+	if cfg.KeyPath != "" {
+		sshArgs = append(sshArgs, "-i", cfg.KeyPath)
+	}
+	if cfg.Port != 0 && cfg.Port != 22 {
+		sshArgs = append(sshArgs, "-p", fmt.Sprintf("%d", cfg.Port))
+	}
+
+	user := cfg.User
+	if user == "" {
+		user = "root"
+	}
+	sshArgs = append(sshArgs, fmt.Sprintf("%s@%s", user, cfg.Host), remoteCmd)
+
+	return sshArgs
+}
+
+// shellQuote wraps a string in single quotes, escaping any embedded single quotes.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
 }
 
 // buildArgs prepends version-specific flags and impersonation.

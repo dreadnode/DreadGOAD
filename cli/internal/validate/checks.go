@@ -168,11 +168,14 @@ func (v *Validator) checkAnonymousSMB(ctx context.Context, w io.Writer) {
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
 		output := v.runPS(ctx, host,
-			`Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Lsa' -Name LmCompatibilityLevel -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LmCompatibilityLevel`)
+			`$v = Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Lsa' -Name LmCompatibilityLevel -ErrorAction SilentlyContinue; if ($v) { $v.LmCompatibilityLevel } else { 'NOT_SET' }`)
 		val := strings.TrimSpace(output)
-		if val == "0" || val == "1" || val == "2" {
+		switch {
+		case val == "0" || val == "1" || val == "2":
 			v.addResult(w, "PASS", "SMB", fmt.Sprintf("LmCompatibilityLevel is %s on %s (NTLM downgrade vulnerable)", val, hostLabel), "")
-		} else {
+		case val == "" || val == "NOT_SET":
+			v.addResult(w, "WARN", "SMB", fmt.Sprintf("LmCompatibilityLevel not configured on %s (registry key missing)", hostLabel), "")
+		default:
 			v.addResult(w, "FAIL", "SMB", fmt.Sprintf("LmCompatibilityLevel is %s on %s (expected 0-2)", val, hostLabel), "")
 		}
 	}
@@ -490,11 +493,14 @@ func (v *Validator) checkADCSESC10(ctx context.Context, w io.Writer) {
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
 		output := v.runPS(ctx, host,
-			`Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\Kdc' -Name StrongCertificateBindingEnforcement -ErrorAction SilentlyContinue | Select-Object -ExpandProperty StrongCertificateBindingEnforcement`)
+			`$v = Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\Kdc' -Name StrongCertificateBindingEnforcement -ErrorAction SilentlyContinue; if ($v) { $v.StrongCertificateBindingEnforcement } else { 'NOT_SET' }`)
 		val := strings.TrimSpace(output)
-		if val == "0" {
+		switch val {
+		case "0":
 			v.addResult(w, "PASS", "ADCS-ESC10", fmt.Sprintf("StrongCertificateBindingEnforcement=0 on %s (ESC10 case 1 exploitable)", hostLabel), "")
-		} else {
+		case "", "NOT_SET":
+			v.addResult(w, "WARN", "ADCS-ESC10", fmt.Sprintf("StrongCertificateBindingEnforcement not configured on %s (registry key missing)", hostLabel), "")
+		default:
 			v.addResult(w, "FAIL", "ADCS-ESC10", fmt.Sprintf("StrongCertificateBindingEnforcement=%s on %s (expected 0)", val, hostLabel), "")
 		}
 	}
@@ -507,11 +513,14 @@ func (v *Validator) checkADCSESC10(ctx context.Context, w io.Writer) {
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
 		output := v.runPS(ctx, host,
-			`Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\SecurityProviders\Schannel' -Name CertificateMappingMethods -ErrorAction SilentlyContinue | Select-Object -ExpandProperty CertificateMappingMethods`)
+			`$v = Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\SecurityProviders\Schannel' -Name CertificateMappingMethods -ErrorAction SilentlyContinue; if ($v) { $v.CertificateMappingMethods } else { 'NOT_SET' }`)
 		val := strings.TrimSpace(output)
-		if val == "4" {
+		switch val {
+		case "4":
 			v.addResult(w, "PASS", "ADCS-ESC10", fmt.Sprintf("CertificateMappingMethods=0x4 on %s (ESC10 case 2 exploitable)", hostLabel), "")
-		} else {
+		case "", "NOT_SET":
+			v.addResult(w, "WARN", "ADCS-ESC10", fmt.Sprintf("CertificateMappingMethods not configured on %s (registry key missing)", hostLabel), "")
+		default:
 			v.addResult(w, "FAIL", "ADCS-ESC10", fmt.Sprintf("CertificateMappingMethods=%s on %s (expected 4)", val, hostLabel), "")
 		}
 	}
@@ -613,14 +622,17 @@ func (v *Validator) checkACLPermissions(ctx context.Context, w io.Writer) {
 		source := v.lab.User(af.ACL.For)
 		target := v.lab.User(af.ACL.To)
 
-		sourceFirst := strings.SplitN(source, ".", 2)[0]
-		// Strip trailing $ for gMSA accounts to match the identity reference
-		sourceFirst = strings.TrimSuffix(sourceFirst, "$")
+		// Use the full source name for sAMAccountName lookup.
+		// Strip trailing $ for gMSA accounts to match the identity reference.
+		sourceSam := strings.TrimSuffix(source, "$")
 
 		// Build the PowerShell lookup for the target object.
 		// DN paths (containing = signs) are resolved directly via Get-Acl;
 		// SamAccountNames are looked up with Get-ADObject which finds
 		// users, groups, and service accounts alike.
+		//
+		// For well-known accounts (e.g. "NT AUTHORITY\ANONYMOUS LOGON"),
+		// we match the full identity reference string directly.
 		script := fmt.Sprintf(`
 $ErrorActionPreference = 'Stop'
 Import-Module ActiveDirectory
@@ -637,8 +649,15 @@ try {
     if (-not $obj) { Write-Output 'TARGET_NOT_FOUND'; exit }
     $objAcl = Get-Acl -Path $obj.DistinguishedName -ErrorAction Stop
   }
-  # Try name-based match first
+  # Try name-based match: wildcard against identity references.
+  # This catches both DOMAIN\user and well-known accounts.
   $ace = $objAcl.Access | Where-Object { $_.IdentityReference -like $sourceMatch }
+  if (-not $ace) {
+    # Try with just the last component (e.g. "ANONYMOUS LOGON" from "NT AUTHORITY\ANONYMOUS LOGON")
+    $shortName = $sourceSam
+    if ($sourceSam -match '\\') { $shortName = $sourceSam.Split('\')[-1] }
+    $ace = $objAcl.Access | Where-Object { $_.IdentityReference -like ('*' + $shortName + '*') }
+  }
   if (-not $ace) {
     # Resolve source to SID and match ACEs stored as SID references
     $srcSID = $null
@@ -664,7 +683,7 @@ try {
   if ($ace) { Write-Output 'ACL_FOUND' } else { Write-Output 'ACL_NOT_FOUND' }
 } catch {
   Write-Output "CHECK_ERROR: $_"
-}`, target, sourceFirst, sourceFirst)
+}`, target, sourceSam, sourceSam)
 
 		output := v.runPS(ctx, dcRole, script)
 
@@ -819,9 +838,12 @@ func (v *Validator) checkLLMNR(ctx context.Context, w io.Writer) {
 		output := v.runPS(ctx, host,
 			`$v = Get-ItemProperty -Path 'HKLM:\Software\policies\Microsoft\Windows NT\DNSClient' -Name EnableMulticast -ErrorAction SilentlyContinue; if ($v) { $v.EnableMulticast } else { 'NOT_SET' }`)
 		val := strings.TrimSpace(output)
-		if val == "1" || val == "NOT_SET" {
+		switch {
+		case val == "1" || val == "NOT_SET":
 			v.addResult(w, "PASS", "LLMNR", fmt.Sprintf("LLMNR enabled on %s", hostLabel), "")
-		} else {
+		case val == "":
+			v.addResult(w, "WARN", "LLMNR", fmt.Sprintf("LLMNR status unknown on %s (command returned empty)", hostLabel), "")
+		default:
 			v.addResult(w, "FAIL", "LLMNR", fmt.Sprintf("LLMNR disabled on %s (value=%s)", hostLabel, val), "")
 		}
 	}
@@ -1096,7 +1118,7 @@ func (v *Validator) checkPasswordPolicy(ctx context.Context, w io.Writer) {
 			continue
 		}
 		output := v.runPS(ctx, host,
-			`$p = Get-ADDefaultDomainPasswordPolicy; Write-Output "$($p.ComplexityEnabled)|$($p.MinPasswordLength)|$($p.LockoutThreshold)"`)
+			`try { $p = Get-ADDefaultDomainPasswordPolicy -ErrorAction Stop; Write-Output "$($p.ComplexityEnabled)|$($p.MinPasswordLength)|$($p.LockoutThreshold)" } catch { Write-Output "ERROR: $_" }`)
 		parts := strings.Split(strings.TrimSpace(output), "|")
 		if len(parts) < 3 {
 			v.addResult(w, "WARN", "PasswordPolicy", fmt.Sprintf("Could not read password policy on %s", host), "")

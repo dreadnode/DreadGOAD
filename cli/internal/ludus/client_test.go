@@ -190,5 +190,169 @@ func toLower(s string) string {
 	return string(b)
 }
 
+// TestSSHConfigIsConfigured verifies SSHConfig.IsConfigured logic.
+func TestSSHConfigIsConfigured(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  SSHConfig
+		want bool
+	}{
+		{"empty", SSHConfig{}, false},
+		{"host only", SSHConfig{Host: "192.168.1.100"}, true},
+		{"full config", SSHConfig{Host: "ludus.local", User: "root", KeyPath: "~/.ssh/id_rsa", Port: 22}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.IsConfigured(); got != tt.want {
+				t.Errorf("IsConfigured() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestBuildSSHArgs verifies SSH argument construction.
+func TestBuildSSHArgs(t *testing.T) {
+	tests := []struct {
+		name      string
+		cfg       SSHConfig
+		remoteCmd string
+		wantHost  string
+		wantKey   bool
+		wantPort  bool
+	}{
+		{
+			name:      "basic",
+			cfg:       SSHConfig{Host: "192.168.1.100", User: "root"},
+			remoteCmd: "ludus version --json",
+			wantHost:  "root@192.168.1.100",
+		},
+		{
+			name:      "with key",
+			cfg:       SSHConfig{Host: "ludus.local", User: "admin", KeyPath: "/home/user/.ssh/id_rsa"},
+			remoteCmd: "ludus range status --json",
+			wantHost:  "admin@ludus.local",
+			wantKey:   true,
+		},
+		{
+			name:      "custom port",
+			cfg:       SSHConfig{Host: "10.0.0.1", User: "root", Port: 2222},
+			remoteCmd: "ludus version --json",
+			wantHost:  "root@10.0.0.1",
+			wantPort:  true,
+		},
+		{
+			name:      "default user",
+			cfg:       SSHConfig{Host: "192.168.1.100"},
+			remoteCmd: "test",
+			wantHost:  "root@192.168.1.100",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := buildSSHArgs(tt.cfg, tt.remoteCmd)
+
+			// Last two args should be user@host and the remote command.
+			if len(args) < 2 {
+				t.Fatalf("args too short: %v", args)
+			}
+			host := args[len(args)-2]
+			cmd := args[len(args)-1]
+
+			if host != tt.wantHost {
+				t.Errorf("host = %q, want %q", host, tt.wantHost)
+			}
+			if cmd != tt.remoteCmd {
+				t.Errorf("cmd = %q, want %q", cmd, tt.remoteCmd)
+			}
+
+			hasKey := false
+			hasPort := false
+			for i, a := range args {
+				if a == "-i" && i+1 < len(args) {
+					hasKey = true
+				}
+				if a == "-p" && i+1 < len(args) {
+					hasPort = true
+				}
+			}
+			if hasKey != tt.wantKey {
+				t.Errorf("has -i flag = %v, want %v", hasKey, tt.wantKey)
+			}
+			if hasPort != tt.wantPort {
+				t.Errorf("has -p flag = %v, want %v", hasPort, tt.wantPort)
+			}
+		})
+	}
+}
+
+// TestShellQuote verifies shell quoting for SSH command arguments.
+func TestShellQuote(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{"simple", "'simple'"},
+		{"with spaces", "'with spaces'"},
+		{"it's", "'it'\"'\"'s'"},
+		{"", "''"},
+		{"Get-Process | Where-Object {$_.Name -eq 'test'}", "'Get-Process | Where-Object {$_.Name -eq '\"'\"'test'\"'\"'}'"},
+	}
+	for _, tt := range tests {
+		got := shellQuote(tt.input)
+		if got != tt.want {
+			t.Errorf("shellQuote(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+// TestParseAnsibleOutput verifies ansible output parsing.
+func TestParseAnsibleOutput(t *testing.T) {
+	tests := []struct {
+		name       string
+		stdout     string
+		stderr     string
+		err        error
+		wantStatus string
+		wantStdout string
+	}{
+		{
+			name:       "success",
+			stdout:     "dc01 | CHANGED | rc=0 >>\ncommand output here",
+			wantStatus: "Success",
+			wantStdout: "command output here",
+		},
+		{
+			name:       "failed",
+			stdout:     "dc01 | FAILED | rc=1 >>\nerror details",
+			wantStatus: "Failed",
+			wantStdout: "error details",
+		},
+		{
+			name:       "unreachable",
+			stdout:     "dc01 | UNREACHABLE >>\nconnection refused",
+			wantStatus: "Failed",
+			wantStdout: "connection refused",
+		},
+		{
+			name:       "error with nil stdout",
+			stdout:     "",
+			err:        fmt.Errorf("command failed"),
+			wantStatus: "Failed",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := parseAnsibleOutput(tt.stdout, tt.stderr, tt.err)
+			if result.Status != tt.wantStatus {
+				t.Errorf("Status = %q, want %q", result.Status, tt.wantStatus)
+			}
+			if tt.wantStdout != "" && result.Stdout != tt.wantStdout {
+				t.Errorf("Stdout = %q, want %q", result.Stdout, tt.wantStdout)
+			}
+		})
+	}
+}
+
 // use fmt to satisfy import
 var _ = fmt.Sprintf

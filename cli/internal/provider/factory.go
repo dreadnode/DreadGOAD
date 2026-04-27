@@ -29,6 +29,11 @@ type ConstructorOpts struct {
 	// Ludus-specific
 	LudusAPIKey           string
 	LudusUseImpersonation bool
+	LudusSSHHost          string // Remote Ludus host for SSH-based execution
+	LudusSSHUser          string // SSH user (default: root)
+	LudusSSHKeyPath       string // Path to SSH private key
+	LudusSSHPassword      string // SSH password (uses sshpass)
+	LudusSSHPort          int    // SSH port (default: 22)
 
 	// InventoryPath is the path to the Ansible inventory file,
 	// used by providers that execute commands via Ansible ad-hoc.
