@@ -202,12 +202,35 @@ func (v *Validator) runPS(ctx context.Context, host, command string) string {
 	if v.verbose {
 		v.log.Debug("running PS command", "host", host, "command", command)
 	}
-	result, err := v.provider.RunCommand(ctx, instanceID, command, 60*time.Second)
-	if err != nil {
-		v.log.Warn("PS command failed", "host", host, "error", err)
-		return ""
+
+	const maxAttempts = 4
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		result, err := v.provider.RunCommand(ctx, instanceID, command, 180*time.Second)
+		if err == nil && strings.TrimSpace(result.Stdout) != "" {
+			return result.Stdout
+		}
+		if err == nil {
+			// Successful exec but empty stdout — could be transient WinRM glitch.
+			// Retry; if every attempt returns empty, accept it as the real answer.
+			if attempt == maxAttempts {
+				return result.Stdout
+			}
+		} else {
+			lastErr = err
+		}
+		if attempt < maxAttempts {
+			select {
+			case <-ctx.Done():
+				return ""
+			case <-time.After(time.Duration(attempt) * 3 * time.Second):
+			}
+		}
 	}
-	return result.Stdout
+	if lastErr != nil {
+		v.log.Warn("PS command failed after retries", "host", host, "error", lastErr)
+	}
+	return ""
 }
 
 func (v *Validator) addResult(w io.Writer, status, category, name, detail string) {
