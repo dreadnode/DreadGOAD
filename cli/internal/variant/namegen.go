@@ -133,6 +133,7 @@ func NewNameGenerator() *NameGenerator {
 			"rangers", "fishing", "marlin", "bigdog", "cowboy",
 			"steelers", "dolphins", "redsox", "camaro", "creative",
 			"platinum", "passw0rd", "trustme", "zeppelin", "warrior",
+			"phoenix",
 		},
 	}
 }

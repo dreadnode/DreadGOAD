@@ -595,10 +595,15 @@ func (g *Generator) parseASREPScripts() map[string]bool {
 	if err != nil {
 		return users
 	}
+	if len(files) == 0 {
+		fmt.Printf("Warning: no asrep*.ps1 scripts found in %s/scripts — AS-REP roastable users will not get crackable passwords\n", g.SourcePath)
+		return users
+	}
 	re := regexp.MustCompile(`(?i)-Identity\s+"([^"]+)"`)
 	for _, f := range files {
 		data, err := os.ReadFile(f)
 		if err != nil {
+			fmt.Printf("Warning: could not read %s: %v\n", f, err)
 			continue
 		}
 		for _, match := range re.FindAllStringSubmatch(string(data), -1) {
