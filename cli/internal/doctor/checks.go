@@ -334,12 +334,10 @@ func checkPyPSRP() CheckResult {
 func checkLudusSSH(opts LudusOptions) []CheckResult {
 	var results []CheckResult
 
-	// ssh binary is required for any SSH-mode operation; sshpass only when
-	// password auth is in use.
-	results = append(results, checkCommand("ssh", "ssh client"))
-	if opts.SSHPassword != "" {
-		results = append(results, checkCommand("sshpass", "sshpass (password auth)"))
-	}
+	// `ssh -G` is still required for ssh_config resolution (Match/Include/
+	// ProxyJump expansion). The actual connection runs through pure-Go
+	// crypto/ssh, so sshpass is no longer needed for password auth.
+	results = append(results, checkCommand("ssh", "ssh client (used for `ssh -G` config resolution)"))
 
 	probeHost, port := opts.SSHHost, opts.SSHPort
 	if opts.ResolveAlias {

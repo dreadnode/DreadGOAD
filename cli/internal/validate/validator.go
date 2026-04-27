@@ -102,8 +102,10 @@ func (v *Validator) DiscoverHosts(ctx context.Context) error {
 }
 
 // maxConcurrentChecks limits how many check categories run in parallel.
-// This bounds concurrent SSM calls to avoid throttling.
-const maxConcurrentChecks = 5
+// This bounds concurrent calls to the underlying provider (AWS SSM, Ludus
+// SSH+ansible, etc.). Tuned to keep all 28 default checks issuing work
+// simultaneously while staying under typical provider throttle limits.
+const maxConcurrentChecks = 16
 
 // checkFunc is the signature for all check functions.
 type checkFunc func(context.Context, io.Writer)
@@ -249,33 +251,23 @@ func (v *Validator) runPS(ctx context.Context, host, command string) string {
 		v.log.Debug("running PS command", "host", host, "command", command)
 	}
 
-	const maxAttempts = 4
+	const maxAttempts = 3
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		result, err := v.provider.RunCommand(ctx, instanceID, command, 180*time.Second)
-		if err == nil && strings.TrimSpace(result.Stdout) != "" {
+		if err == nil {
 			return result.Stdout
 		}
-		if err == nil {
-			// Successful exec but empty stdout — could be transient WinRM glitch.
-			// Retry; if every attempt returns empty, accept it as the real answer.
-			if attempt == maxAttempts {
-				return result.Stdout
-			}
-		} else {
-			lastErr = err
-		}
+		lastErr = err
 		if attempt < maxAttempts {
 			select {
 			case <-ctx.Done():
 				return ""
-			case <-time.After(time.Duration(attempt) * 3 * time.Second):
+			case <-time.After(time.Duration(attempt) * 2 * time.Second):
 			}
 		}
 	}
-	if lastErr != nil {
-		v.log.Warn("PS command failed after retries", "host", host, "error", lastErr)
-	}
+	v.log.Warn("PS command failed after retries", "host", host, "error", lastErr)
 	return ""
 }
 

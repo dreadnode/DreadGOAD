@@ -71,7 +71,7 @@ type LudusConfig struct {
 	SSHHost          string `mapstructure:"ssh_host"`     // Explicit hostname override
 	SSHUser          string `mapstructure:"ssh_user"`     // SSH user override (default: root)
 	SSHKeyPath       string `mapstructure:"ssh_key_path"` // Explicit private key path
-	SSHPassword      string `mapstructure:"ssh_password"` // SSH password (uses sshpass)
+	SSHPassword      string `mapstructure:"ssh_password"` // SSH password (used by native SSH auth)
 	SSHPort          int    `mapstructure:"ssh_port"`     // SSH port override (default: 22)
 }
 

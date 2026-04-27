@@ -109,10 +109,11 @@ func setDefaults() {
 	viper.SetDefault("ludus.api_key", "")
 	viper.SetDefault("ludus.use_impersonation", true)
 	viper.SetDefault("ludus.ssh_host", "")
-	// ssh_user and ssh_port are intentionally left unset so that the
+	// ssh_user and ssh_port are intentionally left unset so the
 	// alias-mode guard (cfg.Ludus.Host with no overrides) can detect when
-	// the user has not customized them. buildSSHArgs and the underlying
-	// ssh client supply the "root"/22 fallbacks at use time.
+	// the user has not customized them. The native SSH client honors
+	// ssh_config user/port when these are empty and falls back to root/22
+	// otherwise.
 	viper.SetDefault("ludus.ssh_user", "")
 	viper.SetDefault("ludus.ssh_key_path", "")
 	viper.SetDefault("ludus.ssh_password", "")

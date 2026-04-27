@@ -50,16 +50,39 @@ type LudusProvider struct {
 
 const statusCacheTTL = 30 * time.Minute
 
-// refreshVMs fetches range status and populates the VM cache.
+// refreshVMs fetches range status and populates the VM cache. When SSH is
+// configured and any VM has no IP from `range status` (Ludus indexes IPs
+// lazily, especially right after deployment), we patch IPs from the
+// authoritative /opt/ludus/ranges/<rangeID>/etc-hosts file in one shot.
 func (p *LudusProvider) refreshVMs(ctx context.Context) error {
 	status, err := p.client.RangeStatusJSON(ctx)
 	if err != nil {
 		return err
 	}
 	m := make(map[string]VM, len(status.VMs))
+	missingIP := false
 	for _, vm := range status.VMs {
 		m[strconv.Itoa(vm.ProxmoxID)] = vm
+		if vm.IP == "" || vm.IP == "null" {
+			missingIP = true
+		}
 	}
+
+	if missingIP && p.client.SSH().IsConfigured() && status.RangeID != "" {
+		hosts, herr := p.client.RangeEtcHosts(ctx, status.RangeID)
+		if herr == nil {
+			for id, vm := range m {
+				if vm.IP != "" && vm.IP != "null" {
+					continue
+				}
+				if ip, ok := hosts[vm.Name]; ok {
+					vm.IP = ip
+					m[id] = vm
+				}
+			}
+		}
+	}
+
 	p.cachedVMs = m
 	p.statusStale = time.Now().Add(statusCacheTTL)
 	return nil
@@ -257,7 +280,9 @@ func (p *LudusProvider) resolveHostname(ctx context.Context, instanceID string) 
 	return role, nil
 }
 
-// resolveVM returns both the hostname and IP for a given instance ID.
+// resolveVM returns both the hostname and IP for a given instance ID. IPs
+// are populated up front by refreshVMs (including the etc-hosts fallback
+// when Ludus's range status returns null), so no per-call fallback runs here.
 func (p *LudusProvider) resolveVM(ctx context.Context, instanceID string) (hostname, ip string, err error) {
 	vms, err := p.getVMs(ctx)
 	if err != nil {
@@ -315,7 +340,11 @@ func (p *LudusProvider) runCommandLocal(ctx context.Context, instanceID, command
 	err = cmd.Run()
 	outStr := stdout.String()
 
-	return parseAnsibleOutput(outStr, stderr.String(), err), nil
+	res := parseAnsibleOutput(outStr, stderr.String(), err)
+	if res.Status == "Failed" {
+		return res, fmt.Errorf("ansible win_shell on %s failed: %s", hostname, firstNonEmpty(res.Stderr, outStr))
+	}
+	return res, nil
 }
 
 // runCommandSSH executes a command on a VM via SSH to the Ludus host, using
@@ -354,7 +383,18 @@ func (p *LudusProvider) runCommandSSH(ctx context.Context, instanceID, command s
 
 	stdoutStr, stderrStr, runErr := p.client.RunSSHCommand(cmdCtx, "ansible", args...)
 
-	return parseAnsibleOutput(stdoutStr, stderrStr, runErr), nil
+	res := parseAnsibleOutput(stdoutStr, stderrStr, runErr)
+	if res.Status == "Failed" {
+		return res, fmt.Errorf("ansible win_shell on %s failed: %s", ip, firstNonEmpty(res.Stderr, stdoutStr))
+	}
+	return res, nil
+}
+
+func firstNonEmpty(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return a
+	}
+	return b
 }
 
 // parseAnsibleOutput extracts command results from ansible ad-hoc output.
