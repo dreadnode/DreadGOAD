@@ -787,10 +787,10 @@ func (v *Validator) checkScheduledTasks(ctx context.Context, w io.Writer) {
 			output := v.runPS(ctx, host, fmt.Sprintf(
 				`$t = Get-ScheduledTask -TaskName '%s' -ErrorAction SilentlyContinue; if ($t) { $t.State } else { '___NOTFOUND___' }`, taskName))
 			state := strings.TrimSpace(output)
-			switch {
-			case state == "___NOTFOUND___":
+			switch state {
+			case "___NOTFOUND___":
 				v.addResult(w, "FAIL", "ScheduledTasks", fmt.Sprintf("%s NOT found on %s", taskName, host), "")
-			case state == "":
+			case "":
 				// Empty output means WinRM returned nothing (transient error);
 				// the task likely exists but we couldn't read its state.
 				v.addResult(w, "WARN", "ScheduledTasks", fmt.Sprintf("%s state unknown on %s (WinRM returned empty)", taskName, host), "")
