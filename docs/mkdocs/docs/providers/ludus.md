@@ -64,22 +64,29 @@ ludus templates status
 
 ## DreadGOAD Configuration
 
-Initialize the configuration file:
+The fastest path is the interactive wizard:
 
 ```bash
-dreadgoad config init
+dreadgoad init
 ```
 
-Configure Ludus-specific settings in `dreadgoad.yaml`:
+It asks for your Ludus host (an `~/.ssh/config` alias works), probes connectivity, accepts your API key, and writes a working `dreadgoad.yaml`. From there it's:
+
+```bash
+dreadgoad doctor   # verify everything
+dreadgoad up       # deploy end-to-end
+```
+
+The minimum config the wizard produces looks like:
 
 ```yaml
 provider: ludus
 ludus:
   api_key: YOUR_ADMIN_API_KEY
-  use_impersonation: true
+  host: proxmox            # ssh_config alias OR raw hostname
 ```
 
-You can also set the API key via environment variable instead:
+You can also set the API key via environment variable instead of writing it to the file:
 
 ```bash
 export LUDUS_API_KEY='YOUR_ADMIN_API_KEY'
