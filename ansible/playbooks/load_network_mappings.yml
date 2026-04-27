@@ -1,0 +1,36 @@
+---
+# Pre-flight for `lab reset` (and any AD-state-only run): populates the
+# instance_to_ip / dc_hostname_to_ip hostvars that downstream plays read
+# via `hostvars[groups['dc'][0]]['instance_to_ip']` etc.
+#
+# Full provision runs network_setup.yml (network_discovery role) which sets
+# these via gather_facts. lab reset skips that for speed, so without this
+# pre-flight the trust-DNS task in ad-trusts.yml falls back to the
+# ansible_host (an SSM instance ID), which fails:
+#   "Cannot convert value 'i-0f5b...' to type 'System.Net.IPAddress'"
+#
+# Source of truth is /tmp/aws_instance_mapping_<env>.json, which the CLI
+# generates before running playbooks.
+
+- name: Load AWS instance/IP mappings for AD-state plays
+  hosts: dc
+  gather_facts: false
+  tasks:
+    - name: Read AWS instance mapping JSON
+      ansible.builtin.include_vars:
+        file: "/tmp/aws_instance_mapping_{{ env }}.json"
+        name: _aws_map
+
+    - name: Publish instance_to_ip and dc_hostname_to_ip as host facts
+      ansible.builtin.set_fact:
+        instance_to_ip: "{{ _aws_map.instance_to_ip | default({}) }}"
+        dc_hostname_to_ip: >-
+          {%- set m = {} -%}
+          {%- for h in groups['dc'] -%}
+            {%- set iid = hostvars[h]['ansible_host'] | default('') -%}
+            {%- if iid and iid in (_aws_map.instance_to_ip | default({})) -%}
+              {%- set _ = m.update({h: _aws_map.instance_to_ip[iid]}) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ m }}
+        cacheable: true
