@@ -5,7 +5,7 @@ go 1.26.2
 require (
 	github.com/aws/aws-sdk-go-v2 v1.41.6
 	github.com/aws/aws-sdk-go-v2/config v1.32.16
-	github.com/aws/aws-sdk-go-v2/service/ec2 v1.298.0
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.299.0
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.68.5
 	github.com/aws/aws-sdk-go-v2/service/sts v1.42.0
 	github.com/cowdogmoo/warpgate/v3 v3.2.1-0.20260420032817-159fa7dc74e6
