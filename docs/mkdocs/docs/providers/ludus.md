@@ -137,6 +137,20 @@ Setting any of `ssh_user`/`ssh_port`/`ssh_key_path`/`ssh_password` switches Drea
 
 ## Installation
 
+The fastest path is the orchestrator — `dreadgoad up` runs the whole pipeline (doctor → infra apply → provision → health-check) and stops on the first failure with a resume hint:
+
+```bash
+dreadgoad up
+```
+
+If a step fails, fix the issue and re-run from there:
+
+```bash
+dreadgoad up --from provision
+```
+
+The orchestrator is just sugar for the per-step commands, which still work standalone:
+
 ```bash
 # Check prerequisites
 dreadgoad --provider ludus doctor
