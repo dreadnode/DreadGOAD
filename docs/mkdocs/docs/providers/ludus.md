@@ -8,9 +8,8 @@
   <img alt="icon_ansible" width="145"  height="150" src="./../img/icon_ansible.png">
 </div>
 
-!!! warning "Install on Ludus server only"
-    DreadGOAD with the Ludus provider must be run directly on the Ludus server (Proxmox host).
-    Remote workstation client usage is not currently supported.
+!!! info "Local or remote operation"
+    DreadGOAD with the Ludus provider runs in one of two modes. In **local mode** (default) DreadGOAD is installed on the Ludus server itself and shells out to the local `ludus` CLI. In **SSH mode** DreadGOAD runs on a workstation and reaches the Ludus server over SSH (the `ludus` CLI is invoked on the remote host) — see [SSH-mode configuration](#ssh-mode-configuration).
 
 ## Prerequisites
 
@@ -89,6 +88,32 @@ export LUDUS_API_KEY='YOUR_ADMIN_API_KEY'
 !!! info
     On Ludus, the IP range is assigned dynamically by the Ludus range system and is not user-configurable. The CLI automatically detects the assigned range during provisioning.
 
+### SSH-mode configuration
+
+If DreadGOAD is *not* installed on the Ludus server itself, configure SSH so the CLI can shell out to a remote `ludus` binary on the server. The presence of `ludus.ssh_host` is the toggle: leave it empty for local mode, set it for SSH mode.
+
+```yaml
+provider: ludus
+ludus:
+  api_key: YOUR_ADMIN_API_KEY
+  use_impersonation: true
+  ssh_host: ludus.example.com   # set to enable SSH mode
+  ssh_user: root                # default: root
+  ssh_port: 22                  # default: 22
+  ssh_key_path: ~/.ssh/id_ed25519  # private key for key-based auth
+  # ssh_password: hunter2       # password auth (uses sshpass — pick one or the other)
+```
+
+| Field | Required | Notes |
+|---|---|---|
+| `ssh_host` | yes (for SSH mode) | Hostname or IP of the Ludus server |
+| `ssh_user` | no | SSH login (default `root`) |
+| `ssh_port` | no | TCP port (default `22`) |
+| `ssh_key_path` | one of key/password | Path to a private key |
+| `ssh_password` | one of key/password | Password — requires `sshpass` on PATH |
+
+When `ssh_password` is set, `sshpass` must be installed locally (`apt install sshpass` / `brew install hudochenkov/sshpass/sshpass`). `dreadgoad doctor` validates the SSH endpoint is reachable and that the right helper binaries are present.
+
 ## Installation
 
 ```bash
@@ -113,6 +138,9 @@ dreadgoad --provider ludus provision
 7. A router VM (`debian-11-x64-server-template`) is deployed for network routing
 
 ### What happens during `provision`
+
+!!! note "Transport: WinRM"
+    Unlike the AWS provider (which uses SSM), Ludus provisioning runs Ansible over **WinRM** to the Windows VMs on the Ludus VLAN. All target VMs must be **powered on** for provisioning, `health-check`, and `validate` to succeed — `infra apply` leaves them running, but if you stop the lab between steps, run `dreadgoad --provider ludus lab start` first.
 
 1. The inventory file is automatically bootstrapped from the Ludus provider template
 2. IP addresses are resolved from the deployed Ludus range (format: `10.{range_number}.10.x`)
@@ -155,6 +183,8 @@ dreadgoad --provider ludus lab status
 ```
 
 ## Verification
+
+`health-check` and `validate` connect to the Windows VMs over WinRM and run ad-hoc Ansible commands, so the VMs must be running. If they were stopped via `lab stop`, start them again with `dreadgoad --provider ludus lab start` (or `ludus range start`) before verifying.
 
 After provisioning completes, verify the lab is working correctly:
 

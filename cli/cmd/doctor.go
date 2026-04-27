@@ -9,14 +9,31 @@ import (
 var doctorCmd = &cobra.Command{
 	Use:   "doctor",
 	Short: "Run pre-flight system checks",
-	Long: `Verifies that all required tools and configurations are in place:
-ansible-core version, AWS CLI, Python, Ansible collections, credentials, and inventory.`,
+	Long: `Verifies that all required tools and configurations are in place.
+
+Common checks: ansible-core version, Python, jq, zip, Ansible collections, inventory.
+
+Provider-specific:
+  aws (default)  AWS CLI, AWS credentials, Terragrunt, Terraform/Tofu
+  ludus          Ludus CLI (or SSH reachability when ludus.ssh_host is set), API key`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Get()
 		if err != nil {
 			return err
 		}
-		results := doctor.RunChecks(cfg.InventoryPath(), cfg.ProjectRoot)
+		results := doctor.RunChecks(doctor.Options{
+			InventoryPath: cfg.InventoryPath(),
+			ProjectRoot:   cfg.ProjectRoot,
+			Provider:      cfg.ResolvedProvider(),
+			Ludus: doctor.LudusOptions{
+				APIKey:      cfg.Ludus.APIKey,
+				SSHHost:     cfg.Ludus.SSHHost,
+				SSHUser:     cfg.Ludus.SSHUser,
+				SSHKeyPath:  cfg.Ludus.SSHKeyPath,
+				SSHPassword: cfg.Ludus.SSHPassword,
+				SSHPort:     cfg.Ludus.SSHPort,
+			},
+		})
 		doctor.PrintResults(results)
 
 		for _, r := range results {

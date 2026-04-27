@@ -2,11 +2,13 @@ package doctor
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/fatih/color"
 )
@@ -18,20 +20,49 @@ type CheckResult struct {
 	Message string
 }
 
-// RunChecks executes all pre-flight checks and returns results.
-func RunChecks(inventoryPath, projectRoot string) []CheckResult {
+// LudusOptions describes the Ludus connection settings doctor needs to probe.
+// SSHHost being non-empty toggles SSH-mode; otherwise the ludus CLI is expected
+// locally.
+type LudusOptions struct {
+	APIKey      string
+	SSHHost     string
+	SSHUser     string
+	SSHKeyPath  string
+	SSHPassword string
+	SSHPort     int
+}
+
+// Options configures which checks RunChecks runs.
+type Options struct {
+	InventoryPath string
+	ProjectRoot   string
+	Provider      string // aws | ludus | proxmox (empty defaults to aws)
+	Ludus         LudusOptions
+}
+
+// RunChecks executes pre-flight checks tailored to the configured provider and
+// returns the results.
+func RunChecks(opts Options) []CheckResult {
 	var results []CheckResult
 
 	results = append(results, checkAnsibleVersion())
-	results = append(results, checkCommand("aws", "AWS CLI"))
 	results = append(results, checkCommand("python3", "Python 3"))
 	results = append(results, checkCommand("jq", "jq"))
 	results = append(results, checkCommand("zip", "zip"))
-	results = append(results, checkAWSCredentials())
-	results = append(results, checkInventoryFile(inventoryPath))
-	results = append(results, checkTerragrunt())
-	results = append(results, checkTerraformOrTofu())
+	results = append(results, checkInventoryFile(opts.InventoryPath))
 	results = append(results, checkAnsibleCollections()...)
+
+	switch opts.Provider {
+	case "ludus":
+		results = append(results, runLudusChecks(opts.Ludus)...)
+	default:
+		// AWS is the historical default; proxmox currently uses the same
+		// terraform/terragrunt toolchain so it falls through here too.
+		results = append(results, checkCommand("aws", "AWS CLI"))
+		results = append(results, checkAWSCredentials())
+		results = append(results, checkTerragrunt())
+		results = append(results, checkTerraformOrTofu())
+	}
 
 	return results
 }
@@ -215,5 +246,70 @@ func checkAnsibleCollections() []CheckResult {
 			})
 		}
 	}
+	return results
+}
+
+// runLudusChecks runs Ludus-specific pre-flight checks, dispatching on whether
+// the CLI is invoked locally on the Ludus host or remotely over SSH.
+func runLudusChecks(opts LudusOptions) []CheckResult {
+	var results []CheckResult
+
+	if opts.SSHHost == "" {
+		// Local mode: ludus CLI must be on PATH.
+		results = append(results, checkCommand("ludus", "Ludus CLI"))
+	} else {
+		results = append(results, checkLudusSSH(opts)...)
+	}
+
+	results = append(results, checkLudusAPIKey(opts.APIKey))
+
+	return results
+}
+
+func checkLudusAPIKey(configured string) CheckResult {
+	if configured != "" {
+		return CheckResult{Name: "Ludus API Key", Status: "pass", Message: "set via ludus.api_key"}
+	}
+	if os.Getenv("LUDUS_API_KEY") != "" {
+		return CheckResult{Name: "Ludus API Key", Status: "pass", Message: "set via LUDUS_API_KEY env"}
+	}
+	return CheckResult{
+		Name:    "Ludus API Key",
+		Status:  "fail",
+		Message: "not configured. Set ludus.api_key in dreadgoad.yaml or export LUDUS_API_KEY",
+	}
+}
+
+func checkLudusSSH(opts LudusOptions) []CheckResult {
+	var results []CheckResult
+
+	// ssh binary is required for any SSH-mode operation; sshpass only when
+	// password auth is in use.
+	results = append(results, checkCommand("ssh", "ssh client"))
+	if opts.SSHPassword != "" {
+		results = append(results, checkCommand("sshpass", "sshpass (password auth)"))
+	}
+
+	port := opts.SSHPort
+	if port == 0 {
+		port = 22
+	}
+	addr := net.JoinHostPort(opts.SSHHost, strconv.Itoa(port))
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	if err != nil {
+		results = append(results, CheckResult{
+			Name:    "Ludus SSH host",
+			Status:  "fail",
+			Message: fmt.Sprintf("cannot reach %s: %v", addr, err),
+		})
+		return results
+	}
+	_ = conn.Close()
+	results = append(results, CheckResult{
+		Name:    "Ludus SSH host",
+		Status:  "pass",
+		Message: fmt.Sprintf("%s reachable", addr),
+	})
+
 	return results
 }
