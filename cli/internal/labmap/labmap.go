@@ -23,17 +23,18 @@ type HostInfo struct {
 
 // HostConfig represents a host from config.json lab.hosts.
 type HostConfig struct {
-	Hostname  string                     `json:"hostname"`
-	Type      string                     `json:"type"` // "dc" or "server"
-	OS        string                     `json:"os"`   // empty = windows, "linux" for linux
-	Domain    string                     `json:"domain"`
-	Path      string                     `json:"path"`
-	Scripts   []string                   `json:"scripts"`
-	Vulns     []string                   `json:"vulns"`
-	VulnsVars map[string]json.RawMessage `json:"vulns_vars"`
-	Security  []string                   `json:"security"`
-	UseLAPS   bool                       `json:"use_laps"`
-	MSSQL     *MSSQLConfig               `json:"mssql"`
+	Hostname    string                     `json:"hostname"`
+	Type        string                     `json:"type"` // "dc" or "server"
+	OS          string                     `json:"os"`   // empty = windows, "linux" for linux
+	Domain      string                     `json:"domain"`
+	Path        string                     `json:"path"`
+	Scripts     []string                   `json:"scripts"`
+	Vulns       []string                   `json:"vulns"`
+	VulnsVars   map[string]json.RawMessage `json:"vulns_vars"`
+	Security    []string                   `json:"security"`
+	UseLAPS     bool                       `json:"use_laps"`
+	MSSQL       *MSSQLConfig               `json:"mssql"`
+	LocalGroups map[string][]string        `json:"local_groups"`
 }
 
 // MSSQLLinkedServer holds the data source address for a linked SQL Server.
@@ -240,6 +241,32 @@ func (m *LabMap) UsersWithPasswordInDescription() []UserFact {
 		for username, user := range dc.Users {
 			if user.Password != "" && user.Description != "" &&
 				strings.Contains(strings.ToLower(user.Description), strings.ToLower(user.Password)) {
+				facts = append(facts, UserFact{
+					Username: m.User(username),
+					Domain:   domain,
+					DCRole:   dc.DC,
+					User:     user,
+				})
+			}
+		}
+	}
+	return facts
+}
+
+// UsersWithSamePasswordAsName returns users whose password equals their first
+// name, surname, or sAMAccountName (e.g. hodor / hodor). This catches the
+// canonical "weak credential" pattern in lab configs.
+func (m *LabMap) UsersWithSamePasswordAsName() []UserFact {
+	var facts []UserFact
+	for domain, dc := range m.DomainConfigs {
+		for username, user := range dc.Users {
+			if user.Password == "" {
+				continue
+			}
+			pw := strings.ToLower(user.Password)
+			if pw == strings.ToLower(username) ||
+				pw == strings.ToLower(user.FirstName) ||
+				pw == strings.ToLower(user.Surname) {
 				facts = append(facts, UserFact{
 					Username: m.User(username),
 					Domain:   domain,
@@ -491,6 +518,86 @@ type ESC7Fact struct {
 	HostRole  string
 	Hostname  string
 	CAManager string // e.g. "essos\\viserys.targaryen"
+}
+
+// GroupFact holds a group with its domain context.
+type GroupFact struct {
+	Group  string
+	Domain string
+	DCRole string
+}
+
+// AllConfiguredUsers returns every user defined in any DomainConfig's Users
+// map, with domain context. Used by checks that must verify the full user set
+// exists in AD.
+func (m *LabMap) AllConfiguredUsers() []UserFact {
+	var facts []UserFact
+	for domain, dc := range m.DomainConfigs {
+		for username, user := range dc.Users {
+			facts = append(facts, UserFact{
+				Username: m.User(username),
+				Domain:   domain,
+				DCRole:   dc.DC,
+				User:     user,
+			})
+		}
+	}
+	sort.Slice(facts, func(i, j int) bool {
+		if facts[i].Domain != facts[j].Domain {
+			return facts[i].Domain < facts[j].Domain
+		}
+		return facts[i].Username < facts[j].Username
+	})
+	return facts
+}
+
+// AllConfiguredGroups returns the deduplicated set of groups referenced by any
+// UserConfig.Groups across all domains. Each fact carries the domain/DC where
+// the group should be queryable.
+func (m *LabMap) AllConfiguredGroups() []GroupFact {
+	seen := make(map[string]bool)
+	var facts []GroupFact
+	for domain, dc := range m.DomainConfigs {
+		for _, user := range dc.Users {
+			for _, g := range user.Groups {
+				key := domain + "|" + strings.ToLower(g)
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				facts = append(facts, GroupFact{
+					Group:  g,
+					Domain: domain,
+					DCRole: dc.DC,
+				})
+			}
+		}
+	}
+	sort.Slice(facts, func(i, j int) bool {
+		if facts[i].Domain != facts[j].Domain {
+			return facts[i].Domain < facts[j].Domain
+		}
+		return facts[i].Group < facts[j].Group
+	})
+	return facts
+}
+
+// LocalAdminsForHost returns the configured local Administrators members for a
+// host role, derived from HostConfig.LocalGroups["Administrators"]. Returns
+// nil if the host has no local_groups config or no Administrators entry.
+func (m *LabMap) LocalAdminsForHost(role string) []string {
+	hc, ok := m.HostConfigs[role]
+	if !ok || hc.LocalGroups == nil {
+		return nil
+	}
+	for name, members := range hc.LocalGroups {
+		if strings.EqualFold(name, "Administrators") {
+			out := make([]string, len(members))
+			copy(out, members)
+			return out
+		}
+	}
+	return nil
 }
 
 // HostsWithESC7 returns ESC7 facts for hosts that have adcs_esc7 in their vulns_vars.

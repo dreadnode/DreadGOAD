@@ -1253,6 +1253,1375 @@ func (v *Validator) checkCertEnrollShare(ctx context.Context, w io.Writer) {
 	}
 }
 
+// ---- Section 5: Credential Discovery ----
+
+// checkUsernamePasswordEqual flags AD users whose password equals their
+// username (e.g. hodor/hodor) — the canonical "trivial creds" pattern.
+func (v *Validator) checkUsernamePasswordEqual(ctx context.Context, w io.Writer) {
+	printHeader(w, "Username == Password Users")
+
+	users := v.lab.UsersWithSamePasswordAsName()
+	if len(users) == 0 {
+		v.addResult(w, "SKIP", "Credentials", "No username==password users configured", "")
+		return
+	}
+
+	for _, uf := range users {
+		dcRole := strings.ToUpper(uf.DCRole)
+		if !v.hasHost(dcRole) {
+			continue
+		}
+		output := v.runPS(ctx, dcRole, fmt.Sprintf(
+			`$u = Get-ADUser -Identity '%s' -ErrorAction SilentlyContinue; if ($u) { 'USER_FOUND' } else { 'USER_NOT_FOUND' }`,
+			uf.Username))
+		switch {
+		case strings.Contains(output, "USER_FOUND"):
+			v.addResult(w, "PASS", "Credentials",
+				fmt.Sprintf("%s (password=%s) exists in %s", uf.Username, uf.User.Password, uf.Domain), "")
+		case strings.Contains(output, "USER_NOT_FOUND"):
+			v.addResult(w, "FAIL", "Credentials",
+				fmt.Sprintf("%s does NOT exist in %s (expected weak-cred user)", uf.Username, uf.Domain), "")
+		default:
+			v.addResult(w, "WARN", "Credentials",
+				fmt.Sprintf("Could not verify %s in %s", uf.Username, uf.Domain), "")
+		}
+	}
+}
+
+// checkAutologonRegistry verifies AutoAdminLogon registry values are populated
+// with plaintext credentials on hosts running the vulns_autologon role.
+func (v *Validator) checkAutologonRegistry(ctx context.Context, w io.Writer) {
+	printHeader(w, "Autologon Registry Credentials")
+
+	hosts := v.lab.HostsWithVuln("autologon")
+	if len(hosts) == 0 {
+		v.addResult(w, "SKIP", "Credentials", "No autologon vulns configured", "")
+		return
+	}
+
+	for _, role := range hosts {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+		output := v.runPS(ctx, host,
+			`$k='HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'; `+
+				`$a=(Get-ItemProperty -Path $k -Name AutoAdminLogon -ErrorAction SilentlyContinue).AutoAdminLogon; `+
+				`$u=(Get-ItemProperty -Path $k -Name DefaultUserName -ErrorAction SilentlyContinue).DefaultUserName; `+
+				`$p=(Get-ItemProperty -Path $k -Name DefaultPassword -ErrorAction SilentlyContinue).DefaultPassword; `+
+				`Write-Output ("AAL=$a|USER=$u|PWLEN=" + ($p | Measure-Object -Character).Characters)`)
+		line := strings.TrimSpace(output)
+		if line == "" {
+			v.addResult(w, "WARN", "Credentials",
+				fmt.Sprintf("Autologon registry unreadable on %s", hostLabel), "")
+			continue
+		}
+		// Parse AAL=, USER=, PWLEN= fields.
+		fields := map[string]string{}
+		for _, p := range strings.Split(line, "|") {
+			if kv := strings.SplitN(p, "=", 2); len(kv) == 2 {
+				fields[kv[0]] = kv[1]
+			}
+		}
+		aal := fields["AAL"]
+		user := fields["USER"]
+		pwlen := fields["PWLEN"]
+		switch {
+		case aal == "1" && user != "" && pwlen != "" && pwlen != "0":
+			v.addResult(w, "PASS", "Credentials",
+				fmt.Sprintf("Autologon enabled on %s (user=%s, pw stored)", hostLabel, user), "")
+		case aal == "1" && (user == "" || pwlen == "" || pwlen == "0"):
+			v.addResult(w, "FAIL", "Credentials",
+				fmt.Sprintf("AutoAdminLogon=1 on %s but credentials missing", hostLabel), "")
+		default:
+			v.addResult(w, "FAIL", "Credentials",
+				fmt.Sprintf("AutoAdminLogon NOT enabled on %s (AAL=%s)", hostLabel, aal), "")
+		}
+	}
+}
+
+// checkCmdkeyCredentials verifies stored Credential Manager entries
+// (typically TERMSRV/* targets) populated by the vulns_credentials role.
+func (v *Validator) checkCmdkeyCredentials(ctx context.Context, w io.Writer) {
+	printHeader(w, "Stored Credential Manager Entries")
+
+	hosts := v.lab.HostsWithVuln("credentials")
+	if len(hosts) == 0 {
+		v.addResult(w, "SKIP", "Credentials", "No credentials vulns configured", "")
+		return
+	}
+
+	for _, role := range hosts {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+		// cmdkey reports per-user creds; query under the configured runas user
+		// is impractical via SSM. Falling back to enumerating Credential
+		// Manager via vaultcmd-style reg query covers the most reliable
+		// surface — TERMSRV credentials are stored as Generic credentials.
+		output := v.runPS(ctx, host,
+			`cmdkey /list 2>&1 | Out-String`)
+		lower := strings.ToLower(output)
+		switch {
+		case strings.Contains(lower, "termsrv/"):
+			v.addResult(w, "PASS", "Credentials",
+				fmt.Sprintf("TERMSRV credential found on %s", hostLabel), "")
+		case strings.Contains(lower, "target:"):
+			v.addResult(w, "WARN", "Credentials",
+				fmt.Sprintf("Credentials stored on %s but no TERMSRV target", hostLabel), "")
+		default:
+			v.addResult(w, "FAIL", "Credentials",
+				fmt.Sprintf("No stored credentials on %s", hostLabel), "")
+		}
+	}
+}
+
+// checkSysvolPlaintext scans SYSVOL for plaintext-credential markers on DCs
+// where the vulns_directory or vulns_files role staged scripts.
+func (v *Validator) checkSysvolPlaintext(ctx context.Context, w io.Writer) {
+	printHeader(w, "SYSVOL Plaintext Credentials")
+
+	candidate := make(map[string]bool)
+	for _, role := range v.lab.HostsWithVuln("directory") {
+		candidate[role] = true
+	}
+	for _, role := range v.lab.HostsWithVuln("files") {
+		candidate[role] = true
+	}
+
+	var dcRoles []string
+	for role := range candidate {
+		hc, ok := v.lab.HostConfigs[role]
+		if !ok || hc.Type != "dc" {
+			continue
+		}
+		dcRoles = append(dcRoles, role)
+	}
+	if len(dcRoles) == 0 {
+		v.addResult(w, "SKIP", "Credentials", "No DCs with directory/files vulns configured", "")
+		return
+	}
+
+	for _, role := range dcRoles {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+		output := v.runPS(ctx, host,
+			`$root='C:\Windows\SYSVOL'; if (-not (Test-Path $root)) { Write-Output 'NO_SYSVOL'; exit }; `+
+				`$pat='password|pwd|secret|cpassword'; `+
+				`$hits = Get-ChildItem -Path $root -Recurse -File -ErrorAction SilentlyContinue | `+
+				`Select-String -Pattern $pat -SimpleMatch:$false -ErrorAction SilentlyContinue; `+
+				`if (-not $hits) { Write-Output 'NO_HITS'; exit }; `+
+				`$hits | Group-Object Path | ForEach-Object { Write-Output $_.Name }`)
+		switch {
+		case strings.Contains(output, "NO_SYSVOL"):
+			v.addResult(w, "FAIL", "Credentials",
+				fmt.Sprintf("SYSVOL not present on %s", hostLabel), "")
+		case strings.Contains(output, "NO_HITS"):
+			v.addResult(w, "FAIL", "Credentials",
+				fmt.Sprintf("No plaintext credential markers in SYSVOL on %s", hostLabel), "")
+		default:
+			files := parseOutputLines(output)
+			if len(files) > 0 {
+				v.addResult(w, "PASS", "Credentials",
+					fmt.Sprintf("SYSVOL plaintext markers on %s in %d file(s)", hostLabel, len(files)), "")
+			} else {
+				v.addResult(w, "WARN", "Credentials",
+					fmt.Sprintf("Could not enumerate SYSVOL on %s", hostLabel), "")
+			}
+		}
+	}
+}
+
+// checkShareFilePlaintext enumerates writable shares populated by the
+// vulns_files role for plaintext-credential drops.
+func (v *Validator) checkShareFilePlaintext(ctx context.Context, w io.Writer) {
+	printHeader(w, "Share File Plaintext Credentials")
+
+	hosts := v.lab.HostsWithVuln("files")
+	if len(hosts) == 0 {
+		v.addResult(w, "SKIP", "Credentials", "No files vulns configured", "")
+		return
+	}
+
+	for _, role := range hosts {
+		hc, ok := v.lab.HostConfigs[role]
+		if !ok || hc.Type == "dc" {
+			// DCs are covered by checkSysvolPlaintext.
+			continue
+		}
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+		output := v.runPS(ctx, host,
+			`$root='C:\shares'; if (-not (Test-Path $root)) { Write-Output 'NO_SHARES'; exit }; `+
+				`$files = Get-ChildItem -Path $root -Recurse -File -ErrorAction SilentlyContinue; `+
+				`Write-Output ("FILES=" + ($files | Measure-Object).Count)`)
+		switch {
+		case strings.Contains(output, "NO_SHARES"):
+			v.addResult(w, "FAIL", "Credentials",
+				fmt.Sprintf("C:\\shares missing on %s", hostLabel), "")
+		case strings.HasPrefix(strings.TrimSpace(output), "FILES="):
+			cnt := strings.TrimPrefix(strings.TrimSpace(output), "FILES=")
+			if cnt == "0" {
+				v.addResult(w, "FAIL", "Credentials",
+					fmt.Sprintf("No files in C:\\shares on %s", hostLabel), "")
+			} else {
+				v.addResult(w, "PASS", "Credentials",
+					fmt.Sprintf("%s file(s) staged under C:\\shares on %s", cnt, hostLabel), "")
+			}
+		default:
+			v.addResult(w, "WARN", "Credentials",
+				fmt.Sprintf("Could not enumerate shares on %s", hostLabel), "")
+		}
+	}
+}
+
+// checkSharePermissions verifies vulns_permissions ACL grants land on disk
+// (e.g. IIS_IUSRS / Authenticated Users with Modify on share folders).
+func (v *Validator) checkSharePermissions(ctx context.Context, w io.Writer) {
+	printHeader(w, "Share Permission ACLs")
+
+	hosts := v.lab.HostsWithVuln("permissions")
+	if len(hosts) == 0 {
+		v.addResult(w, "SKIP", "Permissions", "No permissions vulns configured", "")
+		return
+	}
+
+	for _, role := range hosts {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+		output := v.runPS(ctx, host,
+			`$paths = @('C:\shares','C:\inetpub\wwwroot\upload','C:\thewall'); `+
+				`$any = $false; `+
+				`foreach ($p in $paths) { `+
+				`if (-not (Test-Path $p)) { continue }; `+
+				`$acl = Get-Acl -Path $p -ErrorAction SilentlyContinue; `+
+				`foreach ($ace in $acl.Access) { `+
+				`if ($ace.IdentityReference -match 'Everyone|Authenticated Users|IIS_IUSRS|Users' -and `+
+				`($ace.FileSystemRights -match 'FullControl|Modify|Write')) { `+
+				`Write-Output ("$p|$($ace.IdentityReference)|$($ace.FileSystemRights)"); $any = $true } } }; `+
+				`if (-not $any) { Write-Output 'NO_PERMISSIVE_ACE' }`)
+		switch {
+		case strings.Contains(output, "NO_PERMISSIVE_ACE"):
+			v.addResult(w, "FAIL", "Permissions",
+				fmt.Sprintf("No permissive share ACEs on %s", hostLabel), "")
+		case strings.TrimSpace(output) == "":
+			v.addResult(w, "WARN", "Permissions",
+				fmt.Sprintf("Could not read share ACLs on %s", hostLabel), "")
+		default:
+			lines := parseOutputLines(output)
+			v.addResult(w, "PASS", "Permissions",
+				fmt.Sprintf("Permissive ACEs on %s: %d entries", hostLabel, len(lines)), "")
+		}
+	}
+}
+
+// checkAdministratorFolder verifies the C:\users\administrator folder exists
+// and is readable by non-admin (the vulns_administrator_folder role disables
+// inheritance and grants only admin rights, so listing without admin should
+// still surface the directory's existence).
+func (v *Validator) checkAdministratorFolder(ctx context.Context, w io.Writer) {
+	printHeader(w, "Administrator Profile Folder")
+
+	hosts := v.lab.HostsWithVuln("administrator_folder")
+	if len(hosts) == 0 {
+		v.addResult(w, "SKIP", "Credentials", "No administrator_folder vulns configured", "")
+		return
+	}
+
+	for _, role := range hosts {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+		output := v.runPS(ctx, host,
+			`$p='C:\users\administrator'; `+
+				`if (-not (Test-Path $p)) { Write-Output 'MISSING'; exit }; `+
+				`$acl = Get-Acl -Path $p -ErrorAction SilentlyContinue; `+
+				`$nonAdmin = $acl.Access | Where-Object { `+
+				`$_.IdentityReference -notmatch 'Administrators|SYSTEM|TrustedInstaller|CREATOR OWNER' -and `+
+				`$_.FileSystemRights -match 'Read|List|Modify|FullControl' }; `+
+				`if ($nonAdmin) { Write-Output 'NON_ADMIN_READ' } else { Write-Output 'ADMIN_ONLY' }`)
+		switch {
+		case strings.Contains(output, "MISSING"):
+			v.addResult(w, "FAIL", "Credentials",
+				fmt.Sprintf("C:\\users\\administrator missing on %s", hostLabel), "")
+		case strings.Contains(output, "NON_ADMIN_READ"):
+			v.addResult(w, "PASS", "Credentials",
+				fmt.Sprintf("C:\\users\\administrator readable by non-admin on %s", hostLabel), "")
+		case strings.Contains(output, "ADMIN_ONLY"):
+			v.addResult(w, "PASS", "Credentials",
+				fmt.Sprintf("C:\\users\\administrator exists on %s (admin-only ACL)", hostLabel), "")
+		default:
+			v.addResult(w, "WARN", "Credentials",
+				fmt.Sprintf("Could not verify administrator folder on %s", hostLabel), "")
+		}
+	}
+}
+
+// ---- Section 6: Network Poisoning / Hardening ----
+
+// checkSMBv1 verifies the legacy SMB1 protocol feature is enabled by the
+// vulns_smbv1 role.
+func (v *Validator) checkSMBv1(ctx context.Context, w io.Writer) {
+	printHeader(w, "SMBv1 Protocol")
+
+	hosts := v.lab.HostsWithVuln("smbv1")
+	if len(hosts) == 0 {
+		v.addResult(w, "SKIP", "Network", "No smbv1 vulns configured", "")
+		return
+	}
+
+	for _, role := range hosts {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+		output := v.runPS(ctx, host,
+			`$f = Get-WindowsOptionalFeature -Online -FeatureName SMB1Protocol -ErrorAction SilentlyContinue; `+
+				`if ($f) { $f.State } else { 'NOT_FOUND' }`)
+		state := strings.TrimSpace(output)
+		switch state {
+		case "Enabled":
+			v.addResult(w, "PASS", "Network",
+				fmt.Sprintf("SMBv1 enabled on %s (legacy auth/relay possible)", hostLabel), "")
+		case "Disabled":
+			v.addResult(w, "FAIL", "Network",
+				fmt.Sprintf("SMBv1 disabled on %s", hostLabel), "")
+		case "NOT_FOUND", "":
+			v.addResult(w, "WARN", "Network",
+				fmt.Sprintf("SMBv1 feature unknown on %s", hostLabel), "")
+		default:
+			v.addResult(w, "INFO", "Network",
+				fmt.Sprintf("SMBv1 state %s on %s", state, hostLabel), "")
+		}
+	}
+}
+
+// checkCredSSP verifies WSMAN CredSSP is enabled on server/client hosts via
+// vulns_enable_credssp_server / vulns_enable_credssp_client.
+func (v *Validator) checkCredSSP(ctx context.Context, w io.Writer) {
+	printHeader(w, "CredSSP (WSMAN)")
+
+	servers := v.lab.HostsWithVuln("enable_credssp_server")
+	clients := v.lab.HostsWithVuln("enable_credssp_client")
+	if len(servers) == 0 && len(clients) == 0 {
+		v.addResult(w, "SKIP", "Network", "No CredSSP vulns configured", "")
+		return
+	}
+
+	for _, role := range servers {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+		output := v.runPS(ctx, host,
+			`$v = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Service' -Name auth_credssp -ErrorAction SilentlyContinue; `+
+				`if ($v) { $v.auth_credssp } else { `+
+				`$v2 = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Service\Auth' -Name CredSSP -ErrorAction SilentlyContinue; `+
+				`if ($v2) { $v2.CredSSP } else { 'NOT_SET' } }`)
+		val := strings.TrimSpace(output)
+		switch val {
+		case "1":
+			v.addResult(w, "PASS", "Network",
+				fmt.Sprintf("CredSSP server enabled on %s (relay target)", hostLabel), "")
+		case "0":
+			v.addResult(w, "FAIL", "Network",
+				fmt.Sprintf("CredSSP server disabled on %s", hostLabel), "")
+		case "", "NOT_SET":
+			v.addResult(w, "WARN", "Network",
+				fmt.Sprintf("CredSSP server not configured on %s", hostLabel), "")
+		default:
+			v.addResult(w, "INFO", "Network",
+				fmt.Sprintf("CredSSP server value=%s on %s", val, hostLabel), "")
+		}
+	}
+
+	for _, role := range clients {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+		output := v.runPS(ctx, host,
+			`$base='HKLM:\SOFTWARE\Policies\Microsoft\Windows\CredentialsDelegation'; `+
+				`if (-not (Test-Path $base)) { Write-Output 'NO_KEY'; exit }; `+
+				`$afc = (Get-ItemProperty -Path $base -Name AllowFreshCredentials -ErrorAction SilentlyContinue).AllowFreshCredentials; `+
+				`Write-Output ("AFC=" + $afc)`)
+		line := strings.TrimSpace(output)
+		switch {
+		case strings.Contains(line, "NO_KEY"):
+			v.addResult(w, "FAIL", "Network",
+				fmt.Sprintf("CredSSP client policy missing on %s", hostLabel), "")
+		case strings.HasPrefix(line, "AFC=1"):
+			v.addResult(w, "PASS", "Network",
+				fmt.Sprintf("CredSSP client AllowFreshCredentials=1 on %s", hostLabel), "")
+		case strings.HasPrefix(line, "AFC="):
+			val := strings.TrimPrefix(line, "AFC=")
+			if val == "" || val == "0" {
+				v.addResult(w, "FAIL", "Network",
+					fmt.Sprintf("CredSSP client AllowFreshCredentials disabled on %s", hostLabel), "")
+			} else {
+				v.addResult(w, "INFO", "Network",
+					fmt.Sprintf("CredSSP client AllowFreshCredentials=%s on %s", val, hostLabel), "")
+			}
+		default:
+			v.addResult(w, "WARN", "Network",
+				fmt.Sprintf("Could not read CredSSP client policy on %s", hostLabel), "")
+		}
+	}
+}
+
+// checkWebDAVRedirector confirms the WebDAV-Redirector feature is installed
+// on hosts running the webdav role (enables HTTP-auth coercion).
+func (v *Validator) checkWebDAVRedirector(ctx context.Context, w io.Writer) {
+	printHeader(w, "WebDAV-Redirector Feature")
+
+	servers := v.lab.WindowsServers()
+	if len(servers) == 0 {
+		v.addResult(w, "SKIP", "Network", "No Windows servers configured", "")
+		return
+	}
+
+	any := false
+	for _, role := range servers {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+		output := v.runPS(ctx, host,
+			`$f = Get-WindowsFeature -Name WebDAV-Redirector -ErrorAction SilentlyContinue; `+
+				`if ($f) { $f.InstallState } else { 'NOT_FOUND' }`)
+		state := strings.TrimSpace(output)
+		switch state {
+		case "Installed":
+			any = true
+			v.addResult(w, "PASS", "Network",
+				fmt.Sprintf("WebDAV-Redirector installed on %s", hostLabel), "")
+		case "Available", "Removed":
+			v.addResult(w, "INFO", "Network",
+				fmt.Sprintf("WebDAV-Redirector available but not installed on %s", hostLabel), "")
+		case "NOT_FOUND", "":
+			v.addResult(w, "INFO", "Network",
+				fmt.Sprintf("WebDAV-Redirector feature not present on %s", hostLabel), "")
+		default:
+			v.addResult(w, "INFO", "Network",
+				fmt.Sprintf("WebDAV-Redirector state %s on %s", state, hostLabel), "")
+		}
+	}
+	if !any {
+		v.addResult(w, "INFO", "Network", "WebDAV-Redirector not installed on any Windows server", "")
+	}
+}
+
+// ---- Section 8: ADCS template flags ----
+
+// adcsTemplateAttr queries a single attribute on a named cert template using
+// the configuration naming context. Returns trimmed PowerShell output.
+func (v *Validator) adcsTemplateAttr(ctx context.Context, dcRole, templateName, attr string) string {
+	return v.runPS(ctx, dcRole, fmt.Sprintf(
+		`$t = Get-ADObject -Filter {cn -eq '%s' -and objectClass -eq 'pKICertificateTemplate'} `+
+			`-SearchBase ("CN=Certificate Templates,CN=Public Key Services,CN=Services," + (Get-ADRootDSE).configurationNamingContext) `+
+			`-Properties %s -ErrorAction SilentlyContinue; `+
+			`if (-not $t) { Write-Output 'TEMPLATE_NOT_FOUND'; exit }; `+
+			`$v = $t.'%s'; `+
+			`if ($v -is [System.Array]) { $v -join ',' } else { Write-Output $v }`,
+		templateName, attr, attr))
+}
+
+// adcsTemplateDCs returns the DC roles that have at least one ADCS template
+// queryable. We pick any DC associated with an ADCS host.
+func (v *Validator) adcsTemplateDCs() []string {
+	dcs := make(map[string]bool)
+	for _, adcsRole := range v.lab.ADCSHosts() {
+		if dcRole := v.lab.ADCSDCRole(adcsRole); dcRole != "" {
+			dcs[dcRole] = true
+		}
+	}
+	// Fall back to all DCs if mapping was empty.
+	if len(dcs) == 0 {
+		for _, role := range v.lab.DCs() {
+			dcs[role] = true
+		}
+	}
+	var out []string
+	for r := range dcs {
+		out = append(out, r)
+	}
+	return out
+}
+
+// checkADCSESC1 verifies the ESC1 template has CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT
+// (msPKI-Certificate-Name-Flag bit 0x1) set.
+func (v *Validator) checkADCSESC1(ctx context.Context, w io.Writer) {
+	printHeader(w, "ADCS ESC1 - ENROLLEE_SUPPLIES_SUBJECT")
+
+	dcs := v.adcsTemplateDCs()
+	if len(dcs) == 0 || len(v.lab.ADCSHosts()) == 0 {
+		v.addResult(w, "SKIP", "ADCS-ESC1", "No ADCS configured for this lab", "")
+		return
+	}
+
+	for _, dcRole := range dcs {
+		dc := strings.ToUpper(dcRole)
+		if !v.hasHost(dc) {
+			continue
+		}
+		output := v.adcsTemplateAttr(ctx, dc, "ESC1", "msPKI-Certificate-Name-Flag")
+		switch {
+		case strings.Contains(output, "TEMPLATE_NOT_FOUND"):
+			v.addResult(w, "INFO", "ADCS-ESC1",
+				fmt.Sprintf("ESC1 template not present on %s", dc), "")
+		case strings.TrimSpace(output) == "":
+			v.addResult(w, "WARN", "ADCS-ESC1",
+				fmt.Sprintf("Could not read ESC1 template on %s", dc), "")
+		default:
+			val := strings.TrimSpace(output)
+			// The ENROLLEE_SUPPLIES_SUBJECT flag is bit 0x1 (decimal 1). The
+			// stored value can be a positive or two's-complement int.
+			if strings.Contains(val, "1") && (val == "1" || hasBitOne(val)) {
+				v.addResult(w, "PASS", "ADCS-ESC1",
+					fmt.Sprintf("ESC1 has ENROLLEE_SUPPLIES_SUBJECT (flag=%s) on %s", val, dc), "")
+			} else {
+				v.addResult(w, "FAIL", "ADCS-ESC1",
+					fmt.Sprintf("ESC1 missing ENROLLEE_SUPPLIES_SUBJECT (flag=%s) on %s", val, dc), "")
+			}
+		}
+	}
+}
+
+// hasBitOne returns true if the decimal string represents an integer with
+// bit 0 set (i.e. odd value).
+func hasBitOne(decimal string) bool {
+	s := strings.TrimSpace(decimal)
+	if s == "" {
+		return false
+	}
+	last := s[len(s)-1]
+	return last == '1' || last == '3' || last == '5' || last == '7' || last == '9'
+}
+
+// checkADCSESC2 verifies the ESC2 template lists Any Purpose (2.5.29.37.0)
+// in pKIExtendedKeyUsage.
+func (v *Validator) checkADCSESC2(ctx context.Context, w io.Writer) {
+	printHeader(w, "ADCS ESC2 - Any Purpose EKU")
+
+	dcs := v.adcsTemplateDCs()
+	if len(dcs) == 0 || len(v.lab.ADCSHosts()) == 0 {
+		v.addResult(w, "SKIP", "ADCS-ESC2", "No ADCS configured for this lab", "")
+		return
+	}
+
+	for _, dcRole := range dcs {
+		dc := strings.ToUpper(dcRole)
+		if !v.hasHost(dc) {
+			continue
+		}
+		output := v.adcsTemplateAttr(ctx, dc, "ESC2", "pKIExtendedKeyUsage")
+		switch {
+		case strings.Contains(output, "TEMPLATE_NOT_FOUND"):
+			v.addResult(w, "INFO", "ADCS-ESC2",
+				fmt.Sprintf("ESC2 template not present on %s", dc), "")
+		case strings.Contains(output, "2.5.29.37.0"):
+			v.addResult(w, "PASS", "ADCS-ESC2",
+				fmt.Sprintf("ESC2 has Any Purpose EKU on %s", dc), "")
+		case strings.TrimSpace(output) == "":
+			v.addResult(w, "WARN", "ADCS-ESC2",
+				fmt.Sprintf("Could not read ESC2 template EKU on %s", dc), "")
+		default:
+			v.addResult(w, "FAIL", "ADCS-ESC2",
+				fmt.Sprintf("ESC2 missing Any Purpose EKU on %s (got %s)", dc, strings.TrimSpace(output)), "")
+		}
+	}
+}
+
+// checkADCSESC3 verifies the ESC3-CRA template lists Certificate Request Agent
+// (1.3.6.1.4.1.311.20.2.1) in pKIExtendedKeyUsage.
+func (v *Validator) checkADCSESC3(ctx context.Context, w io.Writer) {
+	printHeader(w, "ADCS ESC3 - Certificate Request Agent EKU")
+
+	dcs := v.adcsTemplateDCs()
+	if len(dcs) == 0 || len(v.lab.ADCSHosts()) == 0 {
+		v.addResult(w, "SKIP", "ADCS-ESC3", "No ADCS configured for this lab", "")
+		return
+	}
+
+	for _, dcRole := range dcs {
+		dc := strings.ToUpper(dcRole)
+		if !v.hasHost(dc) {
+			continue
+		}
+		// Try ESC3-CRA first; fall back to ESC3.
+		out := v.adcsTemplateAttr(ctx, dc, "ESC3-CRA", "pKIExtendedKeyUsage")
+		tmpl := "ESC3-CRA"
+		if strings.Contains(out, "TEMPLATE_NOT_FOUND") {
+			out = v.adcsTemplateAttr(ctx, dc, "ESC3", "pKIExtendedKeyUsage")
+			tmpl = "ESC3"
+		}
+		switch {
+		case strings.Contains(out, "TEMPLATE_NOT_FOUND"):
+			v.addResult(w, "INFO", "ADCS-ESC3",
+				fmt.Sprintf("ESC3/ESC3-CRA template not present on %s", dc), "")
+		case strings.Contains(out, "1.3.6.1.4.1.311.20.2.1"):
+			v.addResult(w, "PASS", "ADCS-ESC3",
+				fmt.Sprintf("%s has Certificate Request Agent EKU on %s", tmpl, dc), "")
+		case strings.TrimSpace(out) == "":
+			v.addResult(w, "WARN", "ADCS-ESC3",
+				fmt.Sprintf("Could not read %s template EKU on %s", tmpl, dc), "")
+		default:
+			v.addResult(w, "FAIL", "ADCS-ESC3",
+				fmt.Sprintf("%s missing CRA EKU on %s (got %s)", tmpl, dc, strings.TrimSpace(out)), "")
+		}
+	}
+}
+
+// checkADCSESC4 verifies a non-default identity has GenericAll on the ESC4
+// template (typically khal.drogo per config.json).
+func (v *Validator) checkADCSESC4(ctx context.Context, w io.Writer) {
+	printHeader(w, "ADCS ESC4 - Template ACL Abuse")
+
+	if len(v.lab.ADCSHosts()) == 0 {
+		v.addResult(w, "SKIP", "ADCS-ESC4", "No ADCS configured for this lab", "")
+		return
+	}
+
+	// Look for ACLs whose target is the ESC4 template DN.
+	var grantees []labmapACL
+	for _, af := range v.lab.AllACLs() {
+		if strings.Contains(strings.ToUpper(af.ACL.To), "CN=ESC4,CN=CERTIFICATE TEMPLATES") {
+			grantees = append(grantees, labmapACL{Domain: af.Domain, DCRole: af.DCRole, Source: af.ACL.For, Right: af.ACL.Right})
+		}
+	}
+
+	dcs := v.adcsTemplateDCs()
+	if len(grantees) == 0 {
+		// Fall back to scanning ACLs for any non-default identity.
+		for _, dcRole := range dcs {
+			dc := strings.ToUpper(dcRole)
+			if !v.hasHost(dc) {
+				continue
+			}
+			output := v.runPS(ctx, dc,
+				`$t = Get-ADObject -Filter {cn -eq 'ESC4' -and objectClass -eq 'pKICertificateTemplate'} `+
+					`-SearchBase ("CN=Certificate Templates,CN=Public Key Services,CN=Services," + (Get-ADRootDSE).configurationNamingContext) `+
+					`-ErrorAction SilentlyContinue; `+
+					`if (-not $t) { Write-Output 'TEMPLATE_NOT_FOUND'; exit }; `+
+					`Import-Module ActiveDirectory; Set-Location AD:; `+
+					`$acl = Get-Acl -Path $t.DistinguishedName; `+
+					`$bad = $acl.Access | Where-Object { `+
+					`$_.IdentityReference -notmatch 'Domain Admins|Enterprise Admins|SYSTEM|Authenticated Users|Domain Users|Administrators|Cert Publishers' -and `+
+					`$_.ActiveDirectoryRights -match 'GenericAll|WriteDacl|WriteOwner' }; `+
+					`if ($bad) { $bad | ForEach-Object { Write-Output ("$($_.IdentityReference)|$($_.ActiveDirectoryRights)") } } `+
+					`else { Write-Output 'NO_ABUSE' }`)
+			switch {
+			case strings.Contains(output, "TEMPLATE_NOT_FOUND"):
+				v.addResult(w, "INFO", "ADCS-ESC4",
+					fmt.Sprintf("ESC4 template not present on %s", dc), "")
+			case strings.Contains(output, "NO_ABUSE"):
+				v.addResult(w, "FAIL", "ADCS-ESC4",
+					fmt.Sprintf("No abusable ACE on ESC4 template on %s", dc), "")
+			case strings.TrimSpace(output) == "":
+				v.addResult(w, "WARN", "ADCS-ESC4",
+					fmt.Sprintf("Could not read ESC4 template ACL on %s", dc), "")
+			default:
+				lines := parseOutputLines(output)
+				v.addResult(w, "PASS", "ADCS-ESC4",
+					fmt.Sprintf("ESC4 abusable ACEs on %s: %s", dc, strings.Join(lines, "; ")), "")
+			}
+		}
+		return
+	}
+
+	// Specific grantee path — verify each labmap-configured identity has the
+	// expected right.
+	for _, g := range grantees {
+		dc := strings.ToUpper(g.DCRole)
+		if !v.hasHost(dc) {
+			continue
+		}
+		source := v.lab.User(g.Source)
+		output := v.runPS(ctx, dc, fmt.Sprintf(
+			`$t = Get-ADObject -Filter {cn -eq 'ESC4' -and objectClass -eq 'pKICertificateTemplate'} `+
+				`-SearchBase ("CN=Certificate Templates,CN=Public Key Services,CN=Services," + (Get-ADRootDSE).configurationNamingContext) `+
+				`-ErrorAction SilentlyContinue; `+
+				`if (-not $t) { Write-Output 'TEMPLATE_NOT_FOUND'; exit }; `+
+				`Import-Module ActiveDirectory; Set-Location AD:; `+
+				`$acl = Get-Acl -Path $t.DistinguishedName; `+
+				`$ace = $acl.Access | Where-Object { $_.IdentityReference -like '*%s*' -and $_.ActiveDirectoryRights -match '%s' }; `+
+				`if ($ace) { Write-Output 'ACL_FOUND' } else { Write-Output 'ACL_NOT_FOUND' }`,
+			source, g.Right))
+		switch {
+		case strings.Contains(output, "TEMPLATE_NOT_FOUND"):
+			v.addResult(w, "INFO", "ADCS-ESC4",
+				fmt.Sprintf("ESC4 template not present on %s", dc), "")
+		case strings.Contains(output, "ACL_FOUND"):
+			v.addResult(w, "PASS", "ADCS-ESC4",
+				fmt.Sprintf("%s has %s on ESC4 template (%s)", source, g.Right, g.Domain), "")
+		case strings.Contains(output, "ACL_NOT_FOUND"):
+			v.addResult(w, "FAIL", "ADCS-ESC4",
+				fmt.Sprintf("%s does NOT have %s on ESC4 template (%s)", source, g.Right, g.Domain), "")
+		default:
+			v.addResult(w, "WARN", "ADCS-ESC4",
+				fmt.Sprintf("Could not verify ESC4 ACL for %s in %s", source, g.Domain), "")
+		}
+	}
+}
+
+// labmapACL is a flattened view of an ACL grant for a single template/object.
+type labmapACL struct {
+	Domain string
+	DCRole string
+	Source string
+	Right  string
+}
+
+// checkADCSESC9 verifies pre-conditions for ESC9 abuse: a configured user
+// (typically missandei) has DoesNotRequirePreAuth set, and the GenericAll
+// ACL chain (missandei -> khal.drogo) exists. ACL checks already run in
+// checkACLPermissions; here we focus on the user attribute.
+func (v *Validator) checkADCSESC9(ctx context.Context, w io.Writer) {
+	printHeader(w, "ADCS ESC9 - Pre-auth + ACL Chain")
+
+	if len(v.lab.ADCSHosts()) == 0 {
+		v.addResult(w, "SKIP", "ADCS-ESC9", "No ADCS configured for this lab", "")
+		return
+	}
+
+	// Pull AS-REP-roastable users domain by domain (these are the candidate
+	// pivot identities for ESC9).
+	any := false
+	for _, role := range v.lab.DCs() {
+		dc := strings.ToUpper(role)
+		if !v.hasHost(dc) {
+			continue
+		}
+		output := v.runPS(ctx, dc,
+			`Get-ADUser -Filter {DoesNotRequirePreAuth -eq $true} -Properties DoesNotRequirePreAuth | `+
+				`Select-Object -ExpandProperty SamAccountName`)
+		users := parseOutputLines(output)
+		domain := v.lab.DomainForHost(strings.ToLower(dc))
+		if domain == "" {
+			domain = dc
+		}
+		if len(users) == 0 {
+			v.addResult(w, "FAIL", "ADCS-ESC9",
+				fmt.Sprintf("No DONT_REQ_PREAUTH users in %s (no ESC9 pivot)", domain), "")
+			continue
+		}
+		any = true
+		v.addResult(w, "PASS", "ADCS-ESC9",
+			fmt.Sprintf("ESC9 pivot users in %s: %s", domain, strings.Join(users, ", ")), "")
+	}
+	if !any {
+		v.addResult(w, "FAIL", "ADCS-ESC9", "No ESC9 pivot users found in any domain", "")
+	}
+}
+
+// checkADCSESC13 verifies the ESC13 template's msPKI-Certificate-Policy is
+// populated (the esc13.ps1 script writes the issuance policy OID into it).
+func (v *Validator) checkADCSESC13(ctx context.Context, w io.Writer) {
+	printHeader(w, "ADCS ESC13 - Issuance Policy Link")
+
+	hosts := v.lab.HostsWithVuln("adcs_esc13")
+	if len(hosts) == 0 {
+		v.addResult(w, "SKIP", "ADCS-ESC13", "No ESC13 vulns configured", "")
+		return
+	}
+
+	for _, role := range hosts {
+		// Templates live in AD — query a DC.
+		queryHost := strings.ToUpper(role)
+		if hc := v.lab.HostConfigs[role]; hc.Type != "dc" {
+			if dcRole := v.lab.DCForDomain(hc.Domain); dcRole != "" {
+				queryHost = strings.ToUpper(dcRole)
+			}
+		}
+		if !v.hasHost(queryHost) {
+			continue
+		}
+		output := v.adcsTemplateAttr(ctx, queryHost, "ESC13", "msPKI-Certificate-Policy")
+		switch {
+		case strings.Contains(output, "TEMPLATE_NOT_FOUND"):
+			v.addResult(w, "FAIL", "ADCS-ESC13",
+				fmt.Sprintf("ESC13 template missing on %s", queryHost), "")
+		case strings.TrimSpace(output) == "":
+			v.addResult(w, "FAIL", "ADCS-ESC13",
+				fmt.Sprintf("ESC13 msPKI-Certificate-Policy unset on %s", queryHost), "")
+		default:
+			v.addResult(w, "PASS", "ADCS-ESC13",
+				fmt.Sprintf("ESC13 issuance policy set on %s: %s", queryHost, strings.TrimSpace(output)), "")
+		}
+	}
+}
+
+// ---- Section 16: DNS / Audit ----
+
+// checkDNSConditionalForwarder verifies a DNS forwarder zone exists for each
+// peer/parent domain on every DC (configured by parent_child_dns or
+// dc_dns_conditional_forwarder roles).
+func (v *Validator) checkDNSConditionalForwarder(ctx context.Context, w io.Writer) {
+	printHeader(w, "DNS Conditional Forwarders")
+
+	domains := v.lab.Domains()
+	if len(domains) < 2 {
+		v.addResult(w, "SKIP", "DNS", "Single-domain lab — no conditional forwarders expected", "")
+		return
+	}
+
+	for _, srcDomain := range domains {
+		dcRole := v.lab.DCForDomain(srcDomain)
+		if dcRole == "" {
+			continue
+		}
+		dc := strings.ToUpper(dcRole)
+		if !v.hasHost(dc) {
+			continue
+		}
+		for _, peer := range domains {
+			if peer == srcDomain {
+				continue
+			}
+			// Skip parent/child relationships because those use delegation,
+			// not forwarder zones — but check forwarders for sibling/peer.
+			if strings.HasSuffix(peer, "."+srcDomain) || strings.HasSuffix(srcDomain, "."+peer) {
+				continue
+			}
+			output := v.runPS(ctx, dc, fmt.Sprintf(
+				`$z = Get-DnsServerZone -Name '%s' -ErrorAction SilentlyContinue; `+
+					`if ($z -and $z.ZoneType -eq 'Forwarder') { 'FORWARDER' } `+
+					`elseif ($z) { 'WRONG_TYPE' } else { 'NOT_FOUND' }`,
+				peer))
+			switch {
+			case strings.Contains(output, "FORWARDER"):
+				v.addResult(w, "PASS", "DNS",
+					fmt.Sprintf("Forwarder for %s configured on %s", peer, dc), "")
+			case strings.Contains(output, "WRONG_TYPE"):
+				v.addResult(w, "WARN", "DNS",
+					fmt.Sprintf("Zone for %s on %s is not a Forwarder", peer, dc), "")
+			case strings.Contains(output, "NOT_FOUND"):
+				v.addResult(w, "FAIL", "DNS",
+					fmt.Sprintf("No forwarder for %s on %s", peer, dc), "")
+			default:
+				v.addResult(w, "WARN", "DNS",
+					fmt.Sprintf("Could not read DNS zones on %s for %s", dc, peer), "")
+			}
+		}
+	}
+}
+
+// checkDCSACLAudit verifies Directory Service Access auditing is enabled on
+// DCs running the dc_audit_sacl role.
+func (v *Validator) checkDCSACLAudit(ctx context.Context, w io.Writer) {
+	printHeader(w, "DC SACL / Directory Service Auditing")
+
+	dcs := v.dcsWithAuditRole()
+	if len(dcs) == 0 {
+		v.addResult(w, "SKIP", "Audit", "No DCs with audit_sacl/audit_policy configured", "")
+		return
+	}
+
+	for _, role := range dcs {
+		dc := strings.ToUpper(role)
+		if !v.hasHost(dc) {
+			continue
+		}
+		output := v.runPS(ctx, dc,
+			`auditpol /get /category:"DS Access" /r 2>&1 | Out-String`)
+		v.reportDSAccessAudit(w, dc, output)
+	}
+}
+
+// dcsWithAuditRole returns DC roles whose config hints at the audit_sacl /
+// audit_policy role being applied (script or security tag).
+func (v *Validator) dcsWithAuditRole() []string {
+	var dcs []string
+	for role, hc := range v.lab.HostConfigs {
+		if hc.Type != "dc" {
+			continue
+		}
+		if hostHasTag(hc.Scripts, "audit_sacl") || hostHasTag(hc.Security, "audit_policy") {
+			dcs = append(dcs, role)
+		}
+	}
+	return dcs
+}
+
+func (v *Validator) reportDSAccessAudit(w io.Writer, dc, output string) {
+	lower := strings.ToLower(output)
+	dsEnabled := strings.Contains(lower, "success and failure") ||
+		(strings.Contains(lower, "success") && strings.Contains(lower, "directory service"))
+	switch {
+	case dsEnabled:
+		v.addResult(w, "PASS", "Audit",
+			fmt.Sprintf("DS Access auditing enabled on %s", dc), "")
+	case strings.Contains(lower, "no auditing"):
+		v.addResult(w, "FAIL", "Audit",
+			fmt.Sprintf("DS Access auditing NOT enabled on %s", dc), "")
+	case strings.TrimSpace(output) == "":
+		v.addResult(w, "WARN", "Audit",
+			fmt.Sprintf("Could not read auditpol on %s", dc), "")
+	default:
+		v.addResult(w, "INFO", "Audit",
+			fmt.Sprintf("DS Access auditpol on %s: %s", dc, strings.TrimSpace(output)), "")
+	}
+}
+
+func hostHasTag(values []string, needle string) bool {
+	for _, s := range values {
+		if strings.Contains(strings.ToLower(s), needle) {
+			return true
+		}
+	}
+	return false
+}
+
+// checkLDAPDiagnosticLogging verifies the NTDS field-engineering registry
+// value is non-zero (set by the ldap_diagnostic_logging role for 1644 events).
+func (v *Validator) checkLDAPDiagnosticLogging(ctx context.Context, w io.Writer) {
+	printHeader(w, "LDAP Diagnostic Logging")
+
+	dcs := v.dcRoles()
+	if len(dcs) == 0 {
+		v.addResult(w, "SKIP", "Audit", "No DCs configured", "")
+		return
+	}
+
+	any := false
+	for _, role := range dcs {
+		dc := strings.ToUpper(role)
+		if !v.hasHost(dc) {
+			continue
+		}
+		output := v.runPS(ctx, dc,
+			`$v = Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Diagnostics' `+
+				`-Name '15 Field Engineering' -ErrorAction SilentlyContinue; `+
+				`if ($v) { $v.'15 Field Engineering' } else { 'NOT_SET' }`)
+		if v.reportLDAPDiagnostic(w, dc, strings.TrimSpace(output)) {
+			any = true
+		}
+	}
+	if !any && len(dcs) > 0 {
+		v.addResult(w, "INFO", "Audit", "No DC has LDAP diagnostic logging enabled", "")
+	}
+}
+
+func (v *Validator) dcRoles() []string {
+	var dcs []string
+	for role, hc := range v.lab.HostConfigs {
+		if hc.Type == "dc" {
+			dcs = append(dcs, role)
+		}
+	}
+	return dcs
+}
+
+// reportLDAPDiagnostic emits the result for one DC and returns true when the
+// 1644 events are enabled.
+func (v *Validator) reportLDAPDiagnostic(w io.Writer, dc, val string) bool {
+	switch val {
+	case "0", "", "NOT_SET":
+		v.addResult(w, "FAIL", "Audit",
+			fmt.Sprintf("LDAP Field Engineering=%s on %s (1644 events disabled)", val, dc), "")
+		return false
+	default:
+		v.addResult(w, "PASS", "Audit",
+			fmt.Sprintf("LDAP Field Engineering=%s on %s (1644 events enabled)", val, dc), "")
+		return true
+	}
+}
+
+// checkASRRules verifies Defender ASR rules are configured on hosts running
+// the security_asr role.
+func (v *Validator) checkASRRules(ctx context.Context, w io.Writer) {
+	printHeader(w, "Defender ASR Rules")
+
+	var hosts []string
+	for role, hc := range v.lab.HostConfigs {
+		for _, s := range hc.Security {
+			if strings.Contains(strings.ToLower(s), "asr") {
+				hosts = append(hosts, role)
+				break
+			}
+		}
+	}
+	if len(hosts) == 0 {
+		v.addResult(w, "SKIP", "Defender", "No ASR security tags configured", "")
+		return
+	}
+
+	for _, role := range hosts {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+		output := v.runPS(ctx, host,
+			`$ids = (Get-MpPreference -ErrorAction SilentlyContinue).AttackSurfaceReductionRules_Ids; `+
+				`if (-not $ids -or $ids.Count -eq 0) { Write-Output 'NO_RULES'; exit }; `+
+				`Write-Output ("COUNT=" + $ids.Count)`)
+		line := strings.TrimSpace(output)
+		switch {
+		case strings.Contains(line, "NO_RULES"):
+			v.addResult(w, "FAIL", "Defender",
+				fmt.Sprintf("No ASR rules configured on %s", hostLabel), "")
+		case strings.HasPrefix(line, "COUNT="):
+			cnt := strings.TrimPrefix(line, "COUNT=")
+			v.addResult(w, "PASS", "Defender",
+				fmt.Sprintf("ASR rules configured on %s: %s rule(s)", hostLabel, cnt), "")
+		default:
+			v.addResult(w, "WARN", "Defender",
+				fmt.Sprintf("Could not read ASR rules on %s", hostLabel), "")
+		}
+	}
+}
+
+// ---- Section 10: IIS upload ----
+
+// checkIISUploadPermissions verifies the IIS upload directory is writable by
+// IIS_IUSRS (set by the vulns_permissions role on hosts running IIS).
+func (v *Validator) checkIISUploadPermissions(ctx context.Context, w io.Writer) {
+	printHeader(w, "IIS Upload Folder Permissions")
+
+	hosts := v.lab.HostsWithVuln("permissions")
+	if len(hosts) == 0 {
+		v.addResult(w, "SKIP", "IIS", "No permissions vulns configured", "")
+		return
+	}
+
+	any := false
+	for _, role := range hosts {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+		output := v.runPS(ctx, host,
+			`$p='C:\inetpub\wwwroot\upload'; `+
+				`if (-not (Test-Path $p)) { Write-Output 'NO_UPLOAD_DIR'; exit }; `+
+				`$acl = Get-Acl -Path $p -ErrorAction SilentlyContinue; `+
+				`$ace = $acl.Access | Where-Object { `+
+				`$_.IdentityReference -match 'IIS_IUSRS' -and $_.FileSystemRights -match 'FullControl|Modify|Write' }; `+
+				`if ($ace) { Write-Output ($ace.FileSystemRights -join ',') } else { Write-Output 'NO_IIS_ACE' }`)
+		line := strings.TrimSpace(output)
+		switch {
+		case strings.Contains(line, "NO_UPLOAD_DIR"):
+			v.addResult(w, "INFO", "IIS",
+				fmt.Sprintf("No upload directory on %s (IIS not configured)", hostLabel), "")
+		case strings.Contains(line, "NO_IIS_ACE"):
+			v.addResult(w, "FAIL", "IIS",
+				fmt.Sprintf("Upload dir on %s has no IIS_IUSRS write ACE", hostLabel), "")
+		case line == "":
+			v.addResult(w, "WARN", "IIS",
+				fmt.Sprintf("Could not read upload ACL on %s", hostLabel), "")
+		default:
+			any = true
+			v.addResult(w, "PASS", "IIS",
+				fmt.Sprintf("IIS_IUSRS has %s on upload dir on %s", line, hostLabel), "")
+		}
+	}
+	if !any {
+		// Not a failure — IIS is optional in some labs.
+		v.addResult(w, "INFO", "IIS", "No IIS_IUSRS upload permissions found", "")
+	}
+}
+
+// ---- Section 2: Configured Users ----
+
+// checkConfiguredUsers verifies each user defined in DomainConfigs.Users
+// actually exists in AD on the user's domain DC, and that every configured
+// group membership is present in MemberOf. Emits one PASS per user and one
+// FAIL per missing user or unsatisfied group expectation.
+func (v *Validator) checkConfiguredUsers(ctx context.Context, w io.Writer) {
+	printHeader(w, "Configured AD Users")
+
+	users := v.lab.AllConfiguredUsers()
+	if len(users) == 0 {
+		v.addResult(w, "SKIP", "Users", "No users configured", "")
+		return
+	}
+
+	for _, uf := range users {
+		dcRole := strings.ToUpper(uf.DCRole)
+		if !v.hasHost(dcRole) {
+			continue
+		}
+		output := v.runPS(ctx, dcRole, fmt.Sprintf(
+			`$u = Get-ADUser -Identity '%s' -Properties MemberOf -ErrorAction SilentlyContinue; `+
+				`if (-not $u) { Write-Output 'USER_NOT_FOUND'; exit }; `+
+				`Write-Output 'USER_FOUND'; `+
+				`foreach ($g in $u.MemberOf) { Write-Output "GROUP=$g" }`,
+			uf.Username))
+		if !strings.Contains(output, "USER_FOUND") {
+			v.addResult(w, "FAIL", "Users",
+				fmt.Sprintf("%s does NOT exist in %s", uf.Username, uf.Domain), "")
+			continue
+		}
+
+		// Collect group names from MemberOf DN strings (CN=Group,...).
+		memberOf := make(map[string]bool)
+		for _, line := range parseOutputLines(output) {
+			if !strings.HasPrefix(line, "GROUP=") {
+				continue
+			}
+			dn := strings.TrimPrefix(line, "GROUP=")
+			// Take CN= portion of first RDN.
+			parts := strings.SplitN(dn, ",", 2)
+			cn := strings.TrimPrefix(parts[0], "CN=")
+			memberOf[strings.ToLower(cn)] = true
+		}
+
+		expected := uf.User.Groups
+		matched := 0
+		var missing []string
+		for _, g := range expected {
+			if memberOf[strings.ToLower(g)] {
+				matched++
+			} else {
+				missing = append(missing, g)
+			}
+		}
+
+		if matched == len(expected) {
+			v.addResult(w, "PASS", "Users",
+				fmt.Sprintf("%s exists with %d/%d expected groups", uf.Username, matched, len(expected)), "")
+		} else {
+			v.addResult(w, "FAIL", "Users",
+				fmt.Sprintf("%s missing groups in %s: %s", uf.Username, uf.Domain, strings.Join(missing, ", ")), "")
+		}
+	}
+}
+
+// ---- Section 3: Configured Groups ----
+
+// checkConfiguredGroups verifies that every group referenced by any user's
+// Groups list actually exists in AD on the corresponding domain DC. The set
+// is deduplicated per (domain, group).
+func (v *Validator) checkConfiguredGroups(ctx context.Context, w io.Writer) {
+	printHeader(w, "Configured AD Groups")
+
+	groups := v.lab.AllConfiguredGroups()
+	if len(groups) == 0 {
+		v.addResult(w, "SKIP", "Groups", "No groups referenced by users", "")
+		return
+	}
+
+	for _, gf := range groups {
+		dcRole := strings.ToUpper(gf.DCRole)
+		if !v.hasHost(dcRole) {
+			continue
+		}
+		output := v.runPS(ctx, dcRole, fmt.Sprintf(
+			`$g = Get-ADGroup -Identity '%s' -ErrorAction SilentlyContinue; `+
+				`if ($g) { 'GROUP_FOUND' } else { 'GROUP_NOT_FOUND' }`,
+			gf.Group))
+		switch {
+		case strings.Contains(output, "GROUP_FOUND"):
+			v.addResult(w, "PASS", "Groups",
+				fmt.Sprintf("Group '%s' exists in %s", gf.Group, gf.Domain), "")
+		case strings.Contains(output, "GROUP_NOT_FOUND"):
+			v.addResult(w, "FAIL", "Groups",
+				fmt.Sprintf("Group '%s' NOT found in %s", gf.Group, gf.Domain), "")
+		default:
+			v.addResult(w, "WARN", "Groups",
+				fmt.Sprintf("Could not verify group '%s' in %s", gf.Group, gf.Domain), "")
+		}
+	}
+}
+
+// ---- Section 11: Local Admin Access Map ----
+
+// checkLocalAdmins verifies, for each Windows host, that the configured
+// local_groups.Administrators set matches the actual Administrators group
+// membership reported by Get-LocalGroupMember. If the host has no
+// configured local admins, it falls back to INFO with the live members so
+// operators can compare manually.
+func (v *Validator) checkLocalAdmins(ctx context.Context, w io.Writer) {
+	printHeader(w, "Local Admin Access Map")
+
+	hosts := v.lab.WindowsHosts()
+	if len(hosts) == 0 {
+		v.addResult(w, "SKIP", "LocalAdmins", "No Windows hosts configured", "")
+		return
+	}
+
+	for _, role := range hosts {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+
+		output := v.runPS(ctx, host,
+			`Get-LocalGroupMember -Group Administrators -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name`)
+		actual := parseOutputLines(output)
+
+		expected := v.lab.LocalAdminsForHost(role)
+		if len(expected) == 0 {
+			if len(actual) > 0 {
+				v.addResult(w, "INFO", "LocalAdmins",
+					fmt.Sprintf("Local admins on %s: %s", hostLabel, strings.Join(actual, ", ")), "")
+			} else {
+				v.addResult(w, "WARN", "LocalAdmins",
+					fmt.Sprintf("Could not enumerate local admins on %s", hostLabel), "")
+			}
+			continue
+		}
+
+		// Normalize actual entries (e.g. "SEVENKINGDOMS\\robert.baratheon")
+		// for case-insensitive matching against expected ("sevenkingdoms\\robert.baratheon").
+		actualSet := make(map[string]bool, len(actual))
+		for _, a := range actual {
+			actualSet[strings.ToLower(strings.TrimSpace(a))] = true
+		}
+
+		var missing []string
+		for _, exp := range expected {
+			if !actualSet[strings.ToLower(strings.TrimSpace(exp))] {
+				missing = append(missing, exp)
+			}
+		}
+		if len(missing) == 0 {
+			v.addResult(w, "PASS", "LocalAdmins",
+				fmt.Sprintf("%s has all %d configured local admins", hostLabel, len(expected)), "")
+		} else {
+			v.addResult(w, "FAIL", "LocalAdmins",
+				fmt.Sprintf("%s missing local admins: %s", hostLabel, strings.Join(missing, ", ")), "")
+		}
+	}
+}
+
+// ---- Section 13: CVE Patch Status ----
+
+// cvePatch maps a CVE identifier to its mitigating KB(s). A missing KB is a
+// PASS (lab is intentionally vulnerable); an installed KB is INFO (patch
+// applied, exploit may fail).
+type cvePatch struct {
+	CVE  string
+	Name string
+	KBs  []string
+}
+
+// checkCVEPatches reports patch status for each (Windows host, CVE) by
+// querying Get-HotFix per KB. Lab hosts are intentionally unpatched, so a
+// missing KB indicates the vulnerability is still exploitable.
+func (v *Validator) checkCVEPatches(ctx context.Context, w io.Writer) {
+	printHeader(w, "CVE Patch Status")
+
+	hosts := v.lab.WindowsHosts()
+	if len(hosts) == 0 {
+		v.addResult(w, "SKIP", "CVE", "No Windows hosts configured", "")
+		return
+	}
+
+	patches := []cvePatch{
+		{CVE: "CVE-2020-1472", Name: "ZeroLogon", KBs: []string{"KB4565351"}},
+		{CVE: "CVE-2021-34527", Name: "PrintNightmare", KBs: []string{"KB5005010", "KB5005033", "KB5005565"}},
+		{CVE: "CVE-2021-42278", Name: "noPac", KBs: []string{"KB5008380"}},
+		{CVE: "CVE-2022-26923", Name: "Certifried", KBs: []string{"KB5014754"}},
+	}
+
+	for _, role := range hosts {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+
+		for _, p := range patches {
+			// Build a single PS command that checks all KBs for this CVE
+			// and emits the first installed KB id, or INSTALLED_NONE.
+			ids := make([]string, len(p.KBs))
+			for i, kb := range p.KBs {
+				ids[i] = "'" + kb + "'"
+			}
+			cmd := fmt.Sprintf(
+				`$kbs = @(%s); `+
+					`$found = $null; `+
+					`foreach ($kb in $kbs) { `+
+					`  $h = Get-HotFix -Id $kb -ErrorAction SilentlyContinue; `+
+					`  if ($h) { $found = $kb; break } `+
+					`}; `+
+					`if ($found) { Write-Output "INSTALLED=$found" } else { Write-Output 'INSTALLED_NONE' }`,
+				strings.Join(ids, ","))
+			output := v.runPS(ctx, host, cmd)
+			line := strings.TrimSpace(output)
+
+			switch {
+			case strings.Contains(line, "INSTALLED_NONE"):
+				v.addResult(w, "PASS", "CVE",
+					fmt.Sprintf("%s on %s: unpatched (%s)", p.Name, hostLabel, p.CVE), "")
+			case strings.HasPrefix(line, "INSTALLED="):
+				kb := strings.TrimPrefix(line, "INSTALLED=")
+				v.addResult(w, "INFO", "CVE",
+					fmt.Sprintf("%s on %s: patched (%s, %s)", p.Name, hostLabel, kb, p.CVE), "")
+			default:
+				v.addResult(w, "WARN", "CVE",
+					fmt.Sprintf("Could not query %s status on %s", p.Name, hostLabel), "")
+			}
+		}
+	}
+}
+
+// ---- Section 14: Admin Shares ----
+
+// checkAdminShares verifies the default ADMIN$ and C$ shares are present on
+// each Windows host. Both shares are required for admin-creds lateral
+// movement (psexec, smbexec, wmiexec).
+func (v *Validator) checkAdminShares(ctx context.Context, w io.Writer) {
+	printHeader(w, "Default Admin Shares")
+
+	hosts := v.lab.WindowsHosts()
+	if len(hosts) == 0 {
+		v.addResult(w, "SKIP", "AdminShares", "No Windows hosts configured", "")
+		return
+	}
+
+	for _, role := range hosts {
+		host := strings.ToUpper(role)
+		if !v.hasHost(host) {
+			continue
+		}
+		hostLabel := strings.ToUpper(v.lab.Hostname(role))
+
+		output := v.runPS(ctx, host,
+			`Get-SmbShare -Name ADMIN$,C$ -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name`)
+		shares := parseOutputLines(output)
+		found := make(map[string]bool, len(shares))
+		for _, s := range shares {
+			found[strings.ToUpper(strings.TrimSpace(s))] = true
+		}
+
+		var missing []string
+		for _, want := range []string{"ADMIN$", "C$"} {
+			if !found[want] {
+				missing = append(missing, want)
+			}
+		}
+		if len(missing) == 0 {
+			v.addResult(w, "PASS", "AdminShares",
+				fmt.Sprintf("%s exposes ADMIN$ and C$", hostLabel), "")
+		} else {
+			v.addResult(w, "FAIL", "AdminShares",
+				fmt.Sprintf("%s missing default shares: %s", hostLabel, strings.Join(missing, ", ")), "")
+		}
+	}
+}
+
 // parseOutputLines splits PowerShell command output into non-empty trimmed
 // lines, discarding blank lines and leading/trailing whitespace.
 func parseOutputLines(output string) []string {

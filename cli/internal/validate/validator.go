@@ -154,22 +154,49 @@ func (v *Validator) RunQuickChecks(ctx context.Context) {
 // RunAllChecks executes all vulnerability validation checks.
 func (v *Validator) RunAllChecks(ctx context.Context) {
 	v.runChecks(ctx, []checkFunc{
+		// Section 2 — Configured Users
+		v.checkConfiguredUsers,
+		// Section 3 — Configured Groups
+		v.checkConfiguredGroups,
+		// Section 5 — Credential Discovery
 		v.checkCredentialDiscovery,
+		v.checkUsernamePasswordEqual,
+		v.checkAutologonRegistry,
+		v.checkCmdkeyCredentials,
+		v.checkSysvolPlaintext,
+		v.checkShareFilePlaintext,
+		v.checkSharePermissions,
+		v.checkAdministratorFolder,
+		// Section 6 — Network Poisoning / Hardening
 		v.checkKerberosAttacks,
 		v.checkNetworkMisconfigs,
 		v.checkAnonymousSMB,
+		v.checkSMBv1,
+		v.checkCredSSP,
+		v.checkWebDAVRedirector,
 		v.checkDelegation,
 		v.checkMachineAccountQuota,
+		// Section 7 — MSSQL
 		v.checkMSSQL,
+		// Section 8 — ADCS
 		v.checkADCS,
-		v.checkADCSESC7,
+		v.checkADCSESC1,
+		v.checkADCSESC2,
+		v.checkADCSESC3,
+		v.checkADCSESC4,
 		v.checkADCSESC6,
+		v.checkADCSESC7,
+		v.checkADCSESC9,
 		v.checkADCSESC10,
 		v.checkADCSESC11,
+		v.checkADCSESC13,
 		v.checkADCSESC15,
+		v.checkCertEnrollShare,
+		// ACLs / trusts / services
 		v.checkACLPermissions,
 		v.checkDomainTrusts,
 		v.checkSIDFiltering,
+		v.checkSIDHistory,
 		v.checkServices,
 		v.checkScheduledTasks,
 		v.checkLLMNR,
@@ -181,8 +208,19 @@ func (v *Validator) RunAllChecks(ctx context.Context) {
 		v.checkPasswordPolicy,
 		v.checkLDAPSigning,
 		v.checkRunAsPPL,
-		v.checkCertEnrollShare,
-		v.checkSIDHistory,
+		// Section 10 — IIS
+		v.checkIISUploadPermissions,
+		// Section 11 — Local Admin Access Map
+		v.checkLocalAdmins,
+		// Section 13 — CVE Patch Status
+		v.checkCVEPatches,
+		// Section 14 — Admin Shares
+		v.checkAdminShares,
+		// Section 16 — DNS / Audit
+		v.checkDNSConditionalForwarder,
+		v.checkDCSACLAudit,
+		v.checkLDAPDiagnosticLogging,
+		v.checkASRRules,
 	})
 }
 

@@ -64,8 +64,8 @@ func buildSOCKSArgs(cfg SSHConfig, port int) []string {
 	var args []string
 
 	args = append(args, "-D", fmt.Sprintf("%d", port))
-	args = append(args, "-N")                         // no remote command
-	args = append(args, "-o", "LogLevel=ERROR")       // suppress banners
+	args = append(args, "-N")                   // no remote command
+	args = append(args, "-o", "LogLevel=ERROR") // suppress banners
 	args = append(args, "-o", "ExitOnForwardFailure=yes")
 
 	hasOverrides := cfg.User != "" || cfg.Port != 0 || cfg.KeyPath != "" || cfg.Password != ""

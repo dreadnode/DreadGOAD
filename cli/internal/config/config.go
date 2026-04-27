@@ -104,8 +104,8 @@ type Config struct {
 }
 
 var (
-	cfg          *Config
-	once         sync.Once
+	cfg           *Config
+	once          sync.Once
 	configMissing bool
 )
 
