@@ -32,6 +32,9 @@
       '/(^|/)\\.hooks/requirements\\.txt$/',
     ],
   },
+  postUpdateOptions: [
+    'gomodTidy',
+  ],
   packageRules: [
     {
       description: 'Auto merge Galaxy dependencies',
@@ -87,6 +90,45 @@
       matchUpdateTypes: [
         'minor',
         'patch',
+      ],
+    },
+    {
+      description: 'Auto-merge Go module dependencies (minor/patch + digests)',
+      matchManagers: [
+        'gomod',
+      ],
+      automerge: true,
+      automergeType: 'pr',
+      matchUpdateTypes: [
+        'minor',
+        'patch',
+        'digest',
+      ],
+    },
+    {
+      description: 'Auto-merge Terraform providers and modules (minor/patch)',
+      matchManagers: [
+        'terraform',
+      ],
+      automerge: true,
+      automergeType: 'pr',
+      matchUpdateTypes: [
+        'minor',
+        'patch',
+      ],
+    },
+    {
+      description: 'Auto-merge Docker base images (minor/patch + digests)',
+      matchManagers: [
+        'dockerfile',
+        'docker-compose',
+      ],
+      automerge: true,
+      automergeType: 'pr',
+      matchUpdateTypes: [
+        'minor',
+        'patch',
+        'digest',
       ],
     },
     {
