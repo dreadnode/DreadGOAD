@@ -241,10 +241,12 @@ func TestBuildSSHArgs(t *testing.T) {
 			wantPort:  true,
 		},
 		{
-			name:      "default user",
-			cfg:       SSHConfig{Host: "192.168.1.100"},
+			// Host-only is the new ssh_config-alias path: pass the target
+			// through verbatim and let the user's ssh_config drive auth.
+			name:      "alias passthrough (no overrides)",
+			cfg:       SSHConfig{Host: "proxmox"},
 			remoteCmd: "test",
-			wantHost:  "root@192.168.1.100",
+			wantHost:  "proxmox",
 		},
 	}
 

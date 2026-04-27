@@ -189,35 +189,49 @@ func buildSSHCommand(cfg SSHConfig, remoteCmd string) (string, []string) {
 }
 
 // buildSSHArgs constructs the ssh command arguments from SSHConfig.
+//
+// When only Host is set (the new ssh_config-alias path), we pass the target
+// through verbatim and let the user's ssh_config drive the rest — including
+// IdentityAgent (1Password), ProxyJump, custom ports, etc. The override
+// fields (User/Port/KeyPath/Password) are only emitted when explicitly set,
+// so CI/automation contexts that can't rely on ssh_config still work.
 func buildSSHArgs(cfg SSHConfig, remoteCmd string) []string {
 	var sshArgs []string
 
-	// Disable strict host key checking for convenience (Ludus servers
-	// are typically on local/trusted networks with self-signed certs).
-	sshArgs = append(sshArgs, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null")
-
-	// Suppress the "Warning: Permanently added..." messages.
+	// Always quiet the noise; this is safe and doesn't override auth.
 	sshArgs = append(sshArgs, "-o", "LogLevel=ERROR")
 
-	if cfg.Password != "" {
-		// When using password auth, skip agent keys to avoid
-		// "too many authentication failures" from the agent.
-		sshArgs = append(sshArgs, "-o", "IdentitiesOnly=yes")
+	// The "explicit override" flags below should only kick in when the user
+	// has bypassed ssh_config — typically because they're providing a raw
+	// hostname plus credentials in dreadgoad.yaml.
+	hasOverrides := cfg.User != "" || cfg.Port != 0 || cfg.KeyPath != "" || cfg.Password != ""
+
+	if hasOverrides {
+		// Explicit-override path: behave like the legacy ssh_host config —
+		// disable host-key checking (Ludus servers are typically ephemeral)
+		// and force the supplied credentials.
+		sshArgs = append(sshArgs, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null")
+
+		if cfg.Password != "" {
+			sshArgs = append(sshArgs, "-o", "IdentitiesOnly=yes")
+		}
+		if cfg.KeyPath != "" {
+			sshArgs = append(sshArgs, "-i", cfg.KeyPath)
+		}
+		if cfg.Port != 0 && cfg.Port != 22 {
+			sshArgs = append(sshArgs, "-p", fmt.Sprintf("%d", cfg.Port))
+		}
+
+		user := cfg.User
+		if user == "" {
+			user = "root"
+		}
+		sshArgs = append(sshArgs, fmt.Sprintf("%s@%s", user, cfg.Host), remoteCmd)
+		return sshArgs
 	}
 
-	if cfg.KeyPath != "" {
-		sshArgs = append(sshArgs, "-i", cfg.KeyPath)
-	}
-	if cfg.Port != 0 && cfg.Port != 22 {
-		sshArgs = append(sshArgs, "-p", fmt.Sprintf("%d", cfg.Port))
-	}
-
-	user := cfg.User
-	if user == "" {
-		user = "root"
-	}
-	sshArgs = append(sshArgs, fmt.Sprintf("%s@%s", user, cfg.Host), remoteCmd)
-
+	// ssh_config-alias path: trust the user's ssh setup completely.
+	sshArgs = append(sshArgs, cfg.Host, remoteCmd)
 	return sshArgs
 }
 

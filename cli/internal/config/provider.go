@@ -51,7 +51,7 @@ func (c *Config) NewProvider(ctx context.Context) (provider.Provider, error) {
 			return nil, fmt.Errorf("ludus API key not configured: set ludus.api_key in dreadgoad.yaml or export LUDUS_API_KEY")
 		}
 		opts.LudusUseImpersonation = c.Ludus.UseImpersonation
-		opts.LudusSSHHost = c.Ludus.SSHHost
+		opts.LudusSSHHost = c.Ludus.SSHTarget()
 		opts.LudusSSHUser = c.Ludus.SSHUser
 		opts.LudusSSHKeyPath = c.Ludus.SSHKeyPath
 		opts.LudusSSHPassword = c.Ludus.SSHPassword

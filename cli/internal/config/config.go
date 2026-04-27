@@ -58,14 +58,30 @@ type ProxmoxConfig struct {
 }
 
 // LudusConfig holds Ludus-specific settings.
+//
+// Host is the preferred way to point at a remote Ludus server: it accepts an
+// ssh_config Host alias (so the user's existing ~/.ssh/config — including
+// IdentityAgent, ProxyJump, etc. — drives the connection) or a raw hostname.
+// The SSH* fields are explicit overrides for CI / automation contexts where
+// ssh_config can't be relied on.
 type LudusConfig struct {
 	APIKey           string `mapstructure:"api_key"`
 	UseImpersonation bool   `mapstructure:"use_impersonation"`
-	SSHHost          string `mapstructure:"ssh_host"`     // Remote Ludus host for SSH-based execution
-	SSHUser          string `mapstructure:"ssh_user"`     // SSH user (default: root)
-	SSHKeyPath       string `mapstructure:"ssh_key_path"` // Path to SSH private key
+	Host             string `mapstructure:"host"`         // ssh_config alias or hostname (preferred)
+	SSHHost          string `mapstructure:"ssh_host"`     // Explicit hostname override
+	SSHUser          string `mapstructure:"ssh_user"`     // SSH user override (default: root)
+	SSHKeyPath       string `mapstructure:"ssh_key_path"` // Explicit private key path
 	SSHPassword      string `mapstructure:"ssh_password"` // SSH password (uses sshpass)
-	SSHPort          int    `mapstructure:"ssh_port"`     // SSH port (default: 22)
+	SSHPort          int    `mapstructure:"ssh_port"`     // SSH port override (default: 22)
+}
+
+// SSHTarget returns the ssh connection target — preferring Host over the
+// legacy SSHHost field — or the empty string if SSH mode isn't configured.
+func (l LudusConfig) SSHTarget() string {
+	if l.Host != "" {
+		return l.Host
+	}
+	return l.SSHHost
 }
 
 // Config holds all CLI configuration.

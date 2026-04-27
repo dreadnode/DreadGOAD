@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dreadnode/dreadgoad/internal/sshconfig"
 	"github.com/fatih/color"
 )
 
@@ -23,13 +24,17 @@ type CheckResult struct {
 // LudusOptions describes the Ludus connection settings doctor needs to probe.
 // SSHHost being non-empty toggles SSH-mode; otherwise the ludus CLI is expected
 // locally.
+//
+// When ResolveAlias is true, SSHHost is treated as an ssh_config alias and
+// passed through `ssh -G` to derive the real hostname/port for the TCP probe.
 type LudusOptions struct {
-	APIKey      string
-	SSHHost     string
-	SSHUser     string
-	SSHKeyPath  string
-	SSHPassword string
-	SSHPort     int
+	APIKey       string
+	SSHHost      string
+	SSHUser      string
+	SSHKeyPath   string
+	SSHPassword  string
+	SSHPort      int
+	ResolveAlias bool
 }
 
 // Options configures which checks RunChecks runs.
@@ -290,11 +295,22 @@ func checkLudusSSH(opts LudusOptions) []CheckResult {
 		results = append(results, checkCommand("sshpass", "sshpass (password auth)"))
 	}
 
-	port := opts.SSHPort
+	probeHost, port := opts.SSHHost, opts.SSHPort
+	if opts.ResolveAlias {
+		// `ssh -G <alias>` returns the same hostname/port the ssh client
+		// itself would use, so the probe matches what the real connection
+		// will hit.
+		if r, err := sshconfig.Resolve(opts.SSHHost); err == nil {
+			probeHost = r.Hostname
+			if port == 0 {
+				port = r.Port
+			}
+		}
+	}
 	if port == 0 {
 		port = 22
 	}
-	addr := net.JoinHostPort(opts.SSHHost, strconv.Itoa(port))
+	addr := net.JoinHostPort(probeHost, strconv.Itoa(port))
 	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
 	if err != nil {
 		results = append(results, CheckResult{
@@ -305,10 +321,14 @@ func checkLudusSSH(opts LudusOptions) []CheckResult {
 		return results
 	}
 	_ = conn.Close()
+	msg := fmt.Sprintf("%s reachable", addr)
+	if opts.ResolveAlias && probeHost != opts.SSHHost {
+		msg = fmt.Sprintf("%s reachable (via ssh_config alias %q)", addr, opts.SSHHost)
+	}
 	results = append(results, CheckResult{
 		Name:    "Ludus SSH host",
 		Status:  "pass",
-		Message: fmt.Sprintf("%s reachable", addr),
+		Message: msg,
 	})
 
 	return results

@@ -90,29 +90,43 @@ export LUDUS_API_KEY='YOUR_ADMIN_API_KEY'
 
 ### SSH-mode configuration
 
-If DreadGOAD is *not* installed on the Ludus server itself, configure SSH so the CLI can shell out to a remote `ludus` binary on the server. The presence of `ludus.ssh_host` is the toggle: leave it empty for local mode, set it for SSH mode.
+If DreadGOAD is *not* installed on the Ludus server itself, point it at the server with a single field — `ludus.host` — and let your existing `~/.ssh/config` do the rest:
 
 ```yaml
 provider: ludus
 ludus:
   api_key: YOUR_ADMIN_API_KEY
-  use_impersonation: true
-  ssh_host: ludus.example.com   # set to enable SSH mode
-  ssh_user: root                # default: root
-  ssh_port: 22                  # default: 22
-  ssh_key_path: ~/.ssh/id_ed25519  # private key for key-based auth
-  # ssh_password: hunter2       # password auth (uses sshpass — pick one or the other)
+  host: proxmox            # ssh_config Host alias OR a raw hostname
 ```
 
-| Field | Required | Notes |
-|---|---|---|
-| `ssh_host` | yes (for SSH mode) | Hostname or IP of the Ludus server |
-| `ssh_user` | no | SSH login (default `root`) |
-| `ssh_port` | no | TCP port (default `22`) |
-| `ssh_key_path` | one of key/password | Path to a private key |
-| `ssh_password` | one of key/password | Password — requires `sshpass` on PATH |
+With a matching `Host proxmox` stanza in `~/.ssh/config`, every connection setting — `HostName`, `User`, `Port`, `IdentityFile`, even `IdentityAgent` (1Password / `ssh-agent`) and `ProxyJump` — is honored automatically. The `ssh` binary on your machine is the only requirement; no extra fields in `dreadgoad.yaml`.
 
-When `ssh_password` is set, `sshpass` must be installed locally (`apt install sshpass` / `brew install hudochenkov/sshpass/sshpass`). `dreadgoad doctor` validates the SSH endpoint is reachable and that the right helper binaries are present.
+`dreadgoad doctor` shells out to `ssh -G <alias>` to derive the real hostname/port for its TCP-reachability probe, so a passing doctor means the same endpoint a real `ssh` connection will hit.
+
+#### Explicit overrides (CI / automation)
+
+For environments where you can't rely on `~/.ssh/config` (containers, CI runners, etc.), set the explicit fields below — they bypass ssh_config entirely:
+
+```yaml
+provider: ludus
+ludus:
+  api_key: YOUR_ADMIN_API_KEY
+  ssh_host: ludus.example.com      # explicit hostname
+  ssh_user: root                   # default: root
+  ssh_port: 22                     # default: 22
+  ssh_key_path: ~/.ssh/id_ed25519  # key auth
+  # ssh_password: hunter2          # password auth — requires sshpass
+```
+
+| Field | Notes |
+|---|---|
+| `ssh_host` | Explicit hostname/IP (alternative to `host`) |
+| `ssh_user` | SSH login (default `root`) |
+| `ssh_port` | TCP port (default `22`) |
+| `ssh_key_path` | Private key path |
+| `ssh_password` | Password — requires `sshpass` on PATH (`brew install hudochenkov/sshpass/sshpass` / `apt install sshpass`) |
+
+Setting any of `ssh_user`/`ssh_port`/`ssh_key_path`/`ssh_password` switches DreadGOAD into explicit-override mode, where `StrictHostKeyChecking=no` is forced and ssh_config defaults are ignored.
 
 ## Installation
 

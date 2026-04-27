@@ -27,11 +27,16 @@ Provider-specific:
 			Provider:      cfg.ResolvedProvider(),
 			Ludus: doctor.LudusOptions{
 				APIKey:      cfg.Ludus.APIKey,
-				SSHHost:     cfg.Ludus.SSHHost,
+				SSHHost:     cfg.Ludus.SSHTarget(),
 				SSHUser:     cfg.Ludus.SSHUser,
 				SSHKeyPath:  cfg.Ludus.SSHKeyPath,
 				SSHPassword: cfg.Ludus.SSHPassword,
 				SSHPort:     cfg.Ludus.SSHPort,
+				ResolveAlias: cfg.Ludus.Host != "" &&
+					cfg.Ludus.SSHUser == "" &&
+					cfg.Ludus.SSHKeyPath == "" &&
+					cfg.Ludus.SSHPassword == "" &&
+					cfg.Ludus.SSHPort == 0,
 			},
 		})
 		doctor.PrintResults(results)
