@@ -12,19 +12,20 @@ import (
 type NameGenerator struct {
 	usedNames map[string]bool
 
-	domainPrefixes   []string
-	domainSuffixes   []string
-	firstNames       []string
-	lastNames        []string
-	hostnamePrefixes []string
-	hostnameSuffixes []string
-	groupThemes      []string
-	groupSuffixes    []string
-	ouRegions        []string
-	ouDivisions      []string
-	animals          []string
-	subdomainWords   []string
-	cityNames        []string
+	domainPrefixes     []string
+	domainSuffixes     []string
+	firstNames         []string
+	lastNames          []string
+	hostnamePrefixes   []string
+	hostnameSuffixes   []string
+	groupThemes        []string
+	groupSuffixes      []string
+	ouRegions          []string
+	ouDivisions        []string
+	animals            []string
+	subdomainWords     []string
+	cityNames          []string
+	crackablePasswords []string // rockyou-style passwords for Kerberoastable/AS-REP accounts
 }
 
 // NewNameGenerator creates a new NameGenerator with default word lists.
@@ -116,6 +117,22 @@ func NewNameGenerator() *NameGenerator {
 			"Boston", "Chicago", "Dallas", "Denver", "Houston",
 			"Phoenix", "Seattle", "Portland", "Austin", "Atlanta",
 			"Miami", "Philadelphia", "San Diego", "San Francisco", "New York",
+		},
+		// Passwords from rockyou top entries — all appear verbatim in the
+		// wordlist so they crack with a straight dictionary attack (no rules).
+		// Used for Kerberoastable and AS-REP roastable accounts.
+		crackablePasswords: []string{
+			"sunshine", "trustno1", "iloveyou", "baseball", "football",
+			"princess", "starwars", "whatever", "corvette", "midnight",
+			"computer", "mustang", "shadow", "master", "welcome",
+			"letmein", "monkey", "blaster", "yankees", "lakers",
+			"password1", "superman", "qwerty", "tigger", "batman",
+			"arsenal", "access14", "buster", "soccer", "pepper",
+			"ginger", "thunder", "summer", "butterfly", "chelsea",
+			"chocolate", "pumpkin", "sparky", "hammer", "broncos",
+			"rangers", "fishing", "marlin", "bigdog", "cowboy",
+			"steelers", "dolphins", "redsox", "camaro", "creative",
+			"platinum", "passw0rd", "trustme", "zeppelin", "warrior",
 		},
 	}
 }
@@ -302,6 +319,12 @@ func (ng *NameGenerator) GeneratePassword(original string) string {
 
 	secureShuffle(password)
 	return string(password)
+}
+
+// GenerateCrackablePassword returns a dictionary password that can be cracked
+// via hashcat/john with standard wordlists (rockyou, etc.).
+func (ng *NameGenerator) GenerateCrackablePassword() string {
+	return secureChoice(ng.crackablePasswords)
 }
 
 // GenerateCityName returns a unique city name.

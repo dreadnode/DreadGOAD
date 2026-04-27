@@ -433,7 +433,7 @@
           "susan.white": {
             "firstname": "susan",
             "surname": "white",
-            "password": "l246ggx",
+            "password": "shadow",
             "city": "-",
             "description": "Susan White",
             "groups": [],
@@ -558,7 +558,7 @@
           "ryan.myers": {
             "firstname": "ryan",
             "surname": "myers",
-            "password": "si4q5iagz",
+            "password": "sunshine",
             "city": "Dallas",
             "description": "Ryan Myers",
             "groups": [
@@ -572,7 +572,7 @@
           "alexander.peterson": {
             "firstname": "alexander",
             "surname": "peterson",
-            "password": "wlrucscdadzooz",
+            "password": "football",
             "city": "Dallas",
             "description": "Alexander Peterson",
             "groups": [
@@ -605,7 +605,7 @@
           "christine.martin": {
             "firstname": "christine",
             "surname": "martin",
-            "password": "ddlfwkwdemov",
+            "password": "baseball",
             "city": "Denver",
             "description": "Christine Martin",
             "groups": [
