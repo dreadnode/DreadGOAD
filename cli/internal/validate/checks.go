@@ -170,10 +170,10 @@ func (v *Validator) checkAnonymousSMB(ctx context.Context, w io.Writer) {
 		output := v.runPS(ctx, host,
 			`$v = Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Lsa' -Name LmCompatibilityLevel -ErrorAction SilentlyContinue; if ($v) { $v.LmCompatibilityLevel } else { 'NOT_SET' }`)
 		val := strings.TrimSpace(output)
-		switch {
-		case val == "0" || val == "1" || val == "2":
+		switch val {
+		case "0", "1", "2":
 			v.addResult(w, "PASS", "SMB", fmt.Sprintf("LmCompatibilityLevel is %s on %s (NTLM downgrade vulnerable)", val, hostLabel), "")
-		case val == "" || val == "NOT_SET":
+		case "", "NOT_SET":
 			v.addResult(w, "WARN", "SMB", fmt.Sprintf("LmCompatibilityLevel not configured on %s (registry key missing)", hostLabel), "")
 		default:
 			v.addResult(w, "FAIL", "SMB", fmt.Sprintf("LmCompatibilityLevel is %s on %s (expected 0-2)", val, hostLabel), "")
@@ -838,10 +838,10 @@ func (v *Validator) checkLLMNR(ctx context.Context, w io.Writer) {
 		output := v.runPS(ctx, host,
 			`$v = Get-ItemProperty -Path 'HKLM:\Software\policies\Microsoft\Windows NT\DNSClient' -Name EnableMulticast -ErrorAction SilentlyContinue; if ($v) { $v.EnableMulticast } else { 'NOT_SET' }`)
 		val := strings.TrimSpace(output)
-		switch {
-		case val == "1" || val == "NOT_SET":
+		switch val {
+		case "1", "NOT_SET":
 			v.addResult(w, "PASS", "LLMNR", fmt.Sprintf("LLMNR enabled on %s", hostLabel), "")
-		case val == "":
+		case "":
 			v.addResult(w, "WARN", "LLMNR", fmt.Sprintf("LLMNR status unknown on %s (command returned empty)", hostLabel), "")
 		default:
 			v.addResult(w, "FAIL", "LLMNR", fmt.Sprintf("LLMNR disabled on %s (value=%s)", hostLabel, val), "")
