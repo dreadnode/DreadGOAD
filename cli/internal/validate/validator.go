@@ -7,12 +7,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/dreadnode/dreadgoad/internal/labmap"
@@ -124,7 +126,13 @@ func (v *Validator) runChecks(ctx context.Context, checks []checkFunc) {
 	}
 
 	for _, ch := range chs {
-		_, _ = os.Stdout.Write(<-ch)
+		if _, err := os.Stdout.Write(<-ch); err != nil {
+			if errors.Is(err, syscall.EPIPE) {
+				return
+			}
+			fmt.Fprintf(os.Stderr, "validate: stdout write failed: %v\n", err)
+			return
+		}
 	}
 }
 
