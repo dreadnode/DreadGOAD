@@ -2449,16 +2449,11 @@ func (v *Validator) checkDNSConditionalForwarder(ctx context.Context, w io.Write
 			if strings.HasSuffix(peer, "."+srcDomain) || strings.HasSuffix(srcDomain, "."+peer) {
 				continue
 			}
-			output, err := runScriptText(ctx, v, dc,
+			output, err := runScriptTextErr(ctx, v, dc,
 				`$z = Get-DnsServerZone -Name {{psq .Peer}} -ErrorAction SilentlyContinue; `+
 					`if ($z -and $z.ZoneType -eq 'Forwarder') { 'FORWARDER' } `+
 					`elseif ($z) { 'WRONG_TYPE' } else { 'NOT_FOUND' }`,
 				map[string]any{"Peer": peer})
-			if err != nil {
-				v.addResult(w, "WARN", "DNS",
-					fmt.Sprintf("Could not query forwarder %s on %s: %v", peer, dc, err), "")
-				continue
-			}
 			switch {
 			case strings.Contains(output, "FORWARDER"):
 				v.addResult(w, "PASS", "DNS",
@@ -2469,9 +2464,16 @@ func (v *Validator) checkDNSConditionalForwarder(ctx context.Context, w io.Write
 			case strings.Contains(output, "NOT_FOUND"):
 				v.addResult(w, "FAIL", "DNS",
 					fmt.Sprintf("No forwarder for %s on %s", peer, dc), "")
-			default:
+			case err != nil:
 				v.addResult(w, "WARN", "DNS",
-					fmt.Sprintf("Could not read DNS zones on %s for %s", dc, peer), "")
+					fmt.Sprintf("Could not query forwarder %s on %s: %v", peer, dc, err), "")
+			default:
+				// Script always emits one of the three keywords; if we
+				// landed here with no transport error, something else
+				// printed to stdout (PS warning, banner, locale-mangled
+				// output). Surface it so the cause is diagnosable.
+				v.addResult(w, "WARN", "DNS",
+					fmt.Sprintf("Unexpected DNS probe output on %s for %s: %q", dc, peer, output), "")
 			}
 		}
 	}

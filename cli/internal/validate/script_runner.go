@@ -87,6 +87,20 @@ func runScriptText(ctx context.Context, v *Validator, host, tmpl string, vars ma
 	return strings.TrimSpace(v.runPS(ctx, host, script)), nil
 }
 
+// runScriptTextErr is the diagnostic variant of runScriptText: it bubbles
+// runPS transport errors (host dead, retries exhausted, ctx cancelled) so
+// catch-all branches in probes can surface a real cause instead of an
+// opaque "could not read" message. The trimmed stdout is returned even
+// when err != nil so callers can include any partial output in WARN text.
+func runScriptTextErr(ctx context.Context, v *Validator, host, tmpl string, vars map[string]any) (string, error) {
+	script, err := renderScript(tmpl, vars)
+	if err != nil {
+		return "", err
+	}
+	out, runErr := v.runPSErr(ctx, host, script)
+	return strings.TrimSpace(out), runErr
+}
+
 // runScriptJSON renders a templated PowerShell script with vars, executes
 // it on host via the validator's provider, and unmarshals the JSON
 // envelope into a value of type T.

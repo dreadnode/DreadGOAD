@@ -271,17 +271,27 @@ const runPSAttempts = 3
 const deadThreshold = 3
 
 func (v *Validator) runPS(ctx context.Context, host, command string) string {
+	out, _ := v.runPSErr(ctx, host, command)
+	return out
+}
+
+// runPSErr is the diagnostic variant of runPS: same retry/dead-host
+// machinery, but it returns the underlying error (host-unknown,
+// host-dead, ctx-canceled, retries-exhausted) so callers in the
+// catch-all paths of probes can surface what actually went wrong
+// instead of treating empty output as opaque "unknown".
+func (v *Validator) runPSErr(ctx context.Context, host, command string) (string, error) {
 	instanceID, ok := v.hosts[host]
 	if !ok {
 		v.log.Warn("host not found", "host", host)
-		return ""
+		return "", fmt.Errorf("host %s not in inventory", host)
 	}
 	if v.verbose {
 		v.log.Debug("running PS command", "host", host, "command", command)
 	}
 
 	if _, dead := v.dead.Load(host); dead {
-		return ""
+		return "", fmt.Errorf("host %s marked dead for this run", host)
 	}
 
 	var lastErr error
@@ -291,13 +301,13 @@ func (v *Validator) runPS(ctx context.Context, host, command string) string {
 			if c, loaded := v.failures.Load(host); loaded {
 				c.(*atomic.Int64).Store(0)
 			}
-			return result.Stdout
+			return result.Stdout, nil
 		}
 		lastErr = err
 		if attempt < runPSAttempts {
 			select {
 			case <-ctx.Done():
-				return ""
+				return "", ctx.Err()
 			case <-time.After(time.Duration(attempt) * 2 * time.Second):
 			}
 		}
@@ -313,7 +323,7 @@ func (v *Validator) runPS(ctx context.Context, host, command string) string {
 	} else {
 		v.log.Warn("PS command failed", "host", host, "failures", n, "error", lastErr)
 	}
-	return ""
+	return "", lastErr
 }
 
 func (v *Validator) addResult(w io.Writer, status, category, name, detail string) {
