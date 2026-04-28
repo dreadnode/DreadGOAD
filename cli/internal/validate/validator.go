@@ -14,6 +14,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -52,8 +53,14 @@ type Validator struct {
 	hosts    map[string]string // hostname -> instance ID
 	lab      *labmap.LabMap
 
-	// dead tracks hosts whose PS calls have failed; entries are added
-	// exactly once via sync.Map.LoadOrStore so the "marking host dead"
+	// failures counts consecutive runPS failures per host. A single transient
+	// SSM/WinRM hiccup must not poison the rest of the run, so we only mark a
+	// host dead after deadThreshold sustained failures. Successful calls
+	// reset the counter.
+	failures sync.Map // hostname -> *atomic.Int64
+
+	// dead tracks hosts that have crossed the failure threshold; entries are
+	// added exactly once via sync.Map.LoadOrStore so the "marking host dead"
 	// warning fires once per host even under heavy concurrent fan-out.
 	dead sync.Map // hostname -> struct{}
 }
@@ -246,6 +253,23 @@ func (v *Validator) SaveReport(path string) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
+// runPSTimeout is the per-attempt budget for a single SSM/WinRM PowerShell call.
+// Concurrent fan-out across 16 checks frequently pushes individual SSM calls
+// past 30s under load; 90s leaves headroom without letting truly hung hosts
+// stall the run forever (those are caught by the dead-host threshold below).
+const runPSTimeout = 90 * time.Second
+
+// runPSAttempts is the per-call retry budget for transient errors (SSM API
+// throttles, momentary WinRM hiccups). Total worst-case wall time per dead
+// call is runPSTimeout * runPSAttempts.
+const runPSAttempts = 3
+
+// deadThreshold is the number of *fully retried* runPS calls that must fail
+// before a host is declared dead and skipped for the rest of the run. One
+// transient blip should not turn the next ~30 checks on a host into bogus
+// failures.
+const deadThreshold = 3
+
 func (v *Validator) runPS(ctx context.Context, host, command string) string {
 	instanceID, ok := v.hosts[host]
 	if !ok {
@@ -260,14 +284,36 @@ func (v *Validator) runPS(ctx context.Context, host, command string) string {
 		return ""
 	}
 
-	result, err := v.provider.RunCommand(ctx, instanceID, command, 15*time.Second)
-	if err != nil {
-		if _, alreadyDead := v.dead.LoadOrStore(host, struct{}{}); !alreadyDead {
-			v.log.Warn("PS command failed; marking host dead for remainder of run", "host", host, "error", err)
+	var lastErr error
+	for attempt := 1; attempt <= runPSAttempts; attempt++ {
+		result, err := v.provider.RunCommand(ctx, instanceID, command, runPSTimeout)
+		if err == nil {
+			if c, loaded := v.failures.Load(host); loaded {
+				c.(*atomic.Int64).Store(0)
+			}
+			return result.Stdout
 		}
-		return ""
+		lastErr = err
+		if attempt < runPSAttempts {
+			select {
+			case <-ctx.Done():
+				return ""
+			case <-time.After(time.Duration(attempt) * 2 * time.Second):
+			}
+		}
 	}
-	return result.Stdout
+
+	counterAny, _ := v.failures.LoadOrStore(host, &atomic.Int64{})
+	n := counterAny.(*atomic.Int64).Add(1)
+	if n >= deadThreshold {
+		if _, alreadyDead := v.dead.LoadOrStore(host, struct{}{}); !alreadyDead {
+			v.log.Warn("PS command failed repeatedly; marking host dead for remainder of run",
+				"host", host, "failures", n, "error", lastErr)
+		}
+	} else {
+		v.log.Warn("PS command failed", "host", host, "failures", n, "error", lastErr)
+	}
+	return ""
 }
 
 func (v *Validator) addResult(w io.Writer, status, category, name, detail string) {
