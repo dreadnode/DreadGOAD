@@ -190,6 +190,61 @@ func TestPasswordInDescriptionPreserved(t *testing.T) {
 	t.Errorf("transformed user %s not found in any domain", newUsername)
 }
 
+func TestFindCrackablePasswords(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "source")
+
+	// Create scripts dir with an AS-REP roasting script targeting arya.stark
+	scriptsDir := filepath.Join(sourceDir, "scripts")
+	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Target arya.stark AND sql_svc — sql_svc should still be skipped (preserved)
+	if err := os.WriteFile(
+		filepath.Join(scriptsDir, "asrep_roasting.ps1"),
+		[]byte("Get-ADUser -Identity \"arya.stark\" | Set-ADAccountControl -DoesNotRequirePreAuth:$true\nGet-ADUser -Identity \"sql_svc\" | Set-ADAccountControl -DoesNotRequirePreAuth:$true"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	config := testConfig()
+
+	// Give samwell.tarly SPNs — Kerberoastable
+	config.Lab.Domains["sevenkingdoms.local"].Users["samwell.tarly"].SPNs = []string{
+		"HTTP/eyrie.sevenkingdoms.local",
+	}
+
+	// Give sql_svc SPNs — should NOT be crackable (preserved)
+	config.Lab.Domains["sevenkingdoms.local"].Users["sql_svc"].SPNs = []string{
+		"MSSQLSvc/kingslanding.sevenkingdoms.local:1433",
+	}
+
+	gen := NewGenerator(sourceDir, "", "test-crackable")
+
+	crackable := gen.findCrackablePasswords(config)
+
+	// (1) samwell.tarly has SPNs → password must be crackable
+	if !crackable["Heartsbane"] {
+		t.Error("expected Heartsbane (samwell.tarly SPN user) to be crackable")
+	}
+
+	// (2) arya.stark is in asrep script → password must be crackable
+	if !crackable["NeedleIsMySword!"] {
+		t.Error("expected NeedleIsMySword! (arya.stark AS-REP user) to be crackable")
+	}
+
+	// (3) sql_svc is preserved → password must NOT be crackable (even via SPN or AS-REP)
+	if crackable["SqlSvcPass1!"] {
+		t.Error("sql_svc password should not be crackable (preserved user)")
+	}
+
+	// Domain password should not be crackable
+	if crackable["DomainPass1!"] {
+		t.Error("domain password should not be crackable")
+	}
+}
+
 func TestApplyReplacements(t *testing.T) {
 	gen := NewGenerator("", "", "test")
 	gen.mappings.Misc["robert"] = "james"

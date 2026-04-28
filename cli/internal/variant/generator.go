@@ -447,8 +447,15 @@ func (g *Generator) mapPasswords(config *LabConfig) {
 	collectDomainPasswords(config.Lab.Domains, passwords)
 	collectHostPasswords(config.Lab.Hosts, passwords)
 
+	crackable := g.findCrackablePasswords(config)
+
 	for pw := range passwords {
-		newPW := g.nameGen.GeneratePassword(pw)
+		var newPW string
+		if crackable[pw] {
+			newPW = g.nameGen.GenerateCrackablePassword()
+		} else {
+			newPW = g.nameGen.GeneratePassword(pw)
+		}
 		g.mappings.Passwords[pw] = newPW
 		truncOld := pw
 		truncNew := newPW
@@ -458,7 +465,11 @@ func (g *Generator) mapPasswords(config *LabConfig) {
 		if len(truncNew) > 20 {
 			truncNew = truncNew[:20]
 		}
-		fmt.Printf("  %s... -> %s...\n", truncOld, truncNew)
+		tag := ""
+		if crackable[pw] {
+			tag = " (crackable)"
+		}
+		fmt.Printf("  %s... -> %s...%s\n", truncOld, truncNew, tag)
 	}
 
 	g.buildUserPasswordMap(config.Lab.Domains)
@@ -533,6 +544,76 @@ func collectVulnPasswords(vulnsVars map[string]any, passwords map[string]bool) {
 			}
 		}
 	}
+}
+
+// findCrackablePasswords identifies original passwords that belong to
+// Kerberoastable (SPN) or AS-REP roastable users. These passwords must be
+// replaced with dictionary words instead of random strings so they remain
+// crackable during the engagement.
+func (g *Generator) findCrackablePasswords(config *LabConfig) map[string]bool {
+	crackable := make(map[string]bool)
+
+	// Users with SPNs are Kerberoastable — their password must be crackable.
+	for _, domain := range config.Lab.Domains {
+		for username, user := range domain.Users {
+			if g.preservedUsers[username] {
+				continue // sql_svc has SPNs but intentionally uncrackable password
+			}
+			if user == nil {
+				continue
+			}
+			if len(user.SPNs) > 0 {
+				if user.Password != "" {
+					crackable[user.Password] = true
+				}
+			}
+		}
+	}
+
+	// Users targeted by AS-REP roasting scripts.
+	asrepUsers := g.parseASREPScripts()
+	for _, domain := range config.Lab.Domains {
+		for username, user := range domain.Users {
+			if g.preservedUsers[username] {
+				continue
+			}
+			if !asrepUsers[strings.ToLower(username)] {
+				continue
+			}
+			if user != nil && user.Password != "" {
+				crackable[user.Password] = true
+			}
+		}
+	}
+
+	return crackable
+}
+
+// parseASREPScripts reads asrep*.ps1 scripts from the source lab and extracts
+// usernames configured for AS-REP roasting (DoesNotRequirePreAuth).
+func (g *Generator) parseASREPScripts() map[string]bool {
+	users := make(map[string]bool)
+	pattern := filepath.Join(g.SourcePath, "scripts", "asrep*.ps1")
+	files, err := filepath.Glob(pattern)
+	if err != nil {
+		return users
+	}
+	if len(files) == 0 {
+		fmt.Printf("Warning: no asrep*.ps1 scripts found in %s/scripts — AS-REP roastable users will not get crackable passwords\n", g.SourcePath)
+		return users
+	}
+	re := regexp.MustCompile(`(?i)-Identity\s+"([^"]+)"`)
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			fmt.Printf("Warning: could not read %s: %v\n", f, err)
+			continue
+		}
+		for _, match := range re.FindAllStringSubmatch(string(data), -1) {
+			users[strings.ToLower(match[1])] = true
+		}
+	}
+	return users
 }
 
 func (g *Generator) buildUserPasswordMap(domains map[string]*DomainConfig) {

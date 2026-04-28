@@ -93,6 +93,37 @@ func TestGeneratePassword(t *testing.T) {
 	}
 }
 
+func TestGenerateCrackablePassword(t *testing.T) {
+	ng := NewNameGenerator()
+
+	// Should return a non-empty password from the wordlist
+	pw := ng.GenerateCrackablePassword()
+	if pw == "" {
+		t.Error("crackable password should not be empty")
+	}
+
+	// Should be in the wordlist
+	found := false
+	for _, w := range ng.crackablePasswords {
+		if w == pw {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("crackable password %q not found in wordlist", pw)
+	}
+
+	// Multiple calls should eventually produce different passwords
+	seen := make(map[string]bool)
+	for i := 0; i < 20; i++ {
+		seen[ng.GenerateCrackablePassword()] = true
+	}
+	if len(seen) < 2 {
+		t.Error("expected some variety in crackable passwords")
+	}
+}
+
 func TestGenerateGroupName(t *testing.T) {
 	ng := NewNameGenerator()
 	name := ng.GenerateGroupName()
