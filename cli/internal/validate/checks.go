@@ -304,8 +304,16 @@ func (v *Validator) checkMSSQL(ctx context.Context, w io.Writer) {
 		}
 		hostLabel := strings.ToUpper(mf.Hostname)
 
+		// Get-Service writes a non-terminating error for any name it can't find
+		// (Cannot find any service with service name 'X'), and PowerShell.exe
+		// exits 1 whenever any error was emitted -- even with -ErrorAction
+		// SilentlyContinue, which suppresses the message but not $?. The
+		// Ludus WinRM runner treats exit!=0 as failure and discards stdout,
+		// so the running service name (e.g. MSSQL$SQLEXPRESS) gets thrown
+		// away and the check spuriously fails. Probe each service name in
+		// isolation, swallow the missing-service error, and force exit 0.
 		output := v.runPS(ctx, host,
-			`Get-Service 'MSSQL$SQLEXPRESS','MSSQLSERVER' -ErrorAction SilentlyContinue | Where-Object {$_.Status -eq 'Running'} | Select-Object -ExpandProperty Name`)
+			`$ErrorActionPreference='SilentlyContinue'; foreach ($n in 'MSSQL$SQLEXPRESS','MSSQLSERVER') { $s = Get-Service -Name $n -ErrorAction SilentlyContinue; if ($s -and $s.Status -eq 'Running') { $s.Name } }; exit 0`)
 		if strings.TrimSpace(output) == "" {
 			v.addResult(w, "FAIL", "MSSQL", fmt.Sprintf("MSSQL NOT running on %s", hostLabel), "")
 			continue
@@ -506,31 +514,45 @@ func (v *Validator) checkADCSESC7(ctx context.Context, w io.Writer) {
 	}
 
 	for _, f := range facts {
-		// The ManageCA ACL is on the CA, so query the ADCS host.
+		// The probe runs on the host that declared the vuln (the DC), where
+		// the upstream vulns_adcs_esc7 role has already installed PSPKI.
+		// Querying the CA's ACL still requires AD context (PSPKI's
+		// Get-CertificationAuthority hits the AD configuration partition),
+		// so the script elevates to a domain admin via Invoke-Command --
+		// mirroring the role's `become: runas` pattern.
 		host := strings.ToUpper(f.HostRole)
 		if !v.hasHost(host) {
 			continue
 		}
 		hostLabel := strings.ToUpper(f.Hostname)
+		caLabel := strings.ToUpper(f.CAHostname)
+		if caLabel == "" {
+			caLabel = hostLabel
+		}
 
 		r, err := runScriptJSON[adcsESC7Result](ctx, v, host, scriptADCSESC7,
-			map[string]any{"Identity": f.CAManager})
+			map[string]any{
+				"Identity":       f.CAManager,
+				"DomainNetBIOS":  f.DomainNetBIOS,
+				"DomainPassword": f.DomainPassword,
+				"AdminUser":      f.AdminUser,
+			})
 		switch {
 		case err != nil:
 			v.addResult(w, "WARN", "ADCS-ESC7",
-				fmt.Sprintf("Could not verify ManageCA for %s on %s: %v", f.CAManager, hostLabel, err), "")
+				fmt.Sprintf("Could not verify ManageCA for %s on %s: %v", f.CAManager, caLabel, err), "")
 		case !r.PSPKI:
 			v.addResult(w, "FAIL", "ADCS-ESC7",
 				fmt.Sprintf("PSPKI module not installed on %s", hostLabel), "")
 		case r.Error != "":
 			v.addResult(w, "WARN", "ADCS-ESC7",
-				fmt.Sprintf("ManageCA check error on %s: %s", hostLabel, r.Error), "")
+				fmt.Sprintf("ManageCA check error on %s: %s", caLabel, r.Error), "")
 		case r.Found:
 			v.addResult(w, "PASS", "ADCS-ESC7",
-				fmt.Sprintf("%s has ManageCA on %s CA (ESC7 exploitable)", f.CAManager, hostLabel), "")
+				fmt.Sprintf("%s has ManageCA on %s CA (ESC7 exploitable)", f.CAManager, caLabel), "")
 		default:
 			v.addResult(w, "FAIL", "ADCS-ESC7",
-				fmt.Sprintf("%s does NOT have ManageCA on %s CA", f.CAManager, hostLabel), "")
+				fmt.Sprintf("%s does NOT have ManageCA on %s CA", f.CAManager, caLabel), "")
 		}
 	}
 }

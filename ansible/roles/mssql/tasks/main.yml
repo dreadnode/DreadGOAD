@@ -34,13 +34,13 @@
   ansible.builtin.include_tasks: install.yml
   when: mssql_service_check.exists is not defined or not mssql_service_check.exists
 
-# Ensure service is running before configuration
+# Ensure service is running before configuration.
+# Idempotent: no-op when already running (golden image), starts it after fresh install.
 - name: Ensure MSSQL service is started
   ansible.windows.win_service:
     name: "{{ mssql_service_name }}"
     force_dependent_services: true
     state: started
-  when: mssql_service_check.exists is defined and mssql_service_check.exists
 
 - name: Wait for port 1433 to become open
   ansible.windows.win_wait_for:

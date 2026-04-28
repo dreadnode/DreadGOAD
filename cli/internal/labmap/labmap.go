@@ -111,6 +111,11 @@ type LabMap struct {
 	// Full parsed config data.
 	HostConfigs   map[string]HostConfig   // keyed by role
 	DomainConfigs map[string]DomainConfig // keyed by domain FQDN
+
+	// AdminUser is the inventory's admin_user (e.g. "administrator" on Ludus,
+	// "goadmin" on AWS/Azure). Populated by the caller (cmd/infra.go) from the
+	// parsed inventory since labmap itself only reads config.json.
+	AdminUser string
 }
 
 // FQDN returns the FQDN for a host role.
@@ -514,10 +519,25 @@ func (m *LabMap) HostsWithLAPS() []string {
 }
 
 // ESC7Fact holds the host role and CA manager identity for an ESC7 vulnerability.
+// HostRole/Hostname identify the host that declares the vuln (typically a DC);
+// CAHost/CAHostname identify the host that actually serves the CA, which may
+// be a member server. ManageCA ACL queries must run against the CA host.
 type ESC7Fact struct {
-	HostRole  string
-	Hostname  string
-	CAManager string // e.g. "essos\\viserys.targaryen"
+	HostRole   string
+	Hostname   string
+	CAHost     string
+	CAHostname string
+	CAManager  string // e.g. "essos\\viserys.targaryen"
+	// Domain credentials for the host's domain. Needed because the upstream
+	// vulns_adcs_esc7 role installs PSPKI on the DC and runs it under runas
+	// with a domain admin (PSPKI's CA discovery hits the AD configuration
+	// partition). The validator runs as a local user with no AD trust, so
+	// the probe script has to elevate to a domain principal explicitly.
+	DomainNetBIOS  string // e.g. "ESSOS"
+	DomainPassword string
+	// AdminUser is the inventory's admin_user (Ludus: "administrator",
+	// AWS/Azure: "goadmin"). The role's runas uses "{{ domain }}\{{ admin_user }}".
+	AdminUser string
 }
 
 // GroupFact holds a group with its domain context.
@@ -601,6 +621,9 @@ func (m *LabMap) LocalAdminsForHost(role string) []string {
 }
 
 // HostsWithESC7 returns ESC7 facts for hosts that have adcs_esc7 in their vulns_vars.
+// Resolves the CA-serving host via the declaring host's domain → ca_server, so
+// the validator queries ManageCA on the box that actually owns the ACL rather
+// than the box that merely declares the vuln.
 func (m *LabMap) HostsWithESC7() []ESC7Fact {
 	var facts []ESC7Fact
 	for role, hc := range m.HostConfigs {
@@ -615,17 +638,46 @@ func (m *LabMap) HostsWithESC7() []ESC7Fact {
 		if err := json.Unmarshal(raw, &entries); err != nil {
 			continue
 		}
+		caHost, caHostname := m.resolveCAHost(hc.Domain)
+		if caHost == "" {
+			caHost, caHostname = role, hc.Hostname
+		}
+		dc := m.DomainConfigs[hc.Domain]
+		adminUser := m.AdminUser
+		if adminUser == "" {
+			adminUser = "administrator"
+		}
 		for _, entry := range entries {
 			if entry.CAManager != "" {
 				facts = append(facts, ESC7Fact{
-					HostRole:  role,
-					Hostname:  hc.Hostname,
-					CAManager: entry.CAManager,
+					HostRole:       role,
+					Hostname:       hc.Hostname,
+					CAHost:         caHost,
+					CAHostname:     caHostname,
+					CAManager:      entry.CAManager,
+					DomainNetBIOS:  dc.NetBIOSName,
+					DomainPassword: dc.DomainPassword,
+					AdminUser:      adminUser,
 				})
 			}
 		}
 	}
 	return facts
+}
+
+// resolveCAHost returns the host role and hostname that serves the CA for the
+// given domain, or empty strings if no CA is configured.
+func (m *LabMap) resolveCAHost(domain string) (string, string) {
+	dc, ok := m.DomainConfigs[domain]
+	if !ok || dc.CAServer == "" {
+		return "", ""
+	}
+	for role, hc := range m.HostConfigs {
+		if strings.EqualFold(hc.Hostname, dc.CAServer) {
+			return role, hc.Hostname
+		}
+	}
+	return "", ""
 }
 
 // rawLabConfig mirrors the full config.json structure.

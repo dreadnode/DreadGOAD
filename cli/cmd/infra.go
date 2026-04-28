@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dreadnode/dreadgoad/internal/config"
+	"github.com/dreadnode/dreadgoad/internal/inventory"
 	"github.com/dreadnode/dreadgoad/internal/labmap"
 	"github.com/dreadnode/dreadgoad/internal/provider"
 	"github.com/fatih/color"
@@ -50,28 +51,9 @@ func requireInfra(ctx context.Context) (*infraContext, error) {
 		}
 	}
 
-	var lab *labmap.LabMap
-	ec := cfg.ActiveEnvironment()
-	if ec.Variant {
-		_, target := cfg.ResolvedVariantPaths()
-		var loadErr error
-		lab, loadErr = labmap.LoadFromVariant(target)
-		if loadErr != nil {
-			return nil, fmt.Errorf("load variant mapping: %w", loadErr)
-		}
-	} else {
-		src := ec.VariantSource
-		if src == "" {
-			src = "ad/GOAD"
-		}
-		if !filepath.IsAbs(src) {
-			src = filepath.Join(cfg.ProjectRoot, src)
-		}
-		var loadErr error
-		lab, loadErr = labmap.LoadFromSource(src, cfg.Env)
-		if loadErr != nil {
-			return nil, fmt.Errorf("load lab config: %w", loadErr)
-		}
+	lab, err := loadLab(cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	expectedHosts := lab.HostRoles()
@@ -95,6 +77,46 @@ func requireInfra(ctx context.Context) (*infraContext, error) {
 		Region:   region,
 		Lab:      lab,
 	}, nil
+}
+
+// loadLab loads the lab map for the active environment and resolves the
+// admin_user from the inventory so domain-principal checks match the identity
+// upstream roles use under `become: runas` (`{{ domain }}\{{ admin_user }}`).
+// Ludus inventories use "administrator"; AWS/Azure use "goadmin".
+func loadLab(cfg *config.Config) (*labmap.LabMap, error) {
+	ec := cfg.ActiveEnvironment()
+
+	var lab *labmap.LabMap
+	var err error
+	if ec.Variant {
+		_, target := cfg.ResolvedVariantPaths()
+		lab, err = labmap.LoadFromVariant(target)
+		if err != nil {
+			return nil, fmt.Errorf("load variant mapping: %w", err)
+		}
+	} else {
+		src := ec.VariantSource
+		if src == "" {
+			src = "ad/GOAD"
+		}
+		if !filepath.IsAbs(src) {
+			src = filepath.Join(cfg.ProjectRoot, src)
+		}
+		lab, err = labmap.LoadFromSource(src, cfg.Env)
+		if err != nil {
+			return nil, fmt.Errorf("load lab config: %w", err)
+		}
+	}
+
+	if inv, invErr := inventory.Parse(cfg.InventoryPath()); invErr == nil {
+		if u, ok := inv.Vars["admin_user"]; ok && u != "" {
+			lab.AdminUser = u
+		}
+	}
+	if lab.AdminUser == "" {
+		lab.AdminUser = "administrator"
+	}
+	return lab, nil
 }
 
 // discoverHostMap finds running instances and maps host roles to instance IDs.
