@@ -12,7 +12,7 @@ import (
 )
 
 // SSH connection reuse: when SSH is configured, the Client lazily opens one
-// long-lived *ssh.Client (via nativeClient) and reuses it for every remote
+// long-lived *ssh.Client (via sshClient) and reuses it for every remote
 // call. Replaces the OpenSSH ControlMaster dance the previous implementation
 // needed to keep validate's command fan-out fast.
 
@@ -73,9 +73,9 @@ type Client struct {
 	ssh            SSHConfig
 	sshSem         chan struct{}
 
-	nativeOnce sync.Once
-	native     *nativeClient
-	nativeErr  error
+	dialOnce sync.Once
+	conn     *sshClient
+	dialErr  error
 }
 
 // NewClient creates a Ludus client with the given API key.
@@ -168,20 +168,20 @@ func (c *Client) acquireSSHSlot(ctx context.Context) error {
 
 func (c *Client) releaseSSHSlot() { <-c.sshSem }
 
-// ensureNative lazy-opens the long-lived SSH connection to the Ludus host.
+// ensureSSH lazy-opens the long-lived SSH connection to the Ludus host.
 // All callers go through this; the first one pays the handshake (and any
 // 1Password biometric prompt), every subsequent call reuses the connection.
-func (c *Client) ensureNative(ctx context.Context) (*nativeClient, error) {
-	c.nativeOnce.Do(func() {
-		c.native, c.nativeErr = dialNative(ctx, c.ssh)
+func (c *Client) ensureSSH(ctx context.Context) (*sshClient, error) {
+	c.dialOnce.Do(func() {
+		c.conn, c.dialErr = dialSSH(ctx, c.ssh)
 	})
-	return c.native, c.nativeErr
+	return c.conn, c.dialErr
 }
 
 // Close releases the underlying SSH connection. Safe to call multiple times.
 func (c *Client) Close() error {
-	if c.native != nil {
-		return c.native.Close()
+	if c.conn != nil {
+		return c.conn.Close()
 	}
 	return nil
 }
@@ -194,7 +194,7 @@ func (c *Client) runSSH(ctx context.Context, binary string, args ...string) (str
 	}
 	defer c.releaseSSHSlot()
 
-	cli, err := c.ensureNative(ctx)
+	cli, err := c.ensureSSH(ctx)
 	if err != nil {
 		return "", fmt.Errorf("ssh dial %s: %w", c.ssh.Host, err)
 	}
@@ -253,7 +253,7 @@ func (c *Client) RunSSHCommand(ctx context.Context, binary string, args ...strin
 	}
 	defer c.releaseSSHSlot()
 
-	cli, err := c.ensureNative(ctx)
+	cli, err := c.ensureSSH(ctx)
 	if err != nil {
 		return "", "", fmt.Errorf("ssh dial %s: %w", c.ssh.Host, err)
 	}

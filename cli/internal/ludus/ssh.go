@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	socks5 "github.com/armon/go-socks5"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
@@ -112,22 +111,22 @@ func expandPath(p string) string {
 	return p
 }
 
-// nativeClient is a long-lived *ssh.Client. Reuse across calls to avoid
+// sshClient is a long-lived *ssh.Client. Reuse across calls to avoid
 // re-handshaking — equivalent to ControlMaster but without the socket file.
-type nativeClient struct {
+type sshClient struct {
 	cli  *ssh.Client
 	host string
 }
 
-// dialNative resolves the SSHConfig through `ssh -G`, then establishes a
+// dialSSH resolves the SSHConfig through `ssh -G`, then establishes a
 // real SSH connection in pure Go. Password auth (when set on cfg) replaces
 // the legacy sshpass dependency.
-func dialNative(ctx context.Context, cfg SSHConfig) (*nativeClient, error) {
+func dialSSH(ctx context.Context, cfg SSHConfig) (*sshClient, error) {
 	cli, err := dialResolved(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
-	return &nativeClient{cli: cli, host: cfg.Host}, nil
+	return &sshClient{cli: cli, host: cfg.Host}, nil
 }
 
 func dialResolved(ctx context.Context, cfg SSHConfig) (*ssh.Client, error) {
@@ -265,7 +264,7 @@ func buildAuthMethods(rc *resolvedSSHConfig, password string) ([]ssh.AuthMethod,
 // Run executes a command on the remote host and returns stdout, stderr, and
 // any execution error. Mirrors the (string, string, error) shape returned by
 // the existing exec.Command wrapper so callers swap cleanly.
-func (c *nativeClient) Run(ctx context.Context, cmdLine string) (string, string, error) {
+func (c *sshClient) Run(ctx context.Context, cmdLine string) (string, string, error) {
 	sess, err := c.cli.NewSession()
 	if err != nil {
 		return "", "", fmt.Errorf("new session: %w", err)
@@ -288,62 +287,16 @@ func (c *nativeClient) Run(ctx context.Context, cmdLine string) (string, string,
 	}
 }
 
+// Dial opens a TCP connection from the remote SSH host. Used by socks.go to
+// route SOCKS5 dials through the SSH transport.
+func (c *sshClient) Dial(network, addr string) (net.Conn, error) {
+	return c.cli.Dial(network, addr)
+}
+
 // Close releases the underlying SSH connection.
-func (c *nativeClient) Close() error {
+func (c *sshClient) Close() error {
 	if c.cli != nil {
 		return c.cli.Close()
 	}
 	return nil
-}
-
-// nativeSOCKS is a local SOCKS5 server whose Dial routes through the SSH
-// client. Drop-in replacement for `ssh -D <port> -N` in socks.go.
-type nativeSOCKS struct {
-	listener net.Listener
-	port     int
-	doneCh   chan struct{}
-}
-
-func (c *nativeClient) StartSOCKS5() (*nativeSOCKS, error) {
-	return startSOCKS5(func(_ context.Context, network, addr string) (net.Conn, error) {
-		return c.cli.Dial(network, addr)
-	})
-}
-
-// startSOCKS5 is the dial-agnostic core of StartSOCKS5; extracted so tests
-// can exercise the listener without needing a real *ssh.Client.
-func startSOCKS5(dial func(context.Context, string, string) (net.Conn, error)) (*nativeSOCKS, error) {
-	srv, err := socks5.New(&socks5.Config{Dial: dial})
-	if err != nil {
-		return nil, fmt.Errorf("init socks5 server: %w", err)
-	}
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return nil, fmt.Errorf("bind socks5 listener: %w", err)
-	}
-
-	done := make(chan struct{})
-	go func() {
-		_ = srv.Serve(ln)
-		close(done)
-	}()
-
-	return &nativeSOCKS{
-		listener: ln,
-		port:     ln.Addr().(*net.TCPAddr).Port,
-		doneCh:   done,
-	}, nil
-}
-
-func (s *nativeSOCKS) ProxyURL() string {
-	return fmt.Sprintf("socks5h://localhost:%d", s.port)
-}
-
-func (s *nativeSOCKS) Port() int { return s.port }
-
-func (s *nativeSOCKS) Close() {
-	if s.listener != nil {
-		_ = s.listener.Close()
-		<-s.doneCh
-	}
 }

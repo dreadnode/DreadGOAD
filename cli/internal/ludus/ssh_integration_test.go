@@ -119,19 +119,19 @@ func TestSOCKS5Server_Standalone(t *testing.T) {
 
 	// Use the dial-agnostic SOCKS5 core: route SOCKS5 dials to our echo server.
 	target := echoLn.Addr().String()
-	socks, srvErr := startSOCKS5(func(_ context.Context, network, _ string) (net.Conn, error) {
+	tunnel, srvErr := startSOCKS5(func(_ context.Context, network, _ string) (net.Conn, error) {
 		return net.Dial(network, target)
 	})
 	if srvErr != nil {
 		t.Fatalf("startSOCKS5: %v", srvErr)
 	}
-	defer socks.Close()
-	t.Logf("SOCKS5 server listening on port %d", socks.Port())
+	defer tunnel.Close()
+	t.Logf("SOCKS5 server listening on port %d", tunnel.Port)
 
 	// Run a real SOCKS5 handshake through it: connect → ask the proxy to
 	// reach an arbitrary host (our stub Dial ignores the target and routes
 	// to the echo server) → write/read to verify bytes flow end-to-end.
-	dialer, err := proxy.SOCKS5("tcp", net.JoinHostPort("127.0.0.1", itoa(socks.Port())), nil, proxy.Direct)
+	dialer, err := proxy.SOCKS5("tcp", net.JoinHostPort("127.0.0.1", itoa(tunnel.Port)), nil, proxy.Direct)
 	if err != nil {
 		t.Fatalf("build socks5 dialer: %v", err)
 	}
@@ -158,11 +158,11 @@ func TestSOCKS5Server_Standalone(t *testing.T) {
 	}
 }
 
-// TestNativeDial_LiveHandshake performs an actual SSH handshake against the
+// TestSSHDial_LiveHandshake performs an actual SSH handshake against the
 // alias in DG_SSH_ALIAS using the prototype, then runs `whoami` over the
 // session. Skipped unless DG_SSH_LIVE=1 because it triggers the 1Password
 // biometric prompt.
-func TestNativeDial_LiveHandshake(t *testing.T) {
+func TestSSHDial_LiveHandshake(t *testing.T) {
 	if os.Getenv("DG_SSH_LIVE") != "1" {
 		t.Skip("set DG_SSH_LIVE=1 to run a real handshake (will trigger 1Password prompt)")
 	}
@@ -174,9 +174,9 @@ func TestNativeDial_LiveHandshake(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	cli, err := dialNative(ctx, SSHConfig{Host: alias})
+	cli, err := dialSSH(ctx, SSHConfig{Host: alias})
 	if err != nil {
-		t.Fatalf("dialNative(%q): %v", alias, err)
+		t.Fatalf("dialSSH(%q): %v", alias, err)
 	}
 	defer cli.Close()
 
@@ -190,12 +190,12 @@ func TestNativeDial_LiveHandshake(t *testing.T) {
 	}
 }
 
-// TestNativeSOCKS5_ThroughLiveSSH dials the alias for real, exposes a SOCKS5
+// TestSOCKS5_ThroughLiveSSH dials the alias for real, exposes a SOCKS5
 // proxy backed by that SSH client, then connects to an external host through
 // the proxy. This is the smoke test for the provision flow's tunnel: traffic
 // originates locally, exits the network at the SSH server. Skipped unless
 // DG_SSH_LIVE=1.
-func TestNativeSOCKS5_ThroughLiveSSH(t *testing.T) {
+func TestSOCKS5_ThroughLiveSSH(t *testing.T) {
 	if os.Getenv("DG_SSH_LIVE") != "1" {
 		t.Skip("set DG_SSH_LIVE=1 to run a real handshake")
 	}
@@ -204,23 +204,14 @@ func TestNativeSOCKS5_ThroughLiveSSH(t *testing.T) {
 		alias = "proxmox"
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	cli, err := dialNative(ctx, SSHConfig{Host: alias})
+	tunnel, err := StartSOCKSTunnel(SSHConfig{Host: alias})
 	if err != nil {
-		t.Fatalf("dialNative: %v", err)
+		t.Fatalf("StartSOCKSTunnel: %v", err)
 	}
-	defer cli.Close()
+	defer tunnel.Close()
+	t.Logf("SOCKS5 over live SSH: %s", tunnel.ProxyURL())
 
-	socks, err := cli.StartSOCKS5()
-	if err != nil {
-		t.Fatalf("StartSOCKS5: %v", err)
-	}
-	defer socks.Close()
-	t.Logf("SOCKS5 over live SSH: %s", socks.ProxyURL())
-
-	dialer, err := proxy.SOCKS5("tcp", net.JoinHostPort("127.0.0.1", itoa(socks.Port())), nil, proxy.Direct)
+	dialer, err := proxy.SOCKS5("tcp", net.JoinHostPort("127.0.0.1", itoa(tunnel.Port)), nil, proxy.Direct)
 	if err != nil {
 		t.Fatalf("build socks5 dialer: %v", err)
 	}
