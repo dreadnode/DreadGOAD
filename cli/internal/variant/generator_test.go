@@ -199,9 +199,10 @@ func TestFindCrackablePasswords(t *testing.T) {
 	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// Target arya.stark AND sql_svc — sql_svc should still be skipped (preserved)
 	if err := os.WriteFile(
 		filepath.Join(scriptsDir, "asrep_roasting.ps1"),
-		[]byte(`Get-ADUser -Identity "arya.stark" | Set-ADAccountControl -DoesNotRequirePreAuth:$true`),
+		[]byte("Get-ADUser -Identity \"arya.stark\" | Set-ADAccountControl -DoesNotRequirePreAuth:$true\nGet-ADUser -Identity \"sql_svc\" | Set-ADAccountControl -DoesNotRequirePreAuth:$true"),
 		0o644,
 	); err != nil {
 		t.Fatal(err)
@@ -233,7 +234,7 @@ func TestFindCrackablePasswords(t *testing.T) {
 		t.Error("expected NeedleIsMySword! (arya.stark AS-REP user) to be crackable")
 	}
 
-	// (3) sql_svc is preserved → password must NOT be crackable
+	// (3) sql_svc is preserved → password must NOT be crackable (even via SPN or AS-REP)
 	if crackable["SqlSvcPass1!"] {
 		t.Error("sql_svc password should not be crackable (preserved user)")
 	}

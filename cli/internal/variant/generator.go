@@ -574,6 +574,9 @@ func (g *Generator) findCrackablePasswords(config *LabConfig) map[string]bool {
 	asrepUsers := g.parseASREPScripts()
 	for _, domain := range config.Lab.Domains {
 		for username, user := range domain.Users {
+			if g.preservedUsers[username] {
+				continue
+			}
 			if !asrepUsers[strings.ToLower(username)] {
 				continue
 			}
