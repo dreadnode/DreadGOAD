@@ -46,6 +46,12 @@ type LudusProvider struct {
 	statusMu    sync.Mutex
 	cachedVMs   map[string]VM // proxmoxID (string) -> VM
 	statusStale time.Time     // refresh after this time
+
+	// wrm runs PowerShell over WinRM with TCP dials tunneled through the
+	// Client's SSH connection. Lazily initialized on first SSH-mode call.
+	wrmOnce sync.Once
+	wrm     *winrmRunner
+	wrmErr  error
 }
 
 const statusCacheTTL = 30 * time.Minute
@@ -347,9 +353,12 @@ func (p *LudusProvider) runCommandLocal(ctx context.Context, instanceID, command
 	return res, nil
 }
 
-// runCommandSSH executes a command on a VM via SSH to the Ludus host, using
-// an inline ansible inventory constructed from the VM's IP address. This
-// removes the need for an inventory file on the remote host.
+// runCommandSSH runs a PowerShell command directly over WinRM, with TCP
+// dials tunneled through the Client's pure-Go SSH connection to the
+// Ludus host. This replaces the previous "shell out to ansible on the
+// Ludus host" path: that approach paid the cost of fork+ansible+python
+// +winrm+ssh teardown for every check, which routinely exceeded the
+// validator's per-call deadline under concurrent fan-out.
 func (p *LudusProvider) runCommandSSH(ctx context.Context, instanceID, command string, timeout time.Duration) (*provider.CommandResult, error) {
 	_, ip, err := p.resolveVM(ctx, instanceID)
 	if err != nil {
@@ -359,35 +368,36 @@ func (p *LudusProvider) runCommandSSH(ctx context.Context, instanceID, command s
 		return nil, fmt.Errorf("VM %s has no IP address; is it running?", instanceID)
 	}
 
-	cmdCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	// Use ansible with an inline inventory (IP followed by comma) and
-	// pass WinRM connection variables directly. This avoids needing an
-	// inventory file on the remote Ludus host.
-	args := []string{
-		"all",
-		"-i", ip + ",",
-		"-m", "win_shell",
-		"-a", command,
-		"-e", "ansible_user=localuser",
-		"-e", "ansible_password=password",
-		"-e", "ansible_connection=winrm",
-		"-e", "ansible_winrm_server_cert_validation=ignore",
-		"-e", "ansible_winrm_transport=ntlm",
-		"-e", "ansible_winrm_scheme=http",
-		"-e", "ansible_port=5985",
-		"-e", "ansible_winrm_operation_timeout_sec=400",
-		"-e", "ansible_winrm_read_timeout_sec=500",
+	wrm, err := p.winrm(ctx)
+	if err != nil {
+		return nil, err
 	}
 
-	stdoutStr, stderrStr, runErr := p.client.RunSSHCommand(cmdCtx, "ansible", args...)
-
-	res := parseAnsibleOutput(stdoutStr, stderrStr, runErr)
-	if res.Status == "Failed" {
-		return res, fmt.Errorf("ansible win_shell on %s failed: %s", ip, failureDetail(res.Stderr, stdoutStr, runErr))
+	stdout, stderr, runErr := wrm.RunPS(ctx, ip, command, timeout)
+	res := &provider.CommandResult{
+		Status: "Success",
+		Stdout: strings.TrimSpace(stdout),
+		Stderr: stderr,
+	}
+	if runErr != nil {
+		res.Status = "Failed"
+		return res, runErr
 	}
 	return res, nil
+}
+
+// winrm lazily constructs the shared WinRM runner, reusing the Client's
+// SSH connection as the TCP dialer for every WinRM HTTP request.
+func (p *LudusProvider) winrm(ctx context.Context) (*winrmRunner, error) {
+	p.wrmOnce.Do(func() {
+		cli, err := p.client.ensureSSH(ctx)
+		if err != nil {
+			p.wrmErr = fmt.Errorf("ssh dial for winrm: %w", err)
+			return
+		}
+		p.wrm = newWinRMRunner(cli.Dial)
+	})
+	return p.wrm, p.wrmErr
 }
 
 func firstNonEmpty(a, b string) string {
