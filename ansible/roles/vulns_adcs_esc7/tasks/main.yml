@@ -30,12 +30,13 @@
       $acl = Get-CertificationAuthority "$caHostname" | Get-CertificationAuthorityAcl
 
       # Skip the grant (and the CA service restart it triggers) when the
-      # identity already holds ManageCa. Match against the NTAccount string
-      # form, which is what Get-CertificationAuthorityAcl returns by default.
-      $manageCa = [PKI.CertificateServices.CertificationAuthorityRights]::ManageCA
+      # identity already holds ManageCa. Use the Rights enum's string form so
+      # we don't depend on the [PKI.CertificateServices.CertificationAuthorityRights]
+      # type literal being resolvable — Import-Module PSPKI doesn't reliably
+      # surface that type to the runas session until first use of a PSPKI cmdlet.
       $alreadyGranted = @($acl.Access | Where-Object {
           $_.AccessType -eq 'Allow' -and
-          (($_.Rights -band $manageCa) -eq $manageCa) -and
+          ($_.Rights.ToString() -split ',\s*' -contains 'ManageCa') -and
           ($_.IdentityReference.ToString() -ieq $caManagerUser)
       }).Count -gt 0
 
