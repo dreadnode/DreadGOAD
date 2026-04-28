@@ -1,0 +1,29 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "dreadgoad-scoreboard"
+version = "0.1.0"
+description = "Live status board for DreadGOAD offensive cyber range"
+requires-python = ">=3.11"
+dependencies = ["rich>=13.0"]
+
+[project.scripts]
+dreadgoad-scoreboard = "scoreboard.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["scoreboard"]
+
+# ─── Installation ──────────────────────────────────────────────
+# This package must be installed from the REPO ROOT because
+# the `scoreboard/` directory is itself the Python package:
+#
+#   cd DreadGOAD
+#   pip install -e ./scoreboard      # won't work (self-referencing)
+#
+# Instead, use the run script:
+#
+#   ./scoreboard/run.sh demo
+#   ./scoreboard/run.sh run --transport local
+#   ./scoreboard/run.sh generate-key
