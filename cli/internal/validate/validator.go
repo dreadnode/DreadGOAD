@@ -52,8 +52,10 @@ type Validator struct {
 	hosts    map[string]string // hostname -> instance ID
 	lab      *labmap.LabMap
 
-	deadMu sync.RWMutex
-	dead   map[string]bool // hostname -> true if last call failed
+	// dead tracks hosts whose PS calls have failed; entries are added
+	// exactly once via sync.Map.LoadOrStore so the "marking host dead"
+	// warning fires once per host even under heavy concurrent fan-out.
+	dead sync.Map // hostname -> struct{}
 }
 
 // NewValidator creates a new Validator.
@@ -67,7 +69,6 @@ func NewValidator(prov provider.Provider, env string, verbose bool, log *slog.Lo
 		env:      env,
 		verbose:  verbose,
 		hosts:    make(map[string]string),
-		dead:     make(map[string]bool),
 		lab:      lab,
 		report: Report{
 			Date: time.Now().UTC().Format(time.RFC3339),
@@ -255,19 +256,15 @@ func (v *Validator) runPS(ctx context.Context, host, command string) string {
 		v.log.Debug("running PS command", "host", host, "command", command)
 	}
 
-	v.deadMu.RLock()
-	isDead := v.dead[host]
-	v.deadMu.RUnlock()
-	if isDead {
+	if _, dead := v.dead.Load(host); dead {
 		return ""
 	}
 
 	result, err := v.provider.RunCommand(ctx, instanceID, command, 15*time.Second)
 	if err != nil {
-		v.log.Warn("PS command failed; marking host dead for remainder of run", "host", host, "error", err)
-		v.deadMu.Lock()
-		v.dead[host] = true
-		v.deadMu.Unlock()
+		if _, alreadyDead := v.dead.LoadOrStore(host, struct{}{}); !alreadyDead {
+			v.log.Warn("PS command failed; marking host dead for remainder of run", "host", host, "error", err)
+		}
 		return ""
 	}
 	return result.Stdout

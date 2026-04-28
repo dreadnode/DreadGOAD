@@ -342,7 +342,7 @@ func (p *LudusProvider) runCommandLocal(ctx context.Context, instanceID, command
 
 	res := parseAnsibleOutput(outStr, stderr.String(), err)
 	if res.Status == "Failed" {
-		return res, fmt.Errorf("ansible win_shell on %s failed: %s", hostname, firstNonEmpty(res.Stderr, outStr))
+		return res, fmt.Errorf("ansible win_shell on %s failed: %s", hostname, failureDetail(res.Stderr, outStr, err))
 	}
 	return res, nil
 }
@@ -385,7 +385,7 @@ func (p *LudusProvider) runCommandSSH(ctx context.Context, instanceID, command s
 
 	res := parseAnsibleOutput(stdoutStr, stderrStr, runErr)
 	if res.Status == "Failed" {
-		return res, fmt.Errorf("ansible win_shell on %s failed: %s", ip, firstNonEmpty(res.Stderr, stdoutStr))
+		return res, fmt.Errorf("ansible win_shell on %s failed: %s", ip, failureDetail(res.Stderr, stdoutStr, runErr))
 	}
 	return res, nil
 }
@@ -395,6 +395,20 @@ func firstNonEmpty(a, b string) string {
 		return a
 	}
 	return b
+}
+
+// failureDetail returns a non-empty reason for an ansible failure, falling
+// back to the underlying run error (e.g. "exit status 4") when both stdout
+// and stderr were captured empty. Without this fallback the formatted error
+// ends with a trailing colon and no reason, which is what bit us before.
+func failureDetail(stderr, stdout string, runErr error) string {
+	if d := strings.TrimSpace(firstNonEmpty(stderr, stdout)); d != "" {
+		return d
+	}
+	if runErr != nil {
+		return runErr.Error()
+	}
+	return "no output captured"
 }
 
 // parseAnsibleOutput extracts command results from ansible ad-hoc output.
