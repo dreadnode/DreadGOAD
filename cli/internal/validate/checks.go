@@ -5,6 +5,7 @@ package validate
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 	"io"
 	"strings"
@@ -25,9 +26,14 @@ func (v *Validator) checkCredentialDiscovery(ctx context.Context, w io.Writer) {
 
 	for _, uf := range users {
 		dcRole := strings.ToUpper(uf.DCRole)
-		output := v.runPS(ctx, dcRole, fmt.Sprintf(
-			`Get-ADUser -Identity '%s' -Properties Description | Select-Object -ExpandProperty Description`,
-			uf.Username))
+		output, err := runScriptText(ctx, v, dcRole,
+			`Get-ADUser -Identity {{psq .Username}} -Properties Description | Select-Object -ExpandProperty Description`,
+			map[string]any{"Username": uf.Username})
+		if err != nil {
+			v.addResult(w, "WARN", "Credentials",
+				fmt.Sprintf("Could not query description for %s: %v", uf.Username, err), "")
+			continue
+		}
 		if strings.Contains(strings.ToLower(output), strings.ToLower(uf.User.Password)) {
 			v.addResult(w, "PASS", "Credentials", fmt.Sprintf("%s has password in description", uf.Username), "")
 		} else {
@@ -74,10 +80,15 @@ func (v *Validator) checkKerberoasting(ctx context.Context, w io.Writer) {
 
 	for _, uf := range spnUsers {
 		dcRole := strings.ToUpper(uf.DCRole)
-		output := v.runPS(ctx, dcRole, fmt.Sprintf(
-			`Get-ADUser -Identity '%s' -Properties ServicePrincipalName | Select-Object -ExpandProperty ServicePrincipalName`,
-			uf.Username))
-		if strings.TrimSpace(output) != "" {
+		output, err := runScriptText(ctx, v, dcRole,
+			`Get-ADUser -Identity {{psq .Username}} -Properties ServicePrincipalName | Select-Object -ExpandProperty ServicePrincipalName`,
+			map[string]any{"Username": uf.Username})
+		if err != nil {
+			v.addResult(w, "WARN", "Kerberos",
+				fmt.Sprintf("Could not query SPNs for %s: %v", uf.Username, err), "")
+			continue
+		}
+		if output != "" {
 			v.addResult(w, "PASS", "Kerberos",
 				fmt.Sprintf("%s has SPNs configured (Kerberoastable)", uf.Username), "")
 		} else {
@@ -120,29 +131,23 @@ func (v *Validator) checkNetworkMisconfigs(ctx context.Context, w io.Writer) {
 func (v *Validator) checkAnonymousSMB(ctx context.Context, w io.Writer) {
 	printHeader(w, "Anonymous/Guest SMB Enumeration")
 
+	const lsaPath = `HKLM:\System\CurrentControlSet\Control\Lsa`
+
+	anon := []struct {
+		name     string
+		passDesc string
+	}{
+		{"RestrictAnonymous", "NULL sessions enabled"},
+		{"RestrictAnonymousSAM", "SAM enum enabled"},
+	}
 	for _, role := range v.lab.DCs() {
 		host := strings.ToUpper(role)
 		if !v.hasHost(host) {
 			continue
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-
-		output := v.runPS(ctx, host,
-			`Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Lsa' -Name RestrictAnonymous -ErrorAction SilentlyContinue | Select-Object -ExpandProperty RestrictAnonymous`)
-		val := strings.TrimSpace(output)
-		if val == "0" {
-			v.addResult(w, "PASS", "SMB", fmt.Sprintf("RestrictAnonymous is 0 on %s (NULL sessions enabled)", hostLabel), "")
-		} else {
-			v.addResult(w, "INFO", "SMB", fmt.Sprintf("RestrictAnonymous is %s on %s", val, hostLabel), "")
-		}
-
-		output = v.runPS(ctx, host,
-			`Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Lsa' -Name RestrictAnonymousSAM -ErrorAction SilentlyContinue | Select-Object -ExpandProperty RestrictAnonymousSAM`)
-		val = strings.TrimSpace(output)
-		if val == "0" {
-			v.addResult(w, "PASS", "SMB", fmt.Sprintf("RestrictAnonymousSAM is 0 on %s (SAM enum enabled)", hostLabel), "")
-		} else {
-			v.addResult(w, "INFO", "SMB", fmt.Sprintf("RestrictAnonymousSAM is %s on %s", val, hostLabel), "")
+		for _, a := range anon {
+			v.checkAnonymousRegistry(ctx, w, host, hostLabel, lsaPath, a.name, a.passDesc)
 		}
 	}
 
@@ -167,17 +172,51 @@ func (v *Validator) checkAnonymousSMB(ctx context.Context, w io.Writer) {
 			continue
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-		output := v.runPS(ctx, host,
-			`$v = Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Lsa' -Name LmCompatibilityLevel -ErrorAction SilentlyContinue; if ($v) { $v.LmCompatibilityLevel } else { 'NOT_SET' }`)
-		val := strings.TrimSpace(output)
-		switch val {
-		case "0", "1", "2":
-			v.addResult(w, "PASS", "SMB", fmt.Sprintf("LmCompatibilityLevel is %s on %s (NTLM downgrade vulnerable)", val, hostLabel), "")
-		case "", "NOT_SET":
-			v.addResult(w, "WARN", "SMB", fmt.Sprintf("LmCompatibilityLevel not configured on %s (registry key missing)", hostLabel), "")
-		default:
-			v.addResult(w, "FAIL", "SMB", fmt.Sprintf("LmCompatibilityLevel is %s on %s (expected 0-2)", val, hostLabel), "")
-		}
+		v.checkLmCompatibility(ctx, w, host, hostLabel, lsaPath)
+	}
+}
+
+func (v *Validator) checkAnonymousRegistry(ctx context.Context, w io.Writer, host, hostLabel, lsaPath, name, passDesc string) {
+	r, err := runScriptJSON[registryDWORDResult](ctx, v, host, scriptRegistryDWORD,
+		map[string]any{"Path": lsaPath, "Name": name})
+	switch {
+	case err != nil:
+		v.addResult(w, "WARN", "SMB",
+			fmt.Sprintf("Could not query %s on %s: %v", name, hostLabel, err), "")
+	case r.Error != "":
+		v.addResult(w, "WARN", "SMB",
+			fmt.Sprintf("%s query error on %s: %s", name, hostLabel, r.Error), "")
+	case r.Present && r.Value == 0:
+		v.addResult(w, "PASS", "SMB",
+			fmt.Sprintf("%s is 0 on %s (%s)", name, hostLabel, passDesc), "")
+	case r.Present:
+		v.addResult(w, "INFO", "SMB",
+			fmt.Sprintf("%s is %d on %s", name, r.Value, hostLabel), "")
+	default:
+		v.addResult(w, "INFO", "SMB",
+			fmt.Sprintf("%s not set on %s", name, hostLabel), "")
+	}
+}
+
+func (v *Validator) checkLmCompatibility(ctx context.Context, w io.Writer, host, hostLabel, lsaPath string) {
+	r, err := runScriptJSON[registryDWORDResult](ctx, v, host, scriptRegistryDWORD,
+		map[string]any{"Path": lsaPath, "Name": "LmCompatibilityLevel"})
+	switch {
+	case err != nil:
+		v.addResult(w, "WARN", "SMB",
+			fmt.Sprintf("Could not query LmCompatibilityLevel on %s: %v", hostLabel, err), "")
+	case r.Error != "":
+		v.addResult(w, "WARN", "SMB",
+			fmt.Sprintf("LmCompatibilityLevel query error on %s: %s", hostLabel, r.Error), "")
+	case !r.Present:
+		v.addResult(w, "WARN", "SMB",
+			fmt.Sprintf("LmCompatibilityLevel not configured on %s (registry key missing)", hostLabel), "")
+	case r.Value >= 0 && r.Value <= 2:
+		v.addResult(w, "PASS", "SMB",
+			fmt.Sprintf("LmCompatibilityLevel is %d on %s (NTLM downgrade vulnerable)", r.Value, hostLabel), "")
+	default:
+		v.addResult(w, "FAIL", "SMB",
+			fmt.Sprintf("LmCompatibilityLevel is %d on %s (expected 0-2)", r.Value, hostLabel), "")
 	}
 }
 
@@ -273,19 +312,27 @@ func (v *Validator) checkMSSQL(ctx context.Context, w io.Writer) {
 		}
 		v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("MSSQL running on %s", hostLabel), "")
 
-		sqlQuery := func(query string) string {
-			return v.runPS(ctx, host, fmt.Sprintf(
+		sqlQuery := func(sqlTmpl string, vars map[string]any) string {
+			out, err := runScriptText(ctx, v, host,
 				`$c = New-Object System.Data.SqlClient.SqlConnection 'Server=localhost;Integrated Security=True;TrustServerCertificate=True'; `+
-					`$c.Open(); $cmd = $c.CreateCommand(); $cmd.CommandText = '%s'; `+
+					`$c.Open(); $cmd = $c.CreateCommand(); `+
+					`$cmd.CommandText = @"`+"\n"+sqlTmpl+"\n"+`"@; `+
 					`$r = $cmd.ExecuteReader(); while ($r.Read()) { Write-Output $r[0].ToString() }; $r.Close(); $c.Close()`,
-				query))
+				vars)
+			if err != nil {
+				return ""
+			}
+			return out
 		}
 
 		for _, admin := range mf.MSSQL.SysAdmins {
-			output = sqlQuery(fmt.Sprintf(
-				"SELECT m.name FROM sys.server_role_members srm JOIN sys.server_principals r ON srm.role_principal_id = r.principal_id JOIN sys.server_principals m ON srm.member_principal_id = m.principal_id WHERE r.name = ''sysadmin'' AND m.name = ''%s''",
-				admin))
-			if strings.TrimSpace(output) != "" {
+			output = sqlQuery(
+				`SELECT m.name FROM sys.server_role_members srm `+
+					`JOIN sys.server_principals r ON srm.role_principal_id = r.principal_id `+
+					`JOIN sys.server_principals m ON srm.member_principal_id = m.principal_id `+
+					`WHERE r.name = 'sysadmin' AND m.name = {{psq .Admin}}`,
+				map[string]any{"Admin": admin})
+			if output != "" {
 				v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("%s is sysadmin on %s", admin, hostLabel), "")
 			} else {
 				v.addResult(w, "FAIL", "MSSQL", fmt.Sprintf("%s is NOT sysadmin on %s", admin, hostLabel), "")
@@ -293,10 +340,13 @@ func (v *Validator) checkMSSQL(ctx context.Context, w io.Writer) {
 		}
 
 		for grantee, target := range mf.MSSQL.ExecuteAsLogin {
-			output = sqlQuery(fmt.Sprintf(
-				"SELECT pr.name FROM sys.server_permissions sp JOIN sys.server_principals pr ON sp.grantee_principal_id = pr.principal_id JOIN sys.server_principals pr2 ON sp.major_id = pr2.principal_id WHERE sp.permission_name = ''IMPERSONATE'' AND pr.name = ''%s'' AND pr2.name = ''%s''",
-				grantee, target))
-			if strings.TrimSpace(output) != "" {
+			output = sqlQuery(
+				`SELECT pr.name FROM sys.server_permissions sp `+
+					`JOIN sys.server_principals pr ON sp.grantee_principal_id = pr.principal_id `+
+					`JOIN sys.server_principals pr2 ON sp.major_id = pr2.principal_id `+
+					`WHERE sp.permission_name = 'IMPERSONATE' AND pr.name = {{psq .Grantee}} AND pr2.name = {{psq .Target}}`,
+				map[string]any{"Grantee": grantee, "Target": target})
+			if output != "" {
 				v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("%s can impersonate %s on %s", grantee, target, hostLabel), "")
 			} else {
 				v.addResult(w, "FAIL", "MSSQL", fmt.Sprintf("%s CANNOT impersonate %s on %s", grantee, target, hostLabel), "")
@@ -304,9 +354,10 @@ func (v *Validator) checkMSSQL(ctx context.Context, w io.Writer) {
 		}
 
 		for name, ls := range mf.MSSQL.LinkedServers {
-			output = sqlQuery(fmt.Sprintf(
-				"SELECT name FROM sys.servers WHERE is_linked = 1 AND name = ''%s''", name))
-			if strings.TrimSpace(output) != "" {
+			output = sqlQuery(
+				`SELECT name FROM sys.servers WHERE is_linked = 1 AND name = {{psq .Name}}`,
+				map[string]any{"Name": name})
+			if output != "" {
 				v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("Linked server %s -> %s on %s", name, ls.DataSrc, hostLabel), "")
 			} else {
 				v.addResult(w, "FAIL", "MSSQL", fmt.Sprintf("Linked server %s NOT found on %s", name, hostLabel), "")
@@ -317,8 +368,12 @@ func (v *Validator) checkMSSQL(ctx context.Context, w io.Writer) {
 	}
 }
 
-func (v *Validator) checkMSSQLExtendedFeatures(w io.Writer, sqlQuery func(string) string, hostLabel string) {
-	output := sqlQuery("SELECT CONVERT(INT, ISNULL(value, value_in_use)) FROM sys.configurations WHERE name = ''xp_cmdshell''")
+type mssqlQueryFn func(sqlTmpl string, vars map[string]any) string
+
+func (v *Validator) checkMSSQLExtendedFeatures(w io.Writer, sqlQuery mssqlQueryFn, hostLabel string) {
+	output := sqlQuery(
+		`SELECT CONVERT(INT, ISNULL(value, value_in_use)) FROM sys.configurations WHERE name = 'xp_cmdshell'`,
+		nil)
 	xpEnabled := strings.TrimSpace(output) == "1"
 	if xpEnabled {
 		v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("xp_cmdshell enabled on %s", hostLabel), "")
@@ -327,7 +382,7 @@ func (v *Validator) checkMSSQLExtendedFeatures(w io.Writer, sqlQuery func(string
 	}
 
 	if xpEnabled {
-		privOut := sqlQuery("EXEC xp_cmdshell ''whoami /priv''")
+		privOut := sqlQuery(`EXEC xp_cmdshell 'whoami /priv'`, nil)
 		if strings.Contains(privOut, "SeImpersonatePrivilege") {
 			v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("MSSQL service has SeImpersonatePrivilege on %s (potato escalation possible)", hostLabel), "")
 		} else if strings.TrimSpace(privOut) != "" {
@@ -335,13 +390,32 @@ func (v *Validator) checkMSSQLExtendedFeatures(w io.Writer, sqlQuery func(string
 		}
 	}
 
-	trustworthy := sqlQuery("SELECT name FROM sys.databases WHERE is_trustworthy_on = 1 AND name NOT IN (''master'',''tempdb'')")
+	trustworthy := sqlQuery(
+		`SELECT name FROM sys.databases WHERE is_trustworthy_on = 1 AND name NOT IN ('master','tempdb')`,
+		nil)
 	dbs := parseOutputLines(trustworthy)
 	if len(dbs) > 0 {
 		v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("TRUSTWORTHY databases on %s: %s", hostLabel, strings.Join(dbs, ", ")), "")
 	} else {
 		v.addResult(w, "INFO", "MSSQL", fmt.Sprintf("No TRUSTWORTHY databases on %s", hostLabel), "")
 	}
+}
+
+//go:embed scripts/adcs_features.ps1
+var scriptADCSFeatures string
+
+//go:embed scripts/adcs_published_templates.ps1
+var scriptADCSPublishedTemplates string
+
+type adcsFeaturesResult struct {
+	CertAuthority bool   `json:"cert_authority"`
+	WebEnrollment bool   `json:"web_enrollment"`
+	Error         string `json:"error"`
+}
+
+type adcsTemplatesResult struct {
+	Templates []string `json:"templates"`
+	Error     string   `json:"error"`
 }
 
 func (v *Validator) checkADCS(ctx context.Context, w io.Writer) {
@@ -360,52 +434,66 @@ func (v *Validator) checkADCS(ctx context.Context, w io.Writer) {
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
 
-		output := v.runPS(ctx, host,
-			`Get-WindowsFeature ADCS-Cert-Authority | Select-Object Name,InstallState | Format-Table -AutoSize | Out-String`)
-		if strings.Contains(strings.ToLower(output), "installed") {
+		feats, err := runScriptJSON[adcsFeaturesResult](ctx, v, host, scriptADCSFeatures, nil)
+		switch {
+		case err != nil:
+			v.addResult(w, "WARN", "ADCS",
+				fmt.Sprintf("Could not query ADCS features on %s: %v", hostLabel, err), "")
+			continue
+		case feats.Error != "":
+			v.addResult(w, "WARN", "ADCS",
+				fmt.Sprintf("ADCS feature query error on %s: %s", hostLabel, feats.Error), "")
+		}
+
+		if feats.CertAuthority {
 			v.addResult(w, "PASS", "ADCS", fmt.Sprintf("ADCS installed on %s", hostLabel), "")
 		} else {
 			v.addResult(w, "FAIL", "ADCS", fmt.Sprintf("ADCS NOT installed on %s", hostLabel), "")
 		}
 
 		if v.lab.CAWebEnrollment() {
-			output = v.runPS(ctx, host,
-				`Get-WindowsFeature ADCS-Web-Enrollment | Select-Object Name,InstallState | Format-Table -AutoSize | Out-String`)
-			if strings.Contains(strings.ToLower(output), "installed") {
+			if feats.WebEnrollment {
 				v.addResult(w, "PASS", "ADCS", "ADCS Web Enrollment installed (ESC8 possible)", "")
 			} else {
 				v.addResult(w, "WARN", "ADCS", "ADCS Web Enrollment not installed", "")
 			}
 		}
 
-		// Query published templates from the domain's DC (not the ADCS member
-		// server) because ADWS is only reliable on domain controllers.
-		templateQueryHost := host
-		if dcRole := v.lab.ADCSDCRole(role); dcRole != "" {
-			templateQueryHost = strings.ToUpper(dcRole)
-		}
-		output = v.runPS(ctx, templateQueryHost,
-			`Get-ADObject -Filter {objectClass -eq 'pKIEnrollmentService'} -SearchBase ("CN=Enrollment Services,CN=Public Key Services,CN=Services," + (Get-ADRootDSE).configurationNamingContext) -Properties certificateTemplates | Select-Object -ExpandProperty certificateTemplates`)
-		if strings.TrimSpace(output) == "" {
-			continue
-		}
-		publishedTemplates := parseOutputLines(output)
-		escTemplates := []string{"ESC1", "ESC2", "ESC3", "ESC3-CRA", "ESC4", "ESC13"}
-		for _, tmpl := range escTemplates {
-			found := false
-			for _, pub := range publishedTemplates {
-				if strings.EqualFold(strings.TrimSpace(pub), tmpl) {
-					found = true
-					break
-				}
-			}
-			if found {
-				v.addResult(w, "PASS", "ADCS", fmt.Sprintf("Template %s published on %s CA", tmpl, hostLabel), "")
-			} else {
-				v.addResult(w, "FAIL", "ADCS", fmt.Sprintf("Template %s NOT published on %s CA", tmpl, hostLabel), "")
-			}
+		v.checkADCSPublishedTemplates(ctx, w, role, host, hostLabel)
+	}
+}
+
+func (v *Validator) checkADCSPublishedTemplates(ctx context.Context, w io.Writer, role, host, hostLabel string) {
+	templateQueryHost := host
+	if dcRole := v.lab.ADCSDCRole(role); dcRole != "" {
+		templateQueryHost = strings.ToUpper(dcRole)
+	}
+	tmpls, err := runScriptJSON[adcsTemplatesResult](ctx, v, templateQueryHost, scriptADCSPublishedTemplates, nil)
+	if err != nil || tmpls.Error != "" || len(tmpls.Templates) == 0 {
+		return
+	}
+
+	published := make(map[string]bool, len(tmpls.Templates))
+	for _, t := range tmpls.Templates {
+		published[strings.ToLower(strings.TrimSpace(t))] = true
+	}
+	for _, tmpl := range []string{"ESC1", "ESC2", "ESC3", "ESC3-CRA", "ESC4", "ESC13"} {
+		if published[strings.ToLower(tmpl)] {
+			v.addResult(w, "PASS", "ADCS", fmt.Sprintf("Template %s published on %s CA", tmpl, hostLabel), "")
+		} else {
+			v.addResult(w, "FAIL", "ADCS", fmt.Sprintf("Template %s NOT published on %s CA", tmpl, hostLabel), "")
 		}
 	}
+}
+
+//go:embed scripts/adcs_esc7.ps1
+var scriptADCSESC7 string
+
+// adcsESC7Result is the typed JSON envelope emitted by adcs_esc7.ps1.
+type adcsESC7Result struct {
+	PSPKI bool   `json:"pspki"`
+	Found bool   `json:"found"`
+	Error string `json:"error"`
 }
 
 func (v *Validator) checkADCSESC7(ctx context.Context, w io.Writer) {
@@ -425,36 +513,43 @@ func (v *Validator) checkADCSESC7(ctx context.Context, w io.Writer) {
 		}
 		hostLabel := strings.ToUpper(f.Hostname)
 
-		// Use PSPKI to check whether the ca_manager identity has ManageCa rights.
-		script := fmt.Sprintf(`
-$ErrorActionPreference = 'Stop'
-if (-not (Get-Module -ListAvailable -Name PSPKI)) {
-  Write-Output 'PSPKI_NOT_INSTALLED'
-  exit
-}
-Import-Module -Name PSPKI
-try {
-  $ca = Get-CertificationAuthority
-  $acl = Get-CertificationAuthority $ca.ComputerName | Get-CertificationAuthorityAcl
-  $match = $acl.Access | Where-Object { $_.IdentityReference -like '*%s*' -and $_.Rights -match 'ManageCa' }
-  if ($match) { Write-Output 'MANAGECA_FOUND' } else { Write-Output 'MANAGECA_NOT_FOUND' }
-} catch {
-  Write-Output "CHECK_ERROR: $_"
-}`, f.CAManager)
-
-		output := v.runPS(ctx, host, script)
-
+		r, err := runScriptJSON[adcsESC7Result](ctx, v, host, scriptADCSESC7,
+			map[string]any{"Identity": f.CAManager})
 		switch {
-		case strings.Contains(output, "MANAGECA_FOUND"):
-			v.addResult(w, "PASS", "ADCS-ESC7", fmt.Sprintf("%s has ManageCA on %s CA (ESC7 exploitable)", f.CAManager, hostLabel), "")
-		case strings.Contains(output, "MANAGECA_NOT_FOUND"):
-			v.addResult(w, "FAIL", "ADCS-ESC7", fmt.Sprintf("%s does NOT have ManageCA on %s CA", f.CAManager, hostLabel), "")
-		case strings.Contains(output, "PSPKI_NOT_INSTALLED"):
-			v.addResult(w, "FAIL", "ADCS-ESC7", fmt.Sprintf("PSPKI module not installed on %s", hostLabel), "")
+		case err != nil:
+			v.addResult(w, "WARN", "ADCS-ESC7",
+				fmt.Sprintf("Could not verify ManageCA for %s on %s: %v", f.CAManager, hostLabel, err), "")
+		case !r.PSPKI:
+			v.addResult(w, "FAIL", "ADCS-ESC7",
+				fmt.Sprintf("PSPKI module not installed on %s", hostLabel), "")
+		case r.Error != "":
+			v.addResult(w, "WARN", "ADCS-ESC7",
+				fmt.Sprintf("ManageCA check error on %s: %s", hostLabel, r.Error), "")
+		case r.Found:
+			v.addResult(w, "PASS", "ADCS-ESC7",
+				fmt.Sprintf("%s has ManageCA on %s CA (ESC7 exploitable)", f.CAManager, hostLabel), "")
 		default:
-			v.addResult(w, "WARN", "ADCS-ESC7", fmt.Sprintf("Could not verify ManageCA for %s on %s: %s", f.CAManager, hostLabel, strings.TrimSpace(output)), "")
+			v.addResult(w, "FAIL", "ADCS-ESC7",
+				fmt.Sprintf("%s does NOT have ManageCA on %s CA", f.CAManager, hostLabel), "")
 		}
 	}
+}
+
+//go:embed scripts/certutil_flag.ps1
+var scriptCertutilFlag string
+
+//go:embed scripts/registry_dword.ps1
+var scriptRegistryDWORD string
+
+type certutilFlagResult struct {
+	Present bool   `json:"present"`
+	Error   string `json:"error"`
+}
+
+type registryDWORDResult struct {
+	Present bool   `json:"present"`
+	Value   int    `json:"value"`
+	Error   string `json:"error"`
 }
 
 func (v *Validator) checkADCSESC6(ctx context.Context, w io.Writer) {
@@ -472,12 +567,21 @@ func (v *Validator) checkADCSESC6(ctx context.Context, w io.Writer) {
 			continue
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-		output := v.runPS(ctx, host,
-			`certutil -getreg policy\EditFlags 2>&1`)
-		if strings.Contains(output, "EDITF_ATTRIBUTESUBJECTALTNAME2") {
-			v.addResult(w, "PASS", "ADCS-ESC6", fmt.Sprintf("EDITF_ATTRIBUTESUBJECTALTNAME2 set on %s (ESC6 exploitable)", hostLabel), "")
-		} else {
-			v.addResult(w, "FAIL", "ADCS-ESC6", fmt.Sprintf("EDITF_ATTRIBUTESUBJECTALTNAME2 NOT set on %s", hostLabel), "")
+		r, err := runScriptJSON[certutilFlagResult](ctx, v, host, scriptCertutilFlag,
+			map[string]any{"Key": `policy\EditFlags`, "Flag": "EDITF_ATTRIBUTESUBJECTALTNAME2"})
+		switch {
+		case err != nil:
+			v.addResult(w, "WARN", "ADCS-ESC6",
+				fmt.Sprintf("Could not query EditFlags on %s: %v", hostLabel, err), "")
+		case r.Error != "":
+			v.addResult(w, "WARN", "ADCS-ESC6",
+				fmt.Sprintf("EditFlags query error on %s: %s", hostLabel, r.Error), "")
+		case r.Present:
+			v.addResult(w, "PASS", "ADCS-ESC6",
+				fmt.Sprintf("EDITF_ATTRIBUTESUBJECTALTNAME2 set on %s (ESC6 exploitable)", hostLabel), "")
+		default:
+			v.addResult(w, "FAIL", "ADCS-ESC6",
+				fmt.Sprintf("EDITF_ATTRIBUTESUBJECTALTNAME2 NOT set on %s", hostLabel), "")
 		}
 	}
 }
@@ -485,47 +589,64 @@ func (v *Validator) checkADCSESC6(ctx context.Context, w io.Writer) {
 func (v *Validator) checkADCSESC10(ctx context.Context, w io.Writer) {
 	printHeader(w, "ADCS ESC10 - Weak Certificate Mapping")
 
-	case1Hosts := v.lab.HostsWithVuln("adcs_esc10_case1")
-	for _, role := range case1Hosts {
-		host := strings.ToUpper(role)
-		if !v.hasHost(host) {
+	cases := []struct {
+		vuln    string
+		path    string
+		name    string
+		wantVal int
+		passFmt string
+	}{
+		{
+			vuln:    "adcs_esc10_case1",
+			path:    `HKLM:\SYSTEM\CurrentControlSet\Services\Kdc`,
+			name:    "StrongCertificateBindingEnforcement",
+			wantVal: 0,
+			passFmt: "StrongCertificateBindingEnforcement=0 on %s (ESC10 case 1 exploitable)",
+		},
+		{
+			vuln:    "adcs_esc10_case2",
+			path:    `HKLM:\System\CurrentControlSet\Control\SecurityProviders\Schannel`,
+			name:    "CertificateMappingMethods",
+			wantVal: 4,
+			passFmt: "CertificateMappingMethods=0x4 on %s (ESC10 case 2 exploitable)",
+		},
+	}
+
+	configured := false
+	for _, c := range cases {
+		hosts := v.lab.HostsWithVuln(c.vuln)
+		if len(hosts) == 0 {
 			continue
 		}
-		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-		output := v.runPS(ctx, host,
-			`$v = Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\Kdc' -Name StrongCertificateBindingEnforcement -ErrorAction SilentlyContinue; if ($v) { $v.StrongCertificateBindingEnforcement } else { 'NOT_SET' }`)
-		val := strings.TrimSpace(output)
-		switch val {
-		case "0":
-			v.addResult(w, "PASS", "ADCS-ESC10", fmt.Sprintf("StrongCertificateBindingEnforcement=0 on %s (ESC10 case 1 exploitable)", hostLabel), "")
-		case "", "NOT_SET":
-			v.addResult(w, "WARN", "ADCS-ESC10", fmt.Sprintf("StrongCertificateBindingEnforcement not configured on %s (registry key missing)", hostLabel), "")
-		default:
-			v.addResult(w, "FAIL", "ADCS-ESC10", fmt.Sprintf("StrongCertificateBindingEnforcement=%s on %s (expected 0)", val, hostLabel), "")
+		configured = true
+		for _, role := range hosts {
+			host := strings.ToUpper(role)
+			if !v.hasHost(host) {
+				continue
+			}
+			hostLabel := strings.ToUpper(v.lab.Hostname(role))
+			r, err := runScriptJSON[registryDWORDResult](ctx, v, host, scriptRegistryDWORD,
+				map[string]any{"Path": c.path, "Name": c.name})
+			switch {
+			case err != nil:
+				v.addResult(w, "WARN", "ADCS-ESC10",
+					fmt.Sprintf("Could not query %s on %s: %v", c.name, hostLabel, err), "")
+			case r.Error != "":
+				v.addResult(w, "WARN", "ADCS-ESC10",
+					fmt.Sprintf("%s query error on %s: %s", c.name, hostLabel, r.Error), "")
+			case !r.Present:
+				v.addResult(w, "WARN", "ADCS-ESC10",
+					fmt.Sprintf("%s not configured on %s (registry key missing)", c.name, hostLabel), "")
+			case r.Value == c.wantVal:
+				v.addResult(w, "PASS", "ADCS-ESC10", fmt.Sprintf(c.passFmt, hostLabel), "")
+			default:
+				v.addResult(w, "FAIL", "ADCS-ESC10",
+					fmt.Sprintf("%s=%d on %s (expected %d)", c.name, r.Value, hostLabel, c.wantVal), "")
+			}
 		}
 	}
 
-	case2Hosts := v.lab.HostsWithVuln("adcs_esc10_case2")
-	for _, role := range case2Hosts {
-		host := strings.ToUpper(role)
-		if !v.hasHost(host) {
-			continue
-		}
-		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-		output := v.runPS(ctx, host,
-			`$v = Get-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\SecurityProviders\Schannel' -Name CertificateMappingMethods -ErrorAction SilentlyContinue; if ($v) { $v.CertificateMappingMethods } else { 'NOT_SET' }`)
-		val := strings.TrimSpace(output)
-		switch val {
-		case "4":
-			v.addResult(w, "PASS", "ADCS-ESC10", fmt.Sprintf("CertificateMappingMethods=0x4 on %s (ESC10 case 2 exploitable)", hostLabel), "")
-		case "", "NOT_SET":
-			v.addResult(w, "WARN", "ADCS-ESC10", fmt.Sprintf("CertificateMappingMethods not configured on %s (registry key missing)", hostLabel), "")
-		default:
-			v.addResult(w, "FAIL", "ADCS-ESC10", fmt.Sprintf("CertificateMappingMethods=%s on %s (expected 4)", val, hostLabel), "")
-		}
-	}
-
-	if len(case1Hosts) == 0 && len(case2Hosts) == 0 {
+	if !configured {
 		v.addResult(w, "SKIP", "ADCS-ESC10", "No ESC10 vulns configured", "")
 	}
 }
@@ -545,13 +666,21 @@ func (v *Validator) checkADCSESC11(ctx context.Context, w io.Writer) {
 			continue
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-		output := v.runPS(ctx, host,
-			`certutil -getreg CA\InterfaceFlags 2>&1`)
-		// When the flag is removed, IF_ENFORCEENCRYPTICERTREQUEST should NOT appear
-		if !strings.Contains(output, "IF_ENFORCEENCRYPTICERTREQUEST") {
-			v.addResult(w, "PASS", "ADCS-ESC11", fmt.Sprintf("IF_ENFORCEENCRYPTICERTREQUEST disabled on %s (ESC11 exploitable)", hostLabel), "")
-		} else {
-			v.addResult(w, "FAIL", "ADCS-ESC11", fmt.Sprintf("IF_ENFORCEENCRYPTICERTREQUEST still set on %s", hostLabel), "")
+		r, err := runScriptJSON[certutilFlagResult](ctx, v, host, scriptCertutilFlag,
+			map[string]any{"Key": `CA\InterfaceFlags`, "Flag": "IF_ENFORCEENCRYPTICERTREQUEST"})
+		switch {
+		case err != nil:
+			v.addResult(w, "WARN", "ADCS-ESC11",
+				fmt.Sprintf("Could not query InterfaceFlags on %s: %v", hostLabel, err), "")
+		case r.Error != "":
+			v.addResult(w, "WARN", "ADCS-ESC11",
+				fmt.Sprintf("InterfaceFlags query error on %s: %s", hostLabel, r.Error), "")
+		case !r.Present:
+			v.addResult(w, "PASS", "ADCS-ESC11",
+				fmt.Sprintf("IF_ENFORCEENCRYPTICERTREQUEST disabled on %s (ESC11 exploitable)", hostLabel), "")
+		default:
+			v.addResult(w, "FAIL", "ADCS-ESC11",
+				fmt.Sprintf("IF_ENFORCEENCRYPTICERTREQUEST still set on %s", hostLabel), "")
 		}
 	}
 }
@@ -579,24 +708,31 @@ func (v *Validator) checkADCSESC15(ctx context.Context, w io.Writer) {
 			continue
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-		output := v.runPS(ctx, templateQueryHost,
-			`$t = Get-ADObject -Filter {displayName -eq 'Web Server' -and objectClass -eq 'pKICertificateTemplate'} -SearchBase ("CN=Certificate Templates,CN=Public Key Services,CN=Services," + (Get-ADRootDSE).configurationNamingContext) -Properties nTSecurityDescriptor; `+
-				`if (-not $t) { Write-Output 'TEMPLATE_NOT_FOUND'; exit }; `+
-				`Import-Module ActiveDirectory; Set-Location AD:; `+
-				`$acl = Get-Acl -Path $t.DistinguishedName; `+
-				`$match = $acl.Access | Where-Object { $_.IdentityReference -like '*Domain Users*' -and $_.ActiveDirectoryRights -match 'ExtendedRight' }; `+
-				`if ($match) { Write-Output 'ENROLL_FOUND' } else { Write-Output 'ENROLL_NOT_FOUND' }`)
+		r, err := runScriptJSON[adcsESC15Result](ctx, v, templateQueryHost, scriptADCSESC15WebServerACL, nil)
 		switch {
-		case strings.Contains(output, "ENROLL_FOUND"):
-			v.addResult(w, "PASS", "ADCS-ESC15", fmt.Sprintf("Domain Users can enroll Web Server template on %s (ESC15 exploitable)", hostLabel), "")
-		case strings.Contains(output, "ENROLL_NOT_FOUND"):
-			v.addResult(w, "FAIL", "ADCS-ESC15", fmt.Sprintf("Domain Users CANNOT enroll Web Server template on %s", hostLabel), "")
-		case strings.Contains(output, "TEMPLATE_NOT_FOUND"):
+		case err != nil:
+			v.addResult(w, "WARN", "ADCS-ESC15",
+				fmt.Sprintf("Could not verify Web Server template ACL on %s: %v", hostLabel, err), "")
+		case r.Error != "":
+			v.addResult(w, "WARN", "ADCS-ESC15",
+				fmt.Sprintf("Web Server template ACL probe error on %s: %s", hostLabel, r.Error), "")
+		case !r.TemplateFound:
 			v.addResult(w, "FAIL", "ADCS-ESC15", fmt.Sprintf("Web Server template NOT found on %s", hostLabel), "")
+		case r.EnrollGrant:
+			v.addResult(w, "PASS", "ADCS-ESC15", fmt.Sprintf("Domain Users can enroll Web Server template on %s (ESC15 exploitable)", hostLabel), "")
 		default:
-			v.addResult(w, "WARN", "ADCS-ESC15", fmt.Sprintf("Could not verify Web Server template ACL on %s", hostLabel), "")
+			v.addResult(w, "FAIL", "ADCS-ESC15", fmt.Sprintf("Domain Users CANNOT enroll Web Server template on %s", hostLabel), "")
 		}
 	}
+}
+
+//go:embed scripts/adcs_esc15_web_server_acl.ps1
+var scriptADCSESC15WebServerACL string
+
+type adcsESC15Result struct {
+	TemplateFound bool   `json:"template_found"`
+	EnrollGrant   bool   `json:"enroll_grant"`
+	Error         string `json:"error"`
 }
 
 func (v *Validator) checkACLPermissions(ctx context.Context, w io.Writer) {
@@ -785,6 +921,15 @@ func (v *Validator) checkServices(ctx context.Context, w io.Writer) {
 	}
 }
 
+//go:embed scripts/scheduled_task.ps1
+var scriptScheduledTask string
+
+type scheduledTaskResult struct {
+	Found bool   `json:"found"`
+	State string `json:"state"`
+	Error string `json:"error"`
+}
+
 func (v *Validator) checkScheduledTasks(ctx context.Context, w io.Writer) {
 	printHeader(w, "Scheduled Tasks (Bots)")
 
@@ -803,20 +948,21 @@ func (v *Validator) checkScheduledTasks(ctx context.Context, w io.Writer) {
 			if !v.hasHost(host) {
 				continue
 			}
-			output := v.runPS(ctx, host, fmt.Sprintf(
-				`$t = Get-ScheduledTask -TaskName '%s' -ErrorAction SilentlyContinue; if ($t) { $t.State } else { '___NOTFOUND___' }`, taskName))
-			state := strings.TrimSpace(output)
-			switch state {
-			case "___NOTFOUND___":
-				v.addResult(w, "FAIL", "ScheduledTasks", fmt.Sprintf("%s NOT found on %s", taskName, host), "")
-			case "":
-				// Empty output means WinRM returned nothing (transient error);
-				// the task likely exists but we couldn't read its state.
-				v.addResult(w, "WARN", "ScheduledTasks", fmt.Sprintf("%s state unknown on %s (WinRM returned empty)", taskName, host), "")
+			r, err := runScriptJSON[scheduledTaskResult](ctx, v, host, scriptScheduledTask,
+				map[string]any{"TaskName": taskName})
+			switch {
+			case err != nil:
+				v.addResult(w, "WARN", "ScheduledTasks",
+					fmt.Sprintf("%s state unknown on %s: %v", taskName, host, err), "")
+			case r.Error != "":
+				v.addResult(w, "WARN", "ScheduledTasks",
+					fmt.Sprintf("%s probe error on %s: %s", taskName, host, r.Error), "")
+			case !r.Found:
+				v.addResult(w, "FAIL", "ScheduledTasks",
+					fmt.Sprintf("%s NOT found on %s", taskName, host), "")
 			default:
-				// Task exists; any state (Ready, Running, Disabled, etc.) is a PASS
-				// since we're validating that provisioning created the task.
-				v.addResult(w, "PASS", "ScheduledTasks", fmt.Sprintf("%s is %s on %s", taskName, state, host), "")
+				v.addResult(w, "PASS", "ScheduledTasks",
+					fmt.Sprintf("%s is %s on %s", taskName, r.State, host), "")
 			}
 		}
 	}
@@ -835,16 +981,24 @@ func (v *Validator) checkLLMNR(ctx context.Context, w io.Writer) {
 			continue
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-		output := v.runPS(ctx, host,
-			`$v = Get-ItemProperty -Path 'HKLM:\Software\policies\Microsoft\Windows NT\DNSClient' -Name EnableMulticast -ErrorAction SilentlyContinue; if ($v) { $v.EnableMulticast } else { 'NOT_SET' }`)
-		val := strings.TrimSpace(output)
-		switch val {
-		case "1", "NOT_SET":
+		r, err := runScriptJSON[registryDWORDResult](ctx, v, host, scriptRegistryDWORD,
+			map[string]any{
+				"Path": `HKLM:\Software\policies\Microsoft\Windows NT\DNSClient`,
+				"Name": "EnableMulticast",
+			})
+		switch {
+		case err != nil:
+			v.addResult(w, "WARN", "LLMNR",
+				fmt.Sprintf("Could not query EnableMulticast on %s: %v", hostLabel, err), "")
+		case r.Error != "":
+			v.addResult(w, "WARN", "LLMNR",
+				fmt.Sprintf("EnableMulticast query error on %s: %s", hostLabel, r.Error), "")
+		case !r.Present, r.Value == 1:
+			// Missing key or value=1 means LLMNR is enabled (default behavior).
 			v.addResult(w, "PASS", "LLMNR", fmt.Sprintf("LLMNR enabled on %s", hostLabel), "")
-		case "":
-			v.addResult(w, "WARN", "LLMNR", fmt.Sprintf("LLMNR status unknown on %s (command returned empty)", hostLabel), "")
 		default:
-			v.addResult(w, "FAIL", "LLMNR", fmt.Sprintf("LLMNR disabled on %s (value=%s)", hostLabel, val), "")
+			v.addResult(w, "FAIL", "LLMNR",
+				fmt.Sprintf("LLMNR disabled on %s (value=%d)", hostLabel, r.Value), "")
 		}
 	}
 
@@ -919,11 +1073,16 @@ func (v *Validator) checkGMSA(ctx context.Context, w io.Writer) {
 		if !v.hasHost(host) {
 			continue
 		}
-		output := v.runPS(ctx, host, fmt.Sprintf(
-			`Get-ADServiceAccount -Identity '%s' -Properties Enabled | Select-Object -ExpandProperty Enabled`, gf.GMSA.Name))
-		if strings.Contains(strings.ToLower(output), "true") {
+		output, err := runScriptText(ctx, v, host,
+			`Get-ADServiceAccount -Identity {{psq .Name}} -Properties Enabled | Select-Object -ExpandProperty Enabled`,
+			map[string]any{"Name": gf.GMSA.Name})
+		switch {
+		case err != nil:
+			v.addResult(w, "WARN", "gMSA",
+				fmt.Sprintf("Could not query gMSA %s in %s: %v", gf.GMSA.Name, gf.Domain, err), "")
+		case strings.Contains(strings.ToLower(output), "true"):
 			v.addResult(w, "PASS", "gMSA", fmt.Sprintf("gMSA %s exists and enabled in %s", gf.GMSA.Name, gf.Domain), "")
-		} else {
+		default:
 			v.addResult(w, "FAIL", "gMSA", fmt.Sprintf("gMSA %s NOT found or disabled in %s", gf.GMSA.Name, gf.Domain), "")
 		}
 	}
@@ -949,11 +1108,16 @@ func (v *Validator) checkLAPS(ctx context.Context, w io.Writer) {
 		if !v.hasHost(dc) {
 			continue
 		}
-		output := v.runPS(ctx, dc, fmt.Sprintf(
-			`Get-ADComputer -Identity '%s' -Properties ms-Mcs-AdmPwd | Select-Object -ExpandProperty ms-Mcs-AdmPwd`, hostname))
-		if strings.TrimSpace(output) != "" {
+		output, err := runScriptText(ctx, v, dc,
+			`Get-ADComputer -Identity {{psq .Hostname}} -Properties ms-Mcs-AdmPwd | Select-Object -ExpandProperty ms-Mcs-AdmPwd`,
+			map[string]any{"Hostname": hostname})
+		switch {
+		case err != nil:
+			v.addResult(w, "WARN", "LAPS",
+				fmt.Sprintf("Could not query LAPS password for %s: %v", hostname, err), "")
+		case output != "":
 			v.addResult(w, "PASS", "LAPS", fmt.Sprintf("LAPS password set for %s", hostname), "")
-		} else {
+		default:
 			v.addResult(w, "FAIL", "LAPS", fmt.Sprintf("LAPS password NOT set for %s", hostname), "")
 		}
 	}
@@ -967,16 +1131,19 @@ func (v *Validator) checkLAPS(ctx context.Context, w io.Writer) {
 			continue
 		}
 		for _, reader := range lf.Readers {
-			output := v.runPS(ctx, dc, fmt.Sprintf(
+			output, err := runScriptText(ctx, v, dc,
 				`$computers = Get-ADComputer -Filter {ms-Mcs-AdmPwd -like '*'} -Properties ms-Mcs-AdmPwd -SearchBase (Get-ADDomain).DistinguishedName -ErrorAction SilentlyContinue; `+
 					`Import-Module ActiveDirectory; Set-Location AD:; `+
+					`$pattern = '*' + {{psq .Reader}} + '*'; `+
 					`$found = $false; foreach ($c in $computers) { `+
 					`$acl = Get-Acl -Path $c.DistinguishedName; `+
-					`$match = $acl.Access | Where-Object { $_.IdentityReference -like '*%s*' }; `+
+					`$match = $acl.Access | Where-Object { $_.IdentityReference -like $pattern }; `+
 					`if ($match) { $found = $true; break } }; `+
 					`if ($found) { Write-Output 'READER_OK' } else { Write-Output 'READER_NOT_FOUND' }`,
-				reader))
+				map[string]any{"Reader": reader})
 			switch {
+			case err != nil:
+				v.addResult(w, "WARN", "LAPS", fmt.Sprintf("Could not verify LAPS reader %s in %s: %v", reader, lf.Domain, err), "")
 			case strings.Contains(output, "READER_OK"):
 				v.addResult(w, "PASS", "LAPS", fmt.Sprintf("%s has LAPS read permission in %s", reader, lf.Domain), "")
 			case strings.Contains(output, "READER_NOT_FOUND"):
@@ -1005,8 +1172,14 @@ func (v *Validator) checkSIDFiltering(ctx context.Context, w io.Writer) {
 		if !v.hasHost(host) {
 			continue
 		}
-		output := v.runPS(ctx, host, fmt.Sprintf(
-			`netdom trust %s /d:%s /quarantine 2>&1`, tf.SourceDomain, tf.TargetDomain))
+		output, err := runScriptText(ctx, v, host,
+			`netdom trust {{psq .Source}} /d:{{psq .Target}} /quarantine 2>&1`,
+			map[string]any{"Source": tf.SourceDomain, "Target": tf.TargetDomain})
+		if err != nil {
+			v.addResult(w, "WARN", "SIDFiltering",
+				fmt.Sprintf("Could not query SID filtering %s -> %s: %v", tf.SourceDomain, tf.TargetDomain, err), "")
+			continue
+		}
 		lower := strings.ToLower(output)
 		switch {
 		case strings.Contains(lower, "not enabled"):
@@ -1109,6 +1282,17 @@ func (v *Validator) checkFirewallDisabled(ctx context.Context, w io.Writer) {
 	}
 }
 
+//go:embed scripts/password_policy.ps1
+var scriptPasswordPolicy string
+
+type passwordPolicyResult struct {
+	Found            bool   `json:"found"`
+	Complexity       bool   `json:"complexity"`
+	MinLength        int    `json:"min_length"`
+	LockoutThreshold int    `json:"lockout_threshold"`
+	Error            string `json:"error"`
+}
+
 func (v *Validator) checkPasswordPolicy(ctx context.Context, w io.Writer) {
 	printHeader(w, "Password Policy")
 
@@ -1117,40 +1301,75 @@ func (v *Validator) checkPasswordPolicy(ctx context.Context, w io.Writer) {
 		if !v.hasHost(host) {
 			continue
 		}
-		output := v.runPS(ctx, host,
-			`try { $p = Get-ADDefaultDomainPasswordPolicy -ErrorAction Stop; Write-Output "$($p.ComplexityEnabled)|$($p.MinPasswordLength)|$($p.LockoutThreshold)" } catch { Write-Output "ERROR: $_" }`)
-		parts := strings.Split(strings.TrimSpace(output), "|")
-		if len(parts) < 3 {
-			v.addResult(w, "WARN", "PasswordPolicy", fmt.Sprintf("Could not read password policy on %s", host), "")
+		r, err := runScriptJSON[passwordPolicyResult](ctx, v, host, scriptPasswordPolicy, nil)
+		switch {
+		case err != nil:
+			v.addResult(w, "WARN", "PasswordPolicy",
+				fmt.Sprintf("Could not read password policy on %s: %v", host, err), "")
+			continue
+		case r.Error != "":
+			v.addResult(w, "WARN", "PasswordPolicy",
+				fmt.Sprintf("Password policy query error on %s: %s", host, r.Error), "")
+			continue
+		case !r.Found:
+			v.addResult(w, "WARN", "PasswordPolicy",
+				fmt.Sprintf("Could not read password policy on %s", host), "")
 			continue
 		}
 		domain := v.lab.DomainForHost(strings.ToLower(host))
 		if domain == "" {
 			domain = host
 		}
-		complexity := parts[0]
-		minLen := parts[1]
-		lockout := parts[2]
-		if strings.EqualFold(complexity, "false") {
+		if !r.Complexity {
 			v.addResult(w, "PASS", "PasswordPolicy", fmt.Sprintf("Password complexity disabled in %s (weak policy)", domain), "")
 		} else {
 			v.addResult(w, "INFO", "PasswordPolicy", fmt.Sprintf("Password complexity enabled in %s", domain), "")
 		}
-		if minLen == "0" || minLen == "1" || minLen == "2" || minLen == "3" {
-			v.addResult(w, "PASS", "PasswordPolicy", fmt.Sprintf("Min password length is %s in %s (weak)", minLen, domain), "")
+		if r.MinLength <= 3 {
+			v.addResult(w, "PASS", "PasswordPolicy", fmt.Sprintf("Min password length is %d in %s (weak)", r.MinLength, domain), "")
 		} else {
-			v.addResult(w, "INFO", "PasswordPolicy", fmt.Sprintf("Min password length is %s in %s", minLen, domain), "")
+			v.addResult(w, "INFO", "PasswordPolicy", fmt.Sprintf("Min password length is %d in %s", r.MinLength, domain), "")
 		}
-		if lockout == "0" {
+		if r.LockoutThreshold == 0 {
 			v.addResult(w, "PASS", "PasswordPolicy", fmt.Sprintf("No lockout threshold in %s (spray-friendly)", domain), "")
 		} else {
-			v.addResult(w, "INFO", "PasswordPolicy", fmt.Sprintf("Lockout threshold is %s in %s", lockout, domain), "")
+			v.addResult(w, "INFO", "PasswordPolicy", fmt.Sprintf("Lockout threshold is %d in %s", r.LockoutThreshold, domain), "")
 		}
 	}
 }
 
 func (v *Validator) checkLDAPSigning(ctx context.Context, w io.Writer) {
 	printHeader(w, "LDAP Signing & Channel Binding")
+
+	probes := []struct {
+		path        string
+		name        string
+		passMsg     string
+		negotiated  string
+		enforcedFmt string
+	}{
+		{
+			path:        `HKLM:\SYSTEM\CurrentControlSet\Services\LDAP`,
+			name:        "LDAPServerSigningRequirements",
+			passMsg:     "LDAP signing not required in %s (relay possible)",
+			negotiated:  "LDAP signing negotiated in %s",
+			enforcedFmt: "LDAP signing required (%d) in %s",
+		},
+		{
+			path:        `HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters`,
+			name:        "LDAPServerIntegrity",
+			passMsg:     "LDAP server integrity disabled in %s",
+			negotiated:  "LDAP server integrity = 1 in %s (SASL only)",
+			enforcedFmt: "LDAP server integrity required (%d) in %s",
+		},
+		{
+			path:        `HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters`,
+			name:        "LdapEnforceChannelBindings",
+			passMsg:     "LDAP channel binding disabled in %s (relay possible)",
+			negotiated:  "LDAP channel binding optional in %s",
+			enforcedFmt: "LDAP channel binding enforced (%d) in %s",
+		},
+	}
 
 	for _, role := range v.lab.DCs() {
 		host := strings.ToUpper(role)
@@ -1162,43 +1381,23 @@ func (v *Validator) checkLDAPSigning(ctx context.Context, w io.Writer) {
 			domain = host
 		}
 
-		// LDAP client signing requirements
-		output := v.runPS(ctx, host,
-			`Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\LDAP' -Name LDAPServerSigningRequirements -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LDAPServerSigningRequirements`)
-		val := strings.TrimSpace(output)
-		switch val {
-		case "0", "":
-			v.addResult(w, "PASS", "LDAP", fmt.Sprintf("LDAP signing not required in %s (relay possible)", domain), "")
-		case "1":
-			v.addResult(w, "INFO", "LDAP", fmt.Sprintf("LDAP signing negotiated in %s", domain), "")
-		default:
-			v.addResult(w, "INFO", "LDAP", fmt.Sprintf("LDAP signing required (%s) in %s", val, domain), "")
-		}
-
-		// LDAP server integrity
-		output = v.runPS(ctx, host,
-			`Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters' -Name LDAPServerIntegrity -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LDAPServerIntegrity`)
-		val = strings.TrimSpace(output)
-		switch val {
-		case "0", "":
-			v.addResult(w, "PASS", "LDAP", fmt.Sprintf("LDAP server integrity disabled in %s", domain), "")
-		case "1":
-			v.addResult(w, "INFO", "LDAP", fmt.Sprintf("LDAP server integrity = %s in %s (SASL only)", val, domain), "")
-		default:
-			v.addResult(w, "INFO", "LDAP", fmt.Sprintf("LDAP server integrity required (%s) in %s", val, domain), "")
-		}
-
-		// LDAP channel binding
-		output = v.runPS(ctx, host,
-			`Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Parameters' -Name LdapEnforceChannelBindings -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LdapEnforceChannelBindings`)
-		val = strings.TrimSpace(output)
-		switch val {
-		case "0", "":
-			v.addResult(w, "PASS", "LDAP", fmt.Sprintf("LDAP channel binding disabled in %s (relay possible)", domain), "")
-		case "1":
-			v.addResult(w, "INFO", "LDAP", fmt.Sprintf("LDAP channel binding optional in %s", domain), "")
-		default:
-			v.addResult(w, "INFO", "LDAP", fmt.Sprintf("LDAP channel binding enforced (%s) in %s", val, domain), "")
+		for _, p := range probes {
+			r, err := runScriptJSON[registryDWORDResult](ctx, v, host, scriptRegistryDWORD,
+				map[string]any{"Path": p.path, "Name": p.name})
+			switch {
+			case err != nil:
+				v.addResult(w, "WARN", "LDAP",
+					fmt.Sprintf("Could not query %s in %s: %v", p.name, domain, err), "")
+			case r.Error != "":
+				v.addResult(w, "WARN", "LDAP",
+					fmt.Sprintf("%s query error in %s: %s", p.name, domain, r.Error), "")
+			case !r.Present || r.Value == 0:
+				v.addResult(w, "PASS", "LDAP", fmt.Sprintf(p.passMsg, domain), "")
+			case r.Value == 1:
+				v.addResult(w, "INFO", "LDAP", fmt.Sprintf(p.negotiated, domain), "")
+			default:
+				v.addResult(w, "INFO", "LDAP", fmt.Sprintf(p.enforcedFmt, r.Value, domain), "")
+			}
 		}
 	}
 }
@@ -1212,18 +1411,30 @@ func (v *Validator) checkRunAsPPL(ctx context.Context, w io.Writer) {
 			continue
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-		output := v.runPS(ctx, host,
-			`Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Lsa' -Name RunAsPPL -ErrorAction SilentlyContinue | Select-Object -ExpandProperty RunAsPPL`)
-		val := strings.TrimSpace(output)
-		switch val {
-		case "0", "":
-			v.addResult(w, "PASS", "LSAProtection", fmt.Sprintf("RunAsPPL disabled on %s (LSASS dumpable)", hostLabel), "")
-		case "1":
-			v.addResult(w, "INFO", "LSAProtection", fmt.Sprintf("RunAsPPL enabled on %s (LSASS protected)", hostLabel), "")
-		case "2":
-			v.addResult(w, "INFO", "LSAProtection", fmt.Sprintf("RunAsPPL locked on %s (LSASS protected, UEFI)", hostLabel), "")
+		r, err := runScriptJSON[registryDWORDResult](ctx, v, host, scriptRegistryDWORD,
+			map[string]any{
+				"Path": `HKLM:\SYSTEM\CurrentControlSet\Control\Lsa`,
+				"Name": "RunAsPPL",
+			})
+		switch {
+		case err != nil:
+			v.addResult(w, "WARN", "LSAProtection",
+				fmt.Sprintf("Could not query RunAsPPL on %s: %v", hostLabel, err), "")
+		case r.Error != "":
+			v.addResult(w, "WARN", "LSAProtection",
+				fmt.Sprintf("RunAsPPL query error on %s: %s", hostLabel, r.Error), "")
+		case !r.Present || r.Value == 0:
+			v.addResult(w, "PASS", "LSAProtection",
+				fmt.Sprintf("RunAsPPL disabled on %s (LSASS dumpable)", hostLabel), "")
+		case r.Value == 1:
+			v.addResult(w, "INFO", "LSAProtection",
+				fmt.Sprintf("RunAsPPL enabled on %s (LSASS protected)", hostLabel), "")
+		case r.Value == 2:
+			v.addResult(w, "INFO", "LSAProtection",
+				fmt.Sprintf("RunAsPPL locked on %s (LSASS protected, UEFI)", hostLabel), "")
 		default:
-			v.addResult(w, "INFO", "LSAProtection", fmt.Sprintf("RunAsPPL=%s on %s", val, hostLabel), "")
+			v.addResult(w, "INFO", "LSAProtection",
+				fmt.Sprintf("RunAsPPL=%d on %s", r.Value, hostLabel), "")
 		}
 	}
 }
@@ -1271,10 +1482,13 @@ func (v *Validator) checkUsernamePasswordEqual(ctx context.Context, w io.Writer)
 		if !v.hasHost(dcRole) {
 			continue
 		}
-		output := v.runPS(ctx, dcRole, fmt.Sprintf(
-			`$u = Get-ADUser -Identity '%s' -ErrorAction SilentlyContinue; if ($u) { 'USER_FOUND' } else { 'USER_NOT_FOUND' }`,
-			uf.Username))
+		output, err := runScriptText(ctx, v, dcRole,
+			`$u = Get-ADUser -Identity {{psq .Username}} -ErrorAction SilentlyContinue; if ($u) { 'USER_FOUND' } else { 'USER_NOT_FOUND' }`,
+			map[string]any{"Username": uf.Username})
 		switch {
+		case err != nil:
+			v.addResult(w, "WARN", "Credentials",
+				fmt.Sprintf("Could not verify %s in %s: %v", uf.Username, uf.Domain, err), "")
 		case strings.Contains(output, "USER_FOUND"):
 			v.addResult(w, "PASS", "Credentials",
 				fmt.Sprintf("%s (password=%s) exists in %s", uf.Username, uf.User.Password, uf.Domain), "")
@@ -1288,8 +1502,12 @@ func (v *Validator) checkUsernamePasswordEqual(ctx context.Context, w io.Writer)
 	}
 }
 
-// checkAutologonRegistry verifies AutoAdminLogon registry values are populated
-// with plaintext credentials on hosts running the vulns_autologon role.
+// checkAutologonRegistry verifies AutoAdminLogon is enabled with stored
+// credentials on hosts running the vulns_autologon role. On Windows
+// 10/Server 2016+, ansible.windows.win_auto_logon stores DefaultPassword
+// in the LSA secret store rather than the registry, so an empty registry
+// password value with AAL=1 + DefaultUserName populated is the *correct*
+// post-provisioning state, not a misconfiguration.
 func (v *Validator) checkAutologonRegistry(ctx context.Context, w io.Writer) {
 	printHeader(w, "Autologon Registry Credentials")
 
@@ -1305,44 +1523,54 @@ func (v *Validator) checkAutologonRegistry(ctx context.Context, w io.Writer) {
 			continue
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-		output := v.runPS(ctx, host,
-			`$k='HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'; `+
-				`$a=(Get-ItemProperty -Path $k -Name AutoAdminLogon -ErrorAction SilentlyContinue).AutoAdminLogon; `+
-				`$u=(Get-ItemProperty -Path $k -Name DefaultUserName -ErrorAction SilentlyContinue).DefaultUserName; `+
-				`$p=(Get-ItemProperty -Path $k -Name DefaultPassword -ErrorAction SilentlyContinue).DefaultPassword; `+
-				`Write-Output ("AAL=$a|USER=$u|PWLEN=" + ($p | Measure-Object -Character).Characters)`)
-		line := strings.TrimSpace(output)
-		if line == "" {
+		r, err := runScriptJSON[autologonResult](ctx, v, host, scriptAutologonRegistry, nil)
+		switch {
+		case err != nil:
 			v.addResult(w, "WARN", "Credentials",
-				fmt.Sprintf("Autologon registry unreadable on %s", hostLabel), "")
+				fmt.Sprintf("Autologon registry unreadable on %s: %v", hostLabel, err), "")
+			continue
+		case r.Error != "":
+			v.addResult(w, "WARN", "Credentials",
+				fmt.Sprintf("Autologon probe error on %s: %s", hostLabel, r.Error), "")
 			continue
 		}
-		// Parse AAL=, USER=, PWLEN= fields.
-		fields := map[string]string{}
-		for _, p := range strings.Split(line, "|") {
-			if kv := strings.SplitN(p, "=", 2); len(kv) == 2 {
-				fields[kv[0]] = kv[1]
-			}
-		}
-		aal := fields["AAL"]
-		user := fields["USER"]
-		pwlen := fields["PWLEN"]
+		hasRegPw := r.PWLength > 0
 		switch {
-		case aal == "1" && user != "" && pwlen != "" && pwlen != "0":
+		case r.AAL == 1 && r.User != "" && hasRegPw:
 			v.addResult(w, "PASS", "Credentials",
-				fmt.Sprintf("Autologon enabled on %s (user=%s, pw stored)", hostLabel, user), "")
-		case aal == "1" && (user == "" || pwlen == "" || pwlen == "0"):
+				fmt.Sprintf("Autologon enabled on %s (user=%s, pw in registry)", hostLabel, r.User), "")
+		case r.AAL == 1 && r.User != "":
+			v.addResult(w, "PASS", "Credentials",
+				fmt.Sprintf("Autologon enabled on %s (user=%s, pw in LSA secret)", hostLabel, r.User), "")
+		case r.AAL == 1:
 			v.addResult(w, "FAIL", "Credentials",
-				fmt.Sprintf("AutoAdminLogon=1 on %s but credentials missing", hostLabel), "")
+				fmt.Sprintf("AutoAdminLogon=1 on %s but DefaultUserName missing", hostLabel), "")
 		default:
 			v.addResult(w, "FAIL", "Credentials",
-				fmt.Sprintf("AutoAdminLogon NOT enabled on %s (AAL=%s)", hostLabel, aal), "")
+				fmt.Sprintf("AutoAdminLogon NOT enabled on %s (AAL=%d)", hostLabel, r.AAL), "")
 		}
 	}
 }
 
+//go:embed scripts/autologon_registry.ps1
+var scriptAutologonRegistry string
+
+type autologonResult struct {
+	AAL      int    `json:"aal"`
+	User     string `json:"user"`
+	PWLength int    `json:"pw_length"`
+	Error    string `json:"error"`
+}
+
 // checkCmdkeyCredentials verifies stored Credential Manager entries
-// (typically TERMSRV/* targets) populated by the vulns_credentials role.
+// populated by the vulns_credentials role. cmdkey writes to the *invoking
+// user's* DPAPI vault, but SSM commands run as SYSTEM and only see the
+// SYSTEM vault — so `cmdkey /list` is blind to per-user creds. Instead we
+// enumerate vault files under each user profile (we cannot decrypt them
+// without that user's DPAPI master key, but their existence proves cmdkey
+// ran). The role stores under the configured `runas` user, so we cross-
+// check the configured users against the profiles that actually contain
+// vault files.
 func (v *Validator) checkCmdkeyCredentials(ctx context.Context, w io.Writer) {
 	printHeader(w, "Stored Credential Manager Entries")
 
@@ -1352,31 +1580,77 @@ func (v *Validator) checkCmdkeyCredentials(ctx context.Context, w io.Writer) {
 		return
 	}
 
+	const vaultEnumQuery = `$paths = @('C:\Users\*\AppData\Local\Microsoft\Credentials\*','C:\Users\*\AppData\Roaming\Microsoft\Credentials\*'); ` +
+		`$found = @{}; ` +
+		`foreach ($p in $paths) { ` +
+		`  foreach ($f in (Get-ChildItem -Path $p -ErrorAction SilentlyContinue -Force)) { ` +
+		`    $u = ($f.FullName -split '\\')[2].ToLower(); ` +
+		`    $found[$u] = $true ` +
+		`  } ` +
+		`}; ` +
+		`if ($found.Count -eq 0) { 'NONE' } else { 'USERS=' + (($found.Keys | Sort-Object) -join ',') }`
+
 	for _, role := range hosts {
 		host := strings.ToUpper(role)
 		if !v.hasHost(host) {
 			continue
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-		// cmdkey reports per-user creds; query under the configured runas user
-		// is impractical via SSM. Falling back to enumerating Credential
-		// Manager via vaultcmd-style reg query covers the most reliable
-		// surface — TERMSRV credentials are stored as Generic credentials.
-		output := v.runPS(ctx, host,
-			`cmdkey /list 2>&1 | Out-String`)
-		lower := strings.ToLower(output)
+
+		output := strings.TrimSpace(v.runPS(ctx, host, vaultEnumQuery))
 		switch {
-		case strings.Contains(lower, "termsrv/"):
-			v.addResult(w, "PASS", "Credentials",
-				fmt.Sprintf("TERMSRV credential found on %s", hostLabel), "")
-		case strings.Contains(lower, "target:"):
+		case output == "":
 			v.addResult(w, "WARN", "Credentials",
-				fmt.Sprintf("Credentials stored on %s but no TERMSRV target", hostLabel), "")
-		default:
+				fmt.Sprintf("Could not enumerate credential vault on %s", hostLabel), "")
+		case strings.HasPrefix(output, "USERS="):
+			users := strings.Split(strings.TrimPrefix(output, "USERS="), ",")
+			v.addResult(w, "PASS", "Credentials",
+				fmt.Sprintf("Credential vault populated on %s (users: %s)", hostLabel, strings.Join(users, ", ")), "")
+		default: // "NONE"
 			v.addResult(w, "FAIL", "Credentials",
 				fmt.Sprintf("No stored credentials on %s", hostLabel), "")
 		}
 	}
+}
+
+//go:embed scripts/sysvol_plaintext.ps1
+var scriptSysvolPlaintext string
+
+//go:embed scripts/shares_file_count.ps1
+var scriptSharesFileCount string
+
+//go:embed scripts/share_permissive_acls.ps1
+var scriptSharePermissiveACLs string
+
+//go:embed scripts/admin_profile_acl.ps1
+var scriptAdminProfileACL string
+
+type sysvolPlaintextResult struct {
+	RootPresent bool     `json:"root_present"`
+	FileCount   int      `json:"file_count"`
+	Files       []string `json:"files"`
+	Error       string   `json:"error"`
+}
+
+type sharesFileCountResult struct {
+	RootPresent bool   `json:"root_present"`
+	FileCount   int    `json:"file_count"`
+	Error       string `json:"error"`
+}
+
+type sharePermissiveACLsResult struct {
+	Entries []struct {
+		Path     string `json:"path"`
+		Identity string `json:"identity"`
+		Rights   string `json:"rights"`
+	} `json:"entries"`
+	Error string `json:"error"`
+}
+
+type adminProfileACLResult struct {
+	Found        bool   `json:"found"`
+	NonAdminRead bool   `json:"non_admin_read"`
+	Error        string `json:"error"`
 }
 
 // checkSysvolPlaintext scans SYSVOL for plaintext-credential markers on DCs
@@ -1411,29 +1685,23 @@ func (v *Validator) checkSysvolPlaintext(ctx context.Context, w io.Writer) {
 			continue
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-		output := v.runPS(ctx, host,
-			`$root='C:\Windows\SYSVOL'; if (-not (Test-Path $root)) { Write-Output 'NO_SYSVOL'; exit }; `+
-				`$pat='password|pwd|secret|cpassword'; `+
-				`$hits = Get-ChildItem -Path $root -Recurse -File -ErrorAction SilentlyContinue | `+
-				`Select-String -Pattern $pat -SimpleMatch:$false -ErrorAction SilentlyContinue; `+
-				`if (-not $hits) { Write-Output 'NO_HITS'; exit }; `+
-				`$hits | Group-Object Path | ForEach-Object { Write-Output $_.Name }`)
+		r, err := runScriptJSON[sysvolPlaintextResult](ctx, v, host, scriptSysvolPlaintext, nil)
 		switch {
-		case strings.Contains(output, "NO_SYSVOL"):
+		case err != nil:
+			v.addResult(w, "WARN", "Credentials",
+				fmt.Sprintf("Could not enumerate SYSVOL on %s: %v", hostLabel, err), "")
+		case r.Error != "":
+			v.addResult(w, "WARN", "Credentials",
+				fmt.Sprintf("SYSVOL scan error on %s: %s", hostLabel, r.Error), "")
+		case !r.RootPresent:
 			v.addResult(w, "FAIL", "Credentials",
 				fmt.Sprintf("SYSVOL not present on %s", hostLabel), "")
-		case strings.Contains(output, "NO_HITS"):
+		case r.FileCount == 0:
 			v.addResult(w, "FAIL", "Credentials",
 				fmt.Sprintf("No plaintext credential markers in SYSVOL on %s", hostLabel), "")
 		default:
-			files := parseOutputLines(output)
-			if len(files) > 0 {
-				v.addResult(w, "PASS", "Credentials",
-					fmt.Sprintf("SYSVOL plaintext markers on %s in %d file(s)", hostLabel, len(files)), "")
-			} else {
-				v.addResult(w, "WARN", "Credentials",
-					fmt.Sprintf("Could not enumerate SYSVOL on %s", hostLabel), "")
-			}
+			v.addResult(w, "PASS", "Credentials",
+				fmt.Sprintf("SYSVOL plaintext markers on %s in %d file(s)", hostLabel, r.FileCount), "")
 		}
 	}
 }
@@ -1460,26 +1728,23 @@ func (v *Validator) checkShareFilePlaintext(ctx context.Context, w io.Writer) {
 			continue
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-		output := v.runPS(ctx, host,
-			`$root='C:\shares'; if (-not (Test-Path $root)) { Write-Output 'NO_SHARES'; exit }; `+
-				`$files = Get-ChildItem -Path $root -Recurse -File -ErrorAction SilentlyContinue; `+
-				`Write-Output ("FILES=" + ($files | Measure-Object).Count)`)
+		r, err := runScriptJSON[sharesFileCountResult](ctx, v, host, scriptSharesFileCount, nil)
 		switch {
-		case strings.Contains(output, "NO_SHARES"):
+		case err != nil:
+			v.addResult(w, "WARN", "Credentials",
+				fmt.Sprintf("Could not enumerate shares on %s: %v", hostLabel, err), "")
+		case r.Error != "":
+			v.addResult(w, "WARN", "Credentials",
+				fmt.Sprintf("Share enum error on %s: %s", hostLabel, r.Error), "")
+		case !r.RootPresent:
 			v.addResult(w, "FAIL", "Credentials",
 				fmt.Sprintf("C:\\shares missing on %s", hostLabel), "")
-		case strings.HasPrefix(strings.TrimSpace(output), "FILES="):
-			cnt := strings.TrimPrefix(strings.TrimSpace(output), "FILES=")
-			if cnt == "0" {
-				v.addResult(w, "FAIL", "Credentials",
-					fmt.Sprintf("No files in C:\\shares on %s", hostLabel), "")
-			} else {
-				v.addResult(w, "PASS", "Credentials",
-					fmt.Sprintf("%s file(s) staged under C:\\shares on %s", cnt, hostLabel), "")
-			}
+		case r.FileCount == 0:
+			v.addResult(w, "FAIL", "Credentials",
+				fmt.Sprintf("No files in C:\\shares on %s", hostLabel), "")
 		default:
-			v.addResult(w, "WARN", "Credentials",
-				fmt.Sprintf("Could not enumerate shares on %s", hostLabel), "")
+			v.addResult(w, "PASS", "Credentials",
+				fmt.Sprintf("%d file(s) staged under C:\\shares on %s", r.FileCount, hostLabel), "")
 		}
 	}
 }
@@ -1501,28 +1766,20 @@ func (v *Validator) checkSharePermissions(ctx context.Context, w io.Writer) {
 			continue
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-		output := v.runPS(ctx, host,
-			`$paths = @('C:\shares','C:\inetpub\wwwroot\upload','C:\thewall'); `+
-				`$any = $false; `+
-				`foreach ($p in $paths) { `+
-				`if (-not (Test-Path $p)) { continue }; `+
-				`$acl = Get-Acl -Path $p -ErrorAction SilentlyContinue; `+
-				`foreach ($ace in $acl.Access) { `+
-				`if ($ace.IdentityReference -match 'Everyone|Authenticated Users|IIS_IUSRS|Users' -and `+
-				`($ace.FileSystemRights -match 'FullControl|Modify|Write')) { `+
-				`Write-Output ("$p|$($ace.IdentityReference)|$($ace.FileSystemRights)"); $any = $true } } }; `+
-				`if (-not $any) { Write-Output 'NO_PERMISSIVE_ACE' }`)
+		r, err := runScriptJSON[sharePermissiveACLsResult](ctx, v, host, scriptSharePermissiveACLs, nil)
 		switch {
-		case strings.Contains(output, "NO_PERMISSIVE_ACE"):
+		case err != nil:
+			v.addResult(w, "WARN", "Permissions",
+				fmt.Sprintf("Could not read share ACLs on %s: %v", hostLabel, err), "")
+		case r.Error != "":
+			v.addResult(w, "WARN", "Permissions",
+				fmt.Sprintf("Share ACL query error on %s: %s", hostLabel, r.Error), "")
+		case len(r.Entries) == 0:
 			v.addResult(w, "FAIL", "Permissions",
 				fmt.Sprintf("No permissive share ACEs on %s", hostLabel), "")
-		case strings.TrimSpace(output) == "":
-			v.addResult(w, "WARN", "Permissions",
-				fmt.Sprintf("Could not read share ACLs on %s", hostLabel), "")
 		default:
-			lines := parseOutputLines(output)
 			v.addResult(w, "PASS", "Permissions",
-				fmt.Sprintf("Permissive ACEs on %s: %d entries", hostLabel, len(lines)), "")
+				fmt.Sprintf("Permissive ACEs on %s: %d entries", hostLabel, len(r.Entries)), "")
 		}
 	}
 }
@@ -1546,32 +1803,37 @@ func (v *Validator) checkAdministratorFolder(ctx context.Context, w io.Writer) {
 			continue
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-		output := v.runPS(ctx, host,
-			`$p='C:\users\administrator'; `+
-				`if (-not (Test-Path $p)) { Write-Output 'MISSING'; exit }; `+
-				`$acl = Get-Acl -Path $p -ErrorAction SilentlyContinue; `+
-				`$nonAdmin = $acl.Access | Where-Object { `+
-				`$_.IdentityReference -notmatch 'Administrators|SYSTEM|TrustedInstaller|CREATOR OWNER' -and `+
-				`$_.FileSystemRights -match 'Read|List|Modify|FullControl' }; `+
-				`if ($nonAdmin) { Write-Output 'NON_ADMIN_READ' } else { Write-Output 'ADMIN_ONLY' }`)
+		r, err := runScriptJSON[adminProfileACLResult](ctx, v, host, scriptAdminProfileACL, nil)
 		switch {
-		case strings.Contains(output, "MISSING"):
+		case err != nil:
+			v.addResult(w, "WARN", "Credentials",
+				fmt.Sprintf("Could not verify administrator folder on %s: %v", hostLabel, err), "")
+		case r.Error != "":
+			v.addResult(w, "WARN", "Credentials",
+				fmt.Sprintf("Administrator folder query error on %s: %s", hostLabel, r.Error), "")
+		case !r.Found:
 			v.addResult(w, "FAIL", "Credentials",
 				fmt.Sprintf("C:\\users\\administrator missing on %s", hostLabel), "")
-		case strings.Contains(output, "NON_ADMIN_READ"):
+		case r.NonAdminRead:
 			v.addResult(w, "PASS", "Credentials",
 				fmt.Sprintf("C:\\users\\administrator readable by non-admin on %s", hostLabel), "")
-		case strings.Contains(output, "ADMIN_ONLY"):
+		default:
 			v.addResult(w, "PASS", "Credentials",
 				fmt.Sprintf("C:\\users\\administrator exists on %s (admin-only ACL)", hostLabel), "")
-		default:
-			v.addResult(w, "WARN", "Credentials",
-				fmt.Sprintf("Could not verify administrator folder on %s", hostLabel), "")
 		}
 	}
 }
 
 // ---- Section 6: Network Poisoning / Hardening ----
+
+//go:embed scripts/smb1_feature.ps1
+var scriptSMB1Feature string
+
+type smb1FeatureResult struct {
+	Found bool   `json:"found"`
+	State string `json:"state"`
+	Error string `json:"error"`
+}
 
 // checkSMBv1 verifies the legacy SMB1 protocol feature is enabled by the
 // vulns_smbv1 role.
@@ -1590,25 +1852,48 @@ func (v *Validator) checkSMBv1(ctx context.Context, w io.Writer) {
 			continue
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-		output := v.runPS(ctx, host,
-			`$f = Get-WindowsOptionalFeature -Online -FeatureName SMB1Protocol -ErrorAction SilentlyContinue; `+
-				`if ($f) { $f.State } else { 'NOT_FOUND' }`)
-		state := strings.TrimSpace(output)
-		switch state {
-		case "Enabled":
-			v.addResult(w, "PASS", "Network",
-				fmt.Sprintf("SMBv1 enabled on %s (legacy auth/relay possible)", hostLabel), "")
-		case "Disabled":
-			v.addResult(w, "FAIL", "Network",
-				fmt.Sprintf("SMBv1 disabled on %s", hostLabel), "")
-		case "NOT_FOUND", "":
+		r, err := runScriptJSON[smb1FeatureResult](ctx, v, host, scriptSMB1Feature, nil)
+		switch {
+		case err != nil:
+			v.addResult(w, "WARN", "Network",
+				fmt.Sprintf("Could not query SMB1 feature on %s: %v", hostLabel, err), "")
+		case r.Error != "":
+			v.addResult(w, "WARN", "Network",
+				fmt.Sprintf("SMB1 query error on %s: %s", hostLabel, r.Error), "")
+		case !r.Found:
 			v.addResult(w, "WARN", "Network",
 				fmt.Sprintf("SMBv1 feature unknown on %s", hostLabel), "")
+		case r.State == "Enabled":
+			v.addResult(w, "PASS", "Network",
+				fmt.Sprintf("SMBv1 enabled on %s (legacy auth/relay possible)", hostLabel), "")
+		case r.State == "Disabled":
+			v.addResult(w, "FAIL", "Network",
+				fmt.Sprintf("SMBv1 disabled on %s", hostLabel), "")
 		default:
 			v.addResult(w, "INFO", "Network",
-				fmt.Sprintf("SMBv1 state %s on %s", state, hostLabel), "")
+				fmt.Sprintf("SMBv1 state %s on %s", r.State, hostLabel), "")
 		}
 	}
+}
+
+//go:embed scripts/credssp_server.ps1
+var scriptCredSSPServer string
+
+//go:embed scripts/credssp_client.ps1
+var scriptCredSSPClient string
+
+type credsspServerResult struct {
+	Present bool   `json:"present"`
+	Value   int    `json:"value"`
+	Source  string `json:"source"`
+	Error   string `json:"error"`
+}
+
+type credsspClientResult struct {
+	PolicyPresent bool   `json:"policy_present"`
+	AFCPresent    bool   `json:"afc_present"`
+	AFC           int    `json:"afc"`
+	Error         string `json:"error"`
 }
 
 // checkCredSSP verifies WSMAN CredSSP is enabled on server/client hosts via
@@ -1628,27 +1913,7 @@ func (v *Validator) checkCredSSP(ctx context.Context, w io.Writer) {
 		if !v.hasHost(host) {
 			continue
 		}
-		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-		output := v.runPS(ctx, host,
-			`$v = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Service' -Name auth_credssp -ErrorAction SilentlyContinue; `+
-				`if ($v) { $v.auth_credssp } else { `+
-				`$v2 = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WSMAN\Service\Auth' -Name CredSSP -ErrorAction SilentlyContinue; `+
-				`if ($v2) { $v2.CredSSP } else { 'NOT_SET' } }`)
-		val := strings.TrimSpace(output)
-		switch val {
-		case "1":
-			v.addResult(w, "PASS", "Network",
-				fmt.Sprintf("CredSSP server enabled on %s (relay target)", hostLabel), "")
-		case "0":
-			v.addResult(w, "FAIL", "Network",
-				fmt.Sprintf("CredSSP server disabled on %s", hostLabel), "")
-		case "", "NOT_SET":
-			v.addResult(w, "WARN", "Network",
-				fmt.Sprintf("CredSSP server not configured on %s", hostLabel), "")
-		default:
-			v.addResult(w, "INFO", "Network",
-				fmt.Sprintf("CredSSP server value=%s on %s", val, hostLabel), "")
-		}
+		v.checkCredSSPServerHost(ctx, w, host, strings.ToUpper(v.lab.Hostname(role)))
 	}
 
 	for _, role := range clients {
@@ -1656,34 +1921,65 @@ func (v *Validator) checkCredSSP(ctx context.Context, w io.Writer) {
 		if !v.hasHost(host) {
 			continue
 		}
-		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-		output := v.runPS(ctx, host,
-			`$base='HKLM:\SOFTWARE\Policies\Microsoft\Windows\CredentialsDelegation'; `+
-				`if (-not (Test-Path $base)) { Write-Output 'NO_KEY'; exit }; `+
-				`$afc = (Get-ItemProperty -Path $base -Name AllowFreshCredentials -ErrorAction SilentlyContinue).AllowFreshCredentials; `+
-				`Write-Output ("AFC=" + $afc)`)
-		line := strings.TrimSpace(output)
-		switch {
-		case strings.Contains(line, "NO_KEY"):
-			v.addResult(w, "FAIL", "Network",
-				fmt.Sprintf("CredSSP client policy missing on %s", hostLabel), "")
-		case strings.HasPrefix(line, "AFC=1"):
-			v.addResult(w, "PASS", "Network",
-				fmt.Sprintf("CredSSP client AllowFreshCredentials=1 on %s", hostLabel), "")
-		case strings.HasPrefix(line, "AFC="):
-			val := strings.TrimPrefix(line, "AFC=")
-			if val == "" || val == "0" {
-				v.addResult(w, "FAIL", "Network",
-					fmt.Sprintf("CredSSP client AllowFreshCredentials disabled on %s", hostLabel), "")
-			} else {
-				v.addResult(w, "INFO", "Network",
-					fmt.Sprintf("CredSSP client AllowFreshCredentials=%s on %s", val, hostLabel), "")
-			}
-		default:
-			v.addResult(w, "WARN", "Network",
-				fmt.Sprintf("Could not read CredSSP client policy on %s", hostLabel), "")
-		}
+		v.checkCredSSPClientHost(ctx, w, host, strings.ToUpper(v.lab.Hostname(role)))
 	}
+}
+
+func (v *Validator) checkCredSSPServerHost(ctx context.Context, w io.Writer, host, hostLabel string) {
+	r, err := runScriptJSON[credsspServerResult](ctx, v, host, scriptCredSSPServer, nil)
+	switch {
+	case err != nil:
+		v.addResult(w, "WARN", "Network",
+			fmt.Sprintf("Could not query CredSSP server on %s: %v", hostLabel, err), "")
+	case r.Error != "":
+		v.addResult(w, "WARN", "Network",
+			fmt.Sprintf("CredSSP server query error on %s: %s", hostLabel, r.Error), "")
+	case !r.Present:
+		v.addResult(w, "WARN", "Network",
+			fmt.Sprintf("CredSSP server not configured on %s", hostLabel), "")
+	case r.Value == 1:
+		v.addResult(w, "PASS", "Network",
+			fmt.Sprintf("CredSSP server enabled on %s (relay target)", hostLabel), "")
+	case r.Value == 0:
+		v.addResult(w, "FAIL", "Network",
+			fmt.Sprintf("CredSSP server disabled on %s", hostLabel), "")
+	default:
+		v.addResult(w, "INFO", "Network",
+			fmt.Sprintf("CredSSP server value=%d on %s", r.Value, hostLabel), "")
+	}
+}
+
+func (v *Validator) checkCredSSPClientHost(ctx context.Context, w io.Writer, host, hostLabel string) {
+	r, err := runScriptJSON[credsspClientResult](ctx, v, host, scriptCredSSPClient, nil)
+	switch {
+	case err != nil:
+		v.addResult(w, "WARN", "Network",
+			fmt.Sprintf("Could not read CredSSP client policy on %s: %v", hostLabel, err), "")
+	case r.Error != "":
+		v.addResult(w, "WARN", "Network",
+			fmt.Sprintf("CredSSP client query error on %s: %s", hostLabel, r.Error), "")
+	case !r.PolicyPresent:
+		v.addResult(w, "FAIL", "Network",
+			fmt.Sprintf("CredSSP client policy missing on %s", hostLabel), "")
+	case !r.AFCPresent, r.AFC == 0:
+		v.addResult(w, "FAIL", "Network",
+			fmt.Sprintf("CredSSP client AllowFreshCredentials disabled on %s", hostLabel), "")
+	case r.AFC == 1:
+		v.addResult(w, "PASS", "Network",
+			fmt.Sprintf("CredSSP client AllowFreshCredentials=1 on %s", hostLabel), "")
+	default:
+		v.addResult(w, "INFO", "Network",
+			fmt.Sprintf("CredSSP client AllowFreshCredentials=%d on %s", r.AFC, hostLabel), "")
+	}
+}
+
+//go:embed scripts/webdav_redirector.ps1
+var scriptWebDAVRedirector string
+
+type webDAVRedirectorResult struct {
+	Found bool   `json:"found"`
+	State string `json:"state"`
+	Error string `json:"error"`
 }
 
 // checkWebDAVRedirector confirms the WebDAV-Redirector feature is installed
@@ -1704,24 +2000,27 @@ func (v *Validator) checkWebDAVRedirector(ctx context.Context, w io.Writer) {
 			continue
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-		output := v.runPS(ctx, host,
-			`$f = Get-WindowsFeature -Name WebDAV-Redirector -ErrorAction SilentlyContinue; `+
-				`if ($f) { $f.InstallState } else { 'NOT_FOUND' }`)
-		state := strings.TrimSpace(output)
-		switch state {
-		case "Installed":
+		r, err := runScriptJSON[webDAVRedirectorResult](ctx, v, host, scriptWebDAVRedirector, nil)
+		switch {
+		case err != nil:
+			v.addResult(w, "WARN", "Network",
+				fmt.Sprintf("Could not query WebDAV-Redirector on %s: %v", hostLabel, err), "")
+		case r.Error != "":
+			v.addResult(w, "WARN", "Network",
+				fmt.Sprintf("WebDAV-Redirector query error on %s: %s", hostLabel, r.Error), "")
+		case !r.Found:
+			v.addResult(w, "INFO", "Network",
+				fmt.Sprintf("WebDAV-Redirector feature not present on %s", hostLabel), "")
+		case r.State == "Installed":
 			any = true
 			v.addResult(w, "PASS", "Network",
 				fmt.Sprintf("WebDAV-Redirector installed on %s", hostLabel), "")
-		case "Available", "Removed":
+		case r.State == "Available", r.State == "Removed":
 			v.addResult(w, "INFO", "Network",
 				fmt.Sprintf("WebDAV-Redirector available but not installed on %s", hostLabel), "")
-		case "NOT_FOUND", "":
-			v.addResult(w, "INFO", "Network",
-				fmt.Sprintf("WebDAV-Redirector feature not present on %s", hostLabel), "")
 		default:
 			v.addResult(w, "INFO", "Network",
-				fmt.Sprintf("WebDAV-Redirector state %s on %s", state, hostLabel), "")
+				fmt.Sprintf("WebDAV-Redirector state %s on %s", r.State, hostLabel), "")
 		}
 	}
 	if !any {
@@ -1734,14 +2033,18 @@ func (v *Validator) checkWebDAVRedirector(ctx context.Context, w io.Writer) {
 // adcsTemplateAttr queries a single attribute on a named cert template using
 // the configuration naming context. Returns trimmed PowerShell output.
 func (v *Validator) adcsTemplateAttr(ctx context.Context, dcRole, templateName, attr string) string {
-	return v.runPS(ctx, dcRole, fmt.Sprintf(
-		`$t = Get-ADObject -Filter {cn -eq '%s' -and objectClass -eq 'pKICertificateTemplate'} `+
+	out, err := runScriptText(ctx, v, dcRole,
+		`$t = Get-ADObject -Filter {cn -eq {{psq .Template}} -and objectClass -eq 'pKICertificateTemplate'} `+
 			`-SearchBase ("CN=Certificate Templates,CN=Public Key Services,CN=Services," + (Get-ADRootDSE).configurationNamingContext) `+
-			`-Properties %s -ErrorAction SilentlyContinue; `+
+			`-Properties {{psq .Attr}} -ErrorAction SilentlyContinue; `+
 			`if (-not $t) { Write-Output 'TEMPLATE_NOT_FOUND'; exit }; `+
-			`$v = $t.'%s'; `+
-			`if ($v -is [System.Array]) { $v -join ',' } else { Write-Output $v }`,
-		templateName, attr, attr))
+			`$val = $t.{{psq .Attr}}; `+
+			`if ($val -is [System.Array]) { $val -join ',' } else { Write-Output $val }`,
+		map[string]any{"Template": templateName, "Attr": attr})
+	if err != nil {
+		return ""
+	}
+	return out
 }
 
 // adcsTemplateDCs returns the DC roles that have at least one ADCS template
@@ -1910,75 +2213,86 @@ func (v *Validator) checkADCSESC4(ctx context.Context, w io.Writer) {
 
 	dcs := v.adcsTemplateDCs()
 	if len(grantees) == 0 {
-		// Fall back to scanning ACLs for any non-default identity.
 		for _, dcRole := range dcs {
 			dc := strings.ToUpper(dcRole)
 			if !v.hasHost(dc) {
 				continue
 			}
-			output := v.runPS(ctx, dc,
-				`$t = Get-ADObject -Filter {cn -eq 'ESC4' -and objectClass -eq 'pKICertificateTemplate'} `+
-					`-SearchBase ("CN=Certificate Templates,CN=Public Key Services,CN=Services," + (Get-ADRootDSE).configurationNamingContext) `+
-					`-ErrorAction SilentlyContinue; `+
-					`if (-not $t) { Write-Output 'TEMPLATE_NOT_FOUND'; exit }; `+
-					`Import-Module ActiveDirectory; Set-Location AD:; `+
-					`$acl = Get-Acl -Path $t.DistinguishedName; `+
-					`$bad = $acl.Access | Where-Object { `+
-					`$_.IdentityReference -notmatch 'Domain Admins|Enterprise Admins|SYSTEM|Authenticated Users|Domain Users|Administrators|Cert Publishers' -and `+
-					`$_.ActiveDirectoryRights -match 'GenericAll|WriteDacl|WriteOwner' }; `+
-					`if ($bad) { $bad | ForEach-Object { Write-Output ("$($_.IdentityReference)|$($_.ActiveDirectoryRights)") } } `+
-					`else { Write-Output 'NO_ABUSE' }`)
-			switch {
-			case strings.Contains(output, "TEMPLATE_NOT_FOUND"):
-				v.addResult(w, "INFO", "ADCS-ESC4",
-					fmt.Sprintf("ESC4 template not present on %s", dc), "")
-			case strings.Contains(output, "NO_ABUSE"):
-				v.addResult(w, "FAIL", "ADCS-ESC4",
-					fmt.Sprintf("No abusable ACE on ESC4 template on %s", dc), "")
-			case strings.TrimSpace(output) == "":
-				v.addResult(w, "WARN", "ADCS-ESC4",
-					fmt.Sprintf("Could not read ESC4 template ACL on %s", dc), "")
-			default:
-				lines := parseOutputLines(output)
-				v.addResult(w, "PASS", "ADCS-ESC4",
-					fmt.Sprintf("ESC4 abusable ACEs on %s: %s", dc, strings.Join(lines, "; ")), "")
-			}
+			v.scanESC4ACL(ctx, w, dc)
 		}
 		return
 	}
 
-	// Specific grantee path — verify each labmap-configured identity has the
-	// expected right.
 	for _, g := range grantees {
 		dc := strings.ToUpper(g.DCRole)
 		if !v.hasHost(dc) {
 			continue
 		}
-		source := v.lab.User(g.Source)
-		output := v.runPS(ctx, dc, fmt.Sprintf(
-			`$t = Get-ADObject -Filter {cn -eq 'ESC4' -and objectClass -eq 'pKICertificateTemplate'} `+
-				`-SearchBase ("CN=Certificate Templates,CN=Public Key Services,CN=Services," + (Get-ADRootDSE).configurationNamingContext) `+
-				`-ErrorAction SilentlyContinue; `+
-				`if (-not $t) { Write-Output 'TEMPLATE_NOT_FOUND'; exit }; `+
-				`Import-Module ActiveDirectory; Set-Location AD:; `+
-				`$acl = Get-Acl -Path $t.DistinguishedName; `+
-				`$ace = $acl.Access | Where-Object { $_.IdentityReference -like '*%s*' -and $_.ActiveDirectoryRights -match '%s' }; `+
-				`if ($ace) { Write-Output 'ACL_FOUND' } else { Write-Output 'ACL_NOT_FOUND' }`,
-			source, g.Right))
-		switch {
-		case strings.Contains(output, "TEMPLATE_NOT_FOUND"):
-			v.addResult(w, "INFO", "ADCS-ESC4",
-				fmt.Sprintf("ESC4 template not present on %s", dc), "")
-		case strings.Contains(output, "ACL_FOUND"):
-			v.addResult(w, "PASS", "ADCS-ESC4",
-				fmt.Sprintf("%s has %s on ESC4 template (%s)", source, g.Right, g.Domain), "")
-		case strings.Contains(output, "ACL_NOT_FOUND"):
-			v.addResult(w, "FAIL", "ADCS-ESC4",
-				fmt.Sprintf("%s does NOT have %s on ESC4 template (%s)", source, g.Right, g.Domain), "")
-		default:
-			v.addResult(w, "WARN", "ADCS-ESC4",
-				fmt.Sprintf("Could not verify ESC4 ACL for %s in %s", source, g.Domain), "")
-		}
+		v.checkESC4Grantee(ctx, w, dc, g)
+	}
+}
+
+func (v *Validator) scanESC4ACL(ctx context.Context, w io.Writer, dc string) {
+	output := v.runPS(ctx, dc,
+		`$t = Get-ADObject -Filter {cn -eq 'ESC4' -and objectClass -eq 'pKICertificateTemplate'} `+
+			`-SearchBase ("CN=Certificate Templates,CN=Public Key Services,CN=Services," + (Get-ADRootDSE).configurationNamingContext) `+
+			`-ErrorAction SilentlyContinue; `+
+			`if (-not $t) { Write-Output 'TEMPLATE_NOT_FOUND'; exit }; `+
+			`Import-Module ActiveDirectory; Set-Location AD:; `+
+			`$acl = Get-Acl -Path $t.DistinguishedName; `+
+			`$bad = $acl.Access | Where-Object { `+
+			`$_.IdentityReference -notmatch 'Domain Admins|Enterprise Admins|SYSTEM|Authenticated Users|Domain Users|Administrators|Cert Publishers' -and `+
+			`$_.ActiveDirectoryRights -match 'GenericAll|WriteDacl|WriteOwner' }; `+
+			`if ($bad) { $bad | ForEach-Object { Write-Output ("$($_.IdentityReference)|$($_.ActiveDirectoryRights)") } } `+
+			`else { Write-Output 'NO_ABUSE' }`)
+	switch {
+	case strings.Contains(output, "TEMPLATE_NOT_FOUND"):
+		v.addResult(w, "INFO", "ADCS-ESC4",
+			fmt.Sprintf("ESC4 template not present on %s", dc), "")
+	case strings.Contains(output, "NO_ABUSE"):
+		v.addResult(w, "FAIL", "ADCS-ESC4",
+			fmt.Sprintf("No abusable ACE on ESC4 template on %s", dc), "")
+	case strings.TrimSpace(output) == "":
+		v.addResult(w, "WARN", "ADCS-ESC4",
+			fmt.Sprintf("Could not read ESC4 template ACL on %s", dc), "")
+	default:
+		lines := parseOutputLines(output)
+		v.addResult(w, "PASS", "ADCS-ESC4",
+			fmt.Sprintf("ESC4 abusable ACEs on %s: %s", dc, strings.Join(lines, "; ")), "")
+	}
+}
+
+func (v *Validator) checkESC4Grantee(ctx context.Context, w io.Writer, dc string, g labmapACL) {
+	source := v.lab.User(g.Source)
+	output, err := runScriptText(ctx, v, dc,
+		`$t = Get-ADObject -Filter {cn -eq 'ESC4' -and objectClass -eq 'pKICertificateTemplate'} `+
+			`-SearchBase ("CN=Certificate Templates,CN=Public Key Services,CN=Services," + (Get-ADRootDSE).configurationNamingContext) `+
+			`-ErrorAction SilentlyContinue; `+
+			`if (-not $t) { Write-Output 'TEMPLATE_NOT_FOUND'; exit }; `+
+			`Import-Module ActiveDirectory; Set-Location AD:; `+
+			`$acl = Get-Acl -Path $t.DistinguishedName; `+
+			`$idPattern = '*' + {{psq .Source}} + '*'; `+
+			`$ace = $acl.Access | Where-Object { $_.IdentityReference -like $idPattern -and $_.ActiveDirectoryRights -match {{psq .Right}} }; `+
+			`if ($ace) { Write-Output 'ACL_FOUND' } else { Write-Output 'ACL_NOT_FOUND' }`,
+		map[string]any{"Source": source, "Right": g.Right})
+	if err != nil {
+		v.addResult(w, "WARN", "ADCS-ESC4",
+			fmt.Sprintf("Could not verify ESC4 ACL for %s in %s: %v", source, g.Domain, err), "")
+		return
+	}
+	switch {
+	case strings.Contains(output, "TEMPLATE_NOT_FOUND"):
+		v.addResult(w, "INFO", "ADCS-ESC4",
+			fmt.Sprintf("ESC4 template not present on %s", dc), "")
+	case strings.Contains(output, "ACL_FOUND"):
+		v.addResult(w, "PASS", "ADCS-ESC4",
+			fmt.Sprintf("%s has %s on ESC4 template (%s)", source, g.Right, g.Domain), "")
+	case strings.Contains(output, "ACL_NOT_FOUND"):
+		v.addResult(w, "FAIL", "ADCS-ESC4",
+			fmt.Sprintf("%s does NOT have %s on ESC4 template (%s)", source, g.Right, g.Domain), "")
+	default:
+		v.addResult(w, "WARN", "ADCS-ESC4",
+			fmt.Sprintf("Could not verify ESC4 ACL for %s in %s", source, g.Domain), "")
 	}
 }
 
@@ -2002,22 +2316,34 @@ func (v *Validator) checkADCSESC9(ctx context.Context, w io.Writer) {
 		return
 	}
 
-	// Pull AS-REP-roastable users domain by domain (these are the candidate
-	// pivot identities for ESC9).
+	// AS-REP roasting is opt-in per DC via an `asrep_roasting*` script in
+	// the host's scripts list. Only DCs that opt in are expected to expose
+	// a DONT_REQ_PREAUTH pivot user; the rest get an INFO note rather than
+	// a spurious FAIL.
+	asrepDCs := make(map[string]bool)
+	for _, role := range v.lab.HostsWithScript("asrep_roasting") {
+		asrepDCs[strings.ToUpper(role)] = true
+	}
+
 	any := false
 	for _, role := range v.lab.DCs() {
 		dc := strings.ToUpper(role)
 		if !v.hasHost(dc) {
 			continue
 		}
-		output := v.runPS(ctx, dc,
-			`Get-ADUser -Filter {DoesNotRequirePreAuth -eq $true} -Properties DoesNotRequirePreAuth | `+
-				`Select-Object -ExpandProperty SamAccountName`)
-		users := parseOutputLines(output)
 		domain := v.lab.DomainForHost(strings.ToLower(dc))
 		if domain == "" {
 			domain = dc
 		}
+		if !asrepDCs[dc] {
+			v.addResult(w, "INFO", "ADCS-ESC9",
+				fmt.Sprintf("AS-REP roasting not configured in %s (no ESC9 pivot expected)", domain), "")
+			continue
+		}
+		output := v.runPS(ctx, dc,
+			`Get-ADUser -Filter {DoesNotRequirePreAuth -eq $true} -Properties DoesNotRequirePreAuth | `+
+				`Select-Object -ExpandProperty SamAccountName`)
+		users := parseOutputLines(output)
 		if len(users) == 0 {
 			v.addResult(w, "FAIL", "ADCS-ESC9",
 				fmt.Sprintf("No DONT_REQ_PREAUTH users in %s (no ESC9 pivot)", domain), "")
@@ -2027,8 +2353,8 @@ func (v *Validator) checkADCSESC9(ctx context.Context, w io.Writer) {
 		v.addResult(w, "PASS", "ADCS-ESC9",
 			fmt.Sprintf("ESC9 pivot users in %s: %s", domain, strings.Join(users, ", ")), "")
 	}
-	if !any {
-		v.addResult(w, "FAIL", "ADCS-ESC9", "No ESC9 pivot users found in any domain", "")
+	if len(asrepDCs) > 0 && !any {
+		v.addResult(w, "FAIL", "ADCS-ESC9", "No ESC9 pivot users found in any AS-REP-configured domain", "")
 	}
 }
 
@@ -2101,11 +2427,16 @@ func (v *Validator) checkDNSConditionalForwarder(ctx context.Context, w io.Write
 			if strings.HasSuffix(peer, "."+srcDomain) || strings.HasSuffix(srcDomain, "."+peer) {
 				continue
 			}
-			output := v.runPS(ctx, dc, fmt.Sprintf(
-				`$z = Get-DnsServerZone -Name '%s' -ErrorAction SilentlyContinue; `+
+			output, err := runScriptText(ctx, v, dc,
+				`$z = Get-DnsServerZone -Name {{psq .Peer}} -ErrorAction SilentlyContinue; `+
 					`if ($z -and $z.ZoneType -eq 'Forwarder') { 'FORWARDER' } `+
 					`elseif ($z) { 'WRONG_TYPE' } else { 'NOT_FOUND' }`,
-				peer))
+				map[string]any{"Peer": peer})
+			if err != nil {
+				v.addResult(w, "WARN", "DNS",
+					fmt.Sprintf("Could not query forwarder %s on %s: %v", peer, dc, err), "")
+				continue
+			}
 			switch {
 			case strings.Contains(output, "FORWARDER"):
 				v.addResult(w, "PASS", "DNS",
@@ -2201,21 +2532,37 @@ func (v *Validator) checkLDAPDiagnosticLogging(ctx context.Context, w io.Writer)
 		return
 	}
 
-	any := false
+	enabled := false
 	for _, role := range dcs {
 		dc := strings.ToUpper(role)
 		if !v.hasHost(dc) {
 			continue
 		}
-		output := v.runPS(ctx, dc,
-			`$v = Get-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Diagnostics' `+
-				`-Name '15 Field Engineering' -ErrorAction SilentlyContinue; `+
-				`if ($v) { $v.'15 Field Engineering' } else { 'NOT_SET' }`)
-		if v.reportLDAPDiagnostic(w, dc, strings.TrimSpace(output)) {
-			any = true
+		r, err := runScriptJSON[registryDWORDResult](ctx, v, dc, scriptRegistryDWORD,
+			map[string]any{
+				"Path": `HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Diagnostics`,
+				"Name": "15 Field Engineering",
+			})
+		switch {
+		case err != nil:
+			v.addResult(w, "WARN", "Audit",
+				fmt.Sprintf("Could not query LDAP Field Engineering on %s: %v", dc, err), "")
+		case r.Error != "":
+			v.addResult(w, "WARN", "Audit",
+				fmt.Sprintf("LDAP Field Engineering query error on %s: %s", dc, r.Error), "")
+		case !r.Present:
+			v.addResult(w, "FAIL", "Audit",
+				fmt.Sprintf("LDAP Field Engineering not set on %s (1644 events disabled)", dc), "")
+		case r.Value == 0:
+			v.addResult(w, "FAIL", "Audit",
+				fmt.Sprintf("LDAP Field Engineering=0 on %s (1644 events disabled)", dc), "")
+		default:
+			v.addResult(w, "PASS", "Audit",
+				fmt.Sprintf("LDAP Field Engineering=%d on %s (1644 events enabled)", r.Value, dc), "")
+			enabled = true
 		}
 	}
-	if !any && len(dcs) > 0 {
+	if !enabled && len(dcs) > 0 {
 		v.addResult(w, "INFO", "Audit", "No DC has LDAP diagnostic logging enabled", "")
 	}
 }
@@ -2230,19 +2577,12 @@ func (v *Validator) dcRoles() []string {
 	return dcs
 }
 
-// reportLDAPDiagnostic emits the result for one DC and returns true when the
-// 1644 events are enabled.
-func (v *Validator) reportLDAPDiagnostic(w io.Writer, dc, val string) bool {
-	switch val {
-	case "0", "", "NOT_SET":
-		v.addResult(w, "FAIL", "Audit",
-			fmt.Sprintf("LDAP Field Engineering=%s on %s (1644 events disabled)", val, dc), "")
-		return false
-	default:
-		v.addResult(w, "PASS", "Audit",
-			fmt.Sprintf("LDAP Field Engineering=%s on %s (1644 events enabled)", val, dc), "")
-		return true
-	}
+//go:embed scripts/asr_rules.ps1
+var scriptASRRules string
+
+type asrRulesResult struct {
+	RuleCount int    `json:"rule_count"`
+	Error     string `json:"error"`
 }
 
 // checkASRRules verifies Defender ASR rules are configured on hosts running
@@ -2270,27 +2610,35 @@ func (v *Validator) checkASRRules(ctx context.Context, w io.Writer) {
 			continue
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-		output := v.runPS(ctx, host,
-			`$ids = (Get-MpPreference -ErrorAction SilentlyContinue).AttackSurfaceReductionRules_Ids; `+
-				`if (-not $ids -or $ids.Count -eq 0) { Write-Output 'NO_RULES'; exit }; `+
-				`Write-Output ("COUNT=" + $ids.Count)`)
-		line := strings.TrimSpace(output)
+		r, err := runScriptJSON[asrRulesResult](ctx, v, host, scriptASRRules, nil)
 		switch {
-		case strings.Contains(line, "NO_RULES"):
+		case err != nil:
+			v.addResult(w, "WARN", "Defender",
+				fmt.Sprintf("Could not read ASR rules on %s: %v", hostLabel, err), "")
+		case r.Error != "":
+			v.addResult(w, "WARN", "Defender",
+				fmt.Sprintf("ASR rules query error on %s: %s", hostLabel, r.Error), "")
+		case r.RuleCount == 0:
 			v.addResult(w, "FAIL", "Defender",
 				fmt.Sprintf("No ASR rules configured on %s", hostLabel), "")
-		case strings.HasPrefix(line, "COUNT="):
-			cnt := strings.TrimPrefix(line, "COUNT=")
-			v.addResult(w, "PASS", "Defender",
-				fmt.Sprintf("ASR rules configured on %s: %s rule(s)", hostLabel, cnt), "")
 		default:
-			v.addResult(w, "WARN", "Defender",
-				fmt.Sprintf("Could not read ASR rules on %s", hostLabel), "")
+			v.addResult(w, "PASS", "Defender",
+				fmt.Sprintf("ASR rules configured on %s: %d rule(s)", hostLabel, r.RuleCount), "")
 		}
 	}
 }
 
 // ---- Section 10: IIS upload ----
+
+//go:embed scripts/iis_upload_acl.ps1
+var scriptIISUploadACL string
+
+type iisUploadACLResult struct {
+	DirPresent bool   `json:"dir_present"`
+	ACEPresent bool   `json:"ace_present"`
+	Rights     string `json:"rights"`
+	Error      string `json:"error"`
+}
 
 // checkIISUploadPermissions verifies the IIS upload directory is writable by
 // IIS_IUSRS (set by the vulns_permissions role on hosts running IIS).
@@ -2310,28 +2658,24 @@ func (v *Validator) checkIISUploadPermissions(ctx context.Context, w io.Writer) 
 			continue
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-		output := v.runPS(ctx, host,
-			`$p='C:\inetpub\wwwroot\upload'; `+
-				`if (-not (Test-Path $p)) { Write-Output 'NO_UPLOAD_DIR'; exit }; `+
-				`$acl = Get-Acl -Path $p -ErrorAction SilentlyContinue; `+
-				`$ace = $acl.Access | Where-Object { `+
-				`$_.IdentityReference -match 'IIS_IUSRS' -and $_.FileSystemRights -match 'FullControl|Modify|Write' }; `+
-				`if ($ace) { Write-Output ($ace.FileSystemRights -join ',') } else { Write-Output 'NO_IIS_ACE' }`)
-		line := strings.TrimSpace(output)
+		r, err := runScriptJSON[iisUploadACLResult](ctx, v, host, scriptIISUploadACL, nil)
 		switch {
-		case strings.Contains(line, "NO_UPLOAD_DIR"):
+		case err != nil:
+			v.addResult(w, "WARN", "IIS",
+				fmt.Sprintf("Could not read upload ACL on %s: %v", hostLabel, err), "")
+		case r.Error != "":
+			v.addResult(w, "WARN", "IIS",
+				fmt.Sprintf("Upload ACL query error on %s: %s", hostLabel, r.Error), "")
+		case !r.DirPresent:
 			v.addResult(w, "INFO", "IIS",
 				fmt.Sprintf("No upload directory on %s (IIS not configured)", hostLabel), "")
-		case strings.Contains(line, "NO_IIS_ACE"):
+		case !r.ACEPresent:
 			v.addResult(w, "FAIL", "IIS",
 				fmt.Sprintf("Upload dir on %s has no IIS_IUSRS write ACE", hostLabel), "")
-		case line == "":
-			v.addResult(w, "WARN", "IIS",
-				fmt.Sprintf("Could not read upload ACL on %s", hostLabel), "")
 		default:
 			any = true
 			v.addResult(w, "PASS", "IIS",
-				fmt.Sprintf("IIS_IUSRS has %s on upload dir on %s", line, hostLabel), "")
+				fmt.Sprintf("IIS_IUSRS has %s on upload dir on %s", r.Rights, hostLabel), "")
 		}
 	}
 	if !any {
@@ -2360,12 +2704,17 @@ func (v *Validator) checkConfiguredUsers(ctx context.Context, w io.Writer) {
 		if !v.hasHost(dcRole) {
 			continue
 		}
-		output := v.runPS(ctx, dcRole, fmt.Sprintf(
-			`$u = Get-ADUser -Identity '%s' -Properties MemberOf -ErrorAction SilentlyContinue; `+
+		output, err := runScriptText(ctx, v, dcRole,
+			`$u = Get-ADUser -Identity {{psq .Username}} -Properties MemberOf -ErrorAction SilentlyContinue; `+
 				`if (-not $u) { Write-Output 'USER_NOT_FOUND'; exit }; `+
 				`Write-Output 'USER_FOUND'; `+
 				`foreach ($g in $u.MemberOf) { Write-Output "GROUP=$g" }`,
-			uf.Username))
+			map[string]any{"Username": uf.Username})
+		if err != nil {
+			v.addResult(w, "WARN", "Users",
+				fmt.Sprintf("Could not verify %s in %s: %v", uf.Username, uf.Domain, err), "")
+			continue
+		}
 		if !strings.Contains(output, "USER_FOUND") {
 			v.addResult(w, "FAIL", "Users",
 				fmt.Sprintf("%s does NOT exist in %s", uf.Username, uf.Domain), "")
@@ -2425,11 +2774,14 @@ func (v *Validator) checkConfiguredGroups(ctx context.Context, w io.Writer) {
 		if !v.hasHost(dcRole) {
 			continue
 		}
-		output := v.runPS(ctx, dcRole, fmt.Sprintf(
-			`$g = Get-ADGroup -Identity '%s' -ErrorAction SilentlyContinue; `+
+		output, err := runScriptText(ctx, v, dcRole,
+			`$g = Get-ADGroup -Identity {{psq .Group}} -ErrorAction SilentlyContinue; `+
 				`if ($g) { 'GROUP_FOUND' } else { 'GROUP_NOT_FOUND' }`,
-			gf.Group))
+			map[string]any{"Group": gf.Group})
 		switch {
+		case err != nil:
+			v.addResult(w, "WARN", "Groups",
+				fmt.Sprintf("Could not verify group '%s' in %s: %v", gf.Group, gf.Domain, err), "")
 		case strings.Contains(output, "GROUP_FOUND"):
 			v.addResult(w, "PASS", "Groups",
 				fmt.Sprintf("Group '%s' exists in %s", gf.Group, gf.Domain), "")
@@ -2445,11 +2797,27 @@ func (v *Validator) checkConfiguredGroups(ctx context.Context, w io.Writer) {
 
 // ---- Section 11: Local Admin Access Map ----
 
+// localAdminsQuery is `net localgroup Administrators` parsed down to its
+// member rows. Unlike Get-LocalGroupMember, `net localgroup` works
+// identically on member servers and DCs (where Administrators is the
+// BUILTIN\Administrators domain-local group). Output rows are DOMAIN\user
+// (or bare account name for local accounts), which matches the
+// labmap-configured "domain\\user" format.
+const localAdminsQuery = `$lines = (net localgroup Administrators 2>&1 | Out-String) -split "` + "`" + `r?` + "`" + `n"; ` +
+	`$inMembers = $false; ` +
+	`foreach ($l in $lines) { ` +
+	`  if ($l -match '^-+$') { $inMembers = $true; continue } ` +
+	`  if (-not $inMembers) { continue } ` +
+	`  $t = $l.Trim(); ` +
+	`  if ($t -eq '' -or $t -like 'The command completed*') { continue } ` +
+	`  $t ` +
+	`}`
+
 // checkLocalAdmins verifies, for each Windows host, that the configured
 // local_groups.Administrators set matches the actual Administrators group
-// membership reported by Get-LocalGroupMember. If the host has no
-// configured local admins, it falls back to INFO with the live members so
-// operators can compare manually.
+// membership. Uses `net localgroup` rather than Get-LocalGroupMember
+// because the latter silently returns nothing for BUILTIN\Administrators
+// on domain controllers.
 func (v *Validator) checkLocalAdmins(ctx context.Context, w io.Writer) {
 	printHeader(w, "Local Admin Access Map")
 
@@ -2466,8 +2834,7 @@ func (v *Validator) checkLocalAdmins(ctx context.Context, w io.Writer) {
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
 
-		output := v.runPS(ctx, host,
-			`Get-LocalGroupMember -Group Administrators -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name`)
+		output := v.runPS(ctx, host, localAdminsQuery)
 		actual := parseOutputLines(output)
 
 		expected := v.lab.LocalAdminsForHost(role)
@@ -2482,16 +2849,28 @@ func (v *Validator) checkLocalAdmins(ctx context.Context, w io.Writer) {
 			continue
 		}
 
-		// Normalize actual entries (e.g. "SEVENKINGDOMS\\robert.baratheon")
-		// for case-insensitive matching against expected ("sevenkingdoms\\robert.baratheon").
-		actualSet := make(map[string]bool, len(actual))
+		// Build a set of actual names. On member servers `net localgroup`
+		// emits "DOMAIN\user"; on DCs same-domain accounts are listed
+		// bare ("robert.baratheon"). Index both the full name and the
+		// post-backslash leaf so a "domain\\user" expectation matches
+		// either form.
+		actualSet := make(map[string]bool, len(actual)*2)
 		for _, a := range actual {
-			actualSet[strings.ToLower(strings.TrimSpace(a))] = true
+			t := strings.ToLower(strings.TrimSpace(a))
+			actualSet[t] = true
+			if i := strings.Index(t, `\`); i >= 0 {
+				actualSet[t[i+1:]] = true
+			}
 		}
 
 		var missing []string
 		for _, exp := range expected {
-			if !actualSet[strings.ToLower(strings.TrimSpace(exp))] {
+			t := strings.ToLower(strings.TrimSpace(exp))
+			leaf := t
+			if i := strings.Index(t, `\`); i >= 0 {
+				leaf = t[i+1:]
+			}
+			if !actualSet[t] && !actualSet[leaf] {
 				missing = append(missing, exp)
 			}
 		}
@@ -2514,6 +2893,14 @@ type cvePatch struct {
 	CVE  string
 	Name string
 	KBs  []string
+}
+
+//go:embed scripts/cve_patch.ps1
+var scriptCVEPatch string
+
+type cvePatchResult struct {
+	Installed string `json:"installed"`
+	Error     string `json:"error"`
 }
 
 // checkCVEPatches reports patch status for each (Windows host, CVE) by
@@ -2543,35 +2930,21 @@ func (v *Validator) checkCVEPatches(ctx context.Context, w io.Writer) {
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
 
 		for _, p := range patches {
-			// Build a single PS command that checks all KBs for this CVE
-			// and emits the first installed KB id, or INSTALLED_NONE.
-			ids := make([]string, len(p.KBs))
-			for i, kb := range p.KBs {
-				ids[i] = "'" + kb + "'"
-			}
-			cmd := fmt.Sprintf(
-				`$kbs = @(%s); `+
-					`$found = $null; `+
-					`foreach ($kb in $kbs) { `+
-					`  $h = Get-HotFix -Id $kb -ErrorAction SilentlyContinue; `+
-					`  if ($h) { $found = $kb; break } `+
-					`}; `+
-					`if ($found) { Write-Output "INSTALLED=$found" } else { Write-Output 'INSTALLED_NONE' }`,
-				strings.Join(ids, ","))
-			output := v.runPS(ctx, host, cmd)
-			line := strings.TrimSpace(output)
-
+			r, err := runScriptJSON[cvePatchResult](ctx, v, host, scriptCVEPatch,
+				map[string]any{"KBs": p.KBs})
 			switch {
-			case strings.Contains(line, "INSTALLED_NONE"):
+			case err != nil:
+				v.addResult(w, "WARN", "CVE",
+					fmt.Sprintf("Could not query %s status on %s: %v", p.Name, hostLabel, err), "")
+			case r.Error != "":
+				v.addResult(w, "WARN", "CVE",
+					fmt.Sprintf("CVE check error on %s: %s", hostLabel, r.Error), "")
+			case r.Installed == "":
 				v.addResult(w, "PASS", "CVE",
 					fmt.Sprintf("%s on %s: unpatched (%s)", p.Name, hostLabel, p.CVE), "")
-			case strings.HasPrefix(line, "INSTALLED="):
-				kb := strings.TrimPrefix(line, "INSTALLED=")
-				v.addResult(w, "INFO", "CVE",
-					fmt.Sprintf("%s on %s: patched (%s, %s)", p.Name, hostLabel, kb, p.CVE), "")
 			default:
-				v.addResult(w, "WARN", "CVE",
-					fmt.Sprintf("Could not query %s status on %s", p.Name, hostLabel), "")
+				v.addResult(w, "INFO", "CVE",
+					fmt.Sprintf("%s on %s: patched (%s, %s)", p.Name, hostLabel, r.Installed, p.CVE), "")
 			}
 		}
 	}
