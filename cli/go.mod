@@ -8,7 +8,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.299.0
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.68.5
 	github.com/aws/aws-sdk-go-v2/service/sts v1.42.0
-	github.com/cowdogmoo/warpgate/v3 v3.2.1-0.20260423050804-86f51bcf8bdb
+	github.com/cowdogmoo/warpgate/v3 v3.2.1-0.20260426005137-cd806e587492
 	github.com/fatih/color v1.19.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/viper v1.21.0
@@ -24,7 +24,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.22 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.22 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.23 // indirect
-	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.69.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.70.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/iam v1.53.8 // indirect
 	github.com/aws/aws-sdk-go-v2/service/imagebuilder v1.53.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.8 // indirect
@@ -32,7 +32,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/signin v1.0.10 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.30.16 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.20 // indirect
-	github.com/aws/smithy-go v1.25.0 // indirect
+	github.com/aws/smithy-go v1.25.1 // indirect
 	github.com/containerd/stargz-snapshotter/estargz v0.18.2 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/docker/cli v29.4.1+incompatible // indirect
