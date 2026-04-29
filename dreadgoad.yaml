@@ -1,5 +1,6 @@
 # DreadGOAD CLI Configuration
 env: staging
+provider: aws  # Provider: aws, proxmox, ludus
 # region: us-west-2  # Override AWS region (default: from inventory)
 debug: false
 max_retries: 3
@@ -7,6 +8,38 @@ retry_delay: 30
 idle_timeout: 1200
 # log_dir: ~/.ansible/logs/goad
 # project_root: /path/to/DreadGOAD  # Auto-detected if omitted
+
+# Proxmox settings (used when provider: proxmox)
+# proxmox:
+#   api_url: "https://192.168.20.80:8006"
+#   user: "root@pam"
+#   password: ""  # Or set DREADGOAD_PROXMOX_PASSWORD env var
+#   node: "proxmox"
+#   pool: "GOAD"
+#   full_clone: "false"
+#   storage: "local"
+#   vlan: "10"
+#   network_bridge: "vmbr3"
+#   network_model: "e1000"
+#   ip_range: "192.168.10"
+#   lab: "GOAD"
+#   template_ids:
+#     WinServer2019_x64: "201900"
+#     WinServer2016_x64: "201600"
+#     WinServer2022_x64: "202201"
+#     WinServer2025_x64: "202501"
+#     Ubuntu_2204_x64: "922040"
+#     Ubuntu_2404_x64: "924040"
+
+# Ludus settings (used when provider: ludus)
+# ludus:
+#   api_key: ""  # Or set LUDUS_API_KEY env var
+#   use_impersonation: true
+#   ssh_host: ""  # Remote Ludus host for SSH-based execution
+#   ssh_user: "root"
+#   ssh_password: ""  # Or set LUDUS_SSH_PASSWORD env var
+#   ssh_key_path: ""  # Path to SSH private key
+#   ssh_port: 22
 
 # Per-environment settings
 environments:

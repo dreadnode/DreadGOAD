@@ -63,6 +63,14 @@ jobs:
         with:
           terraform_version: "1.9.7"
 
+      - name: Set up Terragrunt
+        run: |
+          TG_VERSION="v0.69.1"
+          curl -fsSL -o /tmp/terragrunt \
+            "https://github.com/gruntwork-io/terragrunt/releases/download/${TG_VERSION}/terragrunt_linux_amd64"
+          sudo install -m 0755 /tmp/terragrunt /usr/local/bin/terragrunt
+          terragrunt --version
+
       - name: Set up TFLint
         uses: terraform-linters/setup-tflint@b480b8fcdaa6f2c577f8e4fa799e89e756bb7c93 # v6
         with:

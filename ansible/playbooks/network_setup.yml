@@ -16,16 +16,11 @@
   gather_facts: false
   serial: 10
   tasks:
-    - name: Build and distribute DC and instance IP mappings
+    # instance_to_ip is set by network_discovery's aws_mapping.yml on SSM hosts.
+    # For non-SSM connections (where ansible_host is already an IP/hostname),
+    # rebuild it from per-host host_ipv4 facts.
+    - name: Build instance_to_ip fallback for non-SSM connections
       ansible.builtin.set_fact:
-        dc_hostname_to_ip: >-
-          {%- set mapping = {} -%}
-          {%- for host in groups['dc'] -%}
-            {%- if hostvars[host]['dc_ipv4'] is defined and hostvars[host]['dc_ipv4'] != '' -%}
-              {%- set _ = mapping.update({host: hostvars[host]['dc_ipv4']}) -%}
-            {%- endif -%}
-          {%- endfor -%}
-          {{ mapping }}
         instance_to_ip: >-
           {%- set mapping = {} -%}
           {%- for host in groups['all'] -%}
@@ -40,6 +35,12 @@
       delegate_to: "{{ item }}"
       loop: "{{ groups['all'] }}"
       throttle: 5
+      when: ansible_connection is not search('aws_ssm')
+
+    - name: Build and distribute dc_hostname_to_ip mapping
+      ansible.builtin.include_role:
+        name: dreadnode.goad.network_discovery
+        tasks_from: dc_hostname_mapping.yml
 
     - name: Debug the mappings
       ansible.builtin.debug:

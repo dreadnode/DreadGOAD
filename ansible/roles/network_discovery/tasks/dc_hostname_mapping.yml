@@ -1,0 +1,20 @@
+---
+# Builds the dc_hostname_to_ip mapping from per-host dc_ipv4 facts and
+# distributes it to every host's hostvars. Requires dc_facts.yml (or any
+# task that sets dc_ipv4 on each DC host) to have run first.
+- name: Build and distribute dc_hostname_to_ip mapping
+  ansible.builtin.set_fact:
+    dc_hostname_to_ip: >-
+      {%- set mapping = {} -%}
+      {%- for host in groups['dc'] -%}
+        {%- if hostvars[host]['dc_ipv4'] is defined and hostvars[host]['dc_ipv4'] != '' -%}
+          {%- set _ = mapping.update({host: hostvars[host]['dc_ipv4']}) -%}
+        {%- endif -%}
+      {%- endfor -%}
+      {{ mapping }}
+    cacheable: true
+  run_once: true
+  delegate_facts: true
+  delegate_to: "{{ item }}"
+  loop: "{{ groups['all'] }}"
+  throttle: 5

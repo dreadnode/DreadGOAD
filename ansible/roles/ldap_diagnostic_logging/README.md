@@ -39,6 +39,7 @@ Configure LDAP diagnostic logging on Domain Controllers for security monitoring
 - **Ensure Scripts directory exists** (ansible.windows.win_file)
 - **Create LDAP monitoring script** (ansible.windows.win_copy)
 - **Create scheduled task to monitor LDAP queries** (community.windows.win_scheduled_task)
+- **Verify NTDS diagnostic registry values** (ansible.windows.win_powershell)
 
 ## Example Playbook
 

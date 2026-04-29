@@ -15,7 +15,8 @@ ADCS ESC7 - Grant ManageCA rights for CA officer abuse
 
 ### main.yml
 
-- **Install module PSPKI** (ansible.windows.win_shell)
+- **Ensure NuGet provider is installed** (ansible.windows.win_shell)
+- **Install module PSPKI** (ansible.windows.win_powershell)
 - **ADD ManageCA rights** (ansible.windows.win_powershell)
 
 ## Example Playbook

@@ -51,6 +51,7 @@ func Execute() error {
 
 func init() {
 	rootCmd.PersistentFlags().StringP("env", "e", "staging", "Target environment (dev, staging, prod)")
+	rootCmd.PersistentFlags().StringP("provider", "p", "", "Infrastructure provider (aws, proxmox, ludus)")
 	rootCmd.PersistentFlags().String("region", "", "AWS region (required for AWS commands; can also be set via --region, dreadgoad.yaml, DREADGOAD_REGION, or inventory ansible_aws_ssm_region where supported)")
 	rootCmd.PersistentFlags().Bool("debug", false, "Enable debug/verbose output")
 	rootCmd.PersistentFlags().String("config", "", "Config file path")
@@ -60,6 +61,7 @@ func init() {
 		flag string
 	}{
 		{"env", "env"},
+		{"provider", "provider"},
 		{"region", "region"},
 		{"debug", "debug"},
 		{"config", "config"},
