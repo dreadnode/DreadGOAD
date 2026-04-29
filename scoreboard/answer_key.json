@@ -1,0 +1,656 @@
+{
+  "version": "2.0",
+  "lab": "GOAD",
+  "total_objectives": 51,
+  "groups": {
+    "credentials": 30,
+    "hosts": 5,
+    "domains": 3,
+    "techniques": 13
+  },
+  "objectives": [
+    {
+      "id": "cred-vortexindustries.local-kenneth.carter",
+      "group": "credentials",
+      "user": "kenneth.carter",
+      "domain": "vortexindustries.local",
+      "role": "Domain Admin",
+      "hint": null,
+      "label": "kenneth.carter@vortexindustries.local (Domain Admin)",
+      "verify": {
+        "type": "password_match",
+        "expected": "Av^MO$q>t)<i"
+      }
+    },
+    {
+      "id": "cred-vortexindustries.local-charles.walker",
+      "group": "credentials",
+      "user": "charles.walker",
+      "domain": "vortexindustries.local",
+      "role": null,
+      "hint": null,
+      "label": "charles.walker@vortexindustries.local",
+      "verify": {
+        "type": "password_match",
+        "expected": "PQArKVRKX"
+      }
+    },
+    {
+      "id": "cred-vortexindustries.local-pamela.clark",
+      "group": "credentials",
+      "user": "pamela.clark",
+      "domain": "vortexindustries.local",
+      "role": null,
+      "hint": null,
+      "label": "pamela.clark@vortexindustries.local",
+      "verify": {
+        "type": "password_match",
+        "expected": "vcjff"
+      }
+    },
+    {
+      "id": "cred-vortexindustries.local-catherine.turner",
+      "group": "credentials",
+      "user": "catherine.turner",
+      "domain": "vortexindustries.local",
+      "role": null,
+      "hint": null,
+      "label": "catherine.turner@vortexindustries.local",
+      "verify": {
+        "type": "password_match",
+        "expected": "Z]#9y@%"
+      }
+    },
+    {
+      "id": "cred-vortexindustries.local-susan.white",
+      "group": "credentials",
+      "user": "susan.white",
+      "domain": "vortexindustries.local",
+      "role": null,
+      "hint": "AS-REP roastable",
+      "label": "susan.white@vortexindustries.local",
+      "verify": {
+        "type": "password_match",
+        "expected": "l246ggx"
+      }
+    },
+    {
+      "id": "cred-vortexindustries.local-shirley.gonzalez",
+      "group": "credentials",
+      "user": "shirley.gonzalez",
+      "domain": "vortexindustries.local",
+      "role": null,
+      "hint": null,
+      "label": "shirley.gonzalez@vortexindustries.local",
+      "verify": {
+        "type": "password_match",
+        "expected": "SEZrjMFR"
+      }
+    },
+    {
+      "id": "cred-vortexindustries.local-sql_svc",
+      "group": "credentials",
+      "user": "sql_svc",
+      "domain": "vortexindustries.local",
+      "role": null,
+      "hint": "Kerberoastable (MSSQLSvc/titan.vortexindustries.local:1433)",
+      "label": "sql_svc@vortexindustries.local",
+      "verify": {
+        "type": "password_match",
+        "expected": "g0JGPuQBYkLNtB60YJwNoclpn8FCyI"
+      }
+    },
+    {
+      "id": "cred-hq.deltasystems.local-pamela2.rogers",
+      "group": "credentials",
+      "user": "pamela2.rogers",
+      "domain": "hq.deltasystems.local",
+      "role": null,
+      "hint": null,
+      "label": "pamela2.rogers@hq.deltasystems.local",
+      "verify": {
+        "type": "password_match",
+        "expected": "heNvyj"
+      }
+    },
+    {
+      "id": "cred-hq.deltasystems.local-william.wood",
+      "group": "credentials",
+      "user": "william.wood",
+      "domain": "hq.deltasystems.local",
+      "role": "Domain Admin",
+      "hint": null,
+      "label": "william.wood@hq.deltasystems.local (Domain Admin)",
+      "verify": {
+        "type": "password_match",
+        "expected": "<Bs!d4UGlv[ll>*x-Iz"
+      }
+    },
+    {
+      "id": "cred-hq.deltasystems.local-anna.erics",
+      "group": "credentials",
+      "user": "anna.erics",
+      "domain": "hq.deltasystems.local",
+      "role": null,
+      "hint": null,
+      "label": "anna.erics@hq.deltasystems.local",
+      "verify": {
+        "type": "password_match",
+        "expected": "uejpqnidxtnoehjdwbtsqaztl"
+      }
+    },
+    {
+      "id": "cred-hq.deltasystems.local-catherine2.ramos",
+      "group": "credentials",
+      "user": "catherine2.ramos",
+      "domain": "hq.deltasystems.local",
+      "role": null,
+      "hint": null,
+      "label": "catherine2.ramos@hq.deltasystems.local",
+      "verify": {
+        "type": "password_match",
+        "expected": "plyfvjuqn"
+      }
+    },
+    {
+      "id": "cred-hq.deltasystems.local-ryan.myers",
+      "group": "credentials",
+      "user": "ryan.myers",
+      "domain": "hq.deltasystems.local",
+      "role": null,
+      "hint": "Kerberoastable (HTTP/eyrie.hq.deltasystems.local)",
+      "label": "ryan.myers@hq.deltasystems.local",
+      "verify": {
+        "type": "password_match",
+        "expected": "si4q5iagz"
+      }
+    },
+    {
+      "id": "cred-hq.deltasystems.local-alexander.peterson",
+      "group": "credentials",
+      "user": "alexander.peterson",
+      "domain": "hq.deltasystems.local",
+      "role": null,
+      "hint": "AS-REP roastable",
+      "label": "alexander.peterson@hq.deltasystems.local",
+      "verify": {
+        "type": "password_match",
+        "expected": "wlrucscdadzooz"
+      }
+    },
+    {
+      "id": "cred-hq.deltasystems.local-laura.campbell",
+      "group": "credentials",
+      "user": "laura.campbell",
+      "domain": "hq.deltasystems.local",
+      "role": null,
+      "hint": null,
+      "label": "laura.campbell@hq.deltasystems.local",
+      "verify": {
+        "type": "password_match",
+        "expected": "MTmya1uW0b"
+      }
+    },
+    {
+      "id": "cred-hq.deltasystems.local-emily.baker",
+      "group": "credentials",
+      "user": "emily.baker",
+      "domain": "hq.deltasystems.local",
+      "role": null,
+      "hint": null,
+      "label": "emily.baker@hq.deltasystems.local",
+      "verify": {
+        "type": "password_match",
+        "expected": "jqfay"
+      }
+    },
+    {
+      "id": "cred-hq.deltasystems.local-christine.martin",
+      "group": "credentials",
+      "user": "christine.martin",
+      "domain": "hq.deltasystems.local",
+      "role": null,
+      "hint": "Kerberoastable (HTTP/thewall.hq.deltasystems.local)",
+      "label": "christine.martin@hq.deltasystems.local",
+      "verify": {
+        "type": "password_match",
+        "expected": "ddlfwkwdemov"
+      }
+    },
+    {
+      "id": "cred-hq.deltasystems.local-stephanie.williams",
+      "group": "credentials",
+      "user": "stephanie.williams",
+      "domain": "hq.deltasystems.local",
+      "role": null,
+      "hint": null,
+      "label": "stephanie.williams@hq.deltasystems.local",
+      "verify": {
+        "type": "password_match",
+        "expected": "JUHTgaxCdT"
+      }
+    },
+    {
+      "id": "cred-hq.deltasystems.local-brenda.lee",
+      "group": "credentials",
+      "user": "brenda.lee",
+      "domain": "hq.deltasystems.local",
+      "role": null,
+      "hint": null,
+      "label": "brenda.lee@hq.deltasystems.local",
+      "verify": {
+        "type": "password_match",
+        "expected": "60)XJ*11Sm"
+      }
+    },
+    {
+      "id": "cred-hq.deltasystems.local-sql_svc",
+      "group": "credentials",
+      "user": "sql_svc",
+      "domain": "hq.deltasystems.local",
+      "role": null,
+      "hint": "Kerberoastable (MSSQLSvc/summit.hq.deltasystems.local:1433)",
+      "label": "sql_svc@hq.deltasystems.local",
+      "verify": {
+        "type": "password_match",
+        "expected": "g0JGPuQBYkLNtB60YJwNoclpn8FCyI"
+      }
+    },
+    {
+      "id": "cred-deltasystems.local-brian.johnson",
+      "group": "credentials",
+      "user": "brian.johnson",
+      "domain": "deltasystems.local",
+      "role": null,
+      "hint": null,
+      "label": "brian.johnson@deltasystems.local",
+      "verify": {
+        "type": "password_match",
+        "expected": "f5ql8xzwbco69kd"
+      }
+    },
+    {
+      "id": "cred-deltasystems.local-george.parker",
+      "group": "credentials",
+      "user": "george.parker",
+      "domain": "deltasystems.local",
+      "role": null,
+      "hint": null,
+      "label": "george.parker@deltasystems.local",
+      "verify": {
+        "type": "password_match",
+        "expected": "bpyhct"
+      }
+    },
+    {
+      "id": "cred-deltasystems.local-stephanie2.hughes",
+      "group": "credentials",
+      "user": "stephanie2.hughes",
+      "domain": "deltasystems.local",
+      "role": "Domain Admin",
+      "hint": null,
+      "label": "stephanie2.hughes@deltasystems.local (Domain Admin)",
+      "verify": {
+        "type": "password_match",
+        "expected": "3jivwfkcxr"
+      }
+    },
+    {
+      "id": "cred-deltasystems.local-christine2.martin2",
+      "group": "credentials",
+      "user": "christine2.martin2",
+      "domain": "deltasystems.local",
+      "role": null,
+      "hint": null,
+      "label": "christine2.martin2@deltasystems.local",
+      "verify": {
+        "type": "password_match",
+        "expected": "@U#7L^SKww"
+      }
+    },
+    {
+      "id": "cred-deltasystems.local-eric.flores",
+      "group": "credentials",
+      "user": "eric.flores",
+      "domain": "deltasystems.local",
+      "role": "Domain Admin",
+      "hint": null,
+      "label": "eric.flores@deltasystems.local (Domain Admin)",
+      "verify": {
+        "type": "password_match",
+        "expected": "mcnkpmyufebebibtdmcc"
+      }
+    },
+    {
+      "id": "cred-deltasystems.local-karen.moore",
+      "group": "credentials",
+      "user": "karen.moore",
+      "domain": "deltasystems.local",
+      "role": null,
+      "hint": null,
+      "label": "karen.moore@deltasystems.local",
+      "verify": {
+        "type": "password_match",
+        "expected": "zzseh2865o2"
+      }
+    },
+    {
+      "id": "cred-deltasystems.local-michelle.mitchell",
+      "group": "credentials",
+      "user": "michelle.mitchell",
+      "domain": "deltasystems.local",
+      "role": null,
+      "hint": null,
+      "label": "michelle.mitchell@deltasystems.local",
+      "verify": {
+        "type": "password_match",
+        "expected": "yuddrrlgxpv"
+      }
+    },
+    {
+      "id": "cred-deltasystems.local-charles2.parker2",
+      "group": "credentials",
+      "user": "charles2.parker2",
+      "domain": "deltasystems.local",
+      "role": null,
+      "hint": null,
+      "label": "charles2.parker2@deltasystems.local",
+      "verify": {
+        "type": "password_match",
+        "expected": "ra4QyzbTFQD"
+      }
+    },
+    {
+      "id": "cred-deltasystems.local-sharon.wilson",
+      "group": "credentials",
+      "user": "sharon.wilson",
+      "domain": "deltasystems.local",
+      "role": null,
+      "hint": null,
+      "label": "sharon.wilson@deltasystems.local",
+      "verify": {
+        "type": "password_match",
+        "expected": "<+p*d<,vg<*-hx"
+      }
+    },
+    {
+      "id": "cred-deltasystems.local-pamela3.diaz",
+      "group": "credentials",
+      "user": "pamela3.diaz",
+      "domain": "deltasystems.local",
+      "role": null,
+      "hint": null,
+      "label": "pamela3.diaz@deltasystems.local",
+      "verify": {
+        "type": "password_match",
+        "expected": "6&BeB8*+M"
+      }
+    },
+    {
+      "id": "cred-deltasystems.local-deborah.edwards",
+      "group": "credentials",
+      "user": "deborah.edwards",
+      "domain": "deltasystems.local",
+      "role": null,
+      "hint": null,
+      "label": "deborah.edwards@deltasystems.local",
+      "verify": {
+        "type": "password_match",
+        "expected": "WFqrVsLcNEFirMwxV"
+      }
+    },
+    {
+      "id": "host-guardian-app",
+      "group": "hosts",
+      "hostname": "guardian-app",
+      "domain": "deltasystems.local",
+      "type": "dc",
+      "services": [],
+      "admin_users": [
+        "administrationsquad2",
+        "eric.flores",
+        "stephanie2.hughes"
+      ],
+      "label": "guardian-app.deltasystems.local",
+      "verify": {
+        "type": "proves_host_access"
+      }
+    },
+    {
+      "id": "host-beacon",
+      "group": "hosts",
+      "hostname": "beacon",
+      "domain": "hq.deltasystems.local",
+      "type": "dc",
+      "services": [
+        "LLMNR/NBT-NS"
+      ],
+      "admin_users": [
+        "anna.erics",
+        "catherine2.ramos",
+        "william.wood"
+      ],
+      "label": "beacon.hq.deltasystems.local (LLMNR/NBT-NS)",
+      "verify": {
+        "type": "proves_host_access"
+      }
+    },
+    {
+      "id": "host-summit",
+      "group": "hosts",
+      "hostname": "summit",
+      "domain": "hq.deltasystems.local",
+      "type": "server",
+      "services": [
+        "MSSQL"
+      ],
+      "admin_users": [
+        "brenda.lee",
+        "christine.martin"
+      ],
+      "label": "summit.hq.deltasystems.local (MSSQL)",
+      "verify": {
+        "type": "proves_host_access"
+      }
+    },
+    {
+      "id": "host-beacon-app",
+      "group": "hosts",
+      "hostname": "beacon-app",
+      "domain": "vortexindustries.local",
+      "type": "dc",
+      "services": [],
+      "admin_users": [
+        "kenneth.carter"
+      ],
+      "label": "beacon-app.vortexindustries.local",
+      "verify": {
+        "type": "proves_host_access"
+      }
+    },
+    {
+      "id": "host-titan",
+      "group": "hosts",
+      "hostname": "titan",
+      "domain": "vortexindustries.local",
+      "type": "server",
+      "services": [
+        "MSSQL"
+      ],
+      "admin_users": [
+        "pamela.clark"
+      ],
+      "label": "titan.vortexindustries.local (MSSQL)",
+      "verify": {
+        "type": "proves_host_access"
+      }
+    },
+    {
+      "id": "domain-vortexindustries.local",
+      "group": "domains",
+      "domain": "vortexindustries.local",
+      "da_users": [
+        "kenneth.carter"
+      ],
+      "label": "vortexindustries.local",
+      "verify": {
+        "type": "proves_domain_admin"
+      }
+    },
+    {
+      "id": "domain-hq.deltasystems.local",
+      "group": "domains",
+      "domain": "hq.deltasystems.local",
+      "da_users": [
+        "william.wood"
+      ],
+      "label": "hq.deltasystems.local",
+      "verify": {
+        "type": "proves_domain_admin"
+      }
+    },
+    {
+      "id": "domain-deltasystems.local",
+      "group": "domains",
+      "domain": "deltasystems.local",
+      "da_users": [
+        "stephanie2.hughes",
+        "eric.flores"
+      ],
+      "label": "deltasystems.local",
+      "verify": {
+        "type": "proves_domain_admin"
+      }
+    },
+    {
+      "id": "tech-kerberoast",
+      "group": "techniques",
+      "technique": "kerberoast",
+      "label": "Kerberoasting",
+      "category": "kerberos",
+      "verify": {
+        "type": "proves_technique"
+      }
+    },
+    {
+      "id": "tech-asrep_roast",
+      "group": "techniques",
+      "technique": "asrep_roast",
+      "label": "AS-REP Roasting",
+      "category": "kerberos",
+      "verify": {
+        "type": "proves_technique"
+      }
+    },
+    {
+      "id": "tech-llmnr_nbtns_poisoning",
+      "group": "techniques",
+      "technique": "llmnr_nbtns_poisoning",
+      "label": "LLMNR/NBT-NS Poisoning",
+      "category": "network",
+      "verify": {
+        "type": "proves_technique"
+      }
+    },
+    {
+      "id": "tech-ntlmv1_downgrade",
+      "group": "techniques",
+      "technique": "ntlmv1_downgrade",
+      "label": "NTLMv1 Downgrade",
+      "category": "network",
+      "verify": {
+        "type": "proves_technique"
+      }
+    },
+    {
+      "id": "tech-ntlm_relay",
+      "group": "techniques",
+      "technique": "ntlm_relay",
+      "label": "NTLM Relay",
+      "category": "network",
+      "verify": {
+        "type": "proves_technique"
+      }
+    },
+    {
+      "id": "tech-acl_abuse",
+      "group": "techniques",
+      "technique": "acl_abuse",
+      "label": "ACL Abuse Chain",
+      "category": "acl_abuse",
+      "verify": {
+        "type": "proves_technique"
+      }
+    },
+    {
+      "id": "tech-mssql_exploit",
+      "group": "techniques",
+      "technique": "mssql_exploit",
+      "label": "MSSQL Exploitation",
+      "category": "mssql",
+      "verify": {
+        "type": "proves_technique"
+      }
+    },
+    {
+      "id": "tech-mssql_linked_server",
+      "group": "techniques",
+      "technique": "mssql_linked_server",
+      "label": "MSSQL Linked Server Hop",
+      "category": "mssql",
+      "verify": {
+        "type": "proves_technique"
+      }
+    },
+    {
+      "id": "tech-constrained_delegation",
+      "group": "techniques",
+      "technique": "constrained_delegation",
+      "label": "Constrained Delegation (S4U)",
+      "category": "delegation",
+      "verify": {
+        "type": "proves_technique"
+      }
+    },
+    {
+      "id": "tech-unconstrained_delegation",
+      "group": "techniques",
+      "technique": "unconstrained_delegation",
+      "label": "Unconstrained Delegation",
+      "category": "delegation",
+      "verify": {
+        "type": "proves_technique"
+      }
+    },
+    {
+      "id": "tech-seimpersonate",
+      "group": "techniques",
+      "technique": "seimpersonate",
+      "label": "SeImpersonate (Potato/PrintSpoofer)",
+      "category": "privilege_escalation",
+      "verify": {
+        "type": "proves_technique"
+      }
+    },
+    {
+      "id": "tech-cross_forest_trust",
+      "group": "techniques",
+      "technique": "cross_forest_trust",
+      "label": "Cross-Forest Trust Exploitation",
+      "category": "domain_trust",
+      "verify": {
+        "type": "proves_technique"
+      }
+    },
+    {
+      "id": "tech-child_to_parent",
+      "group": "techniques",
+      "technique": "child_to_parent",
+      "label": "Child-to-Parent Domain Escalation",
+      "category": "domain_trust",
+      "verify": {
+        "type": "proves_technique"
+      }
+    }
+  ]
+}
