@@ -7,16 +7,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
 
-	daws "github.com/dreadnode/dreadgoad/internal/aws"
 	"github.com/dreadnode/dreadgoad/internal/labmap"
+	"github.com/dreadnode/dreadgoad/internal/provider"
 	"github.com/fatih/color"
 )
 
@@ -41,28 +44,39 @@ type Report struct {
 
 // Validator runs vulnerability checks against GOAD instances.
 type Validator struct {
-	mu      sync.Mutex
-	client  *daws.Client
-	log     *slog.Logger
-	env     string
-	verbose bool
-	report  Report
-	hosts   map[string]string // hostname -> instance ID
-	lab     *labmap.LabMap
+	mu       sync.Mutex
+	provider provider.Provider
+	log      *slog.Logger
+	env      string
+	verbose  bool
+	report   Report
+	hosts    map[string]string // hostname -> instance ID
+	lab      *labmap.LabMap
+
+	// failures counts consecutive runPS failures per host. A single transient
+	// SSM/WinRM hiccup must not poison the rest of the run, so we only mark a
+	// host dead after deadThreshold sustained failures. Successful calls
+	// reset the counter.
+	failures sync.Map // hostname -> *atomic.Int64
+
+	// dead tracks hosts that have crossed the failure threshold; entries are
+	// added exactly once via sync.Map.LoadOrStore so the "marking host dead"
+	// warning fires once per host even under heavy concurrent fan-out.
+	dead sync.Map // hostname -> struct{}
 }
 
 // NewValidator creates a new Validator.
-func NewValidator(client *daws.Client, env string, verbose bool, log *slog.Logger, lab *labmap.LabMap) *Validator {
+func NewValidator(prov provider.Provider, env string, verbose bool, log *slog.Logger, lab *labmap.LabMap) *Validator {
 	if log == nil {
 		log = slog.Default()
 	}
 	return &Validator{
-		client:  client,
-		log:     log,
-		env:     env,
-		verbose: verbose,
-		hosts:   make(map[string]string),
-		lab:     lab,
+		provider: prov,
+		log:      log,
+		env:      env,
+		verbose:  verbose,
+		hosts:    make(map[string]string),
+		lab:      lab,
 		report: Report{
 			Date: time.Now().UTC().Format(time.RFC3339),
 			Env:  env,
@@ -73,7 +87,7 @@ func NewValidator(client *daws.Client, env string, verbose bool, log *slog.Logge
 // DiscoverHosts finds GOAD instances and maps hostnames to instance IDs.
 // Host roles are derived from the lab config, not hardcoded.
 func (v *Validator) DiscoverHosts(ctx context.Context) error {
-	instances, err := v.client.DiscoverInstances(ctx, v.env)
+	instances, err := v.provider.DiscoverInstances(ctx, v.env)
 	if err != nil {
 		return fmt.Errorf("discover instances: %w", err)
 	}
@@ -83,8 +97,8 @@ func (v *Validator) DiscoverHosts(ctx context.Context) error {
 		for _, role := range v.lab.HostRoles() {
 			host := strings.ToUpper(role)
 			if strings.Contains(name, host) {
-				v.hosts[host] = inst.InstanceID
-				v.addResult(os.Stdout, "PASS", "Discovery", fmt.Sprintf("Found %s", host), inst.InstanceID)
+				v.hosts[host] = inst.ID
+				v.addResult(os.Stdout, "PASS", "Discovery", fmt.Sprintf("Found %s", host), inst.ID)
 			}
 		}
 	}
@@ -100,8 +114,10 @@ func (v *Validator) DiscoverHosts(ctx context.Context) error {
 }
 
 // maxConcurrentChecks limits how many check categories run in parallel.
-// This bounds concurrent SSM calls to avoid throttling.
-const maxConcurrentChecks = 5
+// This bounds concurrent calls to the underlying provider (AWS SSM, Ludus
+// SSH+ansible, etc.). Tuned to keep all 28 default checks issuing work
+// simultaneously while staying under typical provider throttle limits.
+const maxConcurrentChecks = 16
 
 // checkFunc is the signature for all check functions.
 type checkFunc func(context.Context, io.Writer)
@@ -124,7 +140,13 @@ func (v *Validator) runChecks(ctx context.Context, checks []checkFunc) {
 	}
 
 	for _, ch := range chs {
-		_, _ = os.Stdout.Write(<-ch)
+		if _, err := os.Stdout.Write(<-ch); err != nil {
+			if errors.Is(err, syscall.EPIPE) {
+				return
+			}
+			fmt.Fprintf(os.Stderr, "validate: stdout write failed: %v\n", err)
+			return
+		}
 	}
 }
 
@@ -135,6 +157,8 @@ func (v *Validator) RunQuickChecks(ctx context.Context) {
 		v.checkNetworkMisconfigs,
 		v.checkMSSQL,
 		v.checkADCS,
+		v.checkADCSESC7,
+		v.checkADCSESC6,
 		v.checkDomainTrusts,
 		v.checkServices,
 		v.checkScheduledTasks,
@@ -144,17 +168,49 @@ func (v *Validator) RunQuickChecks(ctx context.Context) {
 // RunAllChecks executes all vulnerability validation checks.
 func (v *Validator) RunAllChecks(ctx context.Context) {
 	v.runChecks(ctx, []checkFunc{
+		// Section 2 — Configured Users
+		v.checkConfiguredUsers,
+		// Section 3 — Configured Groups
+		v.checkConfiguredGroups,
+		// Section 5 — Credential Discovery
 		v.checkCredentialDiscovery,
+		v.checkUsernamePasswordEqual,
+		v.checkAutologonRegistry,
+		v.checkCmdkeyCredentials,
+		v.checkSysvolPlaintext,
+		v.checkShareFilePlaintext,
+		v.checkSharePermissions,
+		v.checkAdministratorFolder,
+		// Section 6 — Network Poisoning / Hardening
 		v.checkKerberosAttacks,
 		v.checkNetworkMisconfigs,
 		v.checkAnonymousSMB,
+		v.checkSMBv1,
+		v.checkCredSSP,
+		v.checkWebDAVRedirector,
 		v.checkDelegation,
 		v.checkMachineAccountQuota,
+		// Section 7 — MSSQL
 		v.checkMSSQL,
+		// Section 8 — ADCS
 		v.checkADCS,
+		v.checkADCSESC1,
+		v.checkADCSESC2,
+		v.checkADCSESC3,
+		v.checkADCSESC4,
+		v.checkADCSESC6,
+		v.checkADCSESC7,
+		v.checkADCSESC9,
+		v.checkADCSESC10,
+		v.checkADCSESC11,
+		v.checkADCSESC13,
+		v.checkADCSESC15,
+		v.checkCertEnrollShare,
+		// ACLs / trusts / services
 		v.checkACLPermissions,
 		v.checkDomainTrusts,
 		v.checkSIDFiltering,
+		v.checkSIDHistory,
 		v.checkServices,
 		v.checkScheduledTasks,
 		v.checkLLMNR,
@@ -164,6 +220,21 @@ func (v *Validator) RunAllChecks(ctx context.Context) {
 		v.checkSMBShares,
 		v.checkFirewallDisabled,
 		v.checkPasswordPolicy,
+		v.checkLDAPSigning,
+		v.checkRunAsPPL,
+		// Section 10 — IIS
+		v.checkIISUploadPermissions,
+		// Section 11 — Local Admin Access Map
+		v.checkLocalAdmins,
+		// Section 13 — CVE Patch Status
+		v.checkCVEPatches,
+		// Section 14 — Admin Shares
+		v.checkAdminShares,
+		// Section 16 — DNS / Audit
+		v.checkDNSConditionalForwarder,
+		v.checkDCSACLAudit,
+		v.checkLDAPDiagnosticLogging,
+		v.checkASRRules,
 	})
 }
 
@@ -182,21 +253,77 @@ func (v *Validator) SaveReport(path string) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
+// runPSTimeout is the per-attempt budget for a single SSM/WinRM PowerShell call.
+// Concurrent fan-out across 16 checks frequently pushes individual SSM calls
+// past 30s under load; 90s leaves headroom without letting truly hung hosts
+// stall the run forever (those are caught by the dead-host threshold below).
+const runPSTimeout = 90 * time.Second
+
+// runPSAttempts is the per-call retry budget for transient errors (SSM API
+// throttles, momentary WinRM hiccups). Total worst-case wall time per dead
+// call is runPSTimeout * runPSAttempts.
+const runPSAttempts = 3
+
+// deadThreshold is the number of *fully retried* runPS calls that must fail
+// before a host is declared dead and skipped for the rest of the run. One
+// transient blip should not turn the next ~30 checks on a host into bogus
+// failures.
+const deadThreshold = 3
+
 func (v *Validator) runPS(ctx context.Context, host, command string) string {
+	out, _ := v.runPSErr(ctx, host, command)
+	return out
+}
+
+// runPSErr is the diagnostic variant of runPS: same retry/dead-host
+// machinery, but it returns the underlying error (host-unknown,
+// host-dead, ctx-canceled, retries-exhausted) so callers in the
+// catch-all paths of probes can surface what actually went wrong
+// instead of treating empty output as opaque "unknown".
+func (v *Validator) runPSErr(ctx context.Context, host, command string) (string, error) {
 	instanceID, ok := v.hosts[host]
 	if !ok {
 		v.log.Warn("host not found", "host", host)
-		return ""
+		return "", fmt.Errorf("host %s not in inventory", host)
 	}
 	if v.verbose {
 		v.log.Debug("running PS command", "host", host, "command", command)
 	}
-	result, err := v.client.RunPowerShellCommand(ctx, instanceID, command, 60*time.Second)
-	if err != nil {
-		v.log.Warn("PS command failed", "host", host, "error", err)
-		return ""
+
+	if _, dead := v.dead.Load(host); dead {
+		return "", fmt.Errorf("host %s marked dead for this run", host)
 	}
-	return result.Stdout
+
+	var lastErr error
+	for attempt := 1; attempt <= runPSAttempts; attempt++ {
+		result, err := v.provider.RunCommand(ctx, instanceID, command, runPSTimeout)
+		if err == nil {
+			if c, loaded := v.failures.Load(host); loaded {
+				c.(*atomic.Int64).Store(0)
+			}
+			return result.Stdout, nil
+		}
+		lastErr = err
+		if attempt < runPSAttempts {
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(time.Duration(attempt) * 2 * time.Second):
+			}
+		}
+	}
+
+	counterAny, _ := v.failures.LoadOrStore(host, &atomic.Int64{})
+	n := counterAny.(*atomic.Int64).Add(1)
+	if n >= deadThreshold {
+		if _, alreadyDead := v.dead.LoadOrStore(host, struct{}{}); !alreadyDead {
+			v.log.Warn("PS command failed repeatedly; marking host dead for remainder of run",
+				"host", host, "failures", n, "error", lastErr)
+		}
+	} else {
+		v.log.Warn("PS command failed", "host", host, "failures", n, "error", lastErr)
+	}
+	return "", lastErr
 }
 
 func (v *Validator) addResult(w io.Writer, status, category, name, detail string) {

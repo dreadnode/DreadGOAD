@@ -1,13 +1,18 @@
 package doctor
 
 import (
+	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/dreadnode/dreadgoad/internal/ludus"
+	"github.com/dreadnode/dreadgoad/internal/sshconfig"
 	"github.com/fatih/color"
 )
 
@@ -18,26 +23,59 @@ type CheckResult struct {
 	Message string
 }
 
-// RunChecks executes all pre-flight checks and returns results.
-func RunChecks(inventoryPath, projectRoot string) []CheckResult {
+// LudusOptions describes the Ludus connection settings doctor needs to probe.
+// SSHHost being non-empty toggles SSH-mode; otherwise the ludus CLI is expected
+// locally.
+//
+// When ResolveAlias is true, SSHHost is treated as an ssh_config alias and
+// passed through `ssh -G` to derive the real hostname/port for the TCP probe.
+type LudusOptions struct {
+	APIKey       string
+	SSHHost      string
+	SSHUser      string
+	SSHKeyPath   string
+	SSHPassword  string
+	SSHPort      int
+	ResolveAlias bool
+}
+
+// Options configures which checks RunChecks runs.
+type Options struct {
+	InventoryPath string
+	ProjectRoot   string
+	Provider      string // aws | ludus | proxmox (empty defaults to aws)
+	Ludus         LudusOptions
+}
+
+// RunChecks executes pre-flight checks tailored to the configured provider and
+// returns the results.
+func RunChecks(opts Options) []CheckResult {
 	var results []CheckResult
 
 	results = append(results, checkAnsibleVersion())
-	results = append(results, checkCommand("aws", "AWS CLI"))
 	results = append(results, checkCommand("python3", "Python 3"))
 	results = append(results, checkCommand("jq", "jq"))
 	results = append(results, checkCommand("zip", "zip"))
-	results = append(results, checkAWSCredentials())
-	results = append(results, checkInventoryFile(inventoryPath))
-	results = append(results, checkTerragrunt())
-	results = append(results, checkTerraformOrTofu())
-	results = append(results, checkAnsibleCollections()...)
+	results = append(results, checkInventoryFile(opts.InventoryPath, opts.Provider))
+	results = append(results, checkAnsibleCollections(opts.Provider)...)
+
+	switch opts.Provider {
+	case "ludus":
+		results = append(results, runLudusChecks(opts.Ludus)...)
+	default:
+		// AWS is the historical default; proxmox currently uses the same
+		// terraform/terragrunt toolchain so it falls through here too.
+		results = append(results, checkCommand("aws", "AWS CLI"))
+		results = append(results, checkAWSCredentials())
+		results = append(results, checkTerragrunt())
+		results = append(results, checkTerraformOrTofu())
+	}
 
 	return results
 }
 
-// PrintResults displays check results with color.
-func PrintResults(results []CheckResult) {
+// PrintResults displays check results with color and returns the failure count.
+func PrintResults(results []CheckResult) int {
 	passed, failed, warned := 0, 0, 0
 
 	fmt.Println("DreadGOAD Pre-flight Checks")
@@ -59,6 +97,7 @@ func PrintResults(results []CheckResult) {
 
 	fmt.Println(strings.Repeat("=", 40))
 	fmt.Printf("Results: %d passed, %d failed, %d warnings\n", passed, failed, warned)
+	return failed
 }
 
 // CheckAnsibleCoreVersion verifies ansible-core is installed and within the
@@ -141,8 +180,17 @@ func checkAWSCredentials() CheckResult {
 	}
 }
 
-func checkInventoryFile(path string) CheckResult {
+func checkInventoryFile(path, provider string) CheckResult {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
+		// For Ludus, inventory is generated during provision from a template,
+		// so it won't exist yet on a fresh setup.
+		if provider == "ludus" {
+			return CheckResult{
+				Name:    "Inventory",
+				Status:  "warn",
+				Message: fmt.Sprintf("%s not found (will be generated during provision)", path),
+			}
+		}
 		return CheckResult{
 			Name:    "Inventory",
 			Status:  "fail",
@@ -186,14 +234,17 @@ func checkTerraformOrTofu() CheckResult {
 	}
 }
 
-func checkAnsibleCollections() []CheckResult {
+func checkAnsibleCollections(provider string) []CheckResult {
 	required := []string{
 		"ansible.windows",
 		"community.general",
 		"community.windows",
-		"amazon.aws",
 		"microsoft.ad",
 		"chocolatey.chocolatey",
+	}
+	// amazon.aws is only needed for the AWS provider.
+	if provider != "ludus" {
+		required = append(required, "amazon.aws")
 	}
 
 	out, _ := exec.Command("ansible-galaxy", "collection", "list", "--format", "yaml").CombinedOutput()
@@ -215,5 +266,114 @@ func checkAnsibleCollections() []CheckResult {
 			})
 		}
 	}
+	return results
+}
+
+// runLudusChecks runs Ludus-specific pre-flight checks, dispatching on whether
+// the CLI is invoked locally on the Ludus host or remotely over SSH.
+func runLudusChecks(opts LudusOptions) []CheckResult {
+	var results []CheckResult
+
+	if opts.SSHHost == "" {
+		// Local mode: ludus CLI must be on PATH. If missing, attempt install.
+		results = append(results, checkLudusCLI())
+	} else {
+		results = append(results, checkLudusSSH(opts)...)
+		// SSH mode uses a SOCKS tunnel + psrp connection plugin, which
+		// requires pypsrp and requests[socks] Python packages.
+		results = append(results, checkPyPSRP())
+	}
+
+	results = append(results, checkLudusAPIKey(opts.APIKey))
+
+	return results
+}
+
+func checkLudusCLI() CheckResult {
+	path, err := ludus.EnsureCLI(context.Background())
+	if err != nil {
+		return CheckResult{
+			Name:    "Ludus CLI",
+			Status:  "fail",
+			Message: fmt.Sprintf("not found and auto-install failed: %v", err),
+		}
+	}
+	return CheckResult{Name: "Ludus CLI", Status: "pass", Message: path}
+}
+
+func checkLudusAPIKey(configured string) CheckResult {
+	if configured != "" {
+		return CheckResult{Name: "Ludus API Key", Status: "pass", Message: "set via ludus.api_key"}
+	}
+	if os.Getenv("LUDUS_API_KEY") != "" {
+		return CheckResult{Name: "Ludus API Key", Status: "pass", Message: "set via LUDUS_API_KEY env"}
+	}
+	return CheckResult{
+		Name:    "Ludus API Key",
+		Status:  "fail",
+		Message: "not configured. Set ludus.api_key in dreadgoad.yaml or export LUDUS_API_KEY",
+	}
+}
+
+func checkPyPSRP() CheckResult {
+	// pypsrp provides the ansible psrp connection plugin. requests[socks]
+	// adds SOCKS proxy support so WinRM traffic can be routed through the
+	// SSH tunnel. Check both by trying to import them.
+	cmd := exec.Command("python3", "-c", "import pypsrp; import socks")
+	if err := cmd.Run(); err != nil {
+		return CheckResult{
+			Name:   "pypsrp + PySocks",
+			Status: "fail",
+			Message: "missing Python packages required for SSH-mode provisioning. " +
+				"Install with: pip install pypsrp requests[socks]",
+		}
+	}
+	return CheckResult{Name: "pypsrp + PySocks", Status: "pass", Message: "installed"}
+}
+
+func checkLudusSSH(opts LudusOptions) []CheckResult {
+	var results []CheckResult
+
+	// `ssh -G` is still required for ssh_config resolution (Match/Include/
+	// ProxyJump expansion). The actual connection runs through pure-Go
+	// crypto/ssh, so sshpass is no longer needed for password auth.
+	results = append(results, checkCommand("ssh", "ssh client (used for `ssh -G` config resolution)"))
+
+	probeHost, port := opts.SSHHost, opts.SSHPort
+	if opts.ResolveAlias {
+		// `ssh -G <alias>` returns the same hostname/port the ssh client
+		// itself would use, so the probe matches what the real connection
+		// will hit.
+		if r, err := sshconfig.Resolve(opts.SSHHost); err == nil {
+			probeHost = r.Hostname
+			if port == 0 {
+				port = r.Port
+			}
+		}
+	}
+	if port == 0 {
+		port = 22
+	}
+	addr := net.JoinHostPort(probeHost, strconv.Itoa(port))
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	if err != nil {
+		results = append(results, CheckResult{
+			Name:    "Ludus SSH host",
+			Status:  "fail",
+			Message: fmt.Sprintf("cannot reach %s: %v", addr, err),
+		})
+		return results
+	}
+	_ = conn.Close()
+	msg := fmt.Sprintf("%s reachable", addr)
+	if opts.ResolveAlias && probeHost != opts.SSHHost {
+		msg = fmt.Sprintf("%s reachable (via ssh_config alias %q)", addr, opts.SSHHost)
+	}
+	results = append(results, CheckResult{
+		Name:    "Ludus SSH host",
+		Status:  "pass",
+		Message: msg,
+	})
+
 	return results
 }
