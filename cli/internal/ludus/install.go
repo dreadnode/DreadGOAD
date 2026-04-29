@@ -38,7 +38,9 @@ func latestVersion(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("fetch latest ludus release: %w", err)
 	}
-	resp.Body.Close()
+	if err := resp.Body.Close(); err != nil {
+		return "", fmt.Errorf("close ludus release response: %w", err)
+	}
 
 	loc := resp.Header.Get("Location")
 	if loc == "" {
@@ -108,11 +110,15 @@ func installDir() string {
 		return filepath.Join(home, "AppData", "Local", "Programs", "ludus")
 	}
 
-	// Check if we can write to /usr/local/bin.
+	// Check if we can write to /usr/local/bin via a probe file. If we can
+	// create+close+remove cleanly, the directory is usable.
 	if f, err := os.CreateTemp(preferred, ".ludus-test-*"); err == nil {
-		f.Close()
-		os.Remove(f.Name())
-		return preferred
+		name := f.Name()
+		closeErr := f.Close()
+		removeErr := os.Remove(name)
+		if closeErr == nil && removeErr == nil {
+			return preferred
+		}
 	}
 
 	home, err := os.UserHomeDir()
@@ -126,8 +132,8 @@ func installDir() string {
 // Returns the path to the ludus binary. If the binary is already available,
 // this is a no-op.
 func EnsureCLI(ctx context.Context) (string, error) {
-	if path, err := exec.LookPath("ludus"); err == nil {
-		return path, nil
+	if p, lookErr := exec.LookPath("ludus"); lookErr == nil {
+		return p, nil
 	}
 
 	fmt.Println("ludus CLI not found in PATH, installing...")
@@ -143,41 +149,88 @@ func EnsureCLI(ctx context.Context) (string, error) {
 		return "", err
 	}
 
-	// Download checksums first.
+	tmpName, err := downloadAndVerify(ctx, version, asset)
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		if rerr := os.Remove(tmpName); rerr != nil && !os.IsNotExist(rerr) {
+			fmt.Printf("  warning: failed to remove temp file %s: %v\n", tmpName, rerr)
+		}
+	}()
+
+	return installLudusBinary(tmpName)
+}
+
+// downloadAndVerify fetches the ludus binary into a temp file and validates
+// its checksum. Returns the temp file path on success; the caller is
+// responsible for removing it.
+func downloadAndVerify(ctx context.Context, version, asset string) (string, error) {
 	expectedHash, err := fetchExpectedChecksum(ctx, version, asset)
 	if err != nil {
 		return "", fmt.Errorf("fetch checksum: %w", err)
 	}
 
-	// Download the binary to a temp file.
-	url := downloadURL(version, asset)
-	fmt.Printf("  downloading %s\n", asset)
-
 	tmpFile, err := os.CreateTemp("", "ludus-client-*")
 	if err != nil {
 		return "", fmt.Errorf("create temp file: %w", err)
 	}
-	defer os.Remove(tmpFile.Name())
+	tmpName := tmpFile.Name()
 
-	if err := downloadFile(ctx, url, tmpFile); err != nil {
-		tmpFile.Close()
-		return "", fmt.Errorf("download ludus binary: %w", err)
+	url := downloadURL(version, asset)
+	fmt.Printf("  downloading %s\n", asset)
+
+	if dlErr := downloadFile(ctx, url, tmpFile); dlErr != nil {
+		closeAndRemove(tmpFile, tmpName)
+		return "", fmt.Errorf("download ludus binary: %w", dlErr)
 	}
-	tmpFile.Close()
-
-	// Verify checksum.
-	if expectedHash != "" {
-		actualHash, hashErr := fileSHA256(tmpFile.Name())
-		if hashErr != nil {
-			return "", fmt.Errorf("compute checksum: %w", hashErr)
+	if cerr := tmpFile.Close(); cerr != nil {
+		if rerr := os.Remove(tmpName); rerr != nil && !os.IsNotExist(rerr) {
+			return "", fmt.Errorf("close ludus temp file: %w (remove: %v)", cerr, rerr)
 		}
-		if actualHash != expectedHash {
-			return "", fmt.Errorf("checksum mismatch: expected %s, got %s", expectedHash, actualHash)
-		}
-		fmt.Println("  checksum verified")
+		return "", fmt.Errorf("close ludus temp file: %w", cerr)
 	}
 
-	// Install to target directory.
+	if err := verifyChecksum(tmpName, expectedHash); err != nil {
+		if rerr := os.Remove(tmpName); rerr != nil && !os.IsNotExist(rerr) {
+			return "", fmt.Errorf("%w (remove: %v)", err, rerr)
+		}
+		return "", err
+	}
+	return tmpName, nil
+}
+
+// verifyChecksum compares the file's SHA-256 with the expected hash. An empty
+// expectedHash skips verification (best-effort for older releases).
+func verifyChecksum(path, expectedHash string) error {
+	if expectedHash == "" {
+		return nil
+	}
+	actualHash, err := fileSHA256(path)
+	if err != nil {
+		return fmt.Errorf("compute checksum: %w", err)
+	}
+	if actualHash != expectedHash {
+		return fmt.Errorf("checksum mismatch: expected %s, got %s", expectedHash, actualHash)
+	}
+	fmt.Println("  checksum verified")
+	return nil
+}
+
+// closeAndRemove tries to close a temp file and remove it; surfacing any
+// failures via stderr since the caller is already returning a primary error.
+func closeAndRemove(f *os.File, name string) {
+	if cerr := f.Close(); cerr != nil {
+		fmt.Fprintf(os.Stderr, "warning: close %s: %v\n", name, cerr)
+	}
+	if rerr := os.Remove(name); rerr != nil && !os.IsNotExist(rerr) {
+		fmt.Fprintf(os.Stderr, "warning: remove %s: %v\n", name, rerr)
+	}
+}
+
+// installLudusBinary copies the staged binary into the install directory,
+// makes it executable, and reports the final location.
+func installLudusBinary(srcPath string) (string, error) {
 	dir := installDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("create install directory %s: %w", dir, err)
@@ -189,8 +242,7 @@ func EnsureCLI(ctx context.Context) (string, error) {
 	}
 	dest := filepath.Join(dir, destName)
 
-	// Copy temp file to destination (cross-device safe).
-	if err := copyFile(tmpFile.Name(), dest); err != nil {
+	if err := copyFile(srcPath, dest); err != nil {
 		return "", fmt.Errorf("install ludus to %s: %w", dest, err)
 	}
 	if err := os.Chmod(dest, 0o755); err != nil {
@@ -199,9 +251,8 @@ func EnsureCLI(ctx context.Context) (string, error) {
 
 	fmt.Printf("  installed to %s\n", dest)
 
-	// Verify it's now in PATH (or warn if install dir isn't in PATH).
-	if path, err := exec.LookPath("ludus"); err == nil {
-		return path, nil
+	if p, lookErr := exec.LookPath("ludus"); lookErr == nil {
+		return p, nil
 	}
 	fmt.Printf("  warning: %s is not in your PATH, add it to use ludus directly\n", dir)
 	return dest, nil
@@ -209,20 +260,26 @@ func EnsureCLI(ctx context.Context) (string, error) {
 
 // fetchExpectedChecksum downloads the checksums file and extracts the hash
 // for the given asset. Returns empty string if checksums are unavailable.
-func fetchExpectedChecksum(ctx context.Context, version, asset string) (string, error) {
+func fetchExpectedChecksum(ctx context.Context, version, asset string) (hash string, err error) {
 	url := checksumsURL(version)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", nil //nolint:nilerr // checksums are best-effort
 	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil || resp.StatusCode != http.StatusOK {
+	resp, doErr := http.DefaultClient.Do(req)
+	if doErr != nil || resp.StatusCode != http.StatusOK {
 		if resp != nil {
-			resp.Body.Close()
+			if cerr := resp.Body.Close(); cerr != nil {
+				return "", nil //nolint:nilerr // best-effort
+			}
 		}
 		return "", nil // checksums unavailable, skip verification
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("close checksums response: %w", cerr)
+		}
+	}()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -239,7 +296,7 @@ func fetchExpectedChecksum(ctx context.Context, version, asset string) (string, 
 	return "", nil // asset not found in checksums, skip verification
 }
 
-func downloadFile(ctx context.Context, url string, dest *os.File) error {
+func downloadFile(ctx context.Context, url string, dest *os.File) (err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -248,7 +305,11 @@ func downloadFile(ctx context.Context, url string, dest *os.File) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if cerr := resp.Body.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)
@@ -258,12 +319,16 @@ func downloadFile(ctx context.Context, url string, dest *os.File) error {
 	return err
 }
 
-func fileSHA256(path string) (string, error) {
+func fileSHA256(path string) (digest string, err error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
 	h := sha256.New()
 	if _, err := io.Copy(h, f); err != nil {
@@ -272,18 +337,26 @@ func fileSHA256(path string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-func copyFile(src, dst string) error {
+func copyFile(src, dst string) (err error) {
 	in, err := os.Open(src)
 	if err != nil {
 		return err
 	}
-	defer in.Close()
+	defer func() {
+		if cerr := in.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
 	out, err := os.Create(dst)
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+	defer func() {
+		if cerr := out.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+	}()
 
 	_, err = io.Copy(out, in)
 	return err

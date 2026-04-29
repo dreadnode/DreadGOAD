@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -264,12 +265,18 @@ func buildAuthMethods(rc *resolvedSSHConfig, password string) ([]ssh.AuthMethod,
 // Run executes a command on the remote host and returns stdout, stderr, and
 // any execution error. Mirrors the (string, string, error) shape returned by
 // the existing exec.Command wrapper so callers swap cleanly.
-func (c *sshClient) Run(ctx context.Context, cmdLine string) (string, string, error) {
+func (c *sshClient) Run(ctx context.Context, cmdLine string) (sout, serr string, runErr error) {
 	sess, err := c.cli.NewSession()
 	if err != nil {
 		return "", "", fmt.Errorf("new session: %w", err)
 	}
-	defer sess.Close()
+	defer func() {
+		// Surface a session-close error only if the command itself
+		// succeeded; otherwise the run error is more useful.
+		if cerr := sess.Close(); cerr != nil && runErr == nil && cerr != io.EOF {
+			runErr = fmt.Errorf("close ssh session: %w", cerr)
+		}
+	}()
 
 	var stdout, stderr bytes.Buffer
 	sess.Stdout = &stdout
@@ -282,7 +289,9 @@ func (c *sshClient) Run(ctx context.Context, cmdLine string) (string, string, er
 	case err := <-done:
 		return stdout.String(), stderr.String(), err
 	case <-ctx.Done():
-		_ = sess.Signal(ssh.SIGKILL)
+		if sigErr := sess.Signal(ssh.SIGKILL); sigErr != nil {
+			return stdout.String(), stderr.String(), fmt.Errorf("%w (signal: %v)", ctx.Err(), sigErr)
+		}
 		return stdout.String(), stderr.String(), ctx.Err()
 	}
 }
