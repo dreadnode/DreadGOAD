@@ -178,12 +178,13 @@ dreadgoad provision
 
 ### What happens during `provision`
 
-!!! note "Transport: WinRM"
-    Unlike the AWS provider (which uses SSM), Ludus provisioning runs Ansible over **WinRM** to the Windows VMs on the Ludus VLAN. All target VMs must be **powered on** for provisioning, `health-check`, and `validate` to succeed — `infra apply` leaves them running, but if you stop the lab between steps, run `dreadgoad lab start` first.
+!!! note "Transport: WinRM (SSH-tunneled in SSH mode)"
+    Unlike the AWS provider (which uses SSM), Ludus provisioning runs Ansible over **WinRM** to the Windows VMs on the Ludus VLAN. In **SSH mode** the local machine can't reach the Ludus VLAN directly, so DreadGOAD automatically opens a SOCKS5 tunnel over its SSH connection to the Ludus host and switches Ansible to the `psrp` connection plugin (which routes WinRM traffic through the SOCKS proxy). In **local mode** the WinRM call is direct. All target VMs must be **powered on** for provisioning, `health-check`, and `validate` to succeed — `infra apply` leaves them running, but if you stop the lab between steps, run `dreadgoad lab start` first.
 
 1. The inventory file is automatically bootstrapped from the Ludus provider template
-2. IP addresses are resolved from the deployed Ludus range (format: `10.{range_number}.10.x`)
-3. Ansible playbooks run over WinRM to configure:
+2. IP addresses are resolved from the deployed Ludus range (format: `10.{range_number}.10.x`); when `range status` returns no IP yet, DreadGOAD falls back to `/opt/ludus/ranges/<rangeID>/etc-hosts` on the Ludus host
+3. In SSH mode, a SOCKS5 tunnel is started on a free localhost port and Ansible is invoked with `ansible_connection=psrp` and `ansible_psrp_proxy=socks5h://localhost:<port>`
+4. Ansible playbooks run over WinRM to configure:
     - Active Directory domains and domain controllers
     - Forest and domain trusts
     - Users, groups, OUs, and GPOs
@@ -223,7 +224,7 @@ dreadgoad lab status
 
 ## Verification
 
-`health-check` and `validate` connect to the Windows VMs over WinRM and run ad-hoc Ansible commands, so the VMs must be running. If they were stopped via `lab stop`, start them again with `dreadgoad lab start` (or `ludus range start`) before verifying.
+`health-check` and `validate` connect to the Windows VMs over WinRM, so the VMs must be running. In **SSH mode** the calls go directly over a Go-native WinRM client whose TCP dials are tunneled through the SSH connection (no `ansible` shell-out per check, which is what keeps validation fast under concurrent fan-out). In **local mode** the same checks run as `ansible win_shell` ad-hoc commands. If the VMs were stopped via `lab stop`, start them again with `dreadgoad lab start` (or `ludus range start`) before verifying.
 
 After provisioning completes, verify the lab is working correctly:
 
@@ -301,19 +302,21 @@ If provisioning fails partway through, you can resume from a specific playbook:
 dreadgoad provision --from ad-servers.yml
 ```
 
-The playbooks run in order. Common resume points:
+The playbooks run in order. Common resume points (full GOAD playbook list, see `playbooks.yml`):
 
 | Playbook | What it does |
 |---|---|
+| `network_setup.yml` | Network adapter / DNS prep on all hosts |
 | `build.yml` | Domain controller promotion, DNS, domain joins |
 | `ad-servers.yml` | IIS, MSSQL, ADCS installation |
 | `ad-parent_domain.yml` | Parent domain (sevenkingdoms.local) users/groups |
 | `ad-child_domain.yml` | Child domain (north.sevenkingdoms.local) config |
+| `wait5m.yml` | 5-minute pause for child domain to settle |
 | `ad-members.yml` | Domain membership and delegation |
 | `ad-trusts.yml` | Forest trusts between domains |
 | `ad-data.yml` | Vulnerable configurations and data seeding |
 | `ad-gmsa.yml` | Group Managed Service Accounts |
-| `ad-laps.yml` | LAPS deployment |
+| `laps.yml` | LAPS deployment |
 | `ad-relations.yml` | ACL-based attack paths |
 | `adcs.yml` | Certificate Services misconfigurations |
 | `ad-acl.yml` | ACL abuse scenarios |
@@ -363,7 +366,7 @@ Unlike the Proxmox provider (which uses Packer + Terraform), the Ludus provider 
 
 1. **Infrastructure**: `ludus range config set` + `ludus range deploy` (no Terraform)
 2. **Networking**: Ludus assigns a dedicated VLAN and IP range per user/range
-3. **Provisioning**: Ansible playbooks over WinRM (same as all other providers)
-4. **Command execution**: Ansible ad-hoc commands via `win_shell` module for health checks and validation
+3. **Provisioning**: Ansible playbooks over WinRM. In SSH mode WinRM is tunneled through a SOCKS5 proxy over the SSH connection using the `psrp` connection plugin; in local mode WinRM is direct
+4. **Command execution**: For `health-check` and `validate`, SSH mode uses a Go-native WinRM client whose TCP dials are tunneled through the SSH connection (no per-check `ansible` fork); local mode shells out to `ansible win_shell`
 
 The DreadGOAD CLI wraps these operations into a consistent interface, so `dreadgoad infra apply`, `dreadgoad provision`, and `dreadgoad health-check` work the same regardless of provider.
