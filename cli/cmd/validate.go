@@ -58,7 +58,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Environment: %s\n", infra.Env)
 	fmt.Printf("Region: %s\n", infra.Region)
 
-	v := validate.NewValidator(infra.Client, infra.Env, verbose, slog.Default(), infra.Lab)
+	v := validate.NewValidator(infra.Provider, infra.Env, verbose, slog.Default(), infra.Lab)
 
 	if err := v.DiscoverHosts(ctx); err != nil {
 		return fmt.Errorf("discover hosts: %w", err)

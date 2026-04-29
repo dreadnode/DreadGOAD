@@ -40,9 +40,54 @@ type InfraConfig struct {
 	TerraformBinary  string `mapstructure:"terraform_binary"`
 }
 
+// ProxmoxConfig holds Proxmox-specific settings.
+type ProxmoxConfig struct {
+	APIURL        string            `mapstructure:"api_url"`
+	User          string            `mapstructure:"user"`
+	Password      string            `mapstructure:"password"`
+	Node          string            `mapstructure:"node"`
+	Pool          string            `mapstructure:"pool"`
+	FullClone     string            `mapstructure:"full_clone"`
+	Storage       string            `mapstructure:"storage"`
+	VLAN          string            `mapstructure:"vlan"`
+	NetworkBridge string            `mapstructure:"network_bridge"`
+	NetworkModel  string            `mapstructure:"network_model"`
+	IPRange       string            `mapstructure:"ip_range"`
+	Lab           string            `mapstructure:"lab"`
+	TemplateIDs   map[string]string `mapstructure:"template_ids"`
+}
+
+// LudusConfig holds Ludus-specific settings.
+//
+// Host is the preferred way to point at a remote Ludus server: it accepts an
+// ssh_config Host alias (so the user's existing ~/.ssh/config — including
+// IdentityAgent, ProxyJump, etc. — drives the connection) or a raw hostname.
+// The SSH* fields are explicit overrides for CI / automation contexts where
+// ssh_config can't be relied on.
+type LudusConfig struct {
+	APIKey           string `mapstructure:"api_key"`
+	UseImpersonation bool   `mapstructure:"use_impersonation"`
+	Host             string `mapstructure:"host"`         // ssh_config alias or hostname (preferred)
+	SSHHost          string `mapstructure:"ssh_host"`     // Explicit hostname override
+	SSHUser          string `mapstructure:"ssh_user"`     // SSH user override (default: root)
+	SSHKeyPath       string `mapstructure:"ssh_key_path"` // Explicit private key path
+	SSHPassword      string `mapstructure:"ssh_password"` // SSH password (used by native SSH auth)
+	SSHPort          int    `mapstructure:"ssh_port"`     // SSH port override (default: 22)
+}
+
+// SSHTarget returns the ssh connection target — preferring Host over the
+// legacy SSHHost field — or the empty string if SSH mode isn't configured.
+func (l LudusConfig) SSHTarget() string {
+	if l.Host != "" {
+		return l.Host
+	}
+	return l.SSHHost
+}
+
 // Config holds all CLI configuration.
 type Config struct {
 	Env          string                       `mapstructure:"env"`
+	Provider     string                       `mapstructure:"provider"`
 	Region       string                       `mapstructure:"region"`
 	Debug        bool                         `mapstructure:"debug"`
 	MaxRetries   int                          `mapstructure:"max_retries"`
@@ -54,12 +99,20 @@ type Config struct {
 	Environments map[string]EnvironmentConfig `mapstructure:"environments"`
 	Extensions   map[string]ExtensionConfig   `mapstructure:"extensions"`
 	Infra        InfraConfig                  `mapstructure:"infra"`
+	Proxmox      ProxmoxConfig                `mapstructure:"proxmox"`
+	Ludus        LudusConfig                  `mapstructure:"ludus"`
 }
 
 var (
-	cfg  *Config
-	once sync.Once
+	cfg           *Config
+	once          sync.Once
+	configMissing bool
 )
+
+// ConfigMissing returns true if no dreadgoad.yaml was found during Init.
+// Commands that depend on provider configuration should check this and warn
+// the user (e.g. "no config found, using defaults; run 'dreadgoad init'").
+func ConfigMissing() bool { return configMissing }
 
 // Init initializes Viper configuration. Called from PersistentPreRunE.
 func Init() error {
@@ -91,6 +144,7 @@ func Init() error {
 		if !errors.As(err, &notFound) {
 			return fmt.Errorf("reading config: %w", err)
 		}
+		configMissing = true
 	}
 	return nil
 }
@@ -353,6 +407,19 @@ func (c *Config) VpcCIDR(envName string) string {
 	return fmt.Sprintf("10.%d.0.0/16", octet)
 }
 
+// ResolvedProvider returns the provider name, defaulting to "aws" for backward compatibility.
+func (c *Config) ResolvedProvider() string {
+	if c.Provider == "" {
+		return "aws"
+	}
+	return c.Provider
+}
+
+// IsAWS returns true if the configured provider is AWS.
+func (c *Config) IsAWS() bool {
+	return c.ResolvedProvider() == "aws"
+}
+
 // ResolveRegion returns the configured AWS region or an actionable error if
 // none is set. This is the single source of truth for region resolution: every
 // command that needs to talk to AWS should call it (or ResolveRegionWithInventory)
@@ -398,6 +465,20 @@ func (c *Config) InfraModulePath(module string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(workDir, module), nil
+}
+
+// ProxmoxWorkDir returns the working directory for Proxmox Terraform operations.
+// Files are rendered to .dreadgoad/proxmox/{env}/.
+func (c *Config) ProxmoxWorkDir() string {
+	return filepath.Join(c.ProjectRoot, ".dreadgoad", "proxmox", c.Env)
+}
+
+// ProxmoxLab returns the lab name for Proxmox deployments.
+func (c *Config) ProxmoxLab() string {
+	if c.Proxmox.Lab != "" {
+		return c.Proxmox.Lab
+	}
+	return "GOAD"
 }
 
 func fileExists(path string) bool {

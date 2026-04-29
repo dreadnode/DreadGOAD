@@ -72,6 +72,8 @@ repos:
     hooks:
       - id: terraform_fmt
         files: ^(modules|infra)/
+      - id: terragrunt_fmt
+        files: ^infra/
       - id: terraform_validate
         files: ^modules/
         args:
