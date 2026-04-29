@@ -125,12 +125,101 @@ func runInfraAction(action string) func(*cobra.Command, []string) error {
 		switch cfg.ResolvedProvider() {
 		case "aws":
 			return runInfraActionAWS(cmd, cfg, action)
+		case "azure":
+			return runInfraActionAzure(cmd, cfg, action)
 		case "ludus":
 			return runInfraActionLudus(cmd, cfg, action)
 		default:
 			return runInfraActionTerraform(cmd, cfg, action)
 		}
 	}
+}
+
+// runInfraActionAzure handles infra commands for Azure via Terragrunt.
+// Mirrors the AWS path but skips AWS-specific config materialization and
+// region resolution (Azure regions are passed through verbatim).
+//
+// Layout: infra/azure/{deployment}/{env}/{region}/. Default deployment is
+// "goad-deployment" (the lab); standalone modules can live alongside this
+// tree but are not the primary lifecycle path.
+func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) error {
+	if err := materializeLabConfig(cfg); err != nil {
+		return fmt.Errorf("materialize lab config: %w", err)
+	}
+
+	module, _ := cmd.Flags().GetString("module")
+	exclude, _ := cmd.Flags().GetString("exclude")
+	deployment := resolveDeployment(cmd, cfg)
+
+	region := cfg.Region
+	if region == "" {
+		return fmt.Errorf("azure region not configured: pass --region (e.g. --region centralus) or set 'region' in dreadgoad.yaml")
+	}
+
+	opts := terragrunt.Options{
+		Action:           action,
+		TerragruntBinary: cfg.Infra.TerragruntBinary,
+		TerraformBinary:  cfg.Infra.TerraformBinary,
+		NonInteractive:   true,
+		ExcludeDirs:      exclude,
+		Debug:            cfg.Debug,
+	}
+
+	if action == "apply" || action == "destroy" {
+		autoApprove, _ := cmd.Flags().GetBool("auto-approve")
+		opts.AutoApprove = autoApprove
+	}
+
+	workDir := filepath.Join(cfg.ProjectRoot, "infra", "azure", deployment, cfg.Env, region)
+	if _, err := os.Stat(workDir); os.IsNotExist(err) {
+		// Backward-compat: the auth-validation POC layout is
+		// infra/azure/{region}/{module}/. Fall back to it when the
+		// deployment-shaped path doesn't exist.
+		legacy := filepath.Join(cfg.ProjectRoot, "infra", "azure", region)
+		if _, lerr := os.Stat(legacy); lerr == nil {
+			workDir = legacy
+		} else {
+			return fmt.Errorf("infra working directory not found: %s", workDir)
+		}
+	}
+
+	opts.LogFile = infraLogPath(cfg, action, deployment, module)
+
+	fmt.Printf("Infra %s [Azure/Terragrunt] (%s/%s)\n", action, cfg.Env, region)
+	if module != "" {
+		fmt.Printf("Module: %s\n", module)
+	}
+	fmt.Printf("Log: %s\n\n", opts.LogFile)
+
+	ctx := context.Background()
+
+	if module != "" {
+		modulePath := filepath.Join(workDir, module)
+		if _, err := os.Stat(modulePath); os.IsNotExist(err) {
+			return fmt.Errorf("module not found: %s", modulePath)
+		}
+
+		if action == "apply" {
+			individual, _ := cmd.Flags().GetBool("individual")
+			if individual {
+				var excludeList []string
+				if exclude != "" {
+					excludeList = strings.Split(exclude, ",")
+				}
+				results, err := terragrunt.RunIndividual(ctx, opts, modulePath, excludeList)
+				if err != nil {
+					return err
+				}
+				return printIndividualResults(results)
+			}
+		}
+
+		opts.WorkDir = modulePath
+		return terragrunt.Run(ctx, opts)
+	}
+
+	opts.WorkDir = workDir
+	return terragrunt.RunAll(ctx, opts)
 }
 
 // runInfraActionAWS handles infra commands for AWS via Terragrunt.
@@ -285,6 +374,31 @@ func renderProxmoxTemplates(cfg *config.Config, workDir string) error {
 	return tfrender.Render(renderOpts)
 }
 
+func runAzureInfraOutput(cfg *config.Config, deployment, region, module string) error {
+	workDir := filepath.Join(cfg.ProjectRoot, "infra", "azure", deployment, cfg.Env, region)
+	if _, err := os.Stat(workDir); os.IsNotExist(err) {
+		workDir = filepath.Join(cfg.ProjectRoot, "infra", "azure", region)
+	}
+	if module != "" {
+		workDir = filepath.Join(workDir, module)
+	}
+	if _, err := os.Stat(workDir); os.IsNotExist(err) {
+		return fmt.Errorf("directory not found: %s", workDir)
+	}
+	opts := terragrunt.Options{
+		Action:           "output",
+		WorkDir:          workDir,
+		TerragruntBinary: cfg.Infra.TerragruntBinary,
+		TerraformBinary:  cfg.Infra.TerraformBinary,
+	}
+	out, err := terragrunt.Output(context.Background(), opts)
+	if err != nil {
+		return err
+	}
+	fmt.Println(string(out))
+	return nil
+}
+
 func runInfraOutput(cmd *cobra.Command, args []string) error {
 	cfg, err := config.Get()
 	if err != nil {
@@ -307,6 +421,16 @@ func runInfraOutput(cmd *cobra.Command, args []string) error {
 			fmt.Printf("  %-6s  %-20s  %-15s  %s\n", inst.ID, inst.Name, inst.PrivateIP, inst.State)
 		}
 		return nil
+	}
+
+	if cfg.ResolvedProvider() == "azure" {
+		module, _ := cmd.Flags().GetString("module")
+		deployment := resolveDeployment(cmd, cfg)
+		region := cfg.Region
+		if region == "" {
+			return fmt.Errorf("azure region not configured: pass --region")
+		}
+		return runAzureInfraOutput(cfg, deployment, region, module)
 	}
 
 	if cfg.ResolvedProvider() != "aws" {
@@ -372,6 +496,10 @@ func runInfraValidate(cmd *cobra.Command, args []string) error {
 		return runInfraValidateLudus(cfg)
 	case "proxmox":
 		return runInfraValidateProxmox(cfg)
+	case "azure":
+		fmt.Println("Azure validation: structural validation is AWS-specific; skipping.")
+		fmt.Println("Run 'az account show' to confirm CLI auth and 'terragrunt init' to validate the module.")
+		return nil
 	}
 
 	deployment := resolveDeployment(cmd, cfg)

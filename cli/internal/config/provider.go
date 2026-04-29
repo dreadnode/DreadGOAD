@@ -9,6 +9,7 @@ import (
 
 	// Register provider constructors.
 	_ "github.com/dreadnode/dreadgoad/internal/aws"
+	_ "github.com/dreadnode/dreadgoad/internal/azure"
 	_ "github.com/dreadnode/dreadgoad/internal/ludus"
 	_ "github.com/dreadnode/dreadgoad/internal/proxmox"
 )
@@ -21,6 +22,13 @@ func (c *Config) NewProvider(ctx context.Context) (provider.Provider, error) {
 
 	switch name {
 	case provider.NameAWS:
+		region, err := c.ResolveRegion()
+		if err != nil {
+			return nil, err
+		}
+		opts.Region = region
+
+	case provider.NameAzure:
 		region, err := c.ResolveRegion()
 		if err != nil {
 			return nil, err

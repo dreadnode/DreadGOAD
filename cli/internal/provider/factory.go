@@ -8,6 +8,7 @@ import (
 // ProviderName constants.
 const (
 	NameAWS     = "aws"
+	NameAzure   = "azure"
 	NameProxmox = "proxmox"
 	NameLudus   = "ludus"
 )
