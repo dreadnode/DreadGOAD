@@ -116,7 +116,7 @@ func (inv *Inventory) parseHostDef(line string) {
 		case "dns_domain":
 			host.DNSDomain = vm[2]
 		case "ansible_user":
-			host.User = vm[2]
+			host.User = stripQuotes(vm[2])
 		case "ansible_password":
 			host.Password = stripQuotes(vm[2])
 		}
