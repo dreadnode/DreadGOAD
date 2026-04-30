@@ -13,7 +13,8 @@ type Instance struct {
 	Name          string // VM resource name (e.g. "test-goad-dreadgoad-kingslanding-vm")
 	ResourceGroup string
 	PrivateIP     string
-	State         string // "running", "stopped", etc. (normalized from PowerState/* )
+	State         string            // "running", "stopped", etc. (normalized from PowerState/* )
+	Tags          map[string]string // Azure resource tags (Role, Lab, Project, Environment, …)
 }
 
 // vmListItem is the shape `az vm list -d` returns.
@@ -51,6 +52,7 @@ func (c *Client) DiscoverInstances(ctx context.Context, env string, includeStopp
 			ResourceGroup: v.ResourceGroup,
 			PrivateIP:     firstIP(v.PrivateIPs),
 			State:         state,
+			Tags:          v.Tags,
 		})
 	}
 	return instances, nil

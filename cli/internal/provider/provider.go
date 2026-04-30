@@ -61,17 +61,25 @@ type Provider interface {
 }
 
 // SessionManager is an optional interface for providers that support
-// remote session management (e.g. AWS SSM). Commands check for this
-// capability before performing session-related operations.
+// persistent remote sessions (e.g. AWS SSM). Commands check for this
+// capability before performing session-related operations. Providers that
+// model command execution as one-shot control-plane invocations (e.g. Azure
+// Run Command) generally do NOT implement this interface, and callers should
+// gracefully degrade rather than treating its absence as an error.
 type SessionManager interface {
 	// CleanupStaleSessions terminates sessions older than maxAge.
 	CleanupStaleSessions(ctx context.Context, instanceIDs []string, maxAge time.Duration, dryRun bool) (int, error)
 
 	// DescribeActiveSessions returns active sessions for an instance.
 	DescribeActiveSessions(ctx context.Context, instanceID string) ([]Session, error)
+}
 
-	// StartInteractiveSession starts an interactive terminal session to an instance.
-	StartInteractiveSession(ctx context.Context, instanceID, region string) error
+// InteractiveShell is an optional interface for providers that can open
+// an interactive shell to an instance. AWS uses SSM Session Manager;
+// Azure simulates one over Run Command. Region may be empty for providers
+// that don't need it (e.g. Azure, where the resource ID is region-bound).
+type InteractiveShell interface {
+	StartInteractiveShell(ctx context.Context, instanceID, region string) error
 }
 
 // Session represents an active remote session.

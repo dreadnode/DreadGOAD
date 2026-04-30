@@ -37,7 +37,7 @@ dependency "network" {
   mock_outputs_allowed_terraform_commands = ["init", "validate", "plan"]
 }
 
-include {
+include "root" {
   path = find_in_parent_folders("root.hcl")
 }
 

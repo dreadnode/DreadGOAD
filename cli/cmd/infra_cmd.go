@@ -87,6 +87,14 @@ func init() {
 	infraApplyCmd.Flags().Bool("individual", false, "Apply each subdirectory individually (for module groups like goad/)")
 	infraDestroyCmd.Flags().Bool("auto-approve", false, "Skip confirmation prompt")
 
+	// Azure-only opt-in flags. The matching DREADGOAD_ENABLE_* env vars are
+	// what the terragrunt exclude{} blocks check; these flags just set them
+	// for the child process so users don't have to.
+	for _, cmd := range []*cobra.Command{infraApplyCmd, infraDestroyCmd, infraPlanCmd} {
+		cmd.Flags().Bool("with-bastion", false, "(Azure) Include the optional Azure Bastion module")
+		cmd.Flags().Bool("with-controller", false, "(Azure) Include the optional in-VNet Ansible controller module")
+	}
+
 	infraCmd.PersistentFlags().StringP("deployment", "d", "", "Deployment name (default: from config)")
 }
 
@@ -165,6 +173,13 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 		Debug:            cfg.Debug,
 	}
 
+	if withBastion, _ := cmd.Flags().GetBool("with-bastion"); withBastion {
+		opts.ExtraEnv = append(opts.ExtraEnv, "DREADGOAD_ENABLE_AZURE_BASTION=true")
+	}
+	if withController, _ := cmd.Flags().GetBool("with-controller"); withController {
+		opts.ExtraEnv = append(opts.ExtraEnv, "DREADGOAD_ENABLE_AZURE_CONTROLLER=true")
+	}
+
 	if action == "apply" || action == "destroy" {
 		autoApprove, _ := cmd.Flags().GetBool("auto-approve")
 		opts.AutoApprove = autoApprove
@@ -194,32 +209,38 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 	ctx := context.Background()
 
 	if module != "" {
-		modulePath := filepath.Join(workDir, module)
-		if _, err := os.Stat(modulePath); os.IsNotExist(err) {
-			return fmt.Errorf("module not found: %s", modulePath)
-		}
-
-		if action == "apply" {
-			individual, _ := cmd.Flags().GetBool("individual")
-			if individual {
-				var excludeList []string
-				if exclude != "" {
-					excludeList = strings.Split(exclude, ",")
-				}
-				results, err := terragrunt.RunIndividual(ctx, opts, modulePath, excludeList)
-				if err != nil {
-					return err
-				}
-				return printIndividualResults(results)
-			}
-		}
-
-		opts.WorkDir = modulePath
-		return terragrunt.Run(ctx, opts)
+		return runTerragruntModule(ctx, cmd, opts, workDir, module, exclude, action)
 	}
 
 	opts.WorkDir = workDir
 	return terragrunt.RunAll(ctx, opts)
+}
+
+// runTerragruntModule runs a single Terragrunt module, optionally applying its
+// subdirectories individually when --individual is set on `apply`.
+func runTerragruntModule(ctx context.Context, cmd *cobra.Command, opts terragrunt.Options, workDir, module, exclude, action string) error {
+	modulePath := filepath.Join(workDir, module)
+	if _, err := os.Stat(modulePath); os.IsNotExist(err) {
+		return fmt.Errorf("module not found: %s", modulePath)
+	}
+
+	if action == "apply" {
+		individual, _ := cmd.Flags().GetBool("individual")
+		if individual {
+			var excludeList []string
+			if exclude != "" {
+				excludeList = strings.Split(exclude, ",")
+			}
+			results, err := terragrunt.RunIndividual(ctx, opts, modulePath, excludeList)
+			if err != nil {
+				return err
+			}
+			return printIndividualResults(results)
+		}
+	}
+
+	opts.WorkDir = modulePath
+	return terragrunt.Run(ctx, opts)
 }
 
 // runInfraActionAWS handles infra commands for AWS via Terragrunt.
@@ -269,28 +290,7 @@ func runInfraActionAWS(cmd *cobra.Command, cfg *config.Config, action string) er
 	ctx := context.Background()
 
 	if module != "" {
-		modulePath := filepath.Join(workDir, module)
-		if _, err := os.Stat(modulePath); os.IsNotExist(err) {
-			return fmt.Errorf("module not found: %s", modulePath)
-		}
-
-		if action == "apply" {
-			individual, _ := cmd.Flags().GetBool("individual")
-			if individual {
-				var excludeList []string
-				if exclude != "" {
-					excludeList = strings.Split(exclude, ",")
-				}
-				results, err := terragrunt.RunIndividual(ctx, opts, modulePath, excludeList)
-				if err != nil {
-					return err
-				}
-				return printIndividualResults(results)
-			}
-		}
-
-		opts.WorkDir = modulePath
-		return terragrunt.Run(ctx, opts)
+		return runTerragruntModule(ctx, cmd, opts, workDir, module, exclude, action)
 	}
 
 	opts.WorkDir = workDir

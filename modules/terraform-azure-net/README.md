@@ -161,6 +161,7 @@ No modules.
 | <a name="output_resource_group_name"></a> [resource\_group\_name](#output\_resource\_group\_name) | The shared resource group lab VMs deploy into. |
 | <a name="output_vnet_cidr"></a> [vnet\_cidr](#output\_vnet\_cidr) | VNet CIDR. |
 | <a name="output_vnet_id"></a> [vnet\_id](#output\_vnet\_id) | VNet ID. |
+| <a name="output_vnet_name"></a> [vnet\_name](#output\_vnet\_name) | VNet name. |
 <!-- END_TF_DOCS -->
 <!-- markdownlint-restore -->
 

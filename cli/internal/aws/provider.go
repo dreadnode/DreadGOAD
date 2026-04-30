@@ -139,7 +139,7 @@ func (p *AWSProvider) DescribeActiveSessions(ctx context.Context, instanceID str
 	return out, nil
 }
 
-func (p *AWSProvider) StartInteractiveSession(ctx context.Context, instanceID, region string) error {
+func (p *AWSProvider) StartInteractiveShell(ctx context.Context, instanceID, region string) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT)
 	defer signal.Stop(sigCh)
@@ -188,9 +188,10 @@ func (p *AWSProvider) CheckSSMStatus(ctx context.Context, instanceIDs []string) 
 
 // Compile-time interface checks.
 var (
-	_ provider.Provider       = (*AWSProvider)(nil)
-	_ provider.SessionManager = (*AWSProvider)(nil)
-	_ provider.SSMRecovery    = (*AWSProvider)(nil)
+	_ provider.Provider         = (*AWSProvider)(nil)
+	_ provider.SessionManager   = (*AWSProvider)(nil)
+	_ provider.InteractiveShell = (*AWSProvider)(nil)
+	_ provider.SSMRecovery      = (*AWSProvider)(nil)
 )
 
 func toProviderInstance(i Instance) provider.Instance {

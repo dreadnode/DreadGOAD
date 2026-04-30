@@ -101,7 +101,16 @@ func (p *AzureProvider) RunCommandOnMultiple(ctx context.Context, instanceIDs []
 	return out, nil
 }
 
-var _ provider.Provider = (*AzureProvider)(nil)
+// StartInteractiveShell opens a Run Command-backed REPL on the target VM.
+// region is unused (the resource ID already encodes location).
+func (p *AzureProvider) StartInteractiveShell(ctx context.Context, instanceID, _ string) error {
+	return p.client.StartInteractiveShell(ctx, instanceID)
+}
+
+var (
+	_ provider.Provider         = (*AzureProvider)(nil)
+	_ provider.InteractiveShell = (*AzureProvider)(nil)
+)
 
 func toProviderInstance(i Instance) provider.Instance {
 	return provider.Instance{

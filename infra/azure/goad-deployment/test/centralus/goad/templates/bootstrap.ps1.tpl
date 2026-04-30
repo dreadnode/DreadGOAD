@@ -30,4 +30,27 @@ net user Administrator '${admin_password}' /expires:never /y
 net user ansible '${admin_password}' /add /expires:never /y
 net localgroup administrators ansible /add
 
+# Enable WinRM for the in-VNet Ansible controller. The default Windows Firewall
+# rule scopes 5985 to LocalSubnet only; the controller (10.8.3.0/28) lives in a
+# different subnet from the GOAD hosts (10.8.1.0/24) so we widen to RemoteAddress=Any
+# and rely on the private NSG (10.8.0.0/16 only) for network ACL.
+Set-Service -Name WinRM -StartupType Automatic
+Start-Service -Name WinRM
+& winrm quickconfig -quiet -force | Out-Null
+
+# pywinrm/pypsrp default to NTLM transport which still encrypts payload at the
+# SPNEGO layer; AllowUnencrypted just removes the listener-level reject.
+& winrm set winrm/config/service '@{AllowUnencrypted="true"}' | Out-Null
+& winrm set winrm/config/service/auth '@{Basic="true"}' | Out-Null
+& winrm set winrm/config/service/auth '@{Negotiate="true"}' | Out-Null
+
+$ruleName = 'WinRM-HTTP-Any'
+Get-NetFirewallRule -Name $ruleName -ErrorAction SilentlyContinue | Remove-NetFirewallRule -ErrorAction SilentlyContinue
+New-NetFirewallRule `
+    -Name $ruleName `
+    -DisplayName 'WinRM HTTP from any (NSG-gated)' `
+    -Direction Inbound -Action Allow `
+    -Protocol TCP -LocalPort 5985 `
+    -Profile Any -RemoteAddress Any | Out-Null
+
 Write-Output "DreadGOAD Azure bootstrap complete on $env:COMPUTERNAME"

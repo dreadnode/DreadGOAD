@@ -13,6 +13,11 @@ output "vnet_id" {
   description = "VNet ID."
 }
 
+output "vnet_name" {
+  value       = azurerm_virtual_network.this.name
+  description = "VNet name."
+}
+
 output "vnet_cidr" {
   value       = var.vnet_cidr
   description = "VNet CIDR."
