@@ -121,6 +121,11 @@ func runRuncmdRun(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if d, ok := prov.(provider.Drainer); ok {
+			d.Drain()
+		}
+	}()
 
 	for i, id := range targetIDs {
 		name := targetNames[i]

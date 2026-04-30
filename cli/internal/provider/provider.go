@@ -74,6 +74,16 @@ type SessionManager interface {
 	DescribeActiveSessions(ctx context.Context, instanceID string) ([]Session, error)
 }
 
+// Drainer is an optional interface for providers that perform deferred
+// cleanup work in detached goroutines (e.g. Azure run-command DELETEs that
+// must complete server-side before their per-VM concurrency slot is freed).
+// Long-running commands like `validate` should call Drain before returning so
+// the OS doesn't kill in-flight cleanup goroutines on process exit, leaving
+// orphan subresources that count against per-VM API limits.
+type Drainer interface {
+	Drain()
+}
+
 // InteractiveShell is an optional interface for providers that can open
 // an interactive shell to an instance. AWS uses SSM Session Manager;
 // Azure simulates one over Run Command. Region may be empty for providers

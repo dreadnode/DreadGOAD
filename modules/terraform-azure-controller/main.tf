@@ -144,11 +144,16 @@ resource "azurerm_linux_virtual_machine" "this" {
     disk_size_gb         = var.os_disk_size_gb
   }
 
-  source_image_reference {
-    publisher = var.source_image.publisher
-    offer     = var.source_image.offer
-    sku       = var.source_image.sku
-    version   = var.source_image.version
+  source_image_id = var.source_image_id
+
+  dynamic "source_image_reference" {
+    for_each = var.source_image_id == null ? [var.source_image] : []
+    content {
+      publisher = source_image_reference.value.publisher
+      offer     = source_image_reference.value.offer
+      sku       = source_image_reference.value.sku
+      version   = source_image_reference.value.version
+    }
   }
 
   custom_data = base64encode(local.cloud_init)

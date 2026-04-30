@@ -14,36 +14,35 @@ func init() {
 		if opts.Region == "" {
 			return nil, fmt.Errorf("azure region is required")
 		}
-		client := NewClient(opts.Region)
-		return &AzureProvider{client: client}, nil
+		client, err := NewClient(opts.Region)
+		if err != nil {
+			return nil, err
+		}
+		return &AzureProvider{
+			client:        client,
+			env:           opts.Env,
+			inventoryPath: opts.InventoryPath,
+		}, nil
 	})
 }
 
 // AzureProvider adapts the az-CLI–backed Client to the provider.Provider
-// interface. It does not implement the optional SSM-specific recovery
-// interfaces, since Azure Run Command operates over the control plane and
-// does not depend on an in-VM agent that needs babysitting.
+// interface. RunCommand is served by an internal WinRM runner (see winrm.go)
+// that tunnels through Bastion → controller → SOCKS5 — the AWS-shaped
+// `provider.RunCommand(ctx, instanceID, ...)` seam is preserved, so the
+// validator stays unaware of any of this.
 //
-// Azure Run Command is single-flight per VM: the control plane returns
-// 409 Conflict ("Run command extension execution is in progress") if a
-// second invocation arrives while the first is still running. Validators
-// fan out 16 concurrent checks, several of which target the same VM, so
-// we serialize per-instance via runMu and let cross-VM concurrency through
-// unchanged.
+// The legacy managed Run Command code in runcommand.go remains available
+// for ad-hoc use (e.g. interactive shell) but is no longer the validate
+// hot path; managed Run Commands took ~15–30s per call versus sub-second
+// for WinRM through the existing tunnel.
 type AzureProvider struct {
-	client *Client
-	runMu  sync.Map // instanceID -> *sync.Mutex
-}
+	client        *Client
+	env           string
+	inventoryPath string
 
-// instanceLock returns (and lazily creates) the mutex for instanceID. Two
-// concurrent callers for the same VM end up sharing one mutex; different
-// VMs get independent ones.
-func (p *AzureProvider) instanceLock(instanceID string) *sync.Mutex {
-	if m, ok := p.runMu.Load(instanceID); ok {
-		return m.(*sync.Mutex)
-	}
-	m, _ := p.runMu.LoadOrStore(instanceID, &sync.Mutex{})
-	return m.(*sync.Mutex)
+	winrmOnce sync.Once
+	winrm     *winrmRunner
 }
 
 // Client returns the underlying az-CLI client for Azure-specific operations
@@ -57,7 +56,10 @@ func (p *AzureProvider) VerifyCredentials(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("Azure subscription %s (%s)", acct.Name, acct.ID), nil
+	if acct.Name != "" {
+		return fmt.Sprintf("Azure subscription %s (%s)", acct.Name, acct.ID), nil
+	}
+	return fmt.Sprintf("Azure subscription %s", acct.ID), nil
 }
 
 func (p *AzureProvider) DiscoverInstances(ctx context.Context, env string) ([]provider.Instance, error) {
@@ -101,11 +103,18 @@ func (p *AzureProvider) DestroyInstances(ctx context.Context, ids []string) erro
 	return p.client.DestroyInstances(ctx, ids)
 }
 
+// runner returns the lazily-initialized winrmRunner for this provider.
+// Constructed once on first RunCommand; tunnel + maps come up during the
+// runner's own lazy init on first runPS call.
+func (p *AzureProvider) runner() *winrmRunner {
+	p.winrmOnce.Do(func() {
+		p.winrm = newWinRMRunner(p.client, p.env, p.inventoryPath)
+	})
+	return p.winrm
+}
+
 func (p *AzureProvider) RunCommand(ctx context.Context, instanceID, command string, timeout time.Duration) (*provider.CommandResult, error) {
-	lock := p.instanceLock(instanceID)
-	lock.Lock()
-	defer lock.Unlock()
-	res, err := p.client.RunPowerShellCommand(ctx, instanceID, command, timeout)
+	res, err := p.runner().runPS(ctx, instanceID, command, timeout)
 	if err != nil {
 		return nil, err
 	}
@@ -113,18 +122,29 @@ func (p *AzureProvider) RunCommand(ctx context.Context, instanceID, command stri
 }
 
 func (p *AzureProvider) RunCommandOnMultiple(ctx context.Context, instanceIDs []string, command string, timeout time.Duration) (map[string]*provider.CommandResult, error) {
-	// RunPowerShellOnMultiple already fans out one goroutine per VM, so each
-	// VM sees at most one in-flight call from this single call site. Per-VM
-	// serialization here would only matter if a *concurrent* RunCommand
-	// landed on the same VM mid-fan-out — accept that race instead of
-	// holding N locks across the whole multi-call.
-	res, err := p.client.RunPowerShellOnMultiple(ctx, instanceIDs, command, timeout)
-	if err != nil {
-		return nil, err
+	type result struct {
+		id  string
+		res *provider.CommandResult
 	}
-	out := make(map[string]*provider.CommandResult, len(res))
-	for id, r := range res {
-		out[id] = &provider.CommandResult{Status: r.Status, Stdout: r.Stdout, Stderr: r.Stderr}
+	results := make(chan result, len(instanceIDs))
+	var wg sync.WaitGroup
+	for _, id := range instanceIDs {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			res, err := p.RunCommand(ctx, id, command, timeout)
+			if err != nil {
+				results <- result{id: id, res: &provider.CommandResult{Status: "Error", Stderr: err.Error()}}
+				return
+			}
+			results <- result{id: id, res: res}
+		}(id)
+	}
+	wg.Wait()
+	close(results)
+	out := make(map[string]*provider.CommandResult, len(instanceIDs))
+	for r := range results {
+		out[r.id] = r.res
 	}
 	return out, nil
 }
@@ -135,9 +155,21 @@ func (p *AzureProvider) StartInteractiveShell(ctx context.Context, instanceID, _
 	return p.client.StartInteractiveShell(ctx, instanceID)
 }
 
+// Drain tears down the WinRM runner's tunnel + cached clients and blocks
+// until any leftover managed Run Command DELETE goroutines complete (still
+// drained for safety, even though the validate hot path no longer uses
+// managed Run Commands).
+func (p *AzureProvider) Drain() {
+	if p.winrm != nil {
+		p.winrm.close()
+	}
+	p.client.Drain()
+}
+
 var (
 	_ provider.Provider         = (*AzureProvider)(nil)
 	_ provider.InteractiveShell = (*AzureProvider)(nil)
+	_ provider.Drainer          = (*AzureProvider)(nil)
 )
 
 func toProviderInstance(i Instance) provider.Instance {

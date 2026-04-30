@@ -28,6 +28,12 @@ type ProvisionTunnel struct {
 // should use (ansible_psrp_proxy=...).
 func (t *ProvisionTunnel) ProxyURL() string { return t.socks.ProxyURL() }
 
+// SOCKSAddr returns "host:port" for the local SOCKS5 listener so non-Ansible
+// callers (e.g. the Go winrm client) can build their own SOCKS5 dialer.
+func (t *ProvisionTunnel) SOCKSAddr() string {
+	return fmt.Sprintf("127.0.0.1:%d", t.socks.Port)
+}
+
 // Close terminates the SOCKS5 listener, the underlying SSH connection to the
 // controller, and the spawned `az network bastion tunnel` subprocess.
 func (t *ProvisionTunnel) Close() {

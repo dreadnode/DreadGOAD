@@ -11,10 +11,11 @@ import (
 // Host represents a single host in the Ansible inventory.
 type Host struct {
 	Name       string
-	InstanceID string // ansible_host value (e.g. i-0e428dfc02f5007dd)
+	InstanceID string // ansible_host value (e.g. i-0e428dfc02f5007dd or 10.8.1.8 for IP-based connections)
 	DictKey    string
 	DNSDomain  string
 	User       string
+	Password   string // ansible_password (single/double quotes stripped)
 	Groups     []string
 }
 
@@ -83,7 +84,20 @@ func (inv *Inventory) parseLine(line, section string) {
 	case "":
 		// no section yet
 	default:
-		inv.parseGroupMembership(line, section)
+		// Standard Ansible INI: a line in a [group] section can be either a
+		// bare hostname (group membership only) or `host k=v k=v` (host def
+		// + implicit membership). Routing both shapes through parseHostDef
+		// matches what `ansible-inventory` does and is what provisioned
+		// inventories like [goad_hosts] rely on.
+		if strings.Contains(line, "=") {
+			inv.parseHostDef(line)
+			if name := strings.Fields(line)[0]; inv.Hosts[name] != nil {
+				inv.Groups[section] = append(inv.Groups[section], name)
+				inv.Hosts[name].Groups = append(inv.Hosts[name].Groups, section)
+			}
+		} else {
+			inv.parseGroupMembership(line, section)
+		}
 	}
 }
 
@@ -103,6 +117,8 @@ func (inv *Inventory) parseHostDef(line string) {
 			host.DNSDomain = vm[2]
 		case "ansible_user":
 			host.User = vm[2]
+		case "ansible_password":
+			host.Password = stripQuotes(vm[2])
 		}
 	}
 	inv.Hosts[host.Name] = host
@@ -174,4 +190,17 @@ func (inv *Inventory) HostByInstanceID(id string) *Host {
 		}
 	}
 	return nil
+}
+
+// stripQuotes removes one matching pair of surrounding single or double
+// quotes from s. Inventory values like ansible_password='abc' come through
+// the var regex with the quotes attached.
+func stripQuotes(s string) string {
+	if len(s) >= 2 {
+		first, last := s[0], s[len(s)-1]
+		if (first == '\'' && last == '\'') || (first == '"' && last == '"') {
+			return s[1 : len(s)-1]
+		}
+	}
+	return s
 }

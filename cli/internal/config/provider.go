@@ -34,6 +34,8 @@ func (c *Config) NewProvider(ctx context.Context) (provider.Provider, error) {
 			return nil, err
 		}
 		opts.Region = region
+		opts.Env = c.Env
+		opts.InventoryPath = c.InventoryPath()
 
 	case provider.NameProxmox:
 		opts.ProxmoxAPIURL = c.Proxmox.APIURL

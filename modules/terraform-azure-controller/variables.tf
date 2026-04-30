@@ -77,7 +77,7 @@ variable "os_disk_storage_account_type" {
 }
 
 variable "source_image" {
-  description = "Marketplace image reference. Defaults to Ubuntu 24.04 LTS (Noble)."
+  description = "Marketplace image reference. Defaults to Ubuntu 24.04 LTS (Noble). Ignored when source_image_id is set."
   type = object({
     publisher = string
     offer     = string
@@ -90,6 +90,12 @@ variable "source_image" {
     sku       = "server"
     version   = "latest"
   }
+}
+
+variable "source_image_id" {
+  description = "Resource ID of an existing image to boot from (Shared Image Gallery version, managed image, or compute gallery image definition). When set, takes precedence over source_image. Use this to deploy from a warpgate-built gallery image."
+  type        = string
+  default     = null
 }
 
 variable "ansible_galaxy_collections" {

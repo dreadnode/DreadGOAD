@@ -258,11 +258,13 @@ func (v *Validator) SaveReport(path string) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-// runPSTimeout is the per-attempt budget for a single SSM/WinRM PowerShell call.
-// Concurrent fan-out across 16 checks frequently pushes individual SSM calls
-// past 30s under load; 90s leaves headroom without letting truly hung hosts
-// stall the run forever (those are caught by the dead-host threshold below).
-const runPSTimeout = 90 * time.Second
+// runPSTimeout is the per-attempt budget for a single SSM/WinRM/RunCommand PS call.
+// AWS SSM completes most calls under 30s; Azure Run Command has a higher floor
+// (~10s create + ~10s exec + ~10–30s PUT-LRO settle) and tail latency that
+// pushes individual calls past 90s under cap=2 queueing. 180s absorbs that tail
+// without letting truly hung hosts stall forever (caught by the dead-host
+// threshold below).
+const runPSTimeout = 180 * time.Second
 
 // runPSAttempts is the per-call retry budget for transient errors (SSM API
 // throttles, momentary WinRM hiccups). Total worst-case wall time per dead
