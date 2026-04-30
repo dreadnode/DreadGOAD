@@ -79,15 +79,6 @@ jobs:
       - name: Init TFLint
         run: tflint --init --config .hooks/linters/.tflint.hcl
 
-      - name: Set up terraform-docs
-        run: |
-          TFD_VERSION="v0.20.0"
-          curl -fsSL -o /tmp/terraform-docs.tar.gz \
-            "https://github.com/terraform-docs/terraform-docs/releases/download/${TFD_VERSION}/terraform-docs-${TFD_VERSION}-linux-amd64.tar.gz"
-          tar -xzf /tmp/terraform-docs.tar.gz -C /tmp terraform-docs
-          sudo install -m 0755 /tmp/terraform-docs /usr/local/bin/terraform-docs
-          terraform-docs --version
-
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
