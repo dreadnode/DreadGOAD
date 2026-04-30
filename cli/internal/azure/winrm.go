@@ -55,6 +55,14 @@ type winrmRunner struct {
 type hostCreds struct {
 	user     string
 	password string
+	// useNTLM picks the masterzen/winrm transport. DCs lose their local SAM
+	// after dcpromo, so the inventory `ansible` user is purely a domain
+	// principal — only NTLM (which lets Windows route to AD) authenticates.
+	// Member servers keep the bootstrap-created local `ansible` user, and
+	// Windows refuses Basic-auth-over-HTTP for domain accounts but accepts
+	// it for local SAM. Mismatching the transport yields 401 on every host
+	// in the wrong category.
+	useNTLM bool
 }
 
 func newWinRMRunner(c *Client, env, inventoryPath string) *winrmRunner {
@@ -138,7 +146,7 @@ func (r *winrmRunner) loadInventoryCreds() (map[string]hostCreds, error) {
 		if h.InstanceID == "" || h.Password == "" {
 			continue
 		}
-		credsByIP[h.InstanceID] = buildHostCreds(h.User, h.Password, defaultUser)
+		credsByIP[h.InstanceID] = buildHostCreds(h.User, h.Password, defaultUser, isDomainController(h.Groups))
 	}
 	if len(credsByIP) == 0 {
 		return nil, fmt.Errorf("no usable credentials in %s (need ansible_host + ansible_password per host)", r.inventoryPath)
@@ -146,20 +154,32 @@ func (r *winrmRunner) loadInventoryCreds() (map[string]hostCreds, error) {
 	return credsByIP, nil
 }
 
-// buildHostCreds normalizes the username for NTLM. On member servers `ansible`
-// is a local-SAM account; sending NTLM Type 3 with no Domain hint causes the
-// server to forward auth to its AD domain, where `ansible` doesn't exist (1326
-// access denied). On a DC there is no separate local SAM — `ansible` lives in
-// AD — so the `.` hint is harmless. Prefix any bare username (no `\` or `@`)
-// with `.\` to force local-first lookup uniformly.
-func buildHostCreds(user, password, defaultUser string) hostCreds {
+func buildHostCreds(user, password, defaultUser string, useNTLM bool) hostCreds {
 	if user == "" {
 		user = defaultUser
 	}
-	if !strings.ContainsAny(user, "\\@") {
-		user = `.\` + user
+	// `.\` is an Ansible-side hint that means "look up user in the local SAM."
+	// masterzen/winrm passes the username verbatim into the NTLM/Basic header,
+	// where Windows sees the literal characters and either rejects them or
+	// fails to find a SID. For Basic-on-member-server (local SAM by design)
+	// the prefix is harmful; for NTLM the bare name lets Windows route. Strip
+	// it but keep `DOMAIN\user` (e.g. SEVENKINGDOMS\ansible for DC01) intact —
+	// that form is meaningful to NTLM SSP and pins auth to a specific domain.
+	user = strings.TrimPrefix(user, `.\`)
+	return hostCreds{user: user, password: password, useNTLM: useNTLM}
+}
+
+// isDomainController returns true when any of the host's inventory groups
+// indicate it has been (or will be) promoted to a DC. The GOAD inventory uses
+// `[dc]`, `[parent_dc]`, and `[child_dc]` consistently across labs.
+func isDomainController(groups []string) bool {
+	for _, g := range groups {
+		switch g {
+		case "dc", "parent_dc", "child_dc":
+			return true
+		}
 	}
-	return hostCreds{user: user, password: password}
+	return false
 }
 
 func (r *winrmRunner) discoverIPMapping(ctx context.Context) (map[string]string, error) {
@@ -230,9 +250,16 @@ func (r *winrmRunner) clientFor(vmID, ip string, creds hostCreds) (*winrm.Client
 	endpoint := winrm.NewEndpoint(ip, 5985, false, true, nil, nil, nil, 0)
 	params := *winrm.DefaultParameters
 	dialer := r.dialer
-	params.TransportDecorator = func() winrm.Transporter {
-		return winrm.NewClientNTLMWithDial(dialer.Dial)
+	if creds.useNTLM {
+		params.TransportDecorator = func() winrm.Transporter {
+			return winrm.NewClientNTLMWithDial(dialer.Dial)
+		}
+	} else {
+		params.TransportDecorator = func() winrm.Transporter {
+			return winrm.NewClientWithDial(dialer.Dial)
+		}
 	}
+	slog.Debug("winrm client init", "vmID", vmID, "ip", ip, "user", creds.user, "passwordLen", len(creds.password), "ntlm", creds.useNTLM)
 	cli, err := winrm.NewClientWithParameters(endpoint, creds.user, creds.password, &params)
 	if err != nil {
 		return nil, fmt.Errorf("winrm client for %s: %w", ip, err)
