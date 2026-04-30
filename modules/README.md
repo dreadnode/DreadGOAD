@@ -50,10 +50,15 @@ human-facing Bastion tunnel into the controller.
 
 Key features:
 
-- Ubuntu 24.04 LTS VM with no public IP, in a dedicated subnet
+- Linux VM with no public IP, in a dedicated subnet
+- Boots either an Azure Marketplace image (default Ubuntu 24.04 LTS) or a
+  prebuilt Shared Image Gallery / Compute Gallery image via `source_image_id`
+  — used to land warpgate-built attacker images (e.g. `ares-golden-azure`)
+  without re-provisioning toolchains at boot
 - NSG locks SSH ingress to the AzureBastionSubnet only
 - cloud-init bootstraps `ansible-core`, `pywinrm`, `pypsrp`, and the GOAD
-  Galaxy collections into `/opt/ansible-venv`
+  Galaxy collections into `/opt/ansible-venv` (skip-able when the gallery
+  image already ships them)
 - SSH key authentication only — no password auth
 - Terragrunt-compatible structure
 
