@@ -48,8 +48,18 @@ type winrmRunner struct {
 	// http.Client whose Transport pools connections to the SOCKS5
 	// listener, so subsequent calls reuse the established TCP/NTLM
 	// state instead of paying handshake cost per command.
+	//
+	// vmLocks serializes RunPSWithContext calls *per VM*. NTLM is a
+	// 3-leg handshake (NEGOTIATE → CHALLENGE → AUTHENTICATE) bound to
+	// a single TCP connection. masterzen/winrm wraps its http.Transport
+	// with go-ntlmssp.Negotiator but the underlying Transport has no
+	// MaxConnsPerHost cap, so up to 16 concurrent validator goroutines
+	// targeting the same DC race for connections from the pool — one
+	// goroutine grabs a half-authenticated socket and 401s. Per-VM
+	// serialization eliminates the race without serializing across VMs.
 	mu          sync.Mutex
 	winrmByVMID map[string]*winrm.Client
+	vmLocks     map[string]*sync.Mutex
 }
 
 type hostCreds struct {
@@ -71,7 +81,20 @@ func newWinRMRunner(c *Client, env, inventoryPath string) *winrmRunner {
 		env:           env,
 		inventoryPath: inventoryPath,
 		winrmByVMID:   make(map[string]*winrm.Client),
+		vmLocks:       make(map[string]*sync.Mutex),
 	}
+}
+
+// vmLock returns the mutex for a given VM, creating it on first use.
+func (r *winrmRunner) vmLock(vmID string) *sync.Mutex {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if l, ok := r.vmLocks[vmID]; ok {
+		return l
+	}
+	l := &sync.Mutex{}
+	r.vmLocks[vmID] = l
+	return l
 }
 
 // init lazily brings up the provision tunnel and assembles the lookup maps
@@ -227,6 +250,14 @@ func (r *winrmRunner) runPS(ctx context.Context, vmID, script string, timeout ti
 		defer cancel()
 	}
 
+	// Serialize per-VM: NTLM's 3-leg handshake is connection-scoped and
+	// concurrent goroutines on a shared http.Transport will collide on
+	// the conn pool, producing intermittent 401s. The lock is per-VM so
+	// validation across VMs still parallelizes.
+	lock := r.vmLock(vmID)
+	lock.Lock()
+	defer lock.Unlock()
+
 	stdout, stderr, exitCode, err := cli.RunPSWithContext(callCtx, script)
 	if err != nil {
 		return nil, fmt.Errorf("winrm run on %s: %w", ip, err)
@@ -272,6 +303,7 @@ func (r *winrmRunner) clientFor(vmID, ip string, creds hostCreds) (*winrm.Client
 func (r *winrmRunner) close() {
 	r.mu.Lock()
 	r.winrmByVMID = make(map[string]*winrm.Client)
+	r.vmLocks = make(map[string]*sync.Mutex)
 	r.mu.Unlock()
 	if r.tunnel != nil {
 		r.tunnel.Close()
