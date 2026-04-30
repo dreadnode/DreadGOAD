@@ -5,8 +5,19 @@
 $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
 
-# Reassert local Administrator + provision the ansible service account.
-net user Administrator '${admin_password}' /expires:never /y
+# Azure provisioning renames the built-in Administrator (SID-500) to whatever
+# admin_username we passed (here: goadadmin). The GOAD playbooks expect the
+# SID-500 account to be named 'administrator' — that's what becomes the domain
+# Administrator after dcpromo. Rename the SID-500 user before anyone else
+# uses it; idempotent across reboots.
+$builtin = Get-LocalUser | Where-Object { $_.SID -like '*-500' }
+if ($builtin -and $builtin.Name -ne 'administrator') {
+    # Drop any pre-existing 'administrator' local user that would block the rename
+    # (e.g. from an earlier bootstrap run that took the wrong path).
+    Get-LocalUser -Name 'administrator' -ErrorAction SilentlyContinue | Remove-LocalUser
+    Rename-LocalUser -Name $builtin.Name -NewName 'administrator'
+}
+net user administrator '${admin_password}' /active:yes /expires:never /y
 net user ansible '${admin_password}' /add /expires:never /y
 net localgroup administrators ansible /add
 

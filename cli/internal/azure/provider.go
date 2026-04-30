@@ -3,6 +3,7 @@ package azure
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/dreadnode/dreadgoad/internal/provider"
@@ -22,8 +23,27 @@ func init() {
 // interface. It does not implement the optional SSM-specific recovery
 // interfaces, since Azure Run Command operates over the control plane and
 // does not depend on an in-VM agent that needs babysitting.
+//
+// Azure Run Command is single-flight per VM: the control plane returns
+// 409 Conflict ("Run command extension execution is in progress") if a
+// second invocation arrives while the first is still running. Validators
+// fan out 16 concurrent checks, several of which target the same VM, so
+// we serialize per-instance via runMu and let cross-VM concurrency through
+// unchanged.
 type AzureProvider struct {
 	client *Client
+	runMu  sync.Map // instanceID -> *sync.Mutex
+}
+
+// instanceLock returns (and lazily creates) the mutex for instanceID. Two
+// concurrent callers for the same VM end up sharing one mutex; different
+// VMs get independent ones.
+func (p *AzureProvider) instanceLock(instanceID string) *sync.Mutex {
+	if m, ok := p.runMu.Load(instanceID); ok {
+		return m.(*sync.Mutex)
+	}
+	m, _ := p.runMu.LoadOrStore(instanceID, &sync.Mutex{})
+	return m.(*sync.Mutex)
 }
 
 // Client returns the underlying az-CLI client for Azure-specific operations
@@ -82,6 +102,9 @@ func (p *AzureProvider) DestroyInstances(ctx context.Context, ids []string) erro
 }
 
 func (p *AzureProvider) RunCommand(ctx context.Context, instanceID, command string, timeout time.Duration) (*provider.CommandResult, error) {
+	lock := p.instanceLock(instanceID)
+	lock.Lock()
+	defer lock.Unlock()
 	res, err := p.client.RunPowerShellCommand(ctx, instanceID, command, timeout)
 	if err != nil {
 		return nil, err
@@ -90,6 +113,11 @@ func (p *AzureProvider) RunCommand(ctx context.Context, instanceID, command stri
 }
 
 func (p *AzureProvider) RunCommandOnMultiple(ctx context.Context, instanceIDs []string, command string, timeout time.Duration) (map[string]*provider.CommandResult, error) {
+	// RunPowerShellOnMultiple already fans out one goroutine per VM, so each
+	// VM sees at most one in-flight call from this single call site. Per-VM
+	// serialization here would only matter if a *concurrent* RunCommand
+	// landed on the same VM mid-fan-out — accept that race instead of
+	// holding N locks across the whole multi-call.
 	res, err := p.client.RunPowerShellOnMultiple(ctx, instanceIDs, command, timeout)
 	if err != nil {
 		return nil, err
