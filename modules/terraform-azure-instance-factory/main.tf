@@ -73,6 +73,12 @@ resource "azurerm_windows_virtual_machine" "this" {
 
 # Custom Script Extension runs the bootstrap PowerShell on first boot.
 # Equivalent to AWS user_data + EC2's automatic execution at launch.
+#
+# Custom Script Extension only re-executes on existing VMs when the agent
+# observes a different `forceUpdateTag`. Hashing the script content into the
+# tag means: edit bootstrap.ps1.tpl → terragrunt apply → script reruns. With
+# only `protected_settings` to drift on, the provider would update the resource
+# but the agent would skip execution because the tag didn't change.
 resource "azurerm_virtual_machine_extension" "bootstrap" {
   count                = var.bootstrap_script != "" ? 1 : 0
   name                 = "${local.name_prefix}-bootstrap"
@@ -80,6 +86,14 @@ resource "azurerm_virtual_machine_extension" "bootstrap" {
   publisher            = "Microsoft.Compute"
   type                 = "CustomScriptExtension"
   type_handler_version = "1.10"
+
+  # Custom Script Extension treats `protected_settings` as opaque + sensitive,
+  # so a content-only change there doesn't always trigger re-execution. The
+  # public `settings` field is observed and replaying a fresh script_hash
+  # forces the agent to re-run when the bootstrap content changes.
+  settings = jsonencode({
+    script_hash = sha256(var.bootstrap_script)
+  })
 
   protected_settings = jsonencode({
     commandToExecute = "powershell.exe -ExecutionPolicy Unrestricted -EncodedCommand ${textencodebase64(var.bootstrap_script, "UTF-16LE")}"

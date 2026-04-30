@@ -1,6 +1,6 @@
 # =============================================================================
 # SRV03 - GOAD lab host (see host-registry.yaml)
-# Marketplace image: Windows Server 2022 Datacenter Azure Edition
+# Marketplace image: Windows Server 2016 Datacenter
 # =============================================================================
 
 include "host" {
@@ -42,10 +42,16 @@ include "root" {
 }
 
 inputs = {
-  env                 = local.env
-  instance_name       = "${local.deployment_name}-dreadgoad-${local.hostname}"
-  computer_name       = local.hostname
-  instance_size       = "Standard_D2s_v3"
+  env           = local.env
+  instance_name = "${local.deployment_name}-dreadgoad-${local.hostname}"
+  computer_name = local.hostname
+  instance_size = "Standard_D2s_v3"
+  source_image = {
+    publisher = "MicrosoftWindowsServer"
+    offer     = "WindowsServer"
+    sku       = "2016-Datacenter"
+    version   = "latest"
+  }
   resource_group_name = dependency.network.outputs.resource_group_name
   location            = dependency.network.outputs.location
   subnet_id           = dependency.network.outputs.private_subnet_id

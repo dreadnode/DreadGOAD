@@ -51,6 +51,17 @@ type SSHConfig struct {
 	KeyPath  string // Path to SSH private key
 	Password string // SSH password (used by native SSH auth when set)
 	Port     int    // SSH port (default: 22)
+
+	// InsecureIgnoreHostKey skips host-key verification. Set this when
+	// dialing through a transport whose endpoint changes per session —
+	// e.g. an Azure Bastion port-tunnel binds a fresh local port each
+	// time, so its key never matches a stable known_hosts entry.
+	InsecureIgnoreHostKey bool
+
+	// IdentitiesOnly restricts auth to the explicit KeyPath / Password,
+	// skipping the SSH agent. Required when the agent holds many keys
+	// and the target's MaxAuthTries would exhaust before our key is tried.
+	IdentitiesOnly bool
 }
 
 // IsConfigured returns true if SSH remote execution is enabled.
