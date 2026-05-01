@@ -28,6 +28,7 @@ permissions:
 env:
   GO_VERSION: "1.26.2"
   PYTHON_VERSION: "3.14.3"
+  TFD_VERSION: "v0.20.0"
 
 jobs:
   pre-commit:
@@ -78,6 +79,14 @@ jobs:
 
       - name: Init TFLint
         run: tflint --init --config .hooks/linters/.tflint.hcl
+
+      - name: Set up terraform-docs
+        run: |
+          curl -fsSL -o /tmp/terraform-docs.tar.gz \
+            "https://github.com/terraform-docs/terraform-docs/releases/download/${TFD_VERSION}/terraform-docs-${TFD_VERSION}-linux-amd64.tar.gz"
+          tar -xzf /tmp/terraform-docs.tar.gz -C /tmp terraform-docs
+          sudo install -m 0755 /tmp/terraform-docs /usr/local/bin/terraform-docs
+          terraform-docs --version
 
       - name: Set up Go
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
