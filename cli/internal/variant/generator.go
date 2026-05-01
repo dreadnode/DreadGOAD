@@ -602,7 +602,9 @@ func (g *Generator) parseASREPScripts() map[string]bool {
 		fmt.Printf("Warning: no asrep*.ps1 scripts found in %s/scripts — AS-REP roastable users will not get crackable passwords\n", g.SourcePath)
 		return users
 	}
-	re := regexp.MustCompile(`(?i)-Identity\s+"([^"]+)"`)
+	// Match -Identity in three forms: "double-quoted", 'single-quoted',
+	// or bare-word (terminated by whitespace, pipe, or semicolon).
+	re := regexp.MustCompile(`(?i)-Identity\s+(?:"([^"]+)"|'([^']+)'|([^\s|;]+))`)
 	for _, f := range files {
 		data, err := os.ReadFile(f)
 		if err != nil {
@@ -610,7 +612,12 @@ func (g *Generator) parseASREPScripts() map[string]bool {
 			continue
 		}
 		for _, match := range re.FindAllStringSubmatch(string(data), -1) {
-			users[strings.ToLower(match[1])] = true
+			for _, name := range match[1:] {
+				if name != "" {
+					users[strings.ToLower(name)] = true
+					break
+				}
+			}
 		}
 	}
 	return users

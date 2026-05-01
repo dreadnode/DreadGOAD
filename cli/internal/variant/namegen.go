@@ -10,7 +10,8 @@ import (
 
 // NameGenerator generates unique, pronounceable names for GOAD entities.
 type NameGenerator struct {
-	usedNames map[string]bool
+	usedNames     map[string]bool
+	usedCrackable map[string]bool
 
 	domainPrefixes     []string
 	domainSuffixes     []string
@@ -31,7 +32,8 @@ type NameGenerator struct {
 // NewNameGenerator creates a new NameGenerator with default word lists.
 func NewNameGenerator() *NameGenerator {
 	return &NameGenerator{
-		usedNames: make(map[string]bool),
+		usedNames:     make(map[string]bool),
+		usedCrackable: make(map[string]bool),
 		domainPrefixes: []string{
 			"zenith", "apex", "nexus", "vertex", "prism", "quantum",
 			"stellar", "fusion", "titan", "phoenix", "omega", "delta",
@@ -126,7 +128,7 @@ func NewNameGenerator() *NameGenerator {
 			"princess", "starwars", "whatever", "corvette", "midnight",
 			"computer", "mustang", "shadow", "master", "welcome",
 			"letmein", "monkey", "blaster", "yankees", "lakers",
-			"password1", "superman", "qwerty", "tigger", "batman",
+			"password1", "superman", "qwerty", "ferrari", "batman",
 			"arsenal", "access14", "buster", "soccer", "pepper",
 			"ginger", "thunder", "summer", "butterfly", "chelsea",
 			"chocolate", "pumpkin", "sparky", "hammer", "broncos",
@@ -323,8 +325,21 @@ func (ng *NameGenerator) GeneratePassword(original string) string {
 }
 
 // GenerateCrackablePassword returns a dictionary password that can be cracked
-// via hashcat/john with standard wordlists (rockyou, etc.).
+// via hashcat/john with standard wordlists (rockyou, etc.). Avoids reusing an
+// entry until the wordlist is exhausted, so multiple roastable users in the
+// same lab don't collide on the same password.
 func (ng *NameGenerator) GenerateCrackablePassword() string {
+	if len(ng.usedCrackable) < len(ng.crackablePasswords) {
+		for {
+			pw := secureChoice(ng.crackablePasswords)
+			if !ng.usedCrackable[pw] {
+				ng.usedCrackable[pw] = true
+				return pw
+			}
+		}
+	}
+	// Pool exhausted — accept a duplicate rather than mutate the word and
+	// break dictionary crackability.
 	return secureChoice(ng.crackablePasswords)
 }
 

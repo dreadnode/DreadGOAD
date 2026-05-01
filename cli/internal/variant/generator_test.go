@@ -245,6 +245,32 @@ func TestFindCrackablePasswords(t *testing.T) {
 	}
 }
 
+func TestParseASREPScriptsQuoteForms(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "source")
+	scriptsDir := filepath.Join(sourceDir, "scripts")
+	if err := os.MkdirAll(scriptsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Three forms: double-quoted, single-quoted, and bare. Plus mixed case.
+	script := `Get-ADUser -Identity "arya.stark" | Set-ADAccountControl -DoesNotRequirePreAuth:$true
+Get-ADUser -identity 'jon.snow' | Set-ADAccountControl -DoesNotRequirePreAuth:$true
+Get-ADUser -Identity tyrion.lannister | Set-ADAccountControl -DoesNotRequirePreAuth:$true
+`
+	if err := os.WriteFile(filepath.Join(scriptsDir, "asrep.ps1"), []byte(script), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gen := NewGenerator(sourceDir, "", "test-asrep-forms")
+	users := gen.parseASREPScripts()
+
+	for _, want := range []string{"arya.stark", "jon.snow", "tyrion.lannister"} {
+		if !users[want] {
+			t.Errorf("expected %q to be parsed from script, got %v", want, users)
+		}
+	}
+}
+
 func TestApplyReplacements(t *testing.T) {
 	gen := NewGenerator("", "", "test")
 	gen.mappings.Misc["robert"] = "james"

@@ -124,6 +124,32 @@ func TestGenerateCrackablePassword(t *testing.T) {
 	}
 }
 
+func TestGenerateCrackablePasswordNoCollisionsUntilExhausted(t *testing.T) {
+	ng := NewNameGenerator()
+	// First N calls (N = wordlist size) must each produce a distinct word so
+	// roastable users in the same lab don't share the same password.
+	pool := len(ng.crackablePasswords)
+	seen := make(map[string]bool, pool)
+	// Account for the one already-consumed call from the prior test setup —
+	// fresh generator here, so start clean.
+	for i := 0; i < pool; i++ {
+		pw := ng.GenerateCrackablePassword()
+		if seen[pw] {
+			t.Fatalf("collision on call %d: %q reused before pool exhausted", i+1, pw)
+		}
+		seen[pw] = true
+	}
+	if len(seen) != pool {
+		t.Errorf("expected %d unique passwords, got %d", pool, len(seen))
+	}
+	// After exhaustion, generator must still return a wordlist entry (not panic
+	// or empty), even if it duplicates an earlier pick.
+	pw := ng.GenerateCrackablePassword()
+	if !seen[pw] {
+		t.Errorf("post-exhaustion password %q not from wordlist", pw)
+	}
+}
+
 func TestGenerateGroupName(t *testing.T) {
 	ng := NewNameGenerator()
 	name := ng.GenerateGroupName()
