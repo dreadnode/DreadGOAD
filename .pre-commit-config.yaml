@@ -82,6 +82,13 @@ repos:
         files: ^(modules|infra)/
         args:
           - --args=--config=__GIT_WORKING_DIR__/.hooks/linters/.tflint.hcl
+      - id: terraform_docs
+        files: ^modules/[^/]+/.+
+        exclude: ^modules/README\.md$
+        args:
+          - --hook-config=--path-to-file=README.md
+          - --hook-config=--add-to-existing-file=true
+          - --hook-config=--create-file-if-not-exist=true
 
   - repo: local
     hooks:

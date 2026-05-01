@@ -144,11 +144,16 @@ func dialResolved(ctx context.Context, cfg SSHConfig) (*ssh.Client, error) {
 		}
 	}
 
-	hostKey, err := buildHostKeyCallback(rc)
-	if err != nil {
-		return nil, fmt.Errorf("host key callback: %w", err)
+	var hostKey ssh.HostKeyCallback
+	if cfg.InsecureIgnoreHostKey {
+		hostKey = ssh.InsecureIgnoreHostKey()
+	} else {
+		hostKey, err = buildHostKeyCallback(rc)
+		if err != nil {
+			return nil, fmt.Errorf("host key callback: %w", err)
+		}
 	}
-	authMethods, err := buildAuthMethods(rc, cfg.Password)
+	authMethods, err := buildAuthMethods(rc, cfg.Password, cfg.IdentitiesOnly)
 	if err != nil {
 		return nil, fmt.Errorf("auth methods: %w", err)
 	}
@@ -219,17 +224,19 @@ func buildHostKeyCallback(rc *resolvedSSHConfig) (ssh.HostKeyCallback, error) {
 	return knownhosts.New(files...)
 }
 
-func buildAuthMethods(rc *resolvedSSHConfig, password string) ([]ssh.AuthMethod, error) {
+func buildAuthMethods(rc *resolvedSSHConfig, password string, identitiesOnly bool) ([]ssh.AuthMethod, error) {
 	var methods []ssh.AuthMethod
 
-	agentSock := rc.IdentityAgent
-	if agentSock == "" {
-		agentSock = os.Getenv("SSH_AUTH_SOCK")
-	}
-	if agentSock != "" && !strings.EqualFold(agentSock, "none") {
-		agentSock = expandPath(agentSock)
-		if conn, err := net.Dial("unix", agentSock); err == nil {
-			methods = append(methods, ssh.PublicKeysCallback(agent.NewClient(conn).Signers))
+	if !identitiesOnly {
+		agentSock := rc.IdentityAgent
+		if agentSock == "" {
+			agentSock = os.Getenv("SSH_AUTH_SOCK")
+		}
+		if agentSock != "" && !strings.EqualFold(agentSock, "none") {
+			agentSock = expandPath(agentSock)
+			if conn, err := net.Dial("unix", agentSock); err == nil {
+				methods = append(methods, ssh.PublicKeysCallback(agent.NewClient(conn).Signers))
+			}
 		}
 	}
 

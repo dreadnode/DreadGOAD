@@ -62,6 +62,8 @@ func RunChecks(opts Options) []CheckResult {
 	switch opts.Provider {
 	case "ludus":
 		results = append(results, runLudusChecks(opts.Ludus)...)
+	case "azure":
+		results = append(results, runAzureChecks()...)
 	default:
 		// AWS is the historical default; proxmox currently uses the same
 		// terraform/terragrunt toolchain so it falls through here too.
@@ -72,6 +74,73 @@ func RunChecks(opts Options) []CheckResult {
 	}
 
 	return results
+}
+
+func runAzureChecks() []CheckResult {
+	var results []CheckResult
+	results = append(results, checkCommand("az", "Azure CLI"))
+	results = append(results, checkAzureAccount())
+	results = append(results, checkAzureBastionExtension())
+	results = append(results, checkAzureSSHExtension())
+	results = append(results, checkTerragrunt())
+	results = append(results, checkTerraformOrTofu())
+	return results
+}
+
+func checkAzureAccount() CheckResult {
+	out, err := exec.Command("az", "account", "show", "--query", "id", "-o", "tsv").CombinedOutput()
+	if err != nil {
+		return CheckResult{
+			Name:    "Azure Login",
+			Status:  "fail",
+			Message: "no active az session. Run: az login",
+		}
+	}
+	return CheckResult{
+		Name:    "Azure Login",
+		Status:  "pass",
+		Message: fmt.Sprintf("subscription %s", strings.TrimSpace(string(out))),
+	}
+}
+
+// checkAzureBastionExtension verifies that `az network bastion` is dispatchable.
+// `network bastion` ships with the core CLI, but `ssh`/`rdp`/`tunnel` rely on
+// the `bastion` extension (autoinstalled on first invocation). We probe the
+// help text to surface a clear error if the user's CLI is too old or sandboxed.
+func checkAzureBastionExtension() CheckResult {
+	cmd := exec.Command("az", "network", "bastion", "--help")
+	if err := cmd.Run(); err != nil {
+		return CheckResult{
+			Name:    "Azure Bastion CLI",
+			Status:  "warn",
+			Message: "az network bastion not available (upgrade az or run: az extension add --name bastion)",
+		}
+	}
+	return CheckResult{
+		Name:    "Azure Bastion CLI",
+		Status:  "pass",
+		Message: "az network bastion available",
+	}
+}
+
+// checkAzureSSHExtension verifies the `az ssh` extension is installed.
+// `az network bastion ssh` and `az network bastion rdp` shell out to `az ssh`
+// for the actual session, and a missing extension surfaces as an opaque
+// "The extension ssh is not installed" error mid-flow.
+func checkAzureSSHExtension() CheckResult {
+	cmd := exec.Command("az", "extension", "show", "-n", "ssh")
+	if err := cmd.Run(); err != nil {
+		return CheckResult{
+			Name:    "Azure SSH extension",
+			Status:  "warn",
+			Message: "az ssh extension not installed — required by `bastion ssh|rdp`. Run: az extension add -n ssh",
+		}
+	}
+	return CheckResult{
+		Name:    "Azure SSH extension",
+		Status:  "pass",
+		Message: "az ssh extension installed",
+	}
 }
 
 // PrintResults displays check results with color and returns the failure count.

@@ -74,17 +74,19 @@ func extractJSON(raw string) ([]byte, error) {
 }
 
 // runScriptText renders a templated PowerShell command with vars and
-// executes it on host. It returns the trimmed raw output. Use this for
-// single-value probes where typed JSON is overkill; the {{psq}}/{{psarr}}
-// helpers still apply for safe interpolation. Errors only surface
-// template-rendering bugs — runPS itself swallows transport failures
-// and returns "".
+// executes it on host. It returns the trimmed raw output. Errors surface
+// both template-rendering bugs and transport failures (host marked dead,
+// retries exhausted, ctx canceled) — caller's `if err != nil` branch
+// should emit WARN instead of letting empty output mascarade as a real
+// "thing not found" result. The trimmed stdout is returned even when
+// err != nil so callers can include any partial output in WARN text.
 func runScriptText(ctx context.Context, v *Validator, host, tmpl string, vars map[string]any) (string, error) {
 	script, err := renderScript(tmpl, vars)
 	if err != nil {
 		return "", err
 	}
-	return strings.TrimSpace(v.runPS(ctx, host, script)), nil
+	out, runErr := v.runPSErr(ctx, host, script)
+	return strings.TrimSpace(out), runErr
 }
 
 // runScriptTextErr is the diagnostic variant of runScriptText: it bubbles

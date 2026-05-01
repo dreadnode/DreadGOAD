@@ -139,18 +139,18 @@ module "asg_deployment" {
 ## Requirements
 
 | Name | Version |
-|------|---------|
+| ---- | ------- |
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | ~> 1.7 |
-| <a name="requirement_aws"></a> [aws](#requirement\_aws) | ~> 6.36.0 |
+| <a name="requirement_aws"></a> [aws](#requirement\_aws) | ~> 6.42.0 |
 | <a name="requirement_http"></a> [http](#requirement\_http) | ~> 3.5.0 |
 | <a name="requirement_random"></a> [random](#requirement\_random) | ~> 3.8.0 |
 
 ## Providers
 
 | Name | Version |
-|------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.36.0 |
-| <a name="provider_http"></a> [http](#provider\_http) | ~> 3.5.0 |
+| ---- | ------- |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.42.0 |
+| <a name="provider_http"></a> [http](#provider\_http) | 3.5.0 |
 
 ## Modules
 
@@ -159,7 +159,7 @@ No modules.
 ## Resources
 
 | Name | Type |
-|------|------|
+| ---- | ---- |
 | [aws_autoscaling_group.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/autoscaling_group) | resource |
 | [aws_iam_instance_profile.ssm](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_instance_profile) | resource |
 | [aws_iam_role.ssm](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
@@ -186,7 +186,7 @@ No modules.
 ## Inputs
 
 | Name | Description | Type | Default | Required |
-|------|-------------|------|---------|:--------:|
+| ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_access_logs_bucket"></a> [access\_logs\_bucket](#input\_access\_logs\_bucket) | S3 bucket for ALB access logs | `string` | `null` | no |
 | <a name="input_additional_ebs_volumes"></a> [additional\_ebs\_volumes](#input\_additional\_ebs\_volumes) | Additional EBS volumes to attach | <pre>list(object({<br/>    device_name           = string<br/>    volume_size           = number<br/>    volume_type           = string<br/>    delete_on_termination = bool<br/>  }))</pre> | `[]` | no |
 | <a name="input_additional_iam_policies"></a> [additional\_iam\_policies](#input\_additional\_iam\_policies) | Map of additional IAM policies to attach to the instance role (if SSM is enabled). Example usage: additional\_iam\_policies = { s3\_full\_access = "arn:aws:iam::aws:policy/AmazonS3FullAccess" } | `map(string)` | `{}` | no |
@@ -272,7 +272,7 @@ No modules.
 ## Outputs
 
 | Name | Description |
-|------|-------------|
+| ---- | ----------- |
 | <a name="output_alb_arn"></a> [alb\_arn](#output\_alb\_arn) | ARN of the Application Load Balancer |
 | <a name="output_alb_dns_name"></a> [alb\_dns\_name](#output\_alb\_dns\_name) | DNS name of the Application Load Balancer |
 | <a name="output_alb_id"></a> [alb\_id](#output\_alb\_id) | ID of the Application Load Balancer |
