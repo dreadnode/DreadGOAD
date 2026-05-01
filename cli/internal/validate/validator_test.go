@@ -23,12 +23,16 @@ func fakeCheck(name string, delay time.Duration, results int) checkFunc {
 	}
 }
 
-func TestRunChecks_OrderedOutput(t *testing.T) {
+func TestRunChecks_GroupedOutput(t *testing.T) {
 	v := &Validator{
 		hosts: make(map[string]string),
 	}
 
-	// Check C is fastest, A is slowest — output must still be A, B, C order.
+	// Each check's output must be a contiguous block — header followed by
+	// its own results — not interleaved with other checks. Order between
+	// checks is by completion time, not submission order: runChecks flushes
+	// each check's buffered output as soon as the check returns so slow
+	// providers (e.g. Azure Run Command) don't hide progress from operators.
 	checks := []checkFunc{
 		fakeCheck("A", 100*time.Millisecond, 2),
 		fakeCheck("B", 50*time.Millisecond, 2),
@@ -44,22 +48,17 @@ func TestRunChecks_OrderedOutput(t *testing.T) {
 		t.Fatal("no output produced")
 	}
 
-	// Verify order: A header must come before B header, B before C.
-	aIdx := indexOf(lines, "== A ==")
-	bIdx := indexOf(lines, "== B ==")
-	cIdx := indexOf(lines, "== C ==")
-
-	if aIdx == -1 || bIdx == -1 || cIdx == -1 {
-		t.Fatalf("missing headers in output:\n%s", output)
-	}
-	if aIdx >= bIdx || bIdx >= cIdx {
-		t.Errorf("output not in submission order: A@%d B@%d C@%d\noutput:\n%s", aIdx, bIdx, cIdx, output)
-	}
-
-	// Verify A's results come before B's header (grouped, not interleaved).
-	aResult := indexOf(lines, "result-A-1")
-	if aResult == -1 || aResult >= bIdx {
-		t.Errorf("A results should be grouped before B header: result@%d B@%d", aResult, bIdx)
+	for _, name := range []string{"A", "B", "C"} {
+		header := indexOf(lines, "== "+name+" ==")
+		r0 := indexOf(lines, fmt.Sprintf("result-%s-0", name))
+		r1 := indexOf(lines, fmt.Sprintf("result-%s-1", name))
+		if header == -1 || r0 == -1 || r1 == -1 {
+			t.Fatalf("missing %s header or results in output:\n%s", name, output)
+		}
+		if r0 != header+1 || r1 != header+2 {
+			t.Errorf("%s output not contiguous: header@%d r0@%d r1@%d\noutput:\n%s",
+				name, header, r0, r1, output)
+		}
 	}
 }
 

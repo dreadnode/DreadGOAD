@@ -122,32 +122,37 @@ const maxConcurrentChecks = 16
 // checkFunc is the signature for all check functions.
 type checkFunc func(context.Context, io.Writer)
 
-// runChecks executes check functions concurrently, printing each check's
-// output in submission order as it completes (per-check buffered channels).
+// runChecks executes check functions concurrently. Each check's output is
+// flushed to stdout as soon as the check finishes, instead of buffering in
+// submission order. The original in-order design wedged on slow providers
+// (Azure Run Command, ~12s per call) — a single early check holding 30+ Run
+// Commands would hide every later check's progress for minutes. Interleaved
+// output gives operators a live progress signal; the persisted JSON report
+// keeps the canonical order.
 func (v *Validator) runChecks(ctx context.Context, checks []checkFunc) {
-	chs := make([]chan []byte, len(checks))
+	var stdoutMu sync.Mutex
 	sem := make(chan struct{}, maxConcurrentChecks)
+	var wg sync.WaitGroup
 
-	for i, fn := range checks {
-		chs[i] = make(chan []byte, 1)
-		go func(ch chan<- []byte, f checkFunc) {
+	for _, fn := range checks {
+		wg.Add(1)
+		go func(f checkFunc) {
+			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			var buf bytes.Buffer
 			f(ctx, &buf)
-			ch <- buf.Bytes()
-		}(chs[i], fn)
-	}
-
-	for _, ch := range chs {
-		if _, err := os.Stdout.Write(<-ch); err != nil {
-			if errors.Is(err, syscall.EPIPE) {
-				return
+			stdoutMu.Lock()
+			defer stdoutMu.Unlock()
+			if _, err := os.Stdout.Write(buf.Bytes()); err != nil {
+				if errors.Is(err, syscall.EPIPE) {
+					return
+				}
+				fmt.Fprintf(os.Stderr, "validate: stdout write failed: %v\n", err)
 			}
-			fmt.Fprintf(os.Stderr, "validate: stdout write failed: %v\n", err)
-			return
-		}
+		}(fn)
 	}
+	wg.Wait()
 }
 
 // RunQuickChecks runs a subset of critical checks.
@@ -253,11 +258,13 @@ func (v *Validator) SaveReport(path string) error {
 	return os.WriteFile(path, data, 0o644)
 }
 
-// runPSTimeout is the per-attempt budget for a single SSM/WinRM PowerShell call.
-// Concurrent fan-out across 16 checks frequently pushes individual SSM calls
-// past 30s under load; 90s leaves headroom without letting truly hung hosts
-// stall the run forever (those are caught by the dead-host threshold below).
-const runPSTimeout = 90 * time.Second
+// runPSTimeout is the per-attempt budget for a single SSM/WinRM/RunCommand PS call.
+// AWS SSM completes most calls under 30s; Azure Run Command has a higher floor
+// (~10s create + ~10s exec + ~10–30s PUT-LRO settle) and tail latency that
+// pushes individual calls past 90s under cap=2 queueing. 180s absorbs that tail
+// without letting truly hung hosts stall forever (caught by the dead-host
+// threshold below).
+const runPSTimeout = 180 * time.Second
 
 // runPSAttempts is the per-call retry budget for transient errors (SSM API
 // throttles, momentary WinRM hiccups). Total worst-case wall time per dead

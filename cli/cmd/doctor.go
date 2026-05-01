@@ -17,6 +17,7 @@ Common checks: ansible-core version, Python, jq, zip, Ansible collections, inven
 
 Provider-specific:
   aws (default)  AWS CLI, AWS credentials, Terragrunt, Terraform/Tofu
+  azure          Azure CLI, az login session, az network bastion, Terragrunt, Terraform/Tofu
   ludus          Ludus CLI (or SSH reachability when ludus.ssh_host is set), API key`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if config.ConfigMissing() {
