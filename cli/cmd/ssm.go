@@ -16,14 +16,15 @@ import (
 var ssmCmd = &cobra.Command{
 	Use:   "ssm",
 	Short: "Manage AWS SSM sessions",
-	Long:  "SSM commands are only available when provider is set to 'aws'.",
+	Long: `SSM commands are AWS-specific. For Azure use 'dreadgoad runcmd'
+(Azure Run Command). For other providers see their respective verbs.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Get()
 		if err != nil {
 			return err
 		}
 		if !cfg.IsAWS() {
-			return fmt.Errorf("ssm commands are only available with the AWS provider (current: %s)", cfg.ResolvedProvider())
+			return fmt.Errorf("ssm commands are only available with the AWS provider (current: %s); use 'runcmd' for Azure", cfg.ResolvedProvider())
 		}
 		return nil
 	},
@@ -161,9 +162,13 @@ func runSSMConnect(cmd *cobra.Command, args []string) error {
 	}
 	ctx := context.Background()
 
-	sm, _, err := getSessionManager(ctx)
+	prov, err := cfg.NewProvider(ctx)
 	if err != nil {
 		return err
+	}
+	shell, ok := prov.(provider.InteractiveShell)
+	if !ok {
+		return fmt.Errorf("provider %s does not support interactive shells", prov.Name())
 	}
 
 	inv, err := inventory.Parse(cfg.InventoryPath())
@@ -182,7 +187,7 @@ func runSSMConnect(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Printf("Starting SSM session to %s (%s) in %s...\n", host.Name, host.InstanceID, region)
 
-	return sm.StartInteractiveSession(ctx, host.InstanceID, region)
+	return shell.StartInteractiveShell(ctx, host.InstanceID, region)
 }
 
 func runSSMRun(cmd *cobra.Command, args []string) error {

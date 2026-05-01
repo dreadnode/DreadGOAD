@@ -273,15 +273,15 @@ output "vpce_security_group" {
 ## Requirements
 
 | Name | Version |
-|------|---------|
+| ---- | ------- |
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | ~> 1.7 |
-| <a name="requirement_aws"></a> [aws](#requirement\_aws) | ~> 6.32.0 |
+| <a name="requirement_aws"></a> [aws](#requirement\_aws) | ~> 6.42.0 |
 
 ## Providers
 
 | Name | Version |
-|------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.32.1 |
+| ---- | ------- |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.42.0 |
 
 ## Modules
 
@@ -290,7 +290,7 @@ No modules.
 ## Resources
 
 | Name | Type |
-|------|------|
+| ---- | ---- |
 | [aws_default_security_group.default](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/default_security_group) | resource |
 | [aws_eip.nat](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/eip) | resource |
 | [aws_internet_gateway.main](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/internet_gateway) | resource |
@@ -316,7 +316,7 @@ No modules.
 ## Inputs
 
 | Name | Description | Type | Default | Required |
-|------|-------------|------|---------|:--------:|
+| ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_additional_private_routes"></a> [additional\_private\_routes](#input\_additional\_private\_routes) | Additional routes to add to the private route table | <pre>map(object({<br/>    destination_cidr_block    = string<br/>    network_interface_id      = optional(string, null)<br/>    gateway_id                = optional(string, null)<br/>    nat_gateway_id            = optional(string, null)<br/>    transit_gateway_id        = optional(string, null)<br/>    vpc_peering_connection_id = optional(string, null)<br/>  }))</pre> | `{}` | no |
 | <a name="input_additional_tags"></a> [additional\_tags](#input\_additional\_tags) | Additional tags to apply to resources | `map(string)` | `{}` | no |
 | <a name="input_deployment_name"></a> [deployment\_name](#input\_deployment\_name) | Name of the deployment (ex: "crucible") | `string` | n/a | yes |
@@ -332,7 +332,7 @@ No modules.
 ## Outputs
 
 | Name | Description |
-|------|-------------|
+| ---- | ----------- |
 | <a name="output_nat_eip"></a> [nat\_eip](#output\_nat\_eip) | The public IP of the NAT gateway |
 | <a name="output_pod_subnet_cidrs"></a> [pod\_subnet\_cidrs](#output\_pod\_subnet\_cidrs) | The CIDR blocks of the pod subnets |
 | <a name="output_pod_subnet_ids"></a> [pod\_subnet\_ids](#output\_pod\_subnet\_ids) | The IDs of the pod subnets (from secondary CIDR) |

@@ -12,14 +12,20 @@ import (
 	"slices"
 
 	"github.com/dreadnode/dreadgoad/internal/ansible"
+	"github.com/dreadnode/dreadgoad/internal/azure"
 	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/dreadnode/dreadgoad/internal/doctor"
 	inv "github.com/dreadnode/dreadgoad/internal/inventory"
 	"github.com/dreadnode/dreadgoad/internal/lab"
 	"github.com/dreadnode/dreadgoad/internal/ludus"
+	"github.com/dreadnode/dreadgoad/internal/provider"
 	"github.com/dreadnode/dreadgoad/internal/variant"
 	"github.com/spf13/cobra"
 )
+
+// closableTunnel is the union return shape from maybeStartSOCKSTunnel. The
+// Ludus and Azure paths wrap different transports but both expose a Close().
+type closableTunnel interface{ Close() }
 
 var provisionCmd = &cobra.Command{
 	Use:   "provision",
@@ -354,11 +360,12 @@ func provisionPlaybooks(ctx context.Context, cfg *config.Config, playbooks []str
 	}
 	fmt.Println("-----------------------------------------------")
 
-	// When running against a remote Ludus server (SSH mode), the local
-	// machine can't reach the lab VLAN directly. Start a SOCKS5 proxy
-	// tunnel through SSH and override Ansible to use the psrp connection
-	// plugin, which routes WinRM traffic through the tunnel.
-	var socksTunnel *ludus.SOCKSTunnel
+	// When running against a remote Ludus server or Azure (where private
+	// VMs aren't reachable from the laptop), open a SOCKS5 proxy through
+	// SSH and override Ansible to route WinRM via the psrp connection
+	// plugin. For Azure, the proxy chain is: laptop → Bastion port-tunnel
+	// → controller SSH → SOCKS5 → in-VNet GOAD VM:5985.
+	var socksTunnel closableTunnel
 	var socksVars map[string]string
 	if tunnel, vars, err := maybeStartSOCKSTunnel(ctx, cfg); err != nil {
 		return fmt.Errorf("SOCKS tunnel setup failed: %w", err)
@@ -419,15 +426,57 @@ func provisionPlaybooks(ctx context.Context, cfg *config.Config, playbooks []str
 	return nil
 }
 
-// maybeStartSOCKSTunnel checks if the configured provider is Ludus in SSH
-// mode. If so, it starts a SOCKS5 tunnel through the Ludus host and returns
-// the tunnel handle plus extra-vars that override Ansible to use the psrp
-// connection plugin through the tunnel. Returns (nil, nil, nil) when no
-// tunnel is needed (non-Ludus, or Ludus in local mode).
-func maybeStartSOCKSTunnel(ctx context.Context, cfg *config.Config) (*ludus.SOCKSTunnel, map[string]string, error) {
-	if cfg.ResolvedProvider() != "ludus" {
+// maybeStartSOCKSTunnel selects a provider-appropriate SOCKS5 tunnel for
+// reaching private Windows hosts. Returns (nil, nil, nil) when the active
+// provider doesn't need one (AWS SSM dial-in, Ludus in local mode, etc.).
+//
+// Each branch returns the same shape: a closable handle + the Ansible
+// extra-vars that route the psrp connection plugin through the proxy.
+func maybeStartSOCKSTunnel(ctx context.Context, cfg *config.Config) (closableTunnel, map[string]string, error) {
+	switch cfg.ResolvedProvider() {
+	case provider.NameAzure:
+		return startAzureSOCKSTunnel(ctx, cfg)
+	case "ludus":
+		return startLudusSOCKSTunnel(cfg)
+	default:
 		return nil, nil, nil
 	}
+}
+
+// startAzureSOCKSTunnel chains an Azure Bastion port-forward + an SSH SOCKS5
+// proxy through the in-VNet Ansible controller, then returns the psrp vars
+// Ansible needs to dial GOAD VM:5985 through that chain.
+func startAzureSOCKSTunnel(ctx context.Context, cfg *config.Config) (closableTunnel, map[string]string, error) {
+	prov, err := cfg.NewProvider(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create azure provider: %w", err)
+	}
+	azProv, ok := prov.(*azure.AzureProvider)
+	if !ok {
+		return nil, nil, fmt.Errorf("provider is not azure (got %T)", prov)
+	}
+
+	fmt.Println("Opening Azure Bastion → controller → SOCKS5 chain for WinRM access...")
+	tunnel, err := azure.StartProvisionTunnel(ctx, azProv.Client(), cfg.Env)
+	if err != nil {
+		return nil, nil, err
+	}
+	fmt.Printf("  SOCKS5 proxy: %s\n", tunnel.ProxyURL())
+
+	vars := map[string]string{
+		"ansible_connection":           "psrp",
+		"ansible_psrp_proxy":           tunnel.ProxyURL(),
+		"ansible_psrp_auth":            "ntlm",
+		"ansible_psrp_cert_validation": "ignore",
+		"ansible_psrp_protocol":        "http",
+		"ansible_port":                 "5985",
+	}
+	return tunnel, vars, nil
+}
+
+// startLudusSOCKSTunnel preserves the original Ludus-in-SSH-mode behavior:
+// open SSH to the Ludus host, layer SOCKS5, route Ansible psrp through it.
+func startLudusSOCKSTunnel(cfg *config.Config) (closableTunnel, map[string]string, error) {
 	target := cfg.Ludus.SSHTarget()
 	if target == "" {
 		return nil, nil, nil
