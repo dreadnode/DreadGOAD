@@ -370,18 +370,23 @@ func (g *Generator) mapUsers(config *LabConfig) {
 				g.pwdInDescUsers[newUsername] = true
 			}
 
-			g.mapUserNameComponents(user, newUsername)
+			g.mapUserNameComponents(user, username, newUsername)
 
 			fmt.Printf("  %s -> %s\n", username, newUsername)
 		}
 	}
 }
 
-func (g *Generator) mapUserNameComponents(user *UserConfig, newUsername string) {
+func (g *Generator) mapUserNameComponents(user *UserConfig, oldUsername, newUsername string) {
 	if user == nil {
 		return
 	}
-	if user.Firstname != "" {
+	// Skip the firstname Misc entry when firstname equals the username
+	// (single-name users like missandei/drogon with surname "-"). Otherwise
+	// Misc[firstname]->newFirst races Users[username]->newUsername at the same
+	// Old length, and a non-stable sort can leave the user keyed as just the
+	// firstname instead of the full firstname.lastname new identity.
+	if user.Firstname != "" && user.Firstname != oldUsername {
 		firstname := user.Firstname
 		newFirst := strings.Split(newUsername, ".")[0]
 		g.mappings.Misc[firstname] = newFirst

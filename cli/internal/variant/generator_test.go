@@ -271,6 +271,73 @@ Get-ADUser -Identity tyrion.lannister | Set-ADAccountControl -DoesNotRequirePreA
 	}
 }
 
+func TestSingleNameUserMapsCleanly(t *testing.T) {
+	// Repro for the missandei/drogon case: a user whose firstname equals the
+	// username and whose surname is "-". The Misc[firstname] entry must not be
+	// added — it would collide with Users[username] at the same Old length and
+	// a non-stable sort could leave the user keyed as just the firstname.
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "source")
+	targetDir := filepath.Join(tmpDir, "target")
+
+	if err := os.MkdirAll(filepath.Join(sourceDir, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &LabConfig{}
+	cfg.Lab.Hosts = map[string]*HostConfig{}
+	cfg.Lab.Domains = map[string]*DomainConfig{
+		"essos.local": {
+			DomainPassword: "Pass1!",
+			Users: map[string]*UserConfig{
+				"missandei": {
+					Firstname:   "missandei",
+					Surname:     "-",
+					Password:    "fr3edom",
+					Description: "missandei",
+				},
+			},
+			Groups:            GroupsConfig{},
+			OrganisationUnits: map[string]OUConfig{},
+			ACLs:              map[string]ACLConfig{},
+		},
+	}
+	data, _ := json.MarshalIndent(cfg, "", "  ")
+	if err := os.WriteFile(filepath.Join(sourceDir, "data", "config.json"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gen := NewGenerator(sourceDir, targetDir, "test-singlename")
+	if err := gen.Run(); err != nil {
+		t.Fatalf("generator failed: %v", err)
+	}
+
+	newUser := gen.mappings.Users["missandei"]
+	if !strings.Contains(newUser, ".") {
+		t.Fatalf("expected firstname.lastname mapping, got %q", newUser)
+	}
+	if _, ok := gen.mappings.Misc["missandei"]; ok {
+		t.Errorf("Misc must not contain a redundant firstname entry for single-name user")
+	}
+
+	raw, err := os.ReadFile(filepath.Join(targetDir, "data", "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var newConfig LabConfig
+	if err := json.Unmarshal(raw, &newConfig); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, dom := range newConfig.Lab.Domains {
+		if _, ok := dom.Users[newUser]; ok {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("transformed user %q not found under expected key in any domain", newUser)
+	}
+}
+
 func TestApplyReplacements(t *testing.T) {
 	gen := NewGenerator("", "", "test")
 	gen.mappings.Misc["robert"] = "james"
