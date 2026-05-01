@@ -28,7 +28,7 @@ permissions:
 env:
   GO_VERSION: "1.26.2"
   PYTHON_VERSION: "3.14.3"
-  TFD_VERSION: "v0.20.0"
+  TFD_VERSION: "v0.22.0"
 
 jobs:
   pre-commit:
