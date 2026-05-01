@@ -43,39 +43,65 @@
       delay: 10
       until: powershellget_install is not failed
 
-    - name: Install DSC modules sequentially
+    - name: Check all required modules
       ansible.windows.win_shell: |
         $ProgressPreference = 'SilentlyContinue'
-        $ErrorActionPreference = 'Stop'
-        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+        $modules = @('ComputerManagementDsc', 'ActiveDirectoryDSC', 'xNetworking')
+        $missing = @()
 
-        $name = '{{ item }}'
-        if (Get-Module -ListAvailable -Name $name) {
-          Write-Output "$name already installed"
+        foreach ($module in $modules) {
+          if (-not (Get-Module -ListAvailable -Name $module)) {
+            $missing += $module
+          }
+        }
+
+        if ($missing.Count -gt 0) {
+          Write-Output ($missing -join ',')
+          exit 1
+        } else {
+          Write-Output "ALL_INSTALLED"
           exit 0
         }
+      register: module_check
+      failed_when: false
+      changed_when: false
 
-        # Unblock any pending downloads from a previous failed attempt before
-        # invoking PackageManagement again.
-        Get-ChildItem -Path 'C:\Program Files\WindowsPowerShell\Modules' -Recurse -ErrorAction SilentlyContinue |
-          Unblock-File -ErrorAction SilentlyContinue
-
-        Install-Module -Name $name -Force -SkipPublisherCheck -AcceptLicense -Confirm:$false -AllowClobber
-
-        if (-not (Get-Module -ListAvailable -Name $name)) {
-          throw "Install-Module reported success but $name is not available"
-        }
-        Write-Output "$name installed"
-      loop:
-        - ComputerManagementDsc
-        - ActiveDirectoryDSC
-        - xNetworking
+    - name: Install all missing modules in parallel
+      community.windows.win_psmodule:
+        name: "{{ item | trim }}"
+        state: present
+        accept_license: true
+        skip_publisher_check: true
+      environment:
+        LOCALAPPDATA: 'C:\Windows\system32\config\systemprofile\AppData\Local'
+      loop: "{{ module_check.stdout_lines[0].split(',') if module_check.stdout_lines else [] }}"
       loop_control:
-        label: "Module: {{ item }}"
-      register: dsc_module_install
-      retries: 5
-      delay: 20
-      until: dsc_module_install is not failed
+        label: "Installing module: {{ item | trim }}"
+      when:
+        - module_check.rc != 0
+        - item | trim != ''
+        - item | trim != 'ALL_INSTALLED'
+      register: module_install
+      async: 600
+      poll: 0
+      vars:
+        ansible_win_async_startup_timeout: 30
+
+    - name: Wait for module installations to complete
+      ansible.builtin.async_status:
+        jid: "{{ async_result_item.ansible_job_id }}"
+      loop: "{{ module_install.results }}"
+      loop_control:
+        loop_var: "async_result_item"
+        label: "Waiting for module: {{ async_result_item.item | default('unknown') | trim }}"
+      register: async_poll_results
+      until: async_poll_results.finished
+      retries: 120
+      delay: 5
+      when:
+        - module_install is not skipped
+        - async_result_item.ansible_job_id is defined
+      failed_when: async_poll_results.finished and async_poll_results.failed
 
 - name: Verify DSC LCM is ready
   ansible.windows.win_powershell:
