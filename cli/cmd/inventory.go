@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	daws "github.com/dreadnode/dreadgoad/internal/aws"
 	"github.com/dreadnode/dreadgoad/internal/config"
 	inv "github.com/dreadnode/dreadgoad/internal/inventory"
 	"github.com/spf13/cobra"
@@ -24,7 +23,7 @@ var inventoryCmd = &cobra.Command{
 
 var inventorySyncCmd = &cobra.Command{
 	Use:   "sync",
-	Short: "Synchronize inventory with AWS instance IDs",
+	Short: "Synchronize inventory with provider instance IDs",
 	RunE:  runInventorySync,
 }
 
@@ -54,6 +53,7 @@ func init() {
 type instanceInfo struct {
 	InstanceID string `json:"InstanceId"`
 	Name       string `json:"Name"`
+	PrivateIP  string `json:"PrivateIP,omitempty"`
 }
 
 func runInventorySync(cmd *cobra.Command, args []string) error {
@@ -132,26 +132,62 @@ func loadInstances(ctx context.Context, jsonFile, invPath string, cfg *config.Co
 	}
 
 	if !parsed.IsSSM() {
-		return nil, fmt.Errorf("inventory sync from AWS is only supported for SSM inventories; use --json to provide instance data manually")
+		// For non-SSM inventories (Ludus, Proxmox), discover instances with IPs.
+		prov, err := cfg.NewProvider(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("inventory sync: use --json to provide instance data manually, or configure a provider: %w", err)
+		}
+		provInstances, err := prov.DiscoverInstances(ctx, cfg.Env)
+		if err != nil {
+			return nil, fmt.Errorf("discover instances: %w", err)
+		}
+		var instances []instanceInfo
+		for _, i := range provInstances {
+			instances = append(instances, instanceInfo{InstanceID: i.ID, Name: i.Name, PrivateIP: i.PrivateIP})
+		}
+		return instances, nil
 	}
 
-	region, err := cfg.ResolveRegionWithInventory(parsed)
+	// SSM inventory: use provider to discover.
+	prov, err := cfg.NewProvider(ctx)
 	if err != nil {
 		return nil, err
 	}
-	client, err := daws.NewClient(ctx, region)
-	if err != nil {
-		return nil, err
-	}
-	awsInstances, err := client.DiscoverInstances(ctx, cfg.Env)
+	provInstances, err := prov.DiscoverInstances(ctx, cfg.Env)
 	if err != nil {
 		return nil, fmt.Errorf("discover instances: %w", err)
 	}
 	var instances []instanceInfo
-	for _, i := range awsInstances {
-		instances = append(instances, instanceInfo{InstanceID: i.InstanceID, Name: i.Name})
+	for _, i := range provInstances {
+		instances = append(instances, instanceInfo{InstanceID: i.ID, Name: i.Name})
 	}
 	return instances, nil
+}
+
+// extractHostRole extracts the Ansible inventory hostname from a VM name.
+// Supports multiple naming conventions:
+//   - AWS: "dreadgoad-dc01" -> "dc01"
+//   - Ludus/Proxmox: "DG-GOAD-DC01" -> "dc01"
+//
+// Falls back to the last hyphen-separated segment for unknown patterns.
+func extractHostRole(vmName string) string {
+	lower := strings.ToLower(vmName)
+
+	// AWS convention: "dreadgoad-<role>"
+	if strings.Contains(lower, "dreadgoad-") {
+		parts := strings.SplitN(lower, "dreadgoad-", 2)
+		if len(parts) == 2 && parts[1] != "" {
+			return parts[1]
+		}
+	}
+
+	// Ludus/Proxmox convention: last segment is the role (e.g. "DG-GOAD-DC01" -> "dc01")
+	parts := strings.Split(lower, "-")
+	if len(parts) >= 2 {
+		return parts[len(parts)-1]
+	}
+
+	return ""
 }
 
 func applyInstanceUpdates(invPath string, instances []instanceInfo) error {
@@ -163,20 +199,25 @@ func applyInstanceUpdates(invPath string, instances []instanceInfo) error {
 	updates := 0
 
 	for _, inst := range instances {
-		if !strings.Contains(inst.Name, "dreadgoad-") {
+		hostname := extractHostRole(inst.Name)
+		if hostname == "" {
 			continue
 		}
-		parts := strings.SplitN(inst.Name, "dreadgoad-", 2)
-		if len(parts) < 2 {
-			continue
+
+		// Determine what value to write as ansible_host:
+		// - If the instance has a PrivateIP, use it (Ludus/Proxmox IP-based inventory)
+		// - Otherwise, use the InstanceID (AWS SSM-based inventory)
+		newValue := inst.InstanceID
+		if inst.PrivateIP != "" {
+			newValue = inst.PrivateIP
 		}
-		hostname := strings.ToLower(parts[1])
+
 		re := regexp.MustCompile(`(?mi)^(` + regexp.QuoteMeta(hostname) + `\s+ansible_host=)\S+`)
 		if re.MatchString(lines) {
-			newLines := re.ReplaceAllString(lines, "${1}"+inst.InstanceID)
+			newLines := re.ReplaceAllString(lines, "${1}"+newValue)
 			if newLines != lines {
 				lines = newLines
-				fmt.Printf("Updated %s with instance ID: %s\n", hostname, inst.InstanceID)
+				fmt.Printf("Updated %s with ansible_host: %s\n", hostname, newValue)
 				updates++
 			}
 		}
@@ -187,9 +228,9 @@ func applyInstanceUpdates(invPath string, instances []instanceInfo) error {
 	}
 
 	if updates == 0 {
-		fmt.Println("No instance ID updates needed. All IDs are current.")
+		fmt.Println("No inventory updates needed. All values are current.")
 	} else {
-		fmt.Printf("Updated %d instance IDs in %s\n", updates, invPath)
+		fmt.Printf("Updated %d entries in %s\n", updates, invPath)
 	}
 	return nil
 }
@@ -226,9 +267,9 @@ func runInventoryMapping(cmd *cobra.Command, args []string) error {
 	return generateInstanceMapping(context.Background(), outputPath)
 }
 
-// generateInstanceMapping queries AWS for instance private IPs and writes the
+// generateInstanceMapping queries the provider for instance IPs and writes the
 // mapping to a JSON file that Ansible's network_discovery role uses to avoid
-// slow runtime detection over SSM. If outputPath is empty, it defaults to
+// slow runtime detection. If outputPath is empty, it defaults to
 // /tmp/aws_instance_mapping_<env>.json.
 // This is a no-op for non-SSM inventories (e.g. Ludus, Proxmox).
 func generateInstanceMapping(ctx context.Context, outputPath string) error {
@@ -254,21 +295,23 @@ func generateInstanceMapping(ctx context.Context, outputPath string) error {
 		outputPath = filepath.Join("/tmp", fmt.Sprintf("aws_instance_mapping_%s.json", cfg.Env))
 	}
 
-	region, err := cfg.ResolveRegionWithInventory(parsed)
-	if err != nil {
-		return err
-	}
-	client, err := daws.NewClient(ctx, region)
+	prov, err := cfg.NewProvider(ctx)
 	if err != nil {
 		return err
 	}
 
-	instanceIDs := parsed.InstanceIDs()
-	fmt.Printf("Querying AWS for %d instance IPs...\n", len(instanceIDs))
-
-	mapping, err := client.GetInstancePrivateIPs(ctx, instanceIDs)
+	instances, err := prov.DiscoverInstances(ctx, cfg.Env)
 	if err != nil {
 		return err
+	}
+
+	fmt.Printf("Querying provider for %d instance IPs...\n", len(instances))
+
+	mapping := make(map[string]string, len(instances))
+	for _, inst := range instances {
+		if inst.PrivateIP != "" {
+			mapping[inst.ID] = inst.PrivateIP
+		}
 	}
 
 	output := map[string]interface{}{

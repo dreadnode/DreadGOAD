@@ -1,8 +1,42 @@
 # Code adapted from ludus adcs module : https://github.com/badsectorlabs/ludus_adcs/blob/main/files/esc7.ps1
 # RUN me on DC
-- name: Install module PSPKI
+# PSPKI 4.x is built against .NET Framework 4.7.2 (uses System.Security.Cryptography.ECParameters,
+# introduced in 4.7). Server 2016 RTM ships with 4.6.2 and the 4.7+ upgrade is OOB, so Import-Module
+# PSPKI fails with ReflectionTypeLoadException on un-upgraded 2016 hosts.
+- name: Read installed .NET Framework release key
+  ansible.windows.win_reg_stat:
+    path: HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full
+    name: Release
+  register: _net_release
+
+- name: Install .NET Framework 4.8 (PSPKI 4.x requires >=4.7.2)
+  chocolatey.chocolatey.win_chocolatey:
+    name: dotnetfx
+    state: present
+  when: (_net_release.value | default(0) | int) < 461808
+  register: _dotnetfx_install
+
+- name: Reboot to complete .NET Framework upgrade
+  ansible.windows.win_reboot:
+    reboot_timeout: 1200
+  when: _dotnetfx_install is changed
+
+- name: Ensure NuGet provider is installed
   ansible.windows.win_shell: |
-    Install-Module PSPKI -Force
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    if (-not (Get-PackageProvider -Name NuGet -ListAvailable -ErrorAction SilentlyContinue)) {
+      Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force
+    }
+
+- name: Install module PSPKI
+  ansible.windows.win_powershell:
+    script: |
+      [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+      Install-Module PSPKI -Force -ErrorAction Stop
+      if (-not (Get-Module -ListAvailable -Name PSPKI)) {
+        throw "PSPKI module installation failed"
+      }
+    error_action: stop
 
 - name: ADD ManageCA rights
   ansible.windows.win_powershell:
@@ -12,17 +46,42 @@
           [String]
           $caManagerUser
       )
-      if (Get-Module -ListAvailable -Name PSPKI) {
-        $Ansible.Changed = $false
-      } else {
-        Import-Module -Name PSPKI
-        $caHostname = Get-CertificationAuthority | Select-Object -ExpandProperty ComputerName
-        try {
-          Get-CertificationAuthority "$caHostname" | Get-CertificationAuthorityAcl | Add-CertificationAuthorityAcl -Identity "$caManagerUser" -AccessType "Allow" -AccessMask "ManageCa" | Set-CertificationAuthorityAcl -RestartCA
-          $Ansible.Changed = $true
-        } catch {
+      try {
+          Import-Module -Name PSPKI -ErrorAction Stop
+      } catch {
+          # ReflectionTypeLoadException buries the actionable detail in LoaderExceptions.
+          # Surface it so future framework/assembly drift is self-diagnosing.
+          $rtle = $_.Exception
+          while ($rtle -and -not ($rtle -is [System.Reflection.ReflectionTypeLoadException])) {
+              $rtle = $rtle.InnerException
+          }
+          if ($rtle) {
+              $msgs = @($rtle.LoaderExceptions | ForEach-Object { $_.Message } | Select-Object -Unique)
+              throw "Import-Module PSPKI failed: $($_.Exception.Message). LoaderExceptions: $($msgs -join ' | ')"
+          }
+          throw
+      }
+      $caHostname = Get-CertificationAuthority | Select-Object -ExpandProperty ComputerName
+      $acl = Get-CertificationAuthority "$caHostname" | Get-CertificationAuthorityAcl
+
+      # Skip the grant (and the CA service restart it triggers) when the
+      # identity already holds ManageCa. Use the Rights enum's string form so
+      # we don't depend on the [PKI.CertificateServices.CertificationAuthorityRights]
+      # type literal being resolvable — Import-Module PSPKI doesn't reliably
+      # surface that type to the runas session until first use of a PSPKI cmdlet.
+      $alreadyGranted = @($acl.Access | Where-Object {
+          $_.AccessType -eq 'Allow' -and
+          ($_.Rights.ToString() -split ',\s*' -contains 'ManageCa') -and
+          ($_.IdentityReference.ToString() -ieq $caManagerUser)
+      }).Count -gt 0
+
+      if ($alreadyGranted) {
           $Ansible.Changed = $false
-        }
+      } else {
+          $acl |
+              Add-CertificationAuthorityAcl -Identity "$caManagerUser" -AccessType "Allow" -AccessMask "ManageCa" |
+              Set-CertificationAuthorityAcl -RestartCA
+          $Ansible.Changed = $true
       }
     error_action: stop
     parameters:

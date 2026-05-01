@@ -23,17 +23,18 @@ type HostInfo struct {
 
 // HostConfig represents a host from config.json lab.hosts.
 type HostConfig struct {
-	Hostname  string                     `json:"hostname"`
-	Type      string                     `json:"type"` // "dc" or "server"
-	OS        string                     `json:"os"`   // empty = windows, "linux" for linux
-	Domain    string                     `json:"domain"`
-	Path      string                     `json:"path"`
-	Scripts   []string                   `json:"scripts"`
-	Vulns     []string                   `json:"vulns"`
-	VulnsVars map[string]json.RawMessage `json:"vulns_vars"`
-	Security  []string                   `json:"security"`
-	UseLAPS   bool                       `json:"use_laps"`
-	MSSQL     *MSSQLConfig               `json:"mssql"`
+	Hostname    string                     `json:"hostname"`
+	Type        string                     `json:"type"` // "dc" or "server"
+	OS          string                     `json:"os"`   // empty = windows, "linux" for linux
+	Domain      string                     `json:"domain"`
+	Path        string                     `json:"path"`
+	Scripts     []string                   `json:"scripts"`
+	Vulns       []string                   `json:"vulns"`
+	VulnsVars   map[string]json.RawMessage `json:"vulns_vars"`
+	Security    []string                   `json:"security"`
+	UseLAPS     bool                       `json:"use_laps"`
+	MSSQL       *MSSQLConfig               `json:"mssql"`
+	LocalGroups map[string][]string        `json:"local_groups"`
 }
 
 // MSSQLLinkedServer holds the data source address for a linked SQL Server.
@@ -110,6 +111,11 @@ type LabMap struct {
 	// Full parsed config data.
 	HostConfigs   map[string]HostConfig   // keyed by role
 	DomainConfigs map[string]DomainConfig // keyed by domain FQDN
+
+	// AdminUser is the inventory's admin_user (e.g. "administrator" on Ludus,
+	// "goadmin" on AWS/Azure). Populated by the caller (cmd/infra.go) from the
+	// parsed inventory since labmap itself only reads config.json.
+	AdminUser string
 }
 
 // FQDN returns the FQDN for a host role.
@@ -252,6 +258,32 @@ func (m *LabMap) UsersWithPasswordInDescription() []UserFact {
 	return facts
 }
 
+// UsersWithSamePasswordAsName returns users whose password equals their first
+// name, surname, or sAMAccountName (e.g. hodor / hodor). This catches the
+// canonical "weak credential" pattern in lab configs.
+func (m *LabMap) UsersWithSamePasswordAsName() []UserFact {
+	var facts []UserFact
+	for domain, dc := range m.DomainConfigs {
+		for username, user := range dc.Users {
+			if user.Password == "" {
+				continue
+			}
+			pw := strings.ToLower(user.Password)
+			if pw == strings.ToLower(username) ||
+				pw == strings.ToLower(user.FirstName) ||
+				pw == strings.ToLower(user.Surname) {
+				facts = append(facts, UserFact{
+					Username: m.User(username),
+					Domain:   domain,
+					DCRole:   dc.DC,
+					User:     user,
+				})
+			}
+		}
+	}
+	return facts
+}
+
 // UsersWithSPNs returns users that have SPNs configured (kerberoastable).
 func (m *LabMap) UsersWithSPNs() []UserFact {
 	var facts []UserFact
@@ -337,6 +369,22 @@ func (m *LabMap) ADCSHosts() []string {
 	}
 	sort.Strings(hosts)
 	return hosts
+}
+
+// ADCSDCRole returns the DC role for the domain that owns a given ADCS host.
+// This is needed because AD template queries must run against a DC, not a
+// member server where ADCS is installed.
+func (m *LabMap) ADCSDCRole(adcsRole string) string {
+	hc, ok := m.HostConfigs[adcsRole]
+	if !ok {
+		return ""
+	}
+	for _, dc := range m.DomainConfigs {
+		if strings.EqualFold(hc.Hostname, dc.CAServer) {
+			return dc.DC
+		}
+	}
+	return ""
 }
 
 // CAWebEnrollment returns true if any domain has CA web enrollment enabled.
@@ -468,6 +516,168 @@ func (m *LabMap) HostsWithLAPS() []string {
 	}
 	sort.Strings(hosts)
 	return hosts
+}
+
+// ESC7Fact holds the host role and CA manager identity for an ESC7 vulnerability.
+// HostRole/Hostname identify the host that declares the vuln (typically a DC);
+// CAHost/CAHostname identify the host that actually serves the CA, which may
+// be a member server. ManageCA ACL queries must run against the CA host.
+type ESC7Fact struct {
+	HostRole   string
+	Hostname   string
+	CAHost     string
+	CAHostname string
+	CAManager  string // e.g. "essos\\viserys.targaryen"
+	// Domain credentials for the host's domain. Needed because the upstream
+	// vulns_adcs_esc7 role installs PSPKI on the DC and runs it under runas
+	// with a domain admin (PSPKI's CA discovery hits the AD configuration
+	// partition). The validator runs as a local user with no AD trust, so
+	// the probe script has to elevate to a domain principal explicitly.
+	DomainNetBIOS  string // e.g. "ESSOS"
+	DomainPassword string
+	// AdminUser is the inventory's admin_user (Ludus: "administrator",
+	// AWS/Azure: "goadmin"). The role's runas uses "{{ domain }}\{{ admin_user }}".
+	AdminUser string
+}
+
+// GroupFact holds a group with its domain context.
+type GroupFact struct {
+	Group  string
+	Domain string
+	DCRole string
+}
+
+// AllConfiguredUsers returns every user defined in any DomainConfig's Users
+// map, with domain context. Used by checks that must verify the full user set
+// exists in AD.
+func (m *LabMap) AllConfiguredUsers() []UserFact {
+	var facts []UserFact
+	for domain, dc := range m.DomainConfigs {
+		for username, user := range dc.Users {
+			facts = append(facts, UserFact{
+				Username: m.User(username),
+				Domain:   domain,
+				DCRole:   dc.DC,
+				User:     user,
+			})
+		}
+	}
+	sort.Slice(facts, func(i, j int) bool {
+		if facts[i].Domain != facts[j].Domain {
+			return facts[i].Domain < facts[j].Domain
+		}
+		return facts[i].Username < facts[j].Username
+	})
+	return facts
+}
+
+// AllConfiguredGroups returns the deduplicated set of groups referenced by any
+// UserConfig.Groups across all domains. Each fact carries the domain/DC where
+// the group should be queryable.
+func (m *LabMap) AllConfiguredGroups() []GroupFact {
+	seen := make(map[string]bool)
+	var facts []GroupFact
+	for domain, dc := range m.DomainConfigs {
+		for _, user := range dc.Users {
+			for _, g := range user.Groups {
+				key := domain + "|" + strings.ToLower(g)
+				if seen[key] {
+					continue
+				}
+				seen[key] = true
+				facts = append(facts, GroupFact{
+					Group:  g,
+					Domain: domain,
+					DCRole: dc.DC,
+				})
+			}
+		}
+	}
+	sort.Slice(facts, func(i, j int) bool {
+		if facts[i].Domain != facts[j].Domain {
+			return facts[i].Domain < facts[j].Domain
+		}
+		return facts[i].Group < facts[j].Group
+	})
+	return facts
+}
+
+// LocalAdminsForHost returns the configured local Administrators members for a
+// host role, derived from HostConfig.LocalGroups["Administrators"]. Returns
+// nil if the host has no local_groups config or no Administrators entry.
+func (m *LabMap) LocalAdminsForHost(role string) []string {
+	hc, ok := m.HostConfigs[role]
+	if !ok || hc.LocalGroups == nil {
+		return nil
+	}
+	for name, members := range hc.LocalGroups {
+		if strings.EqualFold(name, "Administrators") {
+			out := make([]string, len(members))
+			copy(out, members)
+			return out
+		}
+	}
+	return nil
+}
+
+// HostsWithESC7 returns ESC7 facts for hosts that have adcs_esc7 in their vulns_vars.
+// Resolves the CA-serving host via the declaring host's domain → ca_server, so
+// the validator queries ManageCA on the box that actually owns the ACL rather
+// than the box that merely declares the vuln.
+func (m *LabMap) HostsWithESC7() []ESC7Fact {
+	var facts []ESC7Fact
+	for role, hc := range m.HostConfigs {
+		raw, ok := hc.VulnsVars["adcs_esc7"]
+		if !ok {
+			continue
+		}
+		// vulns_vars.adcs_esc7 is a map of arbitrary keys to objects with ca_manager.
+		var entries map[string]struct {
+			CAManager string `json:"ca_manager"`
+		}
+		if err := json.Unmarshal(raw, &entries); err != nil {
+			continue
+		}
+		caHost, caHostname := m.resolveCAHost(hc.Domain)
+		if caHost == "" {
+			caHost, caHostname = role, hc.Hostname
+		}
+		dc := m.DomainConfigs[hc.Domain]
+		adminUser := m.AdminUser
+		if adminUser == "" {
+			adminUser = "administrator"
+		}
+		for _, entry := range entries {
+			if entry.CAManager != "" {
+				facts = append(facts, ESC7Fact{
+					HostRole:       role,
+					Hostname:       hc.Hostname,
+					CAHost:         caHost,
+					CAHostname:     caHostname,
+					CAManager:      entry.CAManager,
+					DomainNetBIOS:  dc.NetBIOSName,
+					DomainPassword: dc.DomainPassword,
+					AdminUser:      adminUser,
+				})
+			}
+		}
+	}
+	return facts
+}
+
+// resolveCAHost returns the host role and hostname that serves the CA for the
+// given domain, or empty strings if no CA is configured.
+func (m *LabMap) resolveCAHost(domain string) (string, string) {
+	dc, ok := m.DomainConfigs[domain]
+	if !ok || dc.CAServer == "" {
+		return "", ""
+	}
+	for role, hc := range m.HostConfigs {
+		if strings.EqualFold(hc.Hostname, dc.CAServer) {
+			return role, hc.Hostname
+		}
+	}
+	return "", ""
 }
 
 // rawLabConfig mirrors the full config.json structure.

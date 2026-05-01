@@ -71,7 +71,7 @@ Install and configure Microsoft SQL Server Express
 - **Display mssql variables in use** (ansible.builtin.debug)
 - **Check if SQL Server service exists** (ansible.windows.win_service)
 - **Run MSSQL installation tasks** (ansible.builtin.include_tasks) - Conditional
-- **Ensure MSSQL service is started** (ansible.windows.win_service) - Conditional
+- **Ensure MSSQL service is started** (ansible.windows.win_service)
 - **Wait for port 1433 to become open** (ansible.windows.win_wait_for)
 - **Run MSSQL configuration tasks** (ansible.builtin.include_tasks)
 

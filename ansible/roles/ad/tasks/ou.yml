@@ -38,6 +38,8 @@
   until: ou_creation is not failed
   async: 180
   poll: 0
+  vars:
+    ansible_win_async_startup_timeout: 30
 
 - name: Wait for OU creation to complete
   ansible.builtin.async_status:
