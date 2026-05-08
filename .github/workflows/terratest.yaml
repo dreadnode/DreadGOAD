@@ -104,7 +104,7 @@ jobs:
     needs: [detect-changes, semaphore]
     if: needs.detect-changes.outputs.net == 'true'
     runs-on: ubuntu-latest
-    environment: terratest
+    environment: ${{ (github.actor == 'l50' && github.event.pull_request.head.repo.fork != true) && '' || 'terratest' }}
     permissions:
       id-token: write
       contents: read
@@ -171,7 +171,7 @@ jobs:
     needs: [detect-changes, semaphore]
     if: needs.detect-changes.outputs.instance-factory == 'true'
     runs-on: ubuntu-latest
-    environment: terratest
+    environment: ${{ (github.actor == 'l50' && github.event.pull_request.head.repo.fork != true) && '' || 'terratest' }}
     permissions:
       id-token: write
       contents: read
