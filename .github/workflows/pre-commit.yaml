@@ -78,6 +78,8 @@ jobs:
           tflint_version: v0.61.0
 
       - name: Init TFLint
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: tflint --init --config .hooks/linters/.tflint.hcl
 
       - name: Set up terraform-docs
