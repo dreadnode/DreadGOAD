@@ -8,53 +8,91 @@ import (
 	"strings"
 	"time"
 
-	daws "github.com/dreadnode/dreadgoad/internal/aws"
 	"github.com/dreadnode/dreadgoad/internal/config"
+	"github.com/dreadnode/dreadgoad/internal/inventory"
 	"github.com/dreadnode/dreadgoad/internal/labmap"
+	"github.com/dreadnode/dreadgoad/internal/provider"
 	"github.com/fatih/color"
 )
 
 // infraContext holds the validated infrastructure state needed by commands.
 type infraContext struct {
-	Client  *daws.Client
-	HostMap map[string]string // hostname -> instance ID
-	Env     string
-	Region  string
-	Lab     *labmap.LabMap
+	Provider provider.Provider
+	HostMap  map[string]string // hostname -> instance ID
+	Env      string
+	Region   string
+	Lab      *labmap.LabMap
 }
 
-// requireInfra validates that AWS credentials work, GOAD instances are discoverable,
-// and SSM agents are online. Returns the ready-to-use infrastructure context.
+// requireInfra validates that provider credentials work, GOAD instances are discoverable,
+// and (for AWS) SSM agents are online. Returns the ready-to-use infrastructure context.
 func requireInfra(ctx context.Context) (*infraContext, error) {
 	cfg, err := config.Get()
 	if err != nil {
 		return nil, err
 	}
 
-	region, err := cfg.ResolveRegion()
+	prov, err := cfg.NewProvider(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("create %s provider: %w", cfg.ResolvedProvider(), err)
+	}
+
+	identity, err := prov.VerifyCredentials(ctx)
+	if err != nil {
+		return nil, err
+	}
+	color.Green("  %s credentials OK (%s)", cfg.ResolvedProvider(), identity)
+
+	var region string
+	if cfg.IsAWS() {
+		region, err = cfg.ResolveRegion()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	lab, err := loadLab(cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	client, err := daws.NewClient(ctx, region)
-	if err != nil {
-		return nil, fmt.Errorf("create AWS client: %w", err)
-	}
-
-	identity, err := client.VerifyCredentials(ctx)
+	expectedHosts := lab.HostRoles()
+	hostMap, err := discoverHostMap(ctx, prov, cfg.Env, expectedHosts)
 	if err != nil {
 		return nil, err
 	}
-	color.Green("  AWS credentials OK (account %s)", identity.Account)
+
+	// SSM status check is AWS-specific.
+	if ssmRecovery, ok := prov.(provider.SSMRecovery); ok {
+		if err := checkSSMOnline(ctx, ssmRecovery, hostMap, lab); err != nil {
+			return nil, err
+		}
+	}
+	fmt.Println()
+
+	return &infraContext{
+		Provider: prov,
+		HostMap:  hostMap,
+		Env:      cfg.Env,
+		Region:   region,
+		Lab:      lab,
+	}, nil
+}
+
+// loadLab loads the lab map for the active environment and resolves the
+// admin_user from the inventory so domain-principal checks match the identity
+// upstream roles use under `become: runas` (`{{ domain }}\{{ admin_user }}`).
+// Ludus inventories use "administrator"; AWS/Azure use "goadmin".
+func loadLab(cfg *config.Config) (*labmap.LabMap, error) {
+	ec := cfg.ActiveEnvironment()
 
 	var lab *labmap.LabMap
-	ec := cfg.ActiveEnvironment()
+	var err error
 	if ec.Variant {
 		_, target := cfg.ResolvedVariantPaths()
-		var loadErr error
-		lab, loadErr = labmap.LoadFromVariant(target)
-		if loadErr != nil {
-			return nil, fmt.Errorf("load variant mapping: %w", loadErr)
+		lab, err = labmap.LoadFromVariant(target)
+		if err != nil {
+			return nil, fmt.Errorf("load variant mapping: %w", err)
 		}
 	} else {
 		src := ec.VariantSource
@@ -64,36 +102,26 @@ func requireInfra(ctx context.Context) (*infraContext, error) {
 		if !filepath.IsAbs(src) {
 			src = filepath.Join(cfg.ProjectRoot, src)
 		}
-		var loadErr error
-		lab, loadErr = labmap.LoadFromSource(src, cfg.Env)
-		if loadErr != nil {
-			return nil, fmt.Errorf("load lab config: %w", loadErr)
+		lab, err = labmap.LoadFromSource(src, cfg.Env)
+		if err != nil {
+			return nil, fmt.Errorf("load lab config: %w", err)
 		}
 	}
 
-	expectedHosts := lab.HostRoles()
-	hostMap, err := discoverHostMap(ctx, client, cfg.Env, expectedHosts)
-	if err != nil {
-		return nil, err
+	if inv, invErr := inventory.Parse(cfg.InventoryPath()); invErr == nil {
+		if u, ok := inv.Vars["admin_user"]; ok && u != "" {
+			lab.AdminUser = u
+		}
 	}
-
-	if err := checkSSMOnline(ctx, client, hostMap, lab); err != nil {
-		return nil, err
+	if lab.AdminUser == "" {
+		lab.AdminUser = "administrator"
 	}
-	fmt.Println()
-
-	return &infraContext{
-		Client:  client,
-		HostMap: hostMap,
-		Env:     cfg.Env,
-		Region:  region,
-		Lab:     lab,
-	}, nil
+	return lab, nil
 }
 
 // discoverHostMap finds running instances and maps host roles to instance IDs.
-func discoverHostMap(ctx context.Context, client *daws.Client, env string, expectedHosts []string) (map[string]string, error) {
-	instances, err := client.DiscoverInstances(ctx, env)
+func discoverHostMap(ctx context.Context, prov provider.Provider, env string, expectedHosts []string) (map[string]string, error) {
+	instances, err := prov.DiscoverInstances(ctx, env)
 	if err != nil {
 		return nil, fmt.Errorf("discover instances: %w", err)
 	}
@@ -107,7 +135,7 @@ func discoverHostMap(ctx context.Context, client *daws.Client, env string, expec
 		for _, h := range expectedHosts {
 			upper := strings.ToUpper(h)
 			if strings.Contains(name, upper) {
-				hostMap[upper] = inst.InstanceID
+				hostMap[upper] = inst.ID
 			}
 		}
 	}
@@ -139,7 +167,7 @@ const ssmRetryInterval = 15 * time.Second
 // Instances with a transient status (e.g. ConnectionLost) are retried with backoff.
 // If retries are exhausted, it attempts to remotely restart the SSM agent on
 // offline instances via a working instance before giving up.
-func checkSSMOnline(ctx context.Context, client *daws.Client, hostMap map[string]string, lab *labmap.LabMap) error {
+func checkSSMOnline(ctx context.Context, ssmRecovery provider.SSMRecovery, hostMap map[string]string, lab *labmap.LabMap) error {
 	idToHost := make(map[string]string, len(hostMap))
 	for h, id := range hostMap {
 		idToHost[id] = h
@@ -153,7 +181,7 @@ func checkSSMOnline(ctx context.Context, client *daws.Client, hostMap map[string
 	totalInstances := len(pending)
 
 	for attempt := range ssmRetryAttempts {
-		statuses, err := client.CheckSSMStatus(ctx, pending)
+		statuses, err := ssmRecovery.CheckSSMStatus(ctx, pending)
 		if err != nil {
 			return fmt.Errorf("check SSM status: %w", err)
 		}
@@ -173,14 +201,14 @@ func checkSSMOnline(ctx context.Context, client *daws.Client, hostMap map[string
 		}
 
 		if attempt == ssmRetryAttempts-1 {
-			// Last retry exhausted — attempt remote SSM agent restart.
-			if recovered := recoverSSMAgents(ctx, client, hostMap, idToHost, nextPending, lab); recovered {
+			// Last retry exhausted -- attempt remote SSM agent restart.
+			if recovered := recoverSSMAgents(ctx, ssmRecovery, hostMap, idToHost, nextPending, lab); recovered {
 				return nil
 			}
 			return fmt.Errorf("SSM agent not online: %s", strings.Join(offline, ", "))
 		}
 
-		color.Yellow("  SSM agent not ready: %s — retrying in %s (%d/%d)",
+		color.Yellow("  SSM agent not ready: %s -- retrying in %s (%d/%d)",
 			strings.Join(offline, ", "), ssmRetryInterval, attempt+1, ssmRetryAttempts)
 
 		select {
@@ -195,10 +223,6 @@ func checkSSMOnline(ctx context.Context, client *daws.Client, hostMap map[string
 	return nil // unreachable
 }
 
-// recoverSSMAgents attempts to restart SSM agents on offline instances by
-// running Invoke-Command from a working instance. This handles the case where
-// the SSM agent has a stale DNS cache (e.g. resolving SSM endpoint to a public
-// IP instead of the VPC endpoint after a DC promotion changed DNS settings).
 // hostConfigByRole looks up a HostConfig by role name, trying the given case
 // first then falling back to a case-insensitive scan.
 func hostConfigByRole(lab *labmap.LabMap, role string) (labmap.HostConfig, bool) {
@@ -251,7 +275,7 @@ func pickRecoveryHelper(hostMap, idToHost map[string]string, offlineIDs []string
 
 // restartOfflineAgents attempts to restart SSM agents on each offline instance
 // via PowerShell remoting from the helper. Returns the IDs that were successfully restarted.
-func restartOfflineAgents(ctx context.Context, client *daws.Client, helperID string, idToHost map[string]string, offlineIDs []string, lab *labmap.LabMap) []string {
+func restartOfflineAgents(ctx context.Context, ssmRecovery provider.SSMRecovery, helperID string, idToHost map[string]string, offlineIDs []string, lab *labmap.LabMap) []string {
 	var restartedIDs []string
 	for _, offID := range offlineIDs {
 		role := strings.ToLower(idToHost[offID])
@@ -268,7 +292,7 @@ func restartOfflineAgents(ctx context.Context, client *daws.Client, helperID str
 		fqdn := hc.Hostname + "." + hc.Domain
 		color.Yellow("    Restarting SSM agent on %s (%s)...", strings.ToUpper(role), fqdn)
 
-		if err := client.RemoteRestartSSMAgent(ctx, helperID, fqdn, dc.NetBIOSName, dc.DomainPassword); err != nil {
+		if err := ssmRecovery.RemoteRestartSSMAgent(ctx, helperID, fqdn, dc.NetBIOSName, dc.DomainPassword); err != nil {
 			color.Red("    Failed: %v", err)
 			continue
 		}
@@ -278,7 +302,7 @@ func restartOfflineAgents(ctx context.Context, client *daws.Client, helperID str
 	return restartedIDs
 }
 
-func recoverSSMAgents(ctx context.Context, client *daws.Client, hostMap, idToHost map[string]string, offlineIDs []string, lab *labmap.LabMap) bool {
+func recoverSSMAgents(ctx context.Context, ssmRecovery provider.SSMRecovery, hostMap, idToHost map[string]string, offlineIDs []string, lab *labmap.LabMap) bool {
 	if lab == nil {
 		return false
 	}
@@ -290,7 +314,7 @@ func recoverSSMAgents(ctx context.Context, client *daws.Client, hostMap, idToHos
 
 	color.Yellow("  Attempting remote SSM agent restart via %s...", idToHost[helperID])
 
-	restartedIDs := restartOfflineAgents(ctx, client, helperID, idToHost, offlineIDs, lab)
+	restartedIDs := restartOfflineAgents(ctx, ssmRecovery, helperID, idToHost, offlineIDs, lab)
 	if len(restartedIDs) == 0 {
 		return false
 	}
@@ -303,7 +327,7 @@ func recoverSSMAgents(ctx context.Context, client *daws.Client, hostMap, idToHos
 	case <-time.After(ssmRetryInterval):
 	}
 
-	statuses, err := client.CheckSSMStatus(ctx, restartedIDs)
+	statuses, err := ssmRecovery.CheckSSMStatus(ctx, restartedIDs)
 	if err != nil {
 		color.Red("  Failed to check SSM status after restart: %v", err)
 		return false

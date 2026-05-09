@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/dreadnode/dreadgoad/internal/provider"
 	"github.com/dreadnode/dreadgoad/internal/validate"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -58,7 +59,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Environment: %s\n", infra.Env)
 	fmt.Printf("Region: %s\n", infra.Region)
 
-	v := validate.NewValidator(infra.Client, infra.Env, verbose, slog.Default(), infra.Lab)
+	v := validate.NewValidator(infra.Provider, infra.Env, verbose, slog.Default(), infra.Lab)
 
 	if err := v.DiscoverHosts(ctx); err != nil {
 		return fmt.Errorf("discover hosts: %w", err)
@@ -68,6 +69,12 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		v.RunQuickChecks(ctx)
 	} else {
 		v.RunAllChecks(ctx)
+	}
+
+	// Wait for any provider-side cleanup (e.g. Azure Run Command DELETEs)
+	// to finish so orphan subresources don't accumulate across runs.
+	if d, ok := infra.Provider.(provider.Drainer); ok {
+		d.Drain()
 	}
 
 	report := v.GetReport()

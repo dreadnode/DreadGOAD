@@ -6,7 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/dreadnode/dreadgoad/internal/labmap"
+	"github.com/dreadnode/dreadgoad/internal/provider"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
@@ -14,7 +16,7 @@ import (
 var healthCheckCmd = &cobra.Command{
 	Use:   "health-check",
 	Short: "Verify all lab instances are healthy",
-	Long: `Runs health checks across all lab instances via SSM to verify:
+	Long: `Runs health checks across all lab instances to verify:
   - Domain controllers are responding
   - AD replication is working with no failures
   - Domain trusts are established
@@ -47,6 +49,11 @@ func runHealthCheck(cmd *cobra.Command, args []string) error {
 	right := pad - left
 	fmt.Printf("%s%s%s\n", strings.Repeat("=", left), title, strings.Repeat("=", right))
 
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
+
 	infra, err := requireInfra(ctx)
 	if err != nil {
 		return err
@@ -59,6 +66,12 @@ func runHealthCheck(cmd *cobra.Command, args []string) error {
 
 	passed := 0
 	failed := 0
+	retried := 0
+
+	retryOpts := provider.RetryCommandOptions{
+		MaxRetries: cfg.MaxRetries,
+		RetryDelay: time.Duration(cfg.RetryDelay) * time.Second,
+	}
 
 	for _, check := range checks {
 		instanceID, ok := infra.HostMap[check.host]
@@ -67,7 +80,14 @@ func runHealthCheck(cmd *cobra.Command, args []string) error {
 			continue
 		}
 
-		result, err := infra.Client.RunPowerShellCommand(ctx, instanceID, check.command, 90*time.Second)
+		result, attempts, err := provider.RunCommandWithRetry(
+			ctx, infra.Provider, instanceID, check.command, 90*time.Second, retryOpts,
+			func(attempt int) {
+				color.Yellow("%-40s %-10s %s", check.name, "RETRY",
+					fmt.Sprintf("transient failure, retry %d/%d...", attempt, cfg.MaxRetries))
+			},
+		)
+
 		if err != nil {
 			color.Red("%-40s %-10s %s", check.name, "FAIL", err.Error())
 			failed++
@@ -81,7 +101,12 @@ func runHealthCheck(cmd *cobra.Command, args []string) error {
 
 		ok, detail := check.eval(result.Stdout)
 		if ok {
-			color.Green("%-40s %-10s %s", check.name, "OK", detail)
+			if attempts > 1 {
+				color.Green("%-40s %-10s %s (passed on attempt %d)", check.name, "OK", detail, attempts)
+				retried++
+			} else {
+				color.Green("%-40s %-10s %s", check.name, "OK", detail)
+			}
 			passed++
 		} else {
 			color.Red("%-40s %-10s %s", check.name, "FAIL", detail)
@@ -90,7 +115,11 @@ func runHealthCheck(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println(strings.Repeat("-", 90))
-	fmt.Printf("Results: %d passed, %d failed\n", passed, failed)
+	summary := fmt.Sprintf("Results: %d passed, %d failed", passed, failed)
+	if retried > 0 {
+		summary += fmt.Sprintf(" (%d recovered after transient retry)", retried)
+	}
+	fmt.Println(summary)
 
 	if failed > 0 {
 		return fmt.Errorf("%d health check(s) failed", failed)

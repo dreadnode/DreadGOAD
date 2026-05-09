@@ -97,6 +97,8 @@
   until: usercreate is not failed
   async: 300
   poll: 0
+  vars:
+    ansible_win_async_startup_timeout: 30
 
 - name: Wait for user creation to complete
   ansible.builtin.async_status:
@@ -152,6 +154,8 @@
   async: 300
   poll: 0
   register: spn_task
+  vars:
+    ansible_win_async_startup_timeout: 30
 
 - name: Wait for SPN configuration to complete
   ansible.builtin.async_status:

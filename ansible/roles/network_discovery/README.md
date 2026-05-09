@@ -38,6 +38,10 @@ Discover network adapters, IPs, and AWS instance mappings on lab hosts
 
 - **Store IP as host fact for DCs** (ansible.builtin.set_fact) - Conditional
 
+### dc_hostname_mapping.yml
+
+- **Build and distribute dc_hostname_to_ip mapping** (ansible.builtin.set_fact)
+
 ### fallbacks.yml
 
 - **Set fallback network facts** (ansible.builtin.set_fact)

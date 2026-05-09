@@ -4,47 +4,51 @@
     ipconfig /flushdns
     ipconfig /renew
 
-# source : https://social.technet.microsoft.com/wiki/contents/articles/11911.active-directory-powershell-how-to-create-forest-trust.aspx
-- name: Add trusts between domain
+# Use System.DirectoryServices.ActiveDirectory with an explicit DirectoryContext
+# for BOTH forests. The earlier getCurrentForest() path crashed with
+# STATUS_ACCESS_VIOLATION on Ludus Server 2019 because the WinRM thread had no
+# domain forest context; passing creds via DirectoryContext bypasses that path
+# entirely and avoids the netdom argv-escaping issue with passwords starting in "-".
+- name: Configure forest trust to remote domain
   ansible.windows.win_powershell:
+    error_action: stop
+    parameters:
+      LocalForest: "{{ domain }}"
+      LocalAdmin: "{{ admin_user }}"
+      LocalAdminPassword: "{{ domain_password }}"
+      RemoteForest: "{{ remote_forest }}"
+      RemoteAdmin: "{{ admin_user }}"
+      RemoteAdminPassword: "{{ remote_admin_password }}"
     script: |
       [CmdletBinding()]
       param (
-          [String]
-          $RemoteForest,
-
-          [String]
-          $RemoteAdmin,
-
-          [String]
-          $RemoteAdminPassword
+        [Parameter(Mandatory)][string]$LocalForest,
+        [Parameter(Mandatory)][string]$LocalAdmin,
+        [Parameter(Mandatory)][string]$LocalAdminPassword,
+        [Parameter(Mandatory)][string]$RemoteForest,
+        [Parameter(Mandatory)][string]$RemoteAdmin,
+        [Parameter(Mandatory)][string]$RemoteAdminPassword
       )
-      $localforest=[System.DirectoryServices.ActiveDirectory.Forest]::getCurrentForest()
+
+      $localCtx = New-Object System.DirectoryServices.ActiveDirectory.DirectoryContext(
+        'Forest', $LocalForest, $LocalAdmin, $LocalAdminPassword)
+      $localForestObj = [System.DirectoryServices.ActiveDirectory.Forest]::GetForest($localCtx)
+
       try {
-        $localForest.GetTrustRelationship($RemoteForest)
+        $null = $localForestObj.GetTrustRelationship($RemoteForest)
         $Ansible.Changed = $false
-        # Add proper output formatting
-        Write-Output '{"status": "exists", "message": "Trust relationship already exists"}'
+        $Ansible.Result = @{ status = 'exists' }
       } catch [System.DirectoryServices.ActiveDirectory.ActiveDirectoryObjectNotFoundException] {
+        $remoteCtx = New-Object System.DirectoryServices.ActiveDirectory.DirectoryContext(
+          'Forest', $RemoteForest, $RemoteAdmin, $RemoteAdminPassword)
+        $remoteForestObj = [System.DirectoryServices.ActiveDirectory.Forest]::GetForest($remoteCtx)
+        $localForestObj.CreateTrustRelationship(
+          $remoteForestObj,
+          [System.DirectoryServices.ActiveDirectory.TrustDirection]::Bidirectional)
         $Ansible.Changed = $true
-        $remoteContext = New-Object -TypeName "System.DirectoryServices.ActiveDirectory.DirectoryContext" -ArgumentList @( "Forest", $RemoteForest, $RemoteAdmin, $RemoteAdminPassword)
-        $distantForest = [System.DirectoryServices.ActiveDirectory.Forest]::getForest($remoteContext)
-        $localForest.CreateTrustRelationship($distantForest,"Bidirectional")
-        # Add proper output formatting
-        Write-Output '{"status": "created", "message": "Trust relationship created successfully"}'
+        $Ansible.Result = @{ status = 'created' }
       }
-    error_action: stop
-    parameters:
-      RemoteForest: "{{ remote_forest }}"
-      RemoteAdmin: "{{ remote_admin }}"
-      RemoteAdminPassword: "{{ remote_admin_password }}"
-  vars:
-    ansible_become: true
-    ansible_become_method: ansible.builtin.runas
-    ansible_become_user: "{{ domain_username }}"
-    ansible_become_password: "{{ domain_password }}"
-  register:
-    trust_result
+  register: trust_result
 
 - name: Reboot and wait for the AD system to restart
   ansible.windows.win_reboot:

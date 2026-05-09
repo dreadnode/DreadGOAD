@@ -9,7 +9,7 @@ collections:
   - name: chocolatey.chocolatey
     version: ">=1.5.3"
   - name: community.crypto
-  - name: community.mysql
+  - name: ansible.mysql
   - name: scicore.guacamole
   - name: ansible.posix
   - name: microsoft.ad

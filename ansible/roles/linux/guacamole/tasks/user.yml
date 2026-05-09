@@ -1,5 +1,5 @@
 - name: change guacadmin password
-  community.mysql.mysql_query:
+  ansible.mysql.mysql_query:
     login_host: "localhost"
     login_port: "3306"
     login_db: "{{ guacamole_db }}"

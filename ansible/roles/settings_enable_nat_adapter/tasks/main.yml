@@ -3,4 +3,4 @@
   ansible.windows.win_shell: "Get-NetAdapter -Name '{{ nat_adapter }}' -ErrorAction SilentlyContinue | Where-Object { $_.Status -ne 'Up' } | Enable-NetAdapter -Confirm:$false; if (Get-NetAdapter -Name '{{ nat_adapter }}' -ErrorAction SilentlyContinue) { Write-Output 'Network adapter {{ nat_adapter }} enabled or already running' } else { Write-Error 'Network adapter {{ nat_adapter }} not found'; exit 1 }"
   register: enable_adapter_interface
   failed_when: enable_adapter_interface.rc != 0
-  when: two_adapters | bool
+  when: two_adapters | default(false) | bool

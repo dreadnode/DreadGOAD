@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	daws "github.com/dreadnode/dreadgoad/internal/aws"
 	"github.com/dreadnode/dreadgoad/internal/config"
+	"github.com/dreadnode/dreadgoad/internal/provider"
 	"github.com/spf13/cobra"
 )
 
@@ -72,24 +72,26 @@ func init() {
 	labCmd.AddCommand(labDestroyVMCmd)
 }
 
-func runLabStatus(cmd *cobra.Command, args []string) error {
+func getProvider(ctx context.Context) (provider.Provider, *config.Config, error) {
 	cfg, err := config.Get()
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
+	prov, err := cfg.NewProvider(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	return prov, cfg, nil
+}
+
+func runLabStatus(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
-
-	region, err := cfg.ResolveRegion()
+	prov, cfg, err := getProvider(ctx)
 	if err != nil {
 		return err
 	}
 
-	client, err := daws.NewClient(ctx, region)
-	if err != nil {
-		return err
-	}
-
-	instances, err := client.DiscoverAllInstances(ctx, cfg.Env)
+	instances, err := prov.DiscoverAllInstances(ctx, cfg.Env)
 	if err != nil {
 		return err
 	}
@@ -99,43 +101,42 @@ func runLabStatus(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Printf("GOAD Lab Status (%s)\n", cfg.Env)
-	fmt.Printf("%-40s %-24s %-15s %s\n", "NAME", "INSTANCE ID", "STATE", "PRIVATE IP")
+	fmt.Printf("GOAD Lab Status (%s, provider: %s)\n", cfg.Env, prov.Name())
+	fmt.Printf("%-40s %-24s %-15s %s\n", "NAME", "ID", "STATE", "PRIVATE IP")
 	fmt.Println(strings.Repeat("-", 95))
 
 	for _, inst := range instances {
 		fmt.Printf("%-40s %-24s %-15s %s\n",
-			inst.Name, inst.InstanceID, inst.State, inst.PrivateIP)
+			inst.Name, inst.ID, inst.State, inst.PrivateIP)
 	}
 	return nil
 }
 
 func runLabAction(action string) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
-		cfg, err := config.Get()
-		if err != nil {
-			return err
-		}
 		ctx := context.Background()
-
-		region, err := cfg.ResolveRegion()
+		prov, cfg, err := getProvider(ctx)
 		if err != nil {
 			return err
 		}
 
-		client, err := daws.NewClient(ctx, region)
-		if err != nil {
-			return err
-		}
-
-		var instances []daws.Instance
+		var instances []provider.Instance
 		if action == "start" {
-			instances, err = client.DiscoverInstances(ctx, cfg.Env, "stopped")
+			// For start, we want stopped instances.
+			all, err := prov.DiscoverAllInstances(ctx, cfg.Env)
+			if err != nil {
+				return err
+			}
+			for _, inst := range all {
+				if inst.State == "stopped" {
+					instances = append(instances, inst)
+				}
+			}
 		} else {
-			instances, err = client.DiscoverInstances(ctx, cfg.Env)
-		}
-		if err != nil {
-			return err
+			instances, err = prov.DiscoverInstances(ctx, cfg.Env)
+			if err != nil {
+				return err
+			}
 		}
 
 		if len(instances) == 0 {
@@ -144,15 +145,15 @@ func runLabAction(action string) func(*cobra.Command, []string) error {
 
 		var ids []string
 		for _, inst := range instances {
-			ids = append(ids, inst.InstanceID)
-			fmt.Printf("  %s %s (%s)\n", action, inst.Name, inst.InstanceID)
+			ids = append(ids, inst.ID)
+			fmt.Printf("  %s %s (%s)\n", action, inst.Name, inst.ID)
 		}
 
 		switch action {
 		case "start":
-			err = client.StartInstances(ctx, ids)
+			err = prov.StartInstances(ctx, ids)
 		case "stop":
-			err = client.StopInstances(ctx, ids)
+			err = prov.StopInstances(ctx, ids)
 		}
 		if err != nil {
 			return fmt.Errorf("%s instances: %w", action, err)
@@ -163,49 +164,49 @@ func runLabAction(action string) func(*cobra.Command, []string) error {
 	}
 }
 
-func execVMAction(ctx context.Context, client *daws.Client, inst *daws.Instance, action string) error {
-	ids := []string{inst.InstanceID}
+func execVMAction(ctx context.Context, prov provider.Provider, inst *provider.Instance, action string) error {
+	ids := []string{inst.ID}
 	switch action {
 	case "start":
-		if err := client.StartInstances(ctx, ids); err != nil {
+		if err := prov.StartInstances(ctx, ids); err != nil {
 			return fmt.Errorf("start VM: %w", err)
 		}
 		fmt.Printf("Start initiated for %s\n", inst.Name)
 	case "stop":
-		if err := client.StopInstances(ctx, ids); err != nil {
+		if err := prov.StopInstances(ctx, ids); err != nil {
 			return fmt.Errorf("stop VM: %w", err)
 		}
 		fmt.Printf("Stop initiated for %s\n", inst.Name)
 	case "restart":
 		if inst.State == "running" {
-			if err := client.StopInstances(ctx, ids); err != nil {
+			if err := prov.StopInstances(ctx, ids); err != nil {
 				return fmt.Errorf("stop VM: %w", err)
 			}
 			fmt.Printf("Stop initiated for %s, waiting for stopped state...\n", inst.Name)
-			if err := client.WaitForInstanceStopped(ctx, inst.InstanceID); err != nil {
+			if err := prov.WaitForInstanceStopped(ctx, inst.ID); err != nil {
 				return fmt.Errorf("wait for stop: %w", err)
 			}
 			fmt.Printf("%s is now stopped\n", inst.Name)
 		}
-		if err := client.StartInstances(ctx, ids); err != nil {
+		if err := prov.StartInstances(ctx, ids); err != nil {
 			return fmt.Errorf("start VM: %w", err)
 		}
 		fmt.Printf("Start initiated for %s\n", inst.Name)
 	case "destroy":
-		return destroyVM(ctx, client, inst)
+		return destroyVM(ctx, prov, inst)
 	}
 	return nil
 }
 
-func destroyVM(ctx context.Context, client *daws.Client, inst *daws.Instance) error {
-	fmt.Printf("WARNING: This will terminate %s (%s) permanently.\n", inst.Name, inst.InstanceID)
+func destroyVM(ctx context.Context, prov provider.Provider, inst *provider.Instance) error {
+	fmt.Printf("WARNING: This will terminate %s (%s) permanently.\n", inst.Name, inst.ID)
 	fmt.Print("Type the instance ID to confirm: ")
 	var confirm string
-	if _, err := fmt.Scanln(&confirm); err != nil || confirm != inst.InstanceID {
+	if _, err := fmt.Scanln(&confirm); err != nil || confirm != inst.ID {
 		fmt.Println("Aborted.")
 		return nil
 	}
-	if err := client.TerminateInstances(ctx, []string{inst.InstanceID}); err != nil {
+	if err := prov.DestroyInstances(ctx, []string{inst.ID}); err != nil {
 		return fmt.Errorf("terminate VM: %w", err)
 	}
 	fmt.Printf("Terminate initiated for %s\n", inst.Name)
@@ -215,28 +216,19 @@ func destroyVM(ctx context.Context, client *daws.Client, inst *daws.Instance) er
 func runVMAction(action string) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
 		hostname := args[0]
-		cfg, err := config.Get()
-		if err != nil {
-			return err
-		}
 		ctx := context.Background()
 
-		region, err := cfg.ResolveRegion()
+		prov, cfg, err := getProvider(ctx)
 		if err != nil {
 			return err
 		}
 
-		client, err := daws.NewClient(ctx, region)
+		inst, err := prov.FindInstanceByHostname(ctx, cfg.Env, hostname)
 		if err != nil {
 			return err
 		}
 
-		inst, err := client.FindInstanceByHostnameAll(ctx, cfg.Env, hostname)
-		if err != nil {
-			return err
-		}
-
-		fmt.Printf("Found: %s (%s) [%s]\n", inst.Name, inst.InstanceID, inst.State)
-		return execVMAction(ctx, client, inst, action)
+		fmt.Printf("Found: %s (%s) [%s]\n", inst.Name, inst.ID, inst.State)
+		return execVMAction(ctx, prov, inst, action)
 	}
 }

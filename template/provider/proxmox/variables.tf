@@ -1,5 +1,5 @@
 variable "pm_api_url" {
-  default = "{{config.get_value('proxmox', 'pm_api_url', 'https://192.168.1.1:8006/api2/json')}}"
+  default = "{{config.get_value('proxmox', 'pm_api_url', 'https://192.168.20.80:8006/api2/json')}}"
 }
 
 variable "pm_user" {

@@ -73,14 +73,15 @@ func runVerifyTrusts(cmd *cobra.Command, args []string) error {
 		script.WriteString("\nWrite-Host ''\nWrite-Host '=== Trust Validation ==='\n")
 		script.WriteString("nltest /domain_trusts /all_trusts\n")
 
-		// Cross-domain query if we have the target DC FQDN
-		if tf.TargetDCRole != "" {
-			tgtFQDN := lab.FQDN(tf.TargetDCRole)
-			if tgtFQDN != "" {
-				fmt.Fprintf(&script, "\nWrite-Host ''\nWrite-Host '=== Cross-Domain Query Test ==='\n")
-				fmt.Fprintf(&script, "Write-Host 'Querying %s:'\n", tf.TargetDomain)
-				fmt.Fprintf(&script, "Get-ADUser -Filter * -Server %s | Select -First 3 Name | Format-Table -AutoSize\n", tgtFQDN)
-			}
+		// Validate the secure channel to the trusted domain's DC.
+		// Note: Get-ADUser cross-domain queries fail under WinRM due to the
+		// Kerberos double-hop limitation (no delegatable TGT in the session).
+		// nltest /sc_query works because it uses the machine account's
+		// secure channel, which doesn't require user-level delegation.
+		if tf.TargetDomain != "" {
+			fmt.Fprintf(&script, "\nWrite-Host ''\nWrite-Host '=== Cross-Domain Secure Channel Test ==='\n")
+			fmt.Fprintf(&script, "Write-Host 'Validating secure channel to %s:'\n", tf.TargetDomain)
+			fmt.Fprintf(&script, "nltest /sc_query:%s\n", tf.TargetDomain)
 		}
 
 		script.WriteString("\nWrite-Host ''\nWrite-Host '=== Trust Status ==='\n")
@@ -90,7 +91,7 @@ func runVerifyTrusts(cmd *cobra.Command, args []string) error {
 		script.WriteString("    if ($LASTEXITCODE -eq 0) { Write-Host \"$($t.Name): HEALTHY\" } else { Write-Host \"$($t.Name): Check manually\" }\n")
 		script.WriteString("}\n")
 
-		result, err := infra.Client.RunPowerShellCommand(ctx, srcID, script.String(), 2*time.Minute)
+		result, err := infra.Provider.RunCommand(ctx, srcID, script.String(), 2*time.Minute)
 		if err != nil {
 			color.Red("  ✗ Trust verification failed: %v", err)
 			allGood = false

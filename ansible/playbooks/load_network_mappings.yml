@@ -1,0 +1,28 @@
+---
+# Pre-flight for `lab reset` (and any AD-state-only run): populates the
+# host_ipv4 / dc_ipv4 / instance_to_ip / dc_hostname_to_ip facts that
+# downstream plays read via hostvars.
+#
+# Full provision runs network_setup.yml which gathers facts from each
+# Windows host. lab reset skips that for speed and instead reuses the
+# AWS instance mapping JSON the CLI writes to /tmp before the run, via
+# the same network_discovery role task files network_setup uses.
+
+- name: Load AWS mappings and DC facts for AD-state plays
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: Apply AWS instance mapping
+      ansible.builtin.include_role:
+        name: dreadnode.goad.network_discovery
+        tasks_from: aws_mapping.yml
+
+    - name: Store DC IPs as facts
+      ansible.builtin.include_role:
+        name: dreadnode.goad.network_discovery
+        tasks_from: dc_facts.yml
+
+    - name: Build and distribute dc_hostname_to_ip mapping
+      ansible.builtin.include_role:
+        name: dreadnode.goad.network_discovery
+        tasks_from: dc_hostname_mapping.yml

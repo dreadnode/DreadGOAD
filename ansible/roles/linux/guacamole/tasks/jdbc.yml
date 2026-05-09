@@ -37,7 +37,7 @@
     remote_src: true
 
 - name: creating Guacamole DB
-  community.mysql.mysql_db:
+  ansible.mysql.mysql_db:
     name: "{{ guacamole_db }}"
     login_host: "localhost"
     login_port: "3306"
@@ -46,7 +46,7 @@
     state: present
 
 - name: creating Guacamole DB User
-  community.mysql.mysql_user:
+  ansible.mysql.mysql_user:
     name: "{{ guacamole_db_username }}"
     password: "{{ guacamole_db_password }}"
     login_host: "localhost"
@@ -63,7 +63,7 @@
   register: guacamole_db_populated_check
 
 - name: popluating DB
-  community.mysql.mysql_db:
+  ansible.mysql.mysql_db:
     name: "{{ guacamole_db_username }}"
     login_host: "localhost"
     login_port: "3306"

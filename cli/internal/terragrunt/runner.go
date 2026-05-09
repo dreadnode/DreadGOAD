@@ -22,6 +22,11 @@ type Options struct {
 	ExcludeDirs      string
 	LogFile          string
 	Debug            bool
+	// ExtraEnv is appended to the child process environment in KEY=VALUE form.
+	// Used by callers that need to set Terragrunt feature toggles (e.g. the
+	// Azure Bastion module's DREADGOAD_ENABLE_AZURE_BASTION gate) without
+	// mutating the parent process env.
+	ExtraEnv []string
 }
 
 type Result struct {
@@ -196,6 +201,9 @@ func buildEnv(opts Options) []string {
 	env := os.Environ()
 	if opts.TerraformBinary != "" {
 		env = append(env, "TG_TF_PATH="+opts.TerraformBinary)
+	}
+	if len(opts.ExtraEnv) > 0 {
+		env = append(env, opts.ExtraEnv...)
 	}
 	return env
 }

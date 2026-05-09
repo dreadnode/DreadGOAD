@@ -19,6 +19,38 @@ vulnerable Active Directory environments for security research and testing.
 
 ## Getting Started
 
+### init
+
+Interactive setup wizard. Walks through provider selection and connectivity probing, then writes a working `dreadgoad.yaml`.
+
+```bash
+dreadgoad init
+```
+
+For Ludus the wizard prefers an `~/.ssh/config` Host alias so existing key/agent setups (including 1Password) carry through with zero extra configuration.
+
+### up
+
+Deploy the lab end-to-end: doctor → infra apply → provision → health-check. Stops on the first failing step and prints a resume hint.
+
+```bash
+dreadgoad up                       # full pipeline
+dreadgoad up --from provision      # resume from a step
+dreadgoad up --skip-doctor         # bypass pre-flight checks
+dreadgoad up --limit dc01          # narrow provisioning to one host
+```
+
+| Flag | Description |
+|------|-------------|
+| `--from string` | Resume from this step (`doctor`, `infra`, `provision`, `health-check`) |
+| `--skip-doctor` | Skip the doctor pre-flight checks |
+| `--limit string` | Limit provisioning to specific hosts |
+| `--plays string` | Comma-separated playbooks to run (default: all) |
+| `--max-retries int` | Max retry attempts for provisioning |
+| `--retry-delay int` | Delay between retries in seconds |
+| `--module string` | Target a specific infra module |
+| `--exclude string` | Exclude infra modules (comma-separated) |
+
 ### config
 
 Manage CLI configuration.

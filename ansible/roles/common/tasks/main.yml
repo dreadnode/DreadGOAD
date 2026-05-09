@@ -33,6 +33,11 @@
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         Install-PackageProvider -Name NuGet -Force -Confirm:$false
         Install-Module PowerShellGet -Force -Confirm:$false
+        # Newly-installed DLLs sometimes carry Mark-of-the-Web from the .nupkg
+        # download, which makes Microsoft.PackageManagement.dll fail to load on
+        # the next Install-Module call ("Catastrophic failure" / 0x8000FFFF).
+        Get-ChildItem -Path 'C:\Program Files\WindowsPowerShell\Modules' -Recurse -ErrorAction SilentlyContinue |
+          Unblock-File -ErrorAction SilentlyContinue
       register: powershellget_install
       retries: 3
       delay: 10

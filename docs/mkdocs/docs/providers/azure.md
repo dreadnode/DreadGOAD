@@ -18,7 +18,8 @@
 
 ## Prerequisites
 
-- [Terraform](https://www.terraform.io/downloads.html)
+- [OpenTofu](https://opentofu.org/) or [Terraform](https://www.terraform.io/downloads.html)
+- [Terragrunt](https://terragrunt.gruntwork.io/)
 - [Azure CLI](https://docs.microsoft.com/en-us/cli/azure/install-azure-cli?view=azure-cli-latest)
 
 ## Azure configuration
@@ -31,16 +32,20 @@ az login
 
 ## DreadGOAD configuration
 
-- Initialize the configuration file with `dreadgoad config init`
-- Azure-specific settings are configured in `dreadgoad.yaml`:
+The Azure path is selected at invocation time via `-p azure` and `--region <azure-region>` (e.g. `centralus`). These can also be set in `dreadgoad.yaml` to avoid re-passing them:
 
 ```yaml
 # dreadgoad.yaml
-azure:
-  location: westeurope
+provider: azure
+region: centralus
+env: test
 ```
 
-- If you want to use a different location you can modify it.
+!!! note "Azure region naming"
+    Azure regions use names like `centralus`, `westeurope`, `eastus2` — not AWS-style names like `us-east-2`. Passing an AWS region routes the apply down the wrong provider path.
+
+!!! warning "Subscription capacity"
+    The Dreadnode MSFT Startup subscription has tight quota limits in `eastus`. Default to `centralus` unless you know the target region has capacity.
 
 
 ## Installation
@@ -48,12 +53,10 @@ azure:
 ```bash
 # check prerequisites
 dreadgoad doctor
-# Create cloud infrastructure
-dreadgoad infra apply
-# Sync inventory
-dreadgoad inventory sync
-# Provision the lab
-dreadgoad provision
+# Create cloud infrastructure (Azure)
+dreadgoad infra apply -p azure --env test --region centralus --auto-approve
+# Provision the lab (TBD: Ansible WinRM transport)
+dreadgoad provision -p azure --env test --region centralus
 ```
 
 ## start/stop/status
@@ -93,15 +96,81 @@ dreadgoad provision
 ## Install step by step
 
 ```bash
-dreadgoad doctor                # check prerequisites
-dreadgoad infra apply           # create cloud infrastructure with Terragrunt/Terraform
-dreadgoad inventory sync        # sync inventory and sources to jumpbox
-dreadgoad provision             # run Ansible provisioning via jumpbox
+dreadgoad doctor                                                                # check prerequisites
+dreadgoad infra apply -p azure --env test --region centralus --auto-approve     # create cloud infrastructure with Terragrunt/Terraform
+dreadgoad provision  -p azure --env test --region centralus                     # run Ansible provisioning (transport: see "How it works")
 ```
 
-## Tips
+## Remote command access (`runcmd`)
 
-- To connect to a host you can use `dreadgoad ssm connect <host>`
+Azure does not have a direct equivalent of AWS SSM Session Manager. The closest match without deploying Azure Bastion is **Azure Run Command** (control-plane, no inbound ports). DreadGOAD exposes this under a separate verb so it isn't confused with AWS SSM:
+
+| Operation | AWS | Azure |
+|---|---|---|
+| Run a one-shot command on hosts | `dreadgoad ssm run -c '<ps>'` | `dreadgoad runcmd run -c '<ps>'` |
+| Open an interactive shell | `dreadgoad ssm connect <host>` | `dreadgoad runcmd connect <host>` |
+| List active sessions | `dreadgoad ssm status` | _N/A — Run Command is stateless_ |
+| Clean up stale sessions | `dreadgoad ssm cleanup` | _N/A — Run Command is stateless_ |
+
+!!! warning "`runcmd connect` is a REPL, not a true interactive shell"
+    Each line you type becomes a separate Azure Run Command invocation. For a real-time shell, deploy the optional Azure Bastion module (`dreadgoad infra apply --with-bastion`) and use `dreadgoad bastion ssh|rdp|tunnel`. We don't bundle Bastion in the default GOAD module because it adds ~$140/mo per environment.
+
+REPL caveats:
+
+- **~5-15s latency per command** (Run Command's end-to-end round-trip)
+- **Output capped at 4096 bytes per stream** (Azure-imposed; pipe big output through `Out-File` and pull the file separately)
+- `$PWD` is persisted between invocations (`cd` works across lines)
+- No live stdin, no signal forwarding to the remote process, no streaming output
+- Ctrl+C cancels the in-flight invocation but keeps the session open
+- Type `exit` (or send EOF) to leave
+
+```bash
+# Run across all hosts
+dreadgoad runcmd run -c 'Get-Service WinRM | Format-List Status, StartType'
+
+# Run on specific hosts
+dreadgoad runcmd run --hosts dc01,srv01 -c 'whoami'
+
+# Open a REPL to a single host
+dreadgoad runcmd connect dc01
+```
+
+## Native-client access via Azure Bastion (`bastion`)
+
+For real-time interactive sessions and port tunneling, DreadGOAD ships an optional Azure Bastion module (`modules/terraform-azure-bastion/`). It is excluded from the default lab apply because it adds ~$140/mo. Enable it by passing `--with-bastion` to `infra apply`, or by exporting `DREADGOAD_ENABLE_AZURE_BASTION=true` before running Terragrunt directly.
+
+```bash
+# Deploy lab + Bastion together
+dreadgoad infra apply --with-bastion -p azure --env test --region centralus --auto-approve
+
+# Or deploy Bastion alone after the lab is up
+dreadgoad infra apply --with-bastion --module bastion -p azure --env test --region centralus
+
+# Status of the deployed Bastion
+dreadgoad bastion status
+```
+
+The Bastion module defaults to SKU `Standard` with `tunneling_enabled = true`, which is the minimum needed for `bastion ssh|rdp|tunnel`. The `Developer` SKU only supports the browser console.
+
+| Operation | Command |
+|---|---|
+| Open SSH to a Linux/jumpbox VM | `dreadgoad bastion ssh <host> --user <u>` |
+| Open RDP to a Windows VM (Windows clients only) | `dreadgoad bastion rdp <host>` |
+| Tunnel a port (default RDP/3389) for any client | `dreadgoad bastion tunnel <host> --remote-port 3389 --local-port 3389` |
+
+Hostname resolution mirrors `runcmd`: the inventory and live tag-based discovery are both consulted. The discovered Bastion host is found by tag (`Project=DreadGOAD`, `Environment=<env>`).
+
+```bash
+# RDP through Bastion via a local-port tunnel from a non-Windows client
+dreadgoad bastion tunnel dc01 --remote-port 3389 --local-port 3389
+# (in another terminal)
+xfreerdp /v:localhost:3389 /u:Administrator
+```
+
+!!! note "Tunneling SKU requirement"
+    `bastion ssh|rdp|tunnel` require `tunneling_enabled = true` on a `Standard` or `Premium` SKU. `dreadgoad bastion status` warns when the deployed Bastion lacks tunneling.
+
+## Tips
 
 - If the command `destroy` or `delete` fails, you can delete the resource group using the CLI
 

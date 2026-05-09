@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
-	daws "github.com/dreadnode/dreadgoad/internal/aws"
 	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/dreadnode/dreadgoad/internal/inventory"
+	"github.com/dreadnode/dreadgoad/internal/provider"
 )
 
 // RetryOptions configures the retry behavior for a [RunPlaybookWithRetry] call.
@@ -119,17 +119,17 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 		Limit:       limit,
 		Debug:       opts.Debug,
 		LogFile:     opts.LogFile,
-		ExtraVars:   opts.ExtraVars,
+		ExtraVars:   copyVars(opts.ExtraVars),
 	}
 
 	switch failResult.ErrorType {
 	case ErrFactGathering:
 		log.Info("retrying with modified fact gathering settings")
 		baseOpts.Forks = 1
-		baseOpts.ExtraVars = map[string]string{
+		mergeVars(baseOpts.ExtraVars, map[string]string{
 			"ansible_facts_gathering_timeout": "60",
 			"gather_timeout":                  "60",
-		}
+		})
 		baseOpts.ExtraEnv = map[string]string{
 			"ANSIBLE_GATHERING": "explicit",
 		}
@@ -137,10 +137,10 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 
 	case ErrNetworkAdapter:
 		log.Info("retrying with network adapter fix")
-		baseOpts.ExtraVars = map[string]string{
+		mergeVars(baseOpts.ExtraVars, map[string]string{
 			"skip_network_adapter_config": "true",
 			"bypass_ethernet3_check":      "true",
-		}
+		})
 		return RunPlaybook(ctx, baseOpts)
 
 	case ErrSSMTransfer:
@@ -151,13 +151,13 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 		time.Sleep(30 * time.Second)
 
 		baseOpts.Forks = 1
-		baseOpts.ExtraVars = map[string]string{
+		mergeVars(baseOpts.ExtraVars, map[string]string{
 			"ansible_aws_ssm_retries":     "10",
 			"ansible_aws_ssm_retry_delay": "30",
 			"ansible_connection_timeout":  "300",
 			"ansible_command_timeout":     "300",
 			"ansible_aws_ssm_timeout":     "300",
-		}
+		})
 		baseOpts.ExtraEnv = map[string]string{"ANSIBLE_TIMEOUT": "300"}
 		return RunPlaybook(ctx, baseOpts)
 
@@ -171,21 +171,21 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 		time.Sleep(10 * time.Second)
 
 		baseOpts.Forks = 1
-		baseOpts.ExtraVars = map[string]string{
+		mergeVars(baseOpts.ExtraVars, map[string]string{
 			"ansible_connection_timeout":      "180",
 			"ansible_timeout":                 "180",
 			"ansible_facts_gathering_timeout": "60",
-		}
+		})
 		baseOpts.ExtraEnv = map[string]string{"ANSIBLE_TIMEOUT": "180"}
 		return RunPlaybook(ctx, baseOpts)
 
 	case ErrPowerShell:
 		log.Info("retrying with PowerShell interactive mode fix")
-		baseOpts.ExtraVars = map[string]string{
+		mergeVars(baseOpts.ExtraVars, map[string]string{
 			"ansible_shell_type": "powershell",
 			"force_ps_module":    "true",
 			"ansible_ps_version": "5.1",
-		}
+		})
 		return RunPlaybook(ctx, baseOpts)
 
 	case ErrSSMUserAccount:
@@ -195,11 +195,11 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 		time.Sleep(30 * time.Second)
 
 		baseOpts.Forks = 1
-		baseOpts.ExtraVars = map[string]string{
+		mergeVars(baseOpts.ExtraVars, map[string]string{
 			"ansible_connection_timeout": "180",
 			"ansible_timeout":            "180",
 			"ansible_aws_ssm_timeout":    "300",
-		}
+		})
 		baseOpts.ExtraEnv = map[string]string{"ANSIBLE_TIMEOUT": "180"}
 		return RunPlaybook(ctx, baseOpts)
 
@@ -242,9 +242,8 @@ func buildRetryLimit(userLimit, failedHosts string) string {
 }
 
 // CleanupSSMSessions terminates stale SSM sessions to prevent connection
-// saturation. It resolves the AWS region from the inventory, then calls
-// [daws.Client.CleanupStaleSessions] for all instances in the current
-// environment. Sessions idle for more than 15 minutes are terminated.
+// saturation. It resolves the provider from config, checks if it supports
+// session management, and cleans up sessions older than 15 minutes.
 // This is a no-op for non-SSM inventories (e.g. Ludus, Proxmox).
 func CleanupSSMSessions(ctx context.Context, env string, log *slog.Logger) {
 	cfg, err := config.Get()
@@ -262,18 +261,18 @@ func CleanupSSMSessions(ctx context.Context, env string, log *slog.Logger) {
 		return
 	}
 
-	region, err := cfg.ResolveRegionWithInventory(inv)
+	prov, err := cfg.NewProvider(ctx)
 	if err != nil {
-		log.Warn("could not resolve AWS region for SSM cleanup", "error", err)
-		return
-	}
-	client, err := daws.NewClient(ctx, region)
-	if err != nil {
-		log.Warn("could not create AWS client for SSM cleanup", "error", err)
+		log.Warn("could not create provider for SSM cleanup", "error", err)
 		return
 	}
 
-	terminated, err := client.CleanupStaleSessions(ctx, inv.InstanceIDs(), 15*time.Minute, false, log)
+	sm, ok := prov.(provider.SessionManager)
+	if !ok {
+		return
+	}
+
+	terminated, err := sm.CleanupStaleSessions(ctx, inv.InstanceIDs(), 15*time.Minute, false)
 	if err != nil {
 		log.Warn("skipping stale SSM session cleanup", "error", err)
 		return
@@ -304,14 +303,14 @@ func fixSSMUsers(ctx context.Context, env string, failedHosts []string, log *slo
 		return
 	}
 
-	region, err := cfg.ResolveRegionWithInventory(inv)
+	prov, err := cfg.NewProvider(ctx)
 	if err != nil {
-		log.Warn("could not resolve AWS region for ssm-user fix", "error", err)
+		log.Warn("could not create provider for ssm-user fix", "error", err)
 		return
 	}
-	client, err := daws.NewClient(ctx, region)
-	if err != nil {
-		log.Warn("could not create AWS client for ssm-user fix", "error", err)
+
+	ssmRecovery, ok := prov.(provider.SSMRecovery)
+	if !ok {
 		return
 	}
 
@@ -324,11 +323,11 @@ func fixSSMUsers(ctx context.Context, env string, failedHosts []string, log *slo
 
 		log.Info("fixing ssm-user", "host", hostName, "instance", host.InstanceID)
 
-		if err := client.EnableSSMUserLocal(ctx, host.InstanceID); err != nil {
+		if err := ssmRecovery.EnableSSMUserLocal(ctx, host.InstanceID); err != nil {
 			log.Info("local enable failed, trying domain account fix", "host", hostName)
 			// Brief pause to avoid SSM SendCommand throttling on the same instance.
 			time.Sleep(5 * time.Second)
-			if err := client.FixSSMUserViaDomainAccount(ctx, host.InstanceID); err != nil {
+			if err := ssmRecovery.FixSSMUserViaDomainAccount(ctx, host.InstanceID); err != nil {
 				log.Warn("ssm-user fix failed", "host", hostName, "error", err)
 			}
 			// FixSSMUserViaDomainAccount already restarts SSM Agent
@@ -340,7 +339,7 @@ func fixSSMUsers(ctx context.Context, env string, failedHosts []string, log *slo
 		// Brief pause to avoid SSM SendCommand throttling on the same instance.
 		time.Sleep(5 * time.Second)
 		log.Info("restarting SSM Agent to refresh credentials", "host", hostName)
-		if err := client.RestartSSMAgent(ctx, host.InstanceID); err != nil {
+		if err := ssmRecovery.RestartSSMAgent(ctx, host.InstanceID); err != nil {
 			log.Warn("SSM Agent restart failed", "host", hostName, "error", err)
 		}
 	}
@@ -377,3 +376,26 @@ func rebootFailedHosts(ctx context.Context, opts RetryOptions, log *slog.Logger)
 }
 
 var execCommand = exec.CommandContext
+
+// copyVars returns a shallow copy of a vars map (nil-safe).
+func copyVars(src map[string]string) map[string]string {
+	if src == nil {
+		return make(map[string]string)
+	}
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
+// mergeVars adds entries from src into dst without overwriting existing keys.
+// This preserves connection-level vars (like SOCKS proxy settings) while
+// allowing retry strategies to add their own vars.
+func mergeVars(dst, src map[string]string) {
+	for k, v := range src {
+		if _, exists := dst[k]; !exists {
+			dst[k] = v
+		}
+	}
+}

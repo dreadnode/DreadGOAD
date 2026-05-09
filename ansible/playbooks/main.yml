@@ -66,6 +66,10 @@
 # specifics security linked to the scenario are here
 - name: Import Security
   ansible.builtin.import_playbook: security.yml
+# enables LDAP diagnostic logging on DCs and SQL audit on MSSQL hosts so
+# attack reconnaissance produces detectable telemetry
+- name: Import Security Logging
+  ansible.builtin.import_playbook: security_logging.yml
 # --------------------------------------------------------------------
 # specifics vulns linked to the scenario are here
 - name: Import Vulnerabilities

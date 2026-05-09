@@ -12,7 +12,9 @@
     "hosts": {
       "dc01": {
         "vulns": [
-          "disable_firewall"
+          "disable_firewall",
+          "adcs_esc10_case1",
+          "adcs_esc10_case2"
         ]
       },
       "dc02": {
@@ -45,14 +47,18 @@
         },
         "vulns": [
           "ntlmdowngrade",
-          "disable_firewall"
-        ],
-        "vulns_vars": null
+          "disable_firewall",
+          "adcs_esc7",
+          "adcs_esc13",
+          "adcs_esc15"
+        ]
       },
       "srv03": {
         "vulns": [
           "openshares",
-          "disable_firewall"
+          "disable_firewall",
+          "adcs_esc6",
+          "adcs_esc11"
         ]
       }
     }

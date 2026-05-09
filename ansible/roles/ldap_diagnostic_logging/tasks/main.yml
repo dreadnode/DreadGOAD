@@ -185,3 +185,25 @@
     username: SYSTEM
     state: present
     enabled: true
+
+# Verify the registry actually holds what we wrote. Windows creates
+# NTDS\Diagnostics defaults at 0 after DC promotion, so a silent skip of the
+# regedit tasks would still leave value=0 and pass the play. Re-read the keys
+# and fail the play loudly if the values don't match the configured levels.
+- name: Verify NTDS diagnostic registry values
+  ansible.windows.win_powershell:
+    parameters:
+      ExpectedFieldEngineering: "{{ field_engineering_level | int }}"
+      ExpectedLDAPInterface: "{{ ldap_interface_events_level | int }}"
+    script: |
+      param([int]$ExpectedFieldEngineering, [int]$ExpectedLDAPInterface)
+      $path = 'HKLM:\SYSTEM\CurrentControlSet\Services\NTDS\Diagnostics'
+      $fe = (Get-ItemProperty -Path $path -Name '15 Field Engineering' -ErrorAction SilentlyContinue).'15 Field Engineering'
+      $li = (Get-ItemProperty -Path $path -Name '16 LDAP Interface Events' -ErrorAction SilentlyContinue).'16 LDAP Interface Events'
+      if ($null -eq $fe -or [int]$fe -ne $ExpectedFieldEngineering) {
+          throw "15 Field Engineering = $fe (expected $ExpectedFieldEngineering)"
+      }
+      if ($null -eq $li -or [int]$li -ne $ExpectedLDAPInterface) {
+          throw "16 LDAP Interface Events = $li (expected $ExpectedLDAPInterface)"
+      }
+  changed_when: false
