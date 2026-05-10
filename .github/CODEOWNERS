@@ -1,0 +1,4 @@
+# Workflow and CI configuration changes require maintainer review,
+# since these files run with repo secrets (incl. the renovate bot's
+# GitHub App private key).
+.github/**          @l50
