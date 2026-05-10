@@ -23,7 +23,7 @@ concurrency:
   group: pre-commit-${{ github.workflow }}-${{ github.ref }}
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   GO_VERSION: "1.26.3"
@@ -35,8 +35,22 @@ jobs:
     name: Update pre-commit hooks and run pre-commit
     runs-on: ubuntu-latest
     steps:
+      - name: Generate app token for autocommit
+        if: >-
+          github.event_name == 'pull_request' &&
+          github.event.pull_request.user.login == 'dreadnode-renovate-bot[bot]' &&
+          !github.event.pull_request.head.repo.fork
+        uses: actions/create-github-app-token@1b10c78c7865c340bc4f6099eb2f838309f1e8c3 # v3.1.1
+        id: app-token
+        with:
+          app-id: "${{ secrets.BOT_APP_ID }}"
+          private-key: "${{ secrets.BOT_APP_PRIVATE_KEY }}"
+
       - name: Checkout git repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.head.ref || github.ref }}
+          token: ${{ steps.app-token.outputs.token || github.token }}
 
       - name: Set up Python
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
@@ -118,5 +132,23 @@ jobs:
           install-only: true
 
       - name: Run pre-commit
+        id: precommit
         run: |
           pre-commit run --show-diff-on-failure --color=always --all-files
+
+      - name: Commit pre-commit autofixes back to bot PR
+        if: ${{ failure() && steps.precommit.outcome == 'failure' && steps.app-token.outputs.token != '' }}
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          GIT_AUTHOR_NAME: "${{ secrets.BOT_USERNAME }}[bot]"
+          GIT_AUTHOR_EMAIL: "${{ secrets.BOT_USER_ID }}+${{ secrets.BOT_USERNAME }}[bot]@users.noreply.github.com"
+          GIT_COMMITTER_NAME: "${{ secrets.BOT_USERNAME }}[bot]"
+          GIT_COMMITTER_EMAIL: "${{ secrets.BOT_USER_ID }}+${{ secrets.BOT_USERNAME }}[bot]@users.noreply.github.com"
+        run: |
+          if [[ -z "$(git status --porcelain)" ]]; then
+            echo "pre-commit failed but did not modify any files; nothing to autofix."
+            exit 1
+          fi
+          git add -A
+          git commit -m "chore: apply pre-commit autofixes"
+          git push origin "HEAD:${HEAD_REF}"
