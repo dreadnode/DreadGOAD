@@ -1,0 +1,279 @@
+package scoreboard
+
+import (
+	"compress/gzip"
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"io"
+	"strings"
+
+	awsclient "github.com/dreadnode/dreadgoad/internal/aws"
+
+	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
+)
+
+// AresTransport sources findings from a running ares operation by invoking
+// `ares ops loot --latest --json` on the target instance via SSM, then
+// translating the structured loot snapshot into synthetic JSONL findings the
+// existing parser understands.
+type AresTransport struct {
+	InstanceID string
+	Region     string
+	BinaryPath string
+	Client     *awsclient.Client
+}
+
+// NewAresTransport constructs an AresTransport. binaryPath defaults to
+// /usr/local/bin/ares when empty.
+func NewAresTransport(ctx context.Context, instanceID, binaryPath, region string) (*AresTransport, error) {
+	if instanceID == "" {
+		return nil, fmt.Errorf("instance ID is required")
+	}
+	c, err := awsclient.NewClient(ctx, region)
+	if err != nil {
+		return nil, err
+	}
+	if binaryPath == "" {
+		binaryPath = "/usr/local/bin/ares"
+	}
+	return &AresTransport{
+		InstanceID: instanceID,
+		Region:     region,
+		BinaryPath: binaryPath,
+		Client:     c,
+	}, nil
+}
+
+type aresLoot struct {
+	OperationID string          `json:"operation_id"`
+	StartedAt   string          `json:"started_at"`
+	Credentials []aresCredEntry `json:"credentials"`
+	Hashes      []aresHashEntry `json:"hashes"`
+}
+
+type aresCredEntry struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Domain   string `json:"domain"`
+	IsAdmin  bool   `json:"is_admin"`
+}
+
+type aresHashEntry struct {
+	Username  string `json:"username"`
+	Domain    string `json:"domain"`
+	HashValue string `json:"hash_value"`
+	HashType  string `json:"hash_type"`
+	Source    string `json:"source"`
+}
+
+// FetchReport runs `ares ops loot --latest --json` on the remote instance and,
+// if successful, also fetches the `ares:op:<id>:exploited` Redis set so
+// technique objectives can be credited directly. Both payloads are
+// gzip+base64-encoded to sidestep SSM's 24KB stdout cap. Returns ErrNoReport
+// when the operation hasn't produced any state yet.
+func (t *AresTransport) FetchReport(ctx context.Context) (string, error) {
+	const jqFilter = `{operation_id, started_at,` +
+		` credentials: [.credentials[] | {username, password, domain, is_admin}],` +
+		` hashes: [.hashes[] | {username, domain, hash_value, hash_type, source}]}`
+	cmd := fmt.Sprintf("%s ops loot --latest --json | jq -c %s | gzip -c | base64 -w0",
+		shellQuote(t.BinaryPath), shellQuote(jqFilter))
+	out, status, stderr, err := runSSMShell(ctx, t.Client, t.InstanceID, cmd)
+	if err != nil {
+		return "", err
+	}
+	if status != ssmtypes.CommandInvocationStatusSuccess {
+		if strings.Contains(stderr, "No state found") || strings.Contains(stderr, "No operations") {
+			return "", ErrNoReport
+		}
+		return "", fmt.Errorf("ares ops loot: %s: %s", status, strings.TrimSpace(stderr))
+	}
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return "", ErrNoReport
+	}
+	raw, err := decodeGzipBase64(out)
+	if err != nil {
+		return "", fmt.Errorf("decode ares loot: %w", err)
+	}
+	var loot aresLoot
+	if err := json.Unmarshal(raw, &loot); err != nil {
+		return "", fmt.Errorf("parse ares loot json: %w", err)
+	}
+
+	exploited := t.fetchExploited(ctx, loot.OperationID)
+	return synthesizeJSONL(&loot, exploited), nil
+}
+
+// fetchExploited reads the `ares:op:<op>:exploited` Redis set; failures are
+// non-fatal (just means no technique findings get emitted this poll).
+func (t *AresTransport) fetchExploited(ctx context.Context, opID string) []string {
+	if opID == "" {
+		return nil
+	}
+	cmd := fmt.Sprintf("redis-cli SMEMBERS %s", shellQuote(fmt.Sprintf("ares:op:%s:exploited", opID)))
+	out, status, _, err := runSSMShell(ctx, t.Client, t.InstanceID, cmd)
+	if err != nil || status != ssmtypes.CommandInvocationStatusSuccess {
+		return nil
+	}
+	var entries []string
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			entries = append(entries, line)
+		}
+	}
+	return entries
+}
+
+func decodeGzipBase64(s string) ([]byte, error) {
+	gz, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return nil, fmt.Errorf("base64: %w", err)
+	}
+	gr, err := gzip.NewReader(strings.NewReader(string(gz)))
+	if err != nil {
+		return nil, fmt.Errorf("gzip: %w", err)
+	}
+	body, readErr := io.ReadAll(gr)
+	closeErr := gr.Close()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close gzip reader: %w", closeErr)
+	}
+	return body, nil
+}
+
+// DeleteReport is a no-op: ares state lives in Redis, not a file the
+// scoreboard should clobber. Restarting an ares operation is a separate
+// workflow (`task ec2:launch ...`).
+func (t *AresTransport) DeleteReport(_ context.Context) (bool, error) {
+	return false, nil
+}
+
+// aresExploitedToTechniqueIDs maps an entry from `ares:op:<id>:exploited` to
+// the answer-key technique IDs it represents. Returns nil for entries that
+// don't correspond to any answer-key technique. The exploited set uses prefix
+// names like `mssql_linked_server_<ip>_<svc>` or bare names like
+// `constrained_delegation_<user>`; we match on the prefix.
+func aresExploitedToTechniqueIDs(entry string) []string {
+	prefixes := []struct {
+		prefix string
+		ids    []string
+	}{
+		{"mssql_linked_server_", []string{"mssql_linked_server"}},
+		{"mssql_impersonation_", []string{"mssql_exploit"}},
+		{"mssql_", []string{"mssql_exploit"}},
+		{"constrained_delegation_", []string{"constrained_delegation"}},
+		{"unconstrained_delegation_", []string{"unconstrained_delegation"}},
+		{"forest_trust_", []string{"cross_forest_trust"}},
+		{"child_to_parent_", []string{"child_to_parent"}},
+		{"acl_abuse_", []string{"acl_abuse"}},
+		{"asrep_roast_", []string{"asrep_roast"}},
+		{"kerberoast_", []string{"kerberoast"}},
+		{"llmnr_", []string{"llmnr_nbtns_poisoning"}},
+		{"ntlm_relay_", []string{"ntlm_relay"}},
+		{"ntlmv1_", []string{"ntlmv1_downgrade"}},
+		{"seimpersonate_", []string{"seimpersonate"}},
+		{"adcs_esc1_", []string{"adcs_esc6"}}, // ESC1 not in answer key; ESC variants tracked separately
+		{"adcs_esc6_", []string{"adcs_esc6"}},
+		{"adcs_esc7_", []string{"adcs_esc7"}},
+		{"adcs_esc10_case1_", []string{"adcs_esc10_case1"}},
+		{"adcs_esc10_case2_", []string{"adcs_esc10_case2"}},
+		{"adcs_esc11_", []string{"adcs_esc11"}},
+		{"adcs_esc13_", []string{"adcs_esc13"}},
+		{"adcs_esc15_", []string{"adcs_esc15"}},
+	}
+	// Per-domain golden ticket: `golden_ticket_<domain>` → `golden_ticket-<domain>`.
+	// One scoreboard objective per domain because forging requires that domain's
+	// krbtgt hash; a multi-domain forest can have a separate GT per domain.
+	if strings.HasPrefix(entry, "golden_ticket_") {
+		domain := strings.ToLower(strings.TrimPrefix(entry, "golden_ticket_"))
+		if domain != "" {
+			return []string{"golden_ticket-" + domain}
+		}
+	}
+	for _, p := range prefixes {
+		if strings.HasPrefix(entry, p.prefix) || entry == strings.TrimSuffix(p.prefix, "_") {
+			return p.ids
+		}
+	}
+	return nil
+}
+
+func synthesizeJSONL(l *aresLoot, exploited []string) string {
+	var b strings.Builder
+	startTime := l.StartedAt
+	header := map[string]string{
+		"agent_id":   "ares:" + l.OperationID,
+		"start_time": startTime,
+	}
+	hb, _ := json.Marshal(header)
+	b.Write(hb)
+	b.WriteByte('\n')
+
+	for _, c := range l.Credentials {
+		if c.Username == "" || c.Password == "" {
+			continue
+		}
+		target := c.Username
+		if c.Domain != "" {
+			target = c.Username + "@" + c.Domain
+		}
+		desc := "ares loot"
+		if c.IsAdmin {
+			desc = "ares loot (admin)"
+		}
+		entry := map[string]string{
+			"target":      target,
+			"evidence":    c.Password,
+			"description": desc,
+		}
+		eb, _ := json.Marshal(entry)
+		b.Write(eb)
+		b.WriteByte('\n')
+	}
+
+	for _, h := range l.Hashes {
+		if h.Username == "" || h.HashValue == "" {
+			continue
+		}
+		target := h.Username
+		if h.Domain != "" {
+			target = h.Username + "@" + strings.ToLower(h.Domain)
+		}
+		htype := h.HashType
+		if htype == "" {
+			htype = "hash"
+		}
+		entry := map[string]string{
+			"target":      target,
+			"evidence":    h.HashValue,
+			"description": "ares: " + strings.ToLower(htype) + " (" + h.Source + ")",
+		}
+		eb, _ := json.Marshal(entry)
+		b.Write(eb)
+		b.WriteByte('\n')
+	}
+
+	emitted := map[string]bool{}
+	for _, ex := range exploited {
+		for _, techID := range aresExploitedToTechniqueIDs(ex) {
+			if emitted[techID] {
+				continue
+			}
+			emitted[techID] = true
+			entry := map[string]string{
+				"target":      "tech:" + techID,
+				"evidence":    "ares: " + ex,
+				"description": "exploited",
+			}
+			eb, _ := json.Marshal(entry)
+			b.Write(eb)
+			b.WriteByte('\n')
+		}
+	}
+	return b.String()
+}
