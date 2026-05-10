@@ -4,30 +4,34 @@
 
 **Lab Architecture:**
 
-- Multi-domain setup with parent/child relationships
-- Three forests: `sevenkingdoms.local`, `north.sevenkingdoms.local` (child), and `essos.local`
-- Multiple servers including Domain Controllers, IIS, MSSQL, and ADCS servers
-- Forest trusts between domains
+- Two forests, three domains: `sevenkingdoms.local` (root) with child `north.sevenkingdoms.local`, and `essos.local` (separate forest)
+- Five Windows servers: DC01 (kingslanding), DC02 (winterfell, child DC), DC03 (meereen), SRV02 (castelblack), SRV03 (braavos)
+- Bidirectional forest trust between `sevenkingdoms.local` and `essos.local`
+- ADCS is installed on DC01 and SRV03; custom vulnerable certificate templates are published on DC03
 
 **GOAD Lab-Specific Vulnerable Configurations:**
 These scheduled tasks and configurations are provisioned by Ansible roles to enable attack scenarios:
 
-| Configuration | Server | User | Frequency | Ansible Role | Attack Enabled |
+| Configuration | Server | User | Frequency | Source | Attack Enabled |
 | --------------- | -------- | ------ | ----------- | -------------- | ---------------- |
-| Non-existent share connection | Winterfell | robb.stark | Every 1 minute | `roles/vulns/responder` | LLMNR/NBT-NS Poisoning |
-| Non-existent share connection | Kingslanding | eddard.stark (Domain Admin) | Every 5 minutes | `roles/vulns/ntlm_relay` | NTLM Relay |
-| AS-REP Roastable account | - | brandon.stark | - | Account settings | AS-REP Roasting |
+| Non-existent share connection | Winterfell | robb.stark | Every 2 minutes | `ad/GOAD/scripts/responder.ps1` | LLMNR/NBT-NS Poisoning |
+| Non-existent share connection (to Meereen) | Winterfell | eddard.stark (Domain Admin of north) | Every 5 minutes | `ad/GOAD/scripts/ntlm_relay.ps1` | NTLM Relay |
+| AS-REP Roastable account | dc02 (Winterfell) | brandon.stark | - | `ad/GOAD/scripts/asrep_roasting.ps1` | AS-REP Roasting (north) |
+| AS-REP Roastable account | dc03 (Meereen) | missandei | - | `ad/GOAD/scripts/asrep_roasting2.ps1` | AS-REP Roasting (essos) |
 | SMB Signing disabled | Winterfell | - | - | Server config | NTLM Relay target |
-| IIS upload vulnerability | 192.168.56.22 | - | - | IIS config | Web shell upload |
+| IIS upload vulnerability | 192.168.56.22 (Castelblack) | - | - | IIS config | Web shell upload |
 
 **Key Vulnerable Accounts:**
 
-- **robb.stark** - Local admin on Winterfell, password in rockyou.txt (NetNTLMv2 capture)
-- **brandon.stark** - AS-REP roastable, password: `iseedeadpeople`
-- **eddard.stark** - Domain Admin, enables NTLM relay to domain compromise
-- **samwell.tarly** - Password in description field: `Heartsbane`
-- **hodor** - Password equals username: `hodor`
-- **jon.snow** - Kerberoastable, password: `iknownothing`
+- **robb.stark** (north) - Local admin on Winterfell, password `sexywolfy` (in rockyou.txt, NetNTLMv2 capture)
+- **brandon.stark** (north) - AS-REP roastable, password: `iseedeadpeople`
+- **missandei** (essos) - AS-REP roastable, password: `fr3edom`; also has GenericAll on khal.drogo
+- **eddard.stark** (north) - Domain Admin (north.sevenkingdoms.local), enables NTLM relay to domain compromise
+- **samwell.tarly** (north) - Password in description field: `Heartsbane`
+- **hodor** (north) - Password equals username: `hodor`
+- **jon.snow** (north) - Kerberoastable (HTTP/thewall SPN), password: `iknownothing`
+- **khal.drogo** (essos) - Local admin on Braavos, MSSQL sysadmin, GenericAll on viserys.targaryen and ESC4 template
+- **viserys.targaryen** (essos) - ManageCA officer (ESC7 abuse path)
 
 ---
 
@@ -70,7 +74,7 @@ These scheduled tasks and configurations are provisioned by Ansible roles to ena
 
 **Vulnerability:** SMB signing not enforced
 
-- **Affected Systems:** CASTELBLACK, BRAAVOS (workstations)
+- **Affected Systems:** CASTELBLACK (SRV02), BRAAVOS (SRV03) — both are domain member servers running Windows Server. SMB signing is not required by default on member servers (only on DCs).
 - **Impact:** Enables NTLM relay attacks
 - **Configuration Issues:**
   - CASTELBLACK: "signing enabled but not required"
@@ -113,28 +117,28 @@ These scheduled tasks and configurations are provisioned by Ansible roles to ena
 
 **Vulnerability:** Insufficient password complexity requirements
 
-- **Configuration:**
-  - No complexity requirements in NORTH domain
-  - Only 5 failed attempt lockout threshold
-  - Short minimum password length
-- **Impact:** Enables password spraying attacks
+- **Configuration:** Set by the `password_policy` role in `ansible/playbooks/ad-data.yml` against every DC (not domain-specific):
+  - `ComplexityEnabled = false` (no complexity requirements)
+  - `LockoutThreshold = 5` (5 failed attempts before lockout)
+  - `MinPasswordLength = 5` (5-character minimum)
+  - `LockoutDuration = 5 minutes`
+- **Impact:** Enables password spraying with short, simple wordlists
 
 ### Username=Password Combinations
 
 **Vulnerability:** Users with passwords matching their usernames
 
 - **Discovered Accounts:**
-  - hodor:hodor
-  - localuser (identical passwords across all three domains)
+  - `hodor:hodor` (north.sevenkingdoms.local)
 - **Discovery Method:** Password spraying
 
 ### Cross-Domain Password Reuse
 
 **Vulnerability:** Identical passwords used across trusted domains
 
-- **Affected Account:** localuser account with Domain Admin privileges
-- **Impact:** Single credential grants admin access to multiple domains
-- **Attack Path:** Dump NORTH domain hashes → spray against SEVENKINGDOMS and ESSOS
+- **GOAD Context:** The `sql_svc` service account exists in both `north.sevenkingdoms.local` and `essos.local` with the same password (`YouWillNotKerboroast1ngMeeeeee`). Compromising it in one domain (e.g., via Kerberoasting) yields the credential for the other.
+- **Impact:** Single credential pivots between forests
+- **Attack Path:** Kerberoast `sql_svc` in north → spray same hash/password against `essos.local`
 
 ---
 
@@ -144,7 +148,7 @@ These scheduled tasks and configurations are provisioned by Ansible roles to ena
 
 **Vulnerability:** Broadcast name resolution protocols enabled
 
-- **GOAD Context:** Winterfell runs scheduled task as robb.stark every minute, attempting to connect to a non-existent share (configured in `roles/vulns/responder`)
+- **GOAD Context:** Winterfell runs a scheduled task as robb.stark every 2 minutes attempting to connect to a non-existent share (`\\Bravos\private`), configured in `ad/GOAD/scripts/responder.ps1`
 - **Tool:** Responder
 - **Captured Credentials:** robb.stark (NetNTLMv2 hash, crackable with rockyou.txt)
 - **Exploitation:**
@@ -153,7 +157,7 @@ These scheduled tasks and configurations are provisioned by Ansible roles to ena
   # Start Responder on lab network interface
   responder -I eth0 -wrf
 
-  # Wait up to 1 minute for robb.stark's scheduled task
+  # Wait up to 2 minutes for robb.stark's scheduled task
   # Capture NetNTLMv2 hash
 
   # Crack with hashcat
@@ -177,7 +181,7 @@ These scheduled tasks and configurations are provisioned by Ansible roles to ena
 
 **Vulnerability:** Unsigned SMB on workstations
 
-- **GOAD Context:** Kingslanding runs scheduled task as eddard.stark (Domain Admin) every 5 minutes connecting to non-existent share. Winterfell has SMB signing disabled.
+- **GOAD Context:** Winterfell runs a scheduled task as eddard.stark (Domain Admin of north.sevenkingdoms.local) every 5 minutes connecting to a non-existent share on Meereen (`\\Meren\Private`), configured in `ad/GOAD/scripts/ntlm_relay.ps1`. Winterfell itself has SMB signing disabled, so the captured authentication can be relayed back to it.
 - **Find Unsigned SMB Hosts:**
 
   ```bash
@@ -248,8 +252,9 @@ These scheduled tasks and configurations are provisioned by Ansible roles to ena
 
 **Vulnerability:** Users with "Do not require Kerberos preauthentication" flag
 
-- **Affected Accounts:** brandon.stark
-- **Cracked Password:** iseedeadpeople
+- **Affected Accounts:**
+  - brandon.stark (north.sevenkingdoms.local) — cracked password: `iseedeadpeople`
+  - missandei (essos.local) — cracked password: `fr3edom`
 - **Discovery Methods:**
   - **PowerView:** `Get-DomainUser -PreauthNotRequired -Properties distinguishedname`
   - **AD Module:** `Get-ADuser -filter * -properties DoesNotRequirePreAuth | where {$_.DoesNotRequirePreAuth -eq "True"}`
@@ -277,9 +282,9 @@ These scheduled tasks and configurations are provisioned by Ansible roles to ena
 **Vulnerability:** Service accounts with SPNs set
 
 - **Affected Accounts:**
-  - jon.snow (CIFS/HTTP services) - Password: "iknownothing"
-  - sansa.stark (HTTP service, unconstrained delegation)
-  - sql_svc (MSSQL service)
+  - jon.snow (HTTP/thewall.north.sevenkingdoms.local; `constrained_delegation_use_any.ps1` adds CIFS SPN at provisioning time) — password: `iknownothing`
+  - sansa.stark (HTTP/eyrie.north.sevenkingdoms.local) — password: `345ertdfg`
+  - sql_svc (MSSQLSvc/castelblack.north.sevenkingdoms.local; MSSQLSvc/braavos.essos.local in essos.local) — password: `YouWillNotKerboroast1ngMeeeeee`
 - **Tools:** GetUserSPNs.py, hashcat (mode 13100)
 - **Exploitation:**
 
@@ -887,7 +892,11 @@ Tywin
 
 **Vulnerability:** Users with impersonation privileges can assume identity of other logins
 
-- **Example:** samwell.tarly impersonating sa login
+- **GOAD Context (castelblack / SRV02):**
+  - `NORTH\samwell.tarly` can impersonate the `sa` login → instance sysadmin
+  - `NORTH\brandon.stark` can impersonate `NORTH\jon.snow` (who is a sysadmin) → indirect path to sysadmin
+- **GOAD Context (braavos / SRV03):**
+  - `ESSOS\jorah.mormont` can impersonate the `sa` login → instance sysadmin
 - **Attack Chain:**
   1. Enumerate impersonation permissions
   2. Execute commands as privileged login
@@ -910,7 +919,7 @@ Tywin
 **Vulnerability:** Database-level impersonation of dbo user
 
 - **Requirements:** Database "trustworthy" property enabled
-- **Example:** arya.stark impersonating dbo in msdb
+- **GOAD Context (castelblack / SRV02):** `NORTH\arya.stark` can impersonate `dbo` in both `master` and `msdb` databases
 - **Impact:** Elevated database privileges
 
 ### NTLM Coercion from MSSQL
@@ -928,7 +937,11 @@ Tywin
 
 **Vulnerability:** SQL Server links between database instances
 
-- **Attack:** Chain queries across linked servers to pivot between systems
+- **GOAD Context:** Bidirectional cross-forest linked-server chain between castelblack and braavos:
+  - `castelblack.north.sevenkingdoms.local` → `BRAAVOS` (login mapping `NORTH\jon.snow` → remote `sa`, password `sa_P@ssw0rd!Ess0s`)
+  - `braavos.essos.local` → `CASTELBLACK` (login mapping `ESSOS\khal.drogo` → remote `sa`, password `Sup1_sa_P@ssw0rd!`)
+  - See `mssql.linked_servers` blocks in `ad/GOAD/data/config.json` for canonical mappings.
+- **Attack:** Chain queries across linked servers to pivot between systems (and across the forest trust)
 - **Exploitation:**
 
   ```sql
@@ -936,7 +949,7 @@ Tywin
   EXEC ('xp_cmdshell ''whoami''') AT [LINKED_SERVER];
   ```
 
-- **Impact:** Command execution across multiple database servers, cross-domain pivoting
+- **Impact:** Command execution across multiple database servers, cross-forest pivoting
 
 ### Command Execution via xp_cmdshell
 
