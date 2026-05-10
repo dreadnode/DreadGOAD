@@ -53,6 +53,16 @@ type Validator struct {
 	hosts    map[string]string // hostname -> instance ID
 	lab      *labmap.LabMap
 
+	// onResult, if set, is invoked for every result appended to the report.
+	// The live TUI uses this to stream results into a channel while the
+	// concurrent check goroutines accumulate them in v.report. Safe to call
+	// from any goroutine; callers must not block (the validator's mutex is
+	// not held during the call, but excessive blocking will slow checks).
+	onResult func(Result)
+	// silent suppresses the streaming color writes from addResult so the TUI
+	// owns the screen. The structured report is unaffected.
+	silent bool
+
 	// failures counts consecutive runPS failures per host. A single transient
 	// SSM/WinRM hiccup must not poison the rest of the run, so we only mark a
 	// host dead after deadThreshold sustained failures. Successful calls
@@ -130,6 +140,10 @@ type checkFunc func(context.Context, io.Writer)
 // output gives operators a live progress signal; the persisted JSON report
 // keeps the canonical order.
 func (v *Validator) runChecks(ctx context.Context, checks []checkFunc) {
+	v.mu.Lock()
+	silent := v.silent
+	v.mu.Unlock()
+
 	var stdoutMu sync.Mutex
 	sem := make(chan struct{}, maxConcurrentChecks)
 	var wg sync.WaitGroup
@@ -140,6 +154,13 @@ func (v *Validator) runChecks(ctx context.Context, checks []checkFunc) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
+			if silent {
+				// TUI mode owns the screen; checks must not emit the
+				// "== Section ==" banners or any stray writes. Results
+				// flow to the dashboard via the OnResult callback.
+				f(ctx, io.Discard)
+				return
+			}
 			var buf bytes.Buffer
 			f(ctx, &buf)
 			stdoutMu.Lock()
@@ -333,6 +354,53 @@ func (v *Validator) runPSErr(ctx context.Context, host, command string) (string,
 	return "", lastErr
 }
 
+// SetOnResult registers a callback invoked for every result appended to the
+// report. Pass nil to unregister.
+func (v *Validator) SetOnResult(fn func(Result)) {
+	v.mu.Lock()
+	v.onResult = fn
+	v.mu.Unlock()
+}
+
+// SetSilent suppresses the streaming colorized writes from addResult. Used by
+// the live TUI so the bubbletea program owns the screen.
+func (v *Validator) SetSilent(silent bool) {
+	v.mu.Lock()
+	v.silent = silent
+	v.mu.Unlock()
+}
+
+// Reset clears the run state so the validator can be reused for a fresh
+// pass. Counters, results, and the dead-host/failure tracking are wiped.
+// Discovered hosts and the configured logger/onResult/silent flags are
+// preserved -- callers running a poll loop typically want to keep those.
+func (v *Validator) Reset() {
+	v.mu.Lock()
+	v.report = Report{
+		Date: time.Now().UTC().Format(time.RFC3339),
+		Env:  v.env,
+	}
+	v.mu.Unlock()
+
+	v.failures.Range(func(k, _ any) bool { v.failures.Delete(k); return true })
+	v.dead.Range(func(k, _ any) bool { v.dead.Delete(k); return true })
+}
+
+// SetLogger swaps the validator's logger and returns the previous one. The
+// live TUI uses this to redirect slog writes (which otherwise hit stderr and
+// bleed through bubbletea's alt screen) to a discard handler for the duration
+// of the run.
+func (v *Validator) SetLogger(log *slog.Logger) *slog.Logger {
+	if log == nil {
+		log = slog.Default()
+	}
+	v.mu.Lock()
+	prev := v.log
+	v.log = log
+	v.mu.Unlock()
+	return prev
+}
+
 func (v *Validator) addResult(w io.Writer, status, category, name, detail string) {
 	r := Result{Status: status, Category: category, Name: name, Detail: detail}
 
@@ -346,7 +414,16 @@ func (v *Validator) addResult(w io.Writer, status, category, name, detail string
 	case "WARN":
 		v.report.Warnings++
 	}
+	cb := v.onResult
+	silent := v.silent
 	v.mu.Unlock()
+
+	if cb != nil {
+		cb(r)
+	}
+	if silent {
+		return
+	}
 
 	switch status {
 	case "PASS":
