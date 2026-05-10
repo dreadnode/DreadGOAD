@@ -25,6 +25,13 @@ FILES_MODIFIED=0
 for role_dir in ansible/roles/*/; do
     [ -d "$role_dir" ] || continue
 
+    # Skip directories that aren't real roles (e.g. parent dirs like
+    # ansible/roles/linux/ that just group sub-roles). A real role has
+    # tasks/main.yml (or .yaml).
+    if [ ! -f "${role_dir}tasks/main.yml" ] && [ ! -f "${role_dir}tasks/main.yaml" ]; then
+        continue
+    fi
+
     role_name=$(basename "$role_dir")
     readme="${role_dir}README.md"
 
