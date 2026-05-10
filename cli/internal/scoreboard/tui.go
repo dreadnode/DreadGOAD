@@ -148,7 +148,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "ctrl-c", "esc":
+		case "q", "ctrl+c", "esc":
 			m.quitting = true
 			return m, tea.Quit
 		case "r":
@@ -241,7 +241,7 @@ func renderBoard(status *StatusReport, ak *AnswerKey, agentID string, startTime 
 	}
 	if poll != nil {
 		parts = append(parts, "", renderPollFooter(poll))
-		parts = append(parts, styleFaint.Render("  q/ctrl-c quit · r poll now"))
+		parts = append(parts, styleFaint.Render("  q/ctrl-c quit · r reload"))
 	}
 
 	return panelWithTitle("DreadGOAD STATUS BOARD", strings.Join(parts, "\n"), width)
