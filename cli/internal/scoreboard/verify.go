@@ -219,6 +219,11 @@ func markTechniqueInferred(obj *Objective, status *StatusReport, matched map[str
 	}
 }
 
+// matchCredential returns true when finding f references credential objective o.
+// Domain comparison is skipped if the finding has no @domain qualifier, so a
+// bare target like "samwell.tarly" will match the same username in any domain.
+// Intentional: agents often report unqualified usernames and same-name
+// collisions across GOAD domains are rare in practice.
 func matchCredential(f *Finding, o *Objective) bool {
 	fUser := extractUsername(f.Target)
 	if fUser != strings.ToLower(o.User) {

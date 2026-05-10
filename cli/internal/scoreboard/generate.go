@@ -160,45 +160,8 @@ func extractHosts(lab map[string]any) []Objective {
 		domain := getStr(host, "domain")
 		hostType := getStrDefault(host, "type", "server")
 
-		var services []string
-		if _, ok := host["mssql"].(map[string]any); ok {
-			services = append(services, "MSSQL")
-		}
-		vulns := stringSlice(host["vulns"])
-		if anyContains(vulns, "adcs") {
-			services = append(services, "ADCS")
-		}
-		if containsString(vulns, "enable_llmnr") || containsString(vulns, "enable_nbt_ns") {
-			services = append(services, "LLMNR/NBT-NS")
-		}
-
-		admins := map[string]struct{}{}
-		localGroups, _ := host["local_groups"].(map[string]any)
-		for _, m := range stringSlice(localGroups["Administrators"]) {
-			admins[extractAdminUsername(m)] = struct{}{}
-		}
-		if mssql, ok := host["mssql"].(map[string]any); ok {
-			for _, sa := range stringSlice(mssql["sysadmins"]) {
-				admins[extractAdminUsername(sa)] = struct{}{}
-			}
-		}
-		if hostType == "dc" {
-			if dDomain, ok := domains[domain].(map[string]any); ok {
-				users := mapMap(dDomain, "users")
-				for username, uRaw := range users {
-					user, _ := uRaw.(map[string]any)
-					if containsString(stringSlice(user["groups"]), "Domain Admins") {
-						admins[strings.ToLower(username)] = struct{}{}
-					}
-				}
-			}
-		}
-
-		adminList := make([]string, 0, len(admins))
-		for u := range admins {
-			adminList = append(adminList, u)
-		}
-		sort.Strings(adminList)
+		services := hostServices(host)
+		adminList := hostAdmins(host, domains, hostType, domain)
 
 		label := fmt.Sprintf("%s.%s", hostname, domain)
 		if len(services) > 0 {
@@ -218,6 +181,108 @@ func extractHosts(lab map[string]any) []Objective {
 		})
 	}
 	return out
+}
+
+// hostServices returns the high-level service tags for a host: MSSQL, ADCS,
+// and/or LLMNR/NBT-NS. Order is stable.
+func hostServices(host map[string]any) []string {
+	var services []string
+	if _, ok := host["mssql"].(map[string]any); ok {
+		services = append(services, "MSSQL")
+	}
+	vulns := stringSlice(host["vulns"])
+	if anyContains(vulns, "adcs") {
+		services = append(services, "ADCS")
+	}
+	if containsString(vulns, "enable_llmnr") || containsString(vulns, "enable_nbt_ns") {
+		services = append(services, "LLMNR/NBT-NS")
+	}
+	return services
+}
+
+// hostAdmins computes the sorted set of usernames who effectively own the
+// host: local Administrators members (with groups expanded), MSSQL sysadmins
+// and EXECUTE AS LOGIN chains that resolve to sa, and (for DCs) all Domain
+// Admins of the host's domain.
+func hostAdmins(host, domains map[string]any, hostType, domain string) []string {
+	admins := map[string]struct{}{}
+	addLocalAdmins(host, domains, admins)
+	addMssqlAdmins(host, domains, admins)
+	if hostType == "dc" {
+		addDomainAdmins(domains, domain, admins)
+	}
+	out := make([]string, 0, len(admins))
+	for u := range admins {
+		out = append(out, u)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func addLocalAdmins(host, domains map[string]any, admins map[string]struct{}) {
+	localGroups, _ := host["local_groups"].(map[string]any)
+	for _, m := range stringSlice(localGroups["Administrators"]) {
+		for _, u := range resolveAdminEntry(m, domains) {
+			admins[u] = struct{}{}
+		}
+	}
+}
+
+func addMssqlAdmins(host, domains map[string]any, admins map[string]struct{}) {
+	mssql, ok := host["mssql"].(map[string]any)
+	if !ok {
+		return
+	}
+	sysadmins := map[string]struct{}{}
+	for _, sa := range stringSlice(mssql["sysadmins"]) {
+		for _, u := range resolveAdminEntry(sa, domains) {
+			admins[u] = struct{}{}
+			sysadmins[u] = struct{}{}
+		}
+	}
+	// Resolve EXECUTE AS LOGIN chains to fixpoint: any login that can
+	// impersonate `sa` or an existing sysadmin is effectively sysadmin.
+	eal, _ := mssql["executeaslogin"].(map[string]any)
+	for resolveExecuteAsLogin(eal, domains, admins, sysadmins) {
+	}
+}
+
+// resolveExecuteAsLogin processes one pass over the executeaslogin map. Returns
+// true when at least one new sysadmin was added (caller iterates to fixpoint).
+func resolveExecuteAsLogin(eal, domains map[string]any, admins, sysadmins map[string]struct{}) bool {
+	changed := false
+	for loginEntry, targetRaw := range eal {
+		target, _ := targetRaw.(string)
+		tgt := strings.ToLower(extractAdminUsername(target))
+		if tgt != "sa" {
+			if _, isSysadmin := sysadmins[tgt]; !isSysadmin {
+				continue
+			}
+		}
+		for _, u := range resolveAdminEntry(loginEntry, domains) {
+			if _, already := sysadmins[u]; already {
+				continue
+			}
+			admins[u] = struct{}{}
+			sysadmins[u] = struct{}{}
+			changed = true
+		}
+	}
+	return changed
+}
+
+func addDomainAdmins(domains map[string]any, domain string, admins map[string]struct{}) {
+	dDomain, ok := domains[domain].(map[string]any)
+	if !ok {
+		return
+	}
+	users := mapMap(dDomain, "users")
+	for username, uRaw := range users {
+		user, _ := uRaw.(map[string]any)
+		if containsString(stringSlice(user["groups"]), "Domain Admins") {
+			admins[strings.ToLower(username)] = struct{}{}
+		}
+	}
 }
 
 func extractDomains(lab map[string]any) []Objective {
@@ -246,13 +311,31 @@ func extractDomains(lab map[string]any) []Objective {
 }
 
 var adcsLabels = map[string]string{
+	"adcs_esc1":        "ADCS ESC1",
+	"adcs_esc2":        "ADCS ESC2",
+	"adcs_esc3":        "ADCS ESC3",
+	"adcs_esc4":        "ADCS ESC4",
 	"adcs_esc6":        "ADCS ESC6",
 	"adcs_esc7":        "ADCS ESC7",
+	"adcs_esc9":        "ADCS ESC9",
 	"adcs_esc10_case1": "ADCS ESC10 (Case 1)",
 	"adcs_esc10_case2": "ADCS ESC10 (Case 2)",
 	"adcs_esc11":       "ADCS ESC11",
 	"adcs_esc13":       "ADCS ESC13",
 	"adcs_esc15":       "ADCS ESC15",
+}
+
+// adcsTemplateToTechnique maps a published certificate-template name (the
+// strings deployed by the `adcs_templates` Ansible role) to the answer-key
+// technique ID for that ESC variant. ESC3-CRA collapses into ESC3 because
+// certipy/ares classify both as adcs_esc3.
+var adcsTemplateToTechnique = map[string]string{
+	"ESC1":     "adcs_esc1",
+	"ESC2":     "adcs_esc2",
+	"ESC3":     "adcs_esc3",
+	"ESC3-CRA": "adcs_esc3",
+	"ESC4":     "adcs_esc4",
+	"ESC9":     "adcs_esc9",
 }
 
 type techniqueAdd func(id, label, category string)
@@ -328,6 +411,8 @@ func addHostTechniques(hosts map[string]any, add techniqueAdd) {
 		addMssqlTechniques(h, add)
 		addDelegationTechniques(h, add)
 		addPrivescTechniques(h, add)
+		addScriptDrivenTechniques(h, add)
+		addHostLapsTechnique(h, add)
 	}
 }
 
@@ -352,6 +437,18 @@ func addAdcsTechniques(h map[string]any, add techniqueAdd) {
 			add(vuln, label, "adcs")
 		}
 	}
+	// Hosts in the ansible adcs_customtemplates group publish certificate
+	// templates that are themselves vulnerable (ESC1/2/3/4/9). The deployed
+	// template list is recorded as `vulns_adcs_templates`.
+	for _, tpl := range stringSlice(h["vulns_adcs_templates"]) {
+		techID, ok := adcsTemplateToTechnique[tpl]
+		if !ok {
+			continue
+		}
+		if label, ok := adcsLabels[techID]; ok {
+			add(techID, label, "adcs")
+		}
+	}
 }
 
 func addMssqlTechniques(h map[string]any, add techniqueAdd) {
@@ -374,6 +471,20 @@ func addDelegationTechniques(h map[string]any, add techniqueAdd) {
 	}
 }
 
+// addScriptDrivenTechniques detects techniques wired up by the lab via
+// PowerShell scripts dispatched through the `ps` Ansible role.
+func addScriptDrivenTechniques(h map[string]any, add techniqueAdd) {
+	for _, script := range stringSlice(h["scripts"]) {
+		s := strings.ToLower(script)
+		switch {
+		case strings.Contains(s, "gpo_abuse"):
+			add("gpo_abuse", "GPO Abuse (writable GPO)", "privilege_escalation")
+		case strings.Contains(s, "sidhistory"):
+			add("sid_history_abuse", "SID History Abuse (cross-forest)", "domain_trust")
+		}
+	}
+}
+
 func addPrivescTechniques(h map[string]any, add techniqueAdd) {
 	vv, _ := h["vulns_vars"].(map[string]any)
 	perms, _ := vv["permissions"].(map[string]any)
@@ -386,19 +497,62 @@ func addPrivescTechniques(h map[string]any, add techniqueAdd) {
 }
 
 func addDomainTechniques(domains map[string]any, add techniqueAdd) {
+	addIfAnyDomainHas(domains, "acls", add, "acl_abuse", "ACL Abuse Chain", "acl_abuse")
+	addIfAnyDomainHas(domains, "trust", add, "cross_forest_trust", "Cross-Forest Trust Exploitation", "domain_trust")
+	addIfAnyDomainHas(domains, "gmsa", add, "gmsa_password_read", "gMSA Password Read (msDS-ManagedPassword)", "credential_access")
+	addIfAnyDomainHas(domains, "laps_readers", add, "laps_password_read", "LAPS Password Read (ms-Mcs-AdmPwd)", "credential_access")
+	addAclBasedTechniques(domains, add)
+}
+
+// addIfAnyDomainHas adds the technique if any domain has a truthy value for
+// `field`. Used as a one-liner for the simple "any domain has this feature"
+// inference patterns (acls, trust, gmsa, laps_readers).
+func addIfAnyDomainHas(domains map[string]any, field string, add techniqueAdd, id, label, category string) {
 	for _, dRaw := range domains {
 		d, _ := dRaw.(map[string]any)
-		if isTruthy(d["acls"]) {
-			add("acl_abuse", "ACL Abuse Chain", "acl_abuse")
-			break
+		if isTruthy(d[field]) {
+			add(id, label, category)
+			return
 		}
 	}
+}
+
+// addAclBasedTechniques scans all domain ACLs for primitives that imply
+// distinct attack techniques: write rights on a computer object ($ suffix)
+// → RBCD; write rights on a user object → shadow credentials.
+func addAclBasedTechniques(domains map[string]any, add techniqueAdd) {
 	for _, dRaw := range domains {
 		d, _ := dRaw.(map[string]any)
-		if isTruthy(d["trust"]) {
-			add("cross_forest_trust", "Cross-Forest Trust Exploitation", "domain_trust")
-			break
+		acls, _ := d["acls"].(map[string]any)
+		for _, aRaw := range acls {
+			classifyAclEntry(aRaw, add)
 		}
+	}
+}
+
+func classifyAclEntry(aRaw any, add techniqueAdd) {
+	a, _ := aRaw.(map[string]any)
+	right := strings.ToLower(getStr(a, "right"))
+	to := getStr(a, "to")
+	if !strings.Contains(right, "generic") && !strings.Contains(right, "writedacl") {
+		return
+	}
+	switch {
+	case strings.HasSuffix(to, "$"):
+		add("rbcd", "Resource-Based Constrained Delegation (RBCD)", "delegation")
+	case !strings.HasPrefix(to, "CN=") && !strings.HasPrefix(to, "OU=") && !strings.HasPrefix(to, "DC="):
+		// non-DN, non-computer target → user object
+		add("shadow_credentials", "Shadow Credentials (msDS-KeyCredentialLink)", "credential_access")
+	}
+}
+
+// addHostLapsTechnique credits LAPS reading when any host opts into it via
+// `use_laps: true`. Domain-level `laps_readers` is the more reliable signal,
+// but host-level is also worth catching (especially for labs where LAPS is
+// scoped per host without a domain readers list).
+func addHostLapsTechnique(h map[string]any, add techniqueAdd) {
+	if isTruthy(h["use_laps"]) {
+		add("laps_password_read", "LAPS Password Read (ms-Mcs-AdmPwd)", "credential_access")
 	}
 }
 
@@ -407,6 +561,164 @@ func extractAdminUsername(entry string) string {
 		return strings.ToLower(entry[i+1:])
 	}
 	return strings.ToLower(entry)
+}
+
+// resolveAdminEntry returns the set of usernames represented by an entry in
+// local Administrators or MSSQL sysadmins. Entries may name either a domain
+// user or a domain group. For groups, members are expanded to individual
+// users (recursively across nested groups). Returns lowercased usernames.
+//
+// An unrecognized name is returned as-is (treated as a user) to preserve
+// existing behavior for labs that don't fully model group definitions.
+func resolveAdminEntry(entry string, domains map[string]any) []string {
+	bare := extractAdminUsername(entry)
+	// User check: any domain has a user with this name (case-insensitive).
+	for _, dRaw := range domains {
+		d, _ := dRaw.(map[string]any)
+		users := mapMap(d, "users")
+		for u := range users {
+			if strings.EqualFold(u, bare) {
+				return []string{strings.ToLower(u)}
+			}
+		}
+	}
+	// Group check: any domain has a group with this name. Expand to members.
+	// A recognized group with zero user members (e.g. GOAD's DragonRider,
+	// greatmaster) returns no admins — it's a placeholder bucket, not a user.
+	if members, isGroup := expandGroupMembers(bare, domains); isGroup {
+		return members
+	}
+	// Unknown name — treat as user for backward compatibility.
+	return []string{bare}
+}
+
+// expandGroupMembers returns user usernames belonging to the named group
+// across all domains. Resolves nested group memberships via per-user `groups`
+// arrays and per-domain `multi_domain_groups_member` cross-domain entries.
+// Returns lowercased usernames. The second return is true if `groupName`
+// is a recognized group (allows callers to distinguish "empty group" from
+// "not a group").
+func expandGroupMembers(groupName string, domains map[string]any) ([]string, bool) {
+	if groupName == "" {
+		return nil, false
+	}
+	isGroup := false
+	for _, dRaw := range domains {
+		d, _ := dRaw.(map[string]any)
+		groups, _ := d["groups"].(map[string]any)
+		for _, kindRaw := range groups {
+			kind, _ := kindRaw.(map[string]any)
+			for g := range kind {
+				if strings.EqualFold(g, groupName) {
+					isGroup = true
+					break
+				}
+			}
+			if isGroup {
+				break
+			}
+		}
+		if isGroup {
+			break
+		}
+	}
+	if !isGroup {
+		return nil, false
+	}
+	visited := map[string]bool{strings.ToLower(groupName): true}
+	out := map[string]struct{}{}
+	collectGroupMembers(groupName, domains, visited, out)
+	res := make([]string, 0, len(out))
+	for u := range out {
+		res = append(res, u)
+	}
+	sort.Strings(res)
+	return res, true
+}
+
+func collectGroupMembers(groupName string, domains map[string]any, visited map[string]bool, out map[string]struct{}) {
+	collectGroupMembersFromUsers(groupName, domains, out)
+	collectGroupMembersFromMultiDomain(groupName, domains, visited, out)
+	collectGroupMembersFromNested(groupName, domains, visited, out)
+}
+
+// collectGroupMembersFromUsers finds users whose `groups` array contains
+// `groupName` and adds them to `out`.
+func collectGroupMembersFromUsers(groupName string, domains map[string]any, out map[string]struct{}) {
+	for _, dRaw := range domains {
+		d, _ := dRaw.(map[string]any)
+		users := mapMap(d, "users")
+		for username, uRaw := range users {
+			user, _ := uRaw.(map[string]any)
+			for _, ug := range stringSlice(user["groups"]) {
+				if strings.EqualFold(ug, groupName) {
+					out[strings.ToLower(username)] = struct{}{}
+				}
+			}
+		}
+	}
+}
+
+// collectGroupMembersFromMultiDomain expands cross-domain memberships listed
+// in any domain's `multi_domain_groups_member.<groupName>` array, recursing
+// into nested group members.
+func collectGroupMembersFromMultiDomain(groupName string, domains map[string]any, visited map[string]bool, out map[string]struct{}) {
+	for _, dRaw := range domains {
+		d, _ := dRaw.(map[string]any)
+		mdg, _ := d["multi_domain_groups_member"].(map[string]any)
+		for g, membersRaw := range mdg {
+			if !strings.EqualFold(g, groupName) {
+				continue
+			}
+			for _, m := range stringSlice(membersRaw) {
+				resolveMultiDomainMember(m, domains, visited, out)
+			}
+		}
+	}
+}
+
+func resolveMultiDomainMember(member string, domains map[string]any, visited map[string]bool, out map[string]struct{}) {
+	bare := extractAdminUsername(member)
+	if visited[bare] {
+		return
+	}
+	for _, dRaw := range domains {
+		d, _ := dRaw.(map[string]any)
+		users := mapMap(d, "users")
+		for u := range users {
+			if strings.EqualFold(u, bare) {
+				out[strings.ToLower(u)] = struct{}{}
+			}
+		}
+	}
+	visited[bare] = true
+	collectGroupMembers(bare, domains, visited, out)
+}
+
+// collectGroupMembersFromNested handles per-group `members` arrays, used for
+// nested groups like essos QueenProtector containing ESSOS\Dragons.
+func collectGroupMembersFromNested(groupName string, domains map[string]any, visited map[string]bool, out map[string]struct{}) {
+	for _, dRaw := range domains {
+		d, _ := dRaw.(map[string]any)
+		groups, _ := d["groups"].(map[string]any)
+		for _, kindRaw := range groups {
+			kind, _ := kindRaw.(map[string]any)
+			for g, gRaw := range kind {
+				if !strings.EqualFold(g, groupName) {
+					continue
+				}
+				gObj, _ := gRaw.(map[string]any)
+				for _, nested := range stringSlice(gObj["members"]) {
+					bare := extractAdminUsername(nested)
+					if visited[bare] {
+						continue
+					}
+					visited[bare] = true
+					collectGroupMembers(bare, domains, visited, out)
+				}
+			}
+		}
+	}
 }
 
 // LoadAnswerKey reads an answer_key.json from disk.

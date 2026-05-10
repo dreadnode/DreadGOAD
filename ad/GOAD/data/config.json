@@ -186,6 +186,7 @@
             },
             "scripts" : ["asrep_roasting2.ps1"],
             "vulns" : ["ntlmdowngrade", "disable_firewall",  "adcs_esc7", "adcs_esc13", "adcs_esc15"],
+            "vulns_adcs_templates": ["ESC1", "ESC2", "ESC3", "ESC3-CRA", "ESC4", "ESC9"],
             "vulns_vars" : {
                 "adcs_esc7": {
                     "viserys": {

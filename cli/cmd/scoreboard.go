@@ -122,7 +122,7 @@ func runScoreboardRun(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("%w (run 'dreadgoad scoreboard generate-key' first)", err)
 	}
 
-	ctx := context.Background()
+	ctx := cmd.Context()
 	t, displayPath, err := buildTransport(ctx, cmd, cfg)
 	if err != nil {
 		return err

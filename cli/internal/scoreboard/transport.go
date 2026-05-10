@@ -1,6 +1,7 @@
 package scoreboard
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/base64"
@@ -110,7 +111,7 @@ func decodeGzipBase64Report(s string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("decode report base64: %w", err)
 	}
-	gr, err := gzip.NewReader(strings.NewReader(string(gz)))
+	gr, err := gzip.NewReader(bytes.NewReader(gz))
 	if err != nil {
 		return "", fmt.Errorf("gunzip report: %w", err)
 	}

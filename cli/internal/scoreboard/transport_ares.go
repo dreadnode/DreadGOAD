@@ -1,6 +1,7 @@
 package scoreboard
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/base64"
@@ -131,7 +132,7 @@ func decodeGzipBase64(s string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("base64: %w", err)
 	}
-	gr, err := gzip.NewReader(strings.NewReader(string(gz)))
+	gr, err := gzip.NewReader(bytes.NewReader(gz))
 	if err != nil {
 		return nil, fmt.Errorf("gzip: %w", err)
 	}
@@ -177,14 +178,24 @@ func aresExploitedToTechniqueIDs(entry string) []string {
 		{"ntlm_relay_", []string{"ntlm_relay"}},
 		{"ntlmv1_", []string{"ntlmv1_downgrade"}},
 		{"seimpersonate_", []string{"seimpersonate"}},
-		{"adcs_esc1_", []string{"adcs_esc6"}}, // ESC1 not in answer key; ESC variants tracked separately
+		{"adcs_esc1_", []string{"adcs_esc1"}},
+		{"adcs_esc2_", []string{"adcs_esc2"}},
+		{"adcs_esc3_", []string{"adcs_esc3"}}, // collapses ESC3 + ESC3-CRA
+		{"adcs_esc4_", []string{"adcs_esc4"}},
 		{"adcs_esc6_", []string{"adcs_esc6"}},
 		{"adcs_esc7_", []string{"adcs_esc7"}},
+		{"adcs_esc9_", []string{"adcs_esc9"}},
 		{"adcs_esc10_case1_", []string{"adcs_esc10_case1"}},
 		{"adcs_esc10_case2_", []string{"adcs_esc10_case2"}},
 		{"adcs_esc11_", []string{"adcs_esc11"}},
 		{"adcs_esc13_", []string{"adcs_esc13"}},
 		{"adcs_esc15_", []string{"adcs_esc15"}},
+		{"gpo_abuse_", []string{"gpo_abuse"}},
+		{"gmsa_", []string{"gmsa_password_read"}},
+		{"laps_", []string{"laps_password_read"}},
+		{"sid_history_", []string{"sid_history_abuse"}},
+		{"rbcd_", []string{"rbcd"}},
+		{"shadow_credentials_", []string{"shadow_credentials"}},
 	}
 	// Per-domain golden ticket: `golden_ticket_<domain>` → `golden_ticket-<domain>`.
 	// One scoreboard objective per domain because forging requires that domain's

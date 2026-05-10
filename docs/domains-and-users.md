@@ -33,7 +33,7 @@ Trust: sevenkingdoms.local <──bidirectional──> essos.local
 | ------ | ---------- |
 | DC01 (kingslanding) | ADCS, Defender ON |
 | DC02 (winterfell) | LLMNR, NBT-NS, SMB shares, Defender ON |
-| DC03 (meereen) | ADCS custom templates, LAPS DC, NTLM downgrade, Defender ON |
+| DC03 (meereen) | ADCS custom templates (ESC1, ESC2, ESC3, ESC3-CRA, ESC4, ESC9, ESC13), LAPS DC, NTLM downgrade, Defender ON |
 | SRV02 (castelblack) | IIS, MSSQL (+ SSMS), WebDAV, SMB shares, Defender OFF |
 | SRV03 (braavos) | MSSQL, WebDAV, LAPS, SMB shares, RunAsPPL, Defender ON |
 

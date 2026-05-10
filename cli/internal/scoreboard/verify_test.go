@@ -93,6 +93,91 @@ func TestParseReportStandardJSON(t *testing.T) {
 	}
 }
 
+// loadGOADAnswerKey is shared by the ground-truth subtests below.
+func loadGOADAnswerKey(t *testing.T) *AnswerKey {
+	t.Helper()
+	ak, err := GenerateAnswerKey("../../../ad/GOAD/data/config.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ak
+}
+
+func TestAnswerKeyHasAllExpectedTechniques(t *testing.T) {
+	ak := loadGOADAnswerKey(t)
+	techIDs := map[string]bool{}
+	for _, o := range ak.Objectives {
+		if o.Group == "techniques" {
+			techIDs[o.Technique] = true
+		}
+	}
+	want := []string{
+		"asrep_roast", "kerberoast",
+		"adcs_esc1", "adcs_esc2", "adcs_esc3", "adcs_esc4", "adcs_esc6",
+		"adcs_esc7", "adcs_esc9", "adcs_esc11", "adcs_esc13", "adcs_esc15",
+		"adcs_esc10_case1", "adcs_esc10_case2",
+		"golden_ticket-essos.local",
+		"golden_ticket-north.sevenkingdoms.local",
+		"golden_ticket-sevenkingdoms.local",
+		"gmsa_password_read", "gpo_abuse", "laps_password_read",
+		"sid_history_abuse", "rbcd", "shadow_credentials",
+		"mssql_exploit", "mssql_linked_server",
+		"llmnr_nbtns_poisoning", "ntlm_relay", "ntlmv1_downgrade",
+		"acl_abuse", "cross_forest_trust", "child_to_parent",
+		"constrained_delegation", "unconstrained_delegation",
+		"seimpersonate",
+	}
+	for _, w := range want {
+		if !techIDs[w] {
+			t.Errorf("missing technique objective: %s", w)
+		}
+	}
+}
+
+func TestAnswerKeyHostAdminsAreAccurate(t *testing.T) {
+	ak := loadGOADAnswerKey(t)
+	hostAdmins := map[string][]string{}
+	for _, o := range ak.Objectives {
+		if o.Group == "hosts" {
+			hostAdmins[o.Hostname] = o.AdminUsers
+		}
+	}
+	// MSSQL EXECUTE AS LOGIN chains land in admin lists.
+	for _, w := range []string{"samwell.tarly", "brandon.stark", "jon.snow", "jeor.mormont"} {
+		if !containsString(hostAdmins["castelblack"], w) {
+			t.Errorf("castelblack admins missing %s; got %v", w, hostAdmins["castelblack"])
+		}
+	}
+	for _, w := range []string{"jorah.mormont", "khal.drogo"} {
+		if !containsString(hostAdmins["braavos"], w) {
+			t.Errorf("braavos admins missing %s; got %v", w, hostAdmins["braavos"])
+		}
+	}
+	// Empty-group placeholders (DragonRider, greatmaster) MUST NOT appear as
+	// admin "users" — they expand to zero members.
+	for _, h := range []string{"kingslanding", "meereen"} {
+		for _, bad := range []string{"dragonrider", "greatmaster"} {
+			if containsString(hostAdmins[h], bad) {
+				t.Errorf("%s admins contains group placeholder %q (must be expanded, not literal)", h, bad)
+			}
+		}
+	}
+}
+
+func TestAnswerKeyAsrepCredentialsHaveHint(t *testing.T) {
+	ak := loadGOADAnswerKey(t)
+	for _, o := range ak.Objectives {
+		if o.Group != "credentials" {
+			continue
+		}
+		isAsrep := (o.Domain == "north.sevenkingdoms.local" && o.User == "brandon.stark") ||
+			(o.Domain == "essos.local" && o.User == "missandei")
+		if isAsrep && !strings.Contains(o.Hint, "AS-REP roastable") {
+			t.Errorf("%s should have AS-REP roastable hint, got %q", o.ID, o.Hint)
+		}
+	}
+}
+
 func TestExtractUsernameFormats(t *testing.T) {
 	cases := map[string]string{
 		"alice@example.com": "alice",
