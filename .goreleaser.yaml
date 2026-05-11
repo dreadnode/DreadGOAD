@@ -25,16 +25,7 @@ builds:
 
     goarch:
       - amd64
-      - arm
       - arm64
-
-    goarm:
-      - "6"
-      - "7"
-
-    goamd64:
-      - v2
-      - v3
 
     hooks:
       pre:
