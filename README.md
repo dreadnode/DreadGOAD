@@ -87,7 +87,8 @@ Create a randomized copy of any lab with unique names but identical attack paths
 - [CLI configuration](docs/cli.md) -- Viper-based config, environment variables, per-environment settings
 - [Domains and users](docs/domains-and-users.md) -- full network topology, credentials, and attack paths
 - [Vulnerability catalog](docs/GOAD-vulnerabilities-comprehensive.md) -- all 50+ vulnerabilities with exploitation techniques
-- [Validation guide](docs/validation.md) -- automated vulnerability validation
+- [Validation guide](docs/validation.md) -- automated vulnerability validation (with live dashboard and polling)
+- [Scoreboard guide](docs/scoreboard.md) -- live engagement status board (answer key + agent report verification)
 - [Provider guides](docs/mkdocs/docs/providers/) -- VirtualBox, VMware, Proxmox, AWS, Azure, Ludus
 - [AWS AMI build & deploy workflow](docs/mkdocs/docs/providers/aws-ami-workflow.md) -- end-to-end warpgate + Terragrunt + Ansible
 - [Extension guides](docs/mkdocs/docs/extensions/) -- ELK, Exchange, Wazuh, hardened workstation

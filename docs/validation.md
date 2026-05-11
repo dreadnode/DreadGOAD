@@ -1,330 +1,117 @@
 # GOAD Vulnerability Validation
 
-This document describes how to validate that your GOAD deployment has all the documented vulnerabilities properly configured.
-
-## Overview
-
-The GOAD validation system checks that all 50+ vulnerabilities documented in [`GOAD-vulnerabilities-comprehensive.md`](./GOAD-vulnerabilities-comprehensive.md) are properly configured in your AWS deployment. This ensures the lab is ready for penetration testing training.
+`dreadgoad validate` runs SSM/Run-Command PowerShell checks against a live
+lab to confirm the 50+ vulnerabilities in
+[`GOAD-vulnerabilities-comprehensive.md`](./GOAD-vulnerabilities-comprehensive.md)
+are wired up correctly.
 
 ## Quick Start
 
-### Run Full Validation
-
 ```bash
-# Validate staging environment (default)
-dreadgoad validate
-
-# Validate a specific environment
-dreadgoad validate --env dev
-
-# Enable verbose output
-dreadgoad validate --verbose
-
-# Initial validation without failing on errors
-dreadgoad validate --env staging --no-fail
+dreadgoad validate                # full validation, active env
+dreadgoad validate --env dev      # specific environment
+dreadgoad validate --quick        # critical vulnerabilities only
+dreadgoad validate --verbose      # extra per-check detail
+dreadgoad validate --no-fail      # always exit 0
 ```
 
-### Run Quick Validation
+### Live Dashboard
 
-For a faster sanity check of critical vulnerabilities:
+When stdout is a TTY, `dreadgoad validate` opens a live Bubbletea/Lipgloss
+dashboard with a per-category PASS/FAIL/WARN breakdown, a running success
+rate, and a footer that switches between `RUNNING`, `WAITING`, and
+`COMPLETE`. Categories with no applicable checks render with a dim `[ ]`
+marker instead of `[v]`.
+
+![Validate dashboard mid-run](img/validate_dashboard_running.png)
+![Validate dashboard complete](img/validate_dashboard_complete.png)
 
 ```bash
-dreadgoad validate --quick
-dreadgoad validate --quick --env dev
+# Disable the dashboard and stream results to stdout
+dreadgoad validate --plain
+
+# Re-run every 5 minutes on the same dashboard (minimum 1m)
+dreadgoad validate --poll 5m
 ```
+
+Keys: `q`, `ctrl+c`, or `esc` to quit. The JSON report on disk is the
+canonical record; it is rewritten at the end of each pass and the path is
+printed on exit.
+
+`--poll` requires the live dashboard (ignored with `--plain` or non-TTY).
+Intervals shorter than `1m` are rejected. Accepted "off" values: `never`,
+`off`, `no`, `false`, `0`, `0s`, or empty.
 
 ## What Gets Validated
 
-The validation script checks the following categories of vulnerabilities:
+The dashboard screenshots above show the live category set. The major
+attack surfaces covered:
 
-### 1. **Credential Discovery** (10 checks)
+- **Credentials**: passwords in description fields, weak policies, spray
+- **Kerberos**: AS-REP roasting, kerberoasting, SPNs
+- **SMB / LLMNR / Network**: SMB signing, NTLM relay, name-resolution poisoning
+- **Delegation**: unconstrained, constrained, RBCD, `MachineAccountQuota`
+- **MSSQL**: services, impersonation, sysadmins, trusted links
+- **ADCS**: installation, web enrollment, ESC1/2/3/4/6/7/8/9/10/11/13/15 templates
+- **ACL abuse**: `ForceChangePassword`, `GenericWrite`, `WriteDacl`, `WriteOwner`, GPO
+- **Trusts**: parent/child, forest trust, cross-forest membership, SID history
+- **Services & misc**: IIS, Print Spooler, LDAP signing, WebClient, gMSA, LAPS
 
-- ✓ Passwords in user description fields (samwell.tarly)
-- ✓ Username=password combinations (hodor)
-- ✓ Weak password policies
-- ✓ Password spray vulnerabilities
+See [`GOAD-vulnerabilities-comprehensive.md`](./GOAD-vulnerabilities-comprehensive.md)
+for the full catalog with exploitation details.
 
-### 2. **Kerberos Attack Vectors** (12 checks)
+## JSON Report
 
-- ✓ AS-REP Roasting accounts (brandon.stark, missandei)
-- ✓ Kerberoasting targets (jon.snow, sql_svc)
-- ✓ Service Principal Names configured
-- ✓ Kerberos user enumeration possible
-
-### 3. **Network Misconfigurations** (8 checks)
-
-- ✓ SMB signing disabled on CASTELBLACK and BRAAVOS
-- ✓ LLMNR/NBT-NS enabled
-- ✓ NTLM relay opportunities
-- ✓ Anonymous SMB session access
-
-### 4. **Delegation Attacks** (6 checks)
-
-- ✓ Unconstrained delegation (sansa.stark)
-- ✓ Constrained delegation (jon.snow)
-- ✓ Resource-Based Constrained Delegation setup
-- ✓ Machine Account Quota = 10
-
-### 5. **MSSQL Configurations** (8 checks)
-
-- ✓ MSSQL services running on CASTELBLACK and BRAAVOS
-- ✓ Impersonation permissions (samwell.tarly → sa, arya.stark → dbo)
-- ✓ MSSQL admin accounts (jon.snow, khal.drogo)
-- ✓ Trusted links between servers
-
-### 6. **ADCS Vulnerabilities** (15+ checks)
-
-- ✓ ADCS installed on BRAAVOS
-- ✓ ADCS Web Enrollment configured (ESC8)
-- ✓ Vulnerable certificate templates (ESC1, ESC2, ESC3, ESC4, ESC6, etc.)
-- ✓ Certificate mapping misconfigurations
-
-### 7. **ACL Abuse** (20+ checks)
-
-- ✓ ForceChangePassword permissions
-- ✓ GenericWrite on users/computers
-- ✓ WriteDacl permissions
-- ✓ WriteOwner on groups
-- ✓ GPO abuse permissions
-- ✓ Complete ACL attack chains
-
-### 8. **Domain Trusts** (4 checks)
-
-- ✓ Parent-child trust (sevenkingdoms ↔ north)
-- ✓ Forest trust (sevenkingdoms ↔ essos)
-- ✓ Cross-forest group memberships
-- ✓ SID history enabled
-
-### 9. **Services & Miscellaneous** (10 checks)
-
-- ✓ IIS running on CASTELBLACK
-- ✓ Print Spooler service status
-- ✓ LDAP signing not enforced
-- ✓ WebClient service configuration
-
-## Output Format
-
-### Console Output
-
-The script provides color-coded console output:
-
-```text
-==========================================
-GOAD Vulnerability Validation
-==========================================
-Environment: dev
-Inventory: ./dev-inventory
-Output: /tmp/goad-validation-20241215-134500.json
-
-ℹ Discovering instances...
-✓ Found DC01: i-0123456789abcdef0
-✓ Found DC02: i-0123456789abcdef1
-✓ Found DC03: i-0123456789abcdef2
-✓ Found SRV02: i-0123456789abcdef3
-✓ Found SRV03: i-0123456789abcdef4
-
-==========================================
-1. Credential Discovery Vulnerabilities
-==========================================
-ℹ Checking for passwords in user descriptions...
-✓ samwell.tarly has password in description
-
-==========================================
-2. Kerberos Attack Vectors
-==========================================
-ℹ Checking AS-REP Roasting accounts...
-✓ brandon.stark has DoesNotRequirePreAuth enabled
-✗ missandei does NOT have PreAuth disabled
-⚠ jon.snow SPNs configured but not optimal
-
-...
-
-==========================================
-Validation Summary
-==========================================
-Total Checks:    87
-Passed:          73
-Failed:          8
-Warnings:        6
-
-Success Rate: 84%
-
-Results saved to: /tmp/goad-validation-20241215-134500.json
-==========================================
-```
-
-### JSON Output
-
-Results are also saved to a JSON file for programmatic analysis:
+Every run writes a JSON report to `/tmp/goad-validation-<timestamp>.json`
+(or `--output <path>`):
 
 ```json
 {
-  "validation_date": "2024-12-15T13:45:00Z",
-  "environment": "dev",
-  "summary": {
-    "total_checks": 87,
-    "passed": 73,
-    "failed": 8,
-    "warnings": 6
-  },
+  "validation_date": "2026-05-11T16:45:00Z",
+  "environment": "staging",
+  "total_checks": 233,
+  "passed": 212,
+  "failed": 0,
+  "warnings": 0,
   "checks": [
     {
-      "category": "credential_discovery",
+      "status": "PASS",
+      "category": "Credentials",
       "name": "password_in_description",
-      "status": "pass",
-      "details": "samwell.tarly has password 'Heartsbane' in description",
-      "user": "samwell.tarly",
-      "domain": "north.sevenkingdoms.local"
-    },
-    ...
+      "detail": "samwell.tarly has password in description"
+    }
   ]
 }
 ```
 
-## Exit Codes
-
-- **0**: All checks passed (or only warnings)
-- **1**: One or more checks failed
-
-## Validation Checklist
-
-Use this checklist to track validation progress:
-
-### Critical Vulnerabilities (Must Pass)
-
-- [ ] All 5 servers running and accessible
-- [ ] All 3 domains configured correctly
-- [ ] All expected users present (46+ users)
-- [ ] SMB signing disabled on SRV02 and SRV03
-- [ ] MSSQL running on both servers
-- [ ] ADCS installed on BRAAVOS
-- [ ] Domain trusts configured
-
-### High Priority Vulnerabilities
-
-- [ ] AS-REP Roasting: brandon.stark, missandei
-- [ ] Kerberoasting: jon.snow, sql_svc
-- [ ] Password in description: samwell.tarly
-- [ ] Unconstrained delegation: sansa.stark
-- [ ] Constrained delegation: jon.snow
-- [ ] Machine Account Quota = 10
-
-### Medium Priority Vulnerabilities
-
-- [ ] MSSQL impersonation permissions
-- [ ] MSSQL trusted links
-- [ ] ADCS vulnerable templates (ESC1-15)
-- [ ] ACL permission chains
-- [ ] Print Spooler enabled
-- [ ] IIS file upload vulnerability
-
-### Lower Priority (Nice to Have)
-
-- [ ] LLMNR/NBT-NS enabled
-- [ ] LAPS configuration
-- [ ] GPO abuse permissions
-- [ ] Cross-forest group memberships
-- [ ] Bot accounts configured
+`status` is one of `PASS`, `FAIL`, `WARN`, `SKIP`, `INFO`. Exit code is
+`0` when no checks failed (or `--no-fail` is set), `1` otherwise.
 
 ## Troubleshooting
 
-### Common Issues
+### "Could not find all required domain controllers"
 
-#### 1. "Could not find all required domain controllers"
-
-**Cause**: Instances not running or SSM not accessible
-
-**Solution**:
+Instances not running or SSM not accessible.
 
 ```bash
-# Check instance status
 dreadgoad lab status
-
-# Verify SSM agent is running
 aws ssm describe-instance-information --filters "Key=tag:Name,Values=*goad*"
 ```
 
-#### 2. "Permission denied" errors
+### SSM command timeouts
 
-**Cause**: Script not executable or AWS credentials not configured
+Check network connectivity to the instances and verify WinRM is running.
+A full pass takes a couple of minutes; the dashboard footer or `--plain`
+output shows progress.
 
-**Solution**:
+### Many checks failing or warning
 
-```bash
-# Make script executable
-chmod +x scripts/validate-goad-vulns.sh
-
-# Check AWS credentials
-aws sts get-caller-identity
-```
-
-#### 3. Script hangs at "Discovering instances..." or times out
-
-**Cause**: AWS CLI calls can be slow, especially when querying multiple instances
-
-**Solution**:
+Vulnerabilities likely not fully provisioned. Re-run the vulnerability
+plays:
 
 ```bash
-# Option 1: Run with --no-fail to see progress
-dreadgoad validate --env staging --no-fail --verbose
-
-# Option 2: Test AWS CLI connectivity first
-time aws ec2 describe-instances --region <your-region> --max-results 5
-```
-
-**Note**: The script may take 1-2 minutes to complete due to multiple AWS API calls. This is normal.
-
-#### 4. "Timeout" errors during SSM commands
-
-**Cause**: SSM commands taking too long
-
-**Solution**:
-
-- Increase sleep time in script (currently 5 seconds)
-- Check network connectivity to instances
-- Verify Windows Remote Management service running
-
-#### 5. Many checks showing "WARN" or "FAIL"
-
-**Cause**: Vulnerabilities not fully provisioned
-
-**Solution**:
-
-```bash
-# Re-run vulnerability provisioning
 dreadgoad provision --plays vulnerabilities.yml
-
-# Or provision specific vulnerability roles
 dreadgoad provision --plays vulnerabilities.yml --limit dc02
-```
-
-## Advanced Usage
-
-### Validate Specific Categories
-
-Modify the script to run only specific validation sections:
-
-```bash
-# Edit the script and comment out sections you don't need
-vim scripts/validate-goad-vulns.sh
-```
-
-### Custom Output Location
-
-```bash
-dreadgoad validate --output /path/to/custom-report.json
-```
-
-### Integrate with CI/CD
-
-Use the validation script in your CI/CD pipeline:
-
-```yaml
-# Example GitHub Actions workflow
-- name: Validate GOAD Deployment
-  run: |
-    dreadgoad validate --env staging
-  continue-on-error: false
 ```
 
 ## Manual Validation
@@ -365,5 +152,6 @@ Get-ADObject $dn -Properties ms-DS-MachineAccountQuota |
 
 - [`GOAD-vulnerabilities-comprehensive.md`](./GOAD-vulnerabilities-comprehensive.md) - Complete vulnerability catalog
 - [`cli.md`](./cli.md) - CLI usage and configuration reference
+- [`scoreboard.md`](./scoreboard.md) - Live engagement status board (the agent-facing counterpart to `validate`)
 - [GOAD Official Docs](https://github.com/Orange-Cyberdefense/GOAD) - Upstream documentation
 - [Mayfly's Walkthrough Series](https://mayfly277.github.io/categories/goad/) - Attack technique guides

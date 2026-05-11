@@ -69,12 +69,24 @@ dreadgoad infra validate
 ### Validation and diagnostics
 
 ```bash
-dreadgoad validate
+dreadgoad validate                       # live dashboard when stdout is a TTY
+dreadgoad validate --plain               # disable the dashboard
+dreadgoad validate --poll 5m             # rerun every 5 minutes inside the dashboard
 dreadgoad validate --format json --output results.json
 dreadgoad health-check
 dreadgoad diagnose
 dreadgoad doctor
 dreadgoad verify-trusts
+```
+
+### Engagement scoreboard
+
+```bash
+dreadgoad scoreboard generate-key                                         # build answer_key.json
+dreadgoad scoreboard run --report ./report.jsonl                          # local transport
+dreadgoad scoreboard run --transport ssm --instance-id i-0123456789abcdef0
+dreadgoad scoreboard run --once                                           # one-shot static board
+dreadgoad scoreboard demo                                                 # sample board with mock findings
 ```
 
 ### Environment and configuration

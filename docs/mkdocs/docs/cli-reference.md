@@ -442,7 +442,7 @@ dreadgoad verify-trusts
 
 Validate GOAD vulnerability configurations.
 
-Checks credentials, Kerberos, SMB, delegation, MSSQL, ADCS, ACLs, trusts, SID filtering, scheduled tasks, LLMNR/NBT-NS, GPO abuse, gMSA, LAPS, and services.
+Checks credentials, Kerberos, SMB, delegation, MSSQL, ADCS, ACLs, trusts, SID filtering, scheduled tasks, LLMNR/NBT-NS, GPO abuse, gMSA, LAPS, and services. When stdout is a TTY, results stream into a live dashboard with a per-category breakdown; pass `--plain` to fall back to line-by-line output.
 
 | Flag | Description |
 |------|-------------|
@@ -451,20 +451,80 @@ Checks credentials, Kerberos, SMB, delegation, MSSQL, ADCS, ACLs, trusts, SID fi
 | `--output string` | JSON report output path |
 | `--quick` | Quick validation of critical vulnerabilities only |
 | `--verbose` | Enable verbose output |
+| `--plain` | Disable the live dashboard; stream results to stdout |
+| `--poll string` | Re-run cadence inside the live dashboard (Go duration like `1m`, `5m`, or `never`; minimum `1m`, default `never`) |
 
 ```bash
-# Full validation with table output
-dreadgoad validate
-
-# Quick check of critical vulnerabilities
-dreadgoad validate --quick
-
-# Export JSON report
-dreadgoad validate --format json --output report.json
-
-# Verbose output, don't fail on errors
-dreadgoad validate --verbose --no-fail
+dreadgoad validate                       # full run, live dashboard on a TTY
+dreadgoad validate --quick               # critical vulnerabilities only
+dreadgoad validate --plain               # disable the dashboard
+dreadgoad validate --poll 5m             # rerun every 5 minutes inside the dashboard
+dreadgoad validate --output report.json  # custom report path
 ```
+
+Dashboard keys: `q`, `ctrl+c`, or `esc` to quit. `--poll` is ignored without the dashboard (non-TTY or `--plain`).
+
+See [validation.md](https://github.com/dreadnode/DreadGOAD/blob/main/docs/validation.md) for the full guide.
+
+---
+
+### scoreboard
+
+Live status board for GOAD engagements. Parses the lab `config.json` into a checklist of objectives ("answer key"), polls an agent's JSONL report (local, SSM, or `ares`), and renders a verification TUI.
+
+#### `scoreboard generate-key`
+
+Build the answer key from the lab configuration. Run this once per lab (or after lab edits) so `scoreboard run` and `scoreboard demo` have something to verify against.
+
+| Flag | Description |
+|------|-------------|
+| `--config string` | Path to GOAD `config.json` (default `ad/GOAD/data/config.json`) |
+| `--output string` | Output path for the answer key (default `scoreboard/answer_key.json`) |
+
+```bash
+dreadgoad scoreboard generate-key
+```
+
+#### `scoreboard run`
+
+Poll an agent's JSONL report and render the live verification TUI.
+
+| Flag | Description |
+|------|-------------|
+| `--transport string` | `local`, `ssm`, or `ares` (default `"local"`) |
+| `--report string` | Path to the agent report on the target (default `/tmp/report.jsonl`) |
+| `--answer-key string` | Path to `answer_key.json` (default `scoreboard/answer_key.json`) |
+| `--instance-id string` | EC2 instance ID (required for `ssm` and `ares`) |
+| `--ssm-region string` | AWS region for SSM (defaults to `--region`) |
+| `--ares-binary string` | Path to the `ares` binary on the target (default `/usr/local/bin/ares`) |
+| `--interval duration` | Poll interval (default `3s`) |
+| `--restart` | Delete the report file on the target before starting (no-op for `ares`) |
+| `--once` | Fetch and verify once, print the board, and exit (no TUI) |
+
+```bash
+# Local report file
+dreadgoad scoreboard run --report ./report.jsonl
+
+# Remote report via SSM
+dreadgoad scoreboard run --transport ssm --instance-id i-0123456789abcdef0
+
+# One-shot static board (no TUI)
+dreadgoad scoreboard run --once
+```
+
+#### `scoreboard demo`
+
+Render a sample board with mock findings so you can see the layout before running a real engagement.
+
+| Flag | Description |
+|------|-------------|
+| `--config string` | Path to GOAD `config.json` (default `ad/GOAD/data/config.json`) |
+
+```bash
+dreadgoad scoreboard demo
+```
+
+See [scoreboard/agent_prompt.md](https://github.com/dreadnode/DreadGOAD/blob/main/scoreboard/agent_prompt.md) for the report format agents are expected to emit.
 
 ---
 
