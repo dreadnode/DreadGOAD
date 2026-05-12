@@ -74,14 +74,23 @@ type TUIConfig struct {
 }
 
 // RunTUI starts the interactive status board. It returns when the user
-// quits (q/ctrl-c) or the context is cancelled.
+// quits (q/ctrl-c) or the context is cancelled. On exit, a final static
+// snapshot is printed to stdout so the last frame survives the alt-screen
+// teardown (useful in tmux, where alt-screen contents aren't in scrollback).
 func RunTUI(ctx context.Context, cfg TUIConfig) error {
 	if cfg.PollInterval <= 0 {
 		cfg.PollInterval = 3 * time.Second
 	}
 	m := newModel(ctx, cfg)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
-	_, err := p.Run()
+	final, err := p.Run()
+	if fm, ok := final.(*model); ok {
+		width := fm.width
+		if width <= 0 {
+			width = 120
+		}
+		fmt.Println(renderBoard(fm.status, fm.cfg.AnswerKey, fm.report.AgentID, fm.startTime, nil, width, 0))
+	}
 	return err
 }
 
@@ -89,22 +98,27 @@ func RunTUI(ctx context.Context, cfg TUIConfig) error {
 // command to print one snapshot without entering an alt-screen TUI).
 func RenderStatic(status *StatusReport, ak *AnswerKey, agentID string, startTime time.Time) string {
 	width := 120
-	return renderBoard(status, ak, agentID, startTime, nil, width)
+	return renderBoard(status, ak, agentID, startTime, nil, width, 0)
 }
 
 type model struct {
-	ctx        context.Context
-	cfg        TUIConfig
-	status     *StatusReport
-	report     *Report
-	startTime  time.Time
-	width      int
-	height     int
-	lastPollAt time.Time
-	pollState  pollResult
-	pollErr    string
-	lastHash   uint64
-	quitting   bool
+	ctx          context.Context
+	cfg          TUIConfig
+	status       *StatusReport
+	report       *Report
+	startTime    time.Time
+	width        int
+	height       int
+	lastPollAt   time.Time
+	pollState    pollResult
+	pollErr      string
+	lastHash     uint64
+	quitting     bool
+	scrollOffset int // body-row offset for vertical scrolling
+	// scrollAtEnd, when true, pins the viewport to the bottom across renders
+	// so the user can "follow" growing content. Set by G/end, cleared by any
+	// upward navigation.
+	scrollAtEnd bool
 }
 
 func newModel(ctx context.Context, cfg TUIConfig) *model {
@@ -147,46 +161,71 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "q", "ctrl+c", "esc":
-			m.quitting = true
-			return m, tea.Quit
-		case "r":
-			return m, m.pollCmd()
-		}
+		return m.handleKey(msg)
 	case pollMsg:
-		m.lastPollAt = msg.when
-		switch {
-		case msg.err == nil:
-			m.pollState = pollOK
-			m.pollErr = ""
-			h := simpleHash(msg.raw)
-			if h != m.lastHash {
-				m.lastHash = h
-				m.report = ParseReport(msg.raw)
-				if st, err := time.Parse(time.RFC3339, m.report.StartTime); err == nil && m.startTime.IsZero() {
-					m.startTime = st
-				}
-				m.status = VerifyReport(m.report, m.cfg.AnswerKey)
-			}
-		case errors.Is(msg.err, ErrNoReport):
-			m.pollState = pollNoFile
-			m.pollErr = ""
-		default:
-			m.pollState = pollError
-			m.pollErr = msg.err.Error()
-		}
-		// Schedule next poll
-		next := tea.Tick(m.cfg.PollInterval, func(time.Time) tea.Msg {
-			return pollKickMsg{}
-		})
-		return m, next
+		return m.handlePoll(msg)
 	case pollKickMsg:
 		return m, m.pollCmd()
 	case tickMsg:
 		return m, tickCmd()
 	}
 	return m, nil
+}
+
+func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "q", "ctrl+c", "esc":
+		m.quitting = true
+		return m, tea.Quit
+	case "r":
+		return m, m.pollCmd()
+	case "j", "down":
+		m.scrollOffset++
+		m.scrollAtEnd = false
+	case "k", "up":
+		m.scrollOffset--
+		m.scrollAtEnd = false
+	case "pgdown", " ", "ctrl+d":
+		m.scrollOffset += m.pageSize()
+		m.scrollAtEnd = false
+	case "pgup", "ctrl+u":
+		m.scrollOffset -= m.pageSize()
+		m.scrollAtEnd = false
+	case "g", "home":
+		m.scrollOffset = 0
+		m.scrollAtEnd = false
+	case "G", "end":
+		m.scrollAtEnd = true
+	}
+	return m, nil
+}
+
+func (m *model) handlePoll(msg pollMsg) (tea.Model, tea.Cmd) {
+	m.lastPollAt = msg.when
+	switch {
+	case msg.err == nil:
+		m.pollState = pollOK
+		m.pollErr = ""
+		h := simpleHash(msg.raw)
+		if h != m.lastHash {
+			m.lastHash = h
+			m.report = ParseReport(msg.raw)
+			if st, err := time.Parse(time.RFC3339, m.report.StartTime); err == nil && m.startTime.IsZero() {
+				m.startTime = st
+			}
+			m.status = VerifyReport(m.report, m.cfg.AnswerKey)
+		}
+	case errors.Is(msg.err, ErrNoReport):
+		m.pollState = pollNoFile
+		m.pollErr = ""
+	default:
+		m.pollState = pollError
+		m.pollErr = msg.err.Error()
+	}
+	next := tea.Tick(m.cfg.PollInterval, func(time.Time) tea.Msg {
+		return pollKickMsg{}
+	})
+	return m, next
 }
 
 type pollKickMsg struct{}
@@ -207,7 +246,60 @@ func (m *model) View() string {
 		lastPollAt:   m.lastPollAt,
 		interval:     m.cfg.PollInterval,
 	}
-	return renderBoard(m.status, m.cfg.AnswerKey, m.report.AgentID, m.startTime, pollSnap, width)
+	full := renderBoard(m.status, m.cfg.AnswerKey, m.report.AgentID, m.startTime, pollSnap, width, m.height)
+	return m.applyScroll(full)
+}
+
+// pageSize returns the body-row count for one PgUp/PgDn jump. It matches
+// the scroll viewport's height (terminal height minus the pinned top
+// border, totals header, and bottom border).
+func (m *model) pageSize() int {
+	if m.height <= 4 {
+		return 1
+	}
+	return m.height - 3
+}
+
+// applyScroll trims `full` to the visible region when content exceeds the
+// terminal height. The top border, totals-header row, and bottom border
+// stay pinned; everything between scrolls based on m.scrollOffset. Offset
+// clamping happens here because the natural content height isn't known
+// until renderBoard has run.
+func (m *model) applyScroll(full string) string {
+	if m.height <= 0 {
+		return full
+	}
+	lines := strings.Split(full, "\n")
+	if len(lines) <= m.height {
+		m.scrollOffset = 0
+		return full
+	}
+	const pinTop = 2 // top border + totals header row
+	const pinBottom = 1
+	if m.height <= pinTop+pinBottom+1 {
+		return full
+	}
+	middle := lines[pinTop : len(lines)-pinBottom]
+	viewport := m.height - pinTop - pinBottom
+	maxOffset := len(middle) - viewport
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if m.scrollAtEnd {
+		m.scrollOffset = maxOffset
+	}
+	if m.scrollOffset > maxOffset {
+		m.scrollOffset = maxOffset
+	}
+	if m.scrollOffset < 0 {
+		m.scrollOffset = 0
+	}
+	visible := middle[m.scrollOffset : m.scrollOffset+viewport]
+	out := make([]string, 0, pinTop+len(visible)+pinBottom)
+	out = append(out, lines[0], lines[1])
+	out = append(out, visible...)
+	out = append(out, lines[len(lines)-1])
+	return strings.Join(out, "\n")
 }
 
 type pollSnapshot struct {
@@ -219,7 +311,11 @@ type pollSnapshot struct {
 	interval     time.Duration
 }
 
-func renderBoard(status *StatusReport, ak *AnswerKey, agentID string, startTime time.Time, poll *pollSnapshot, width int) string {
+// renderBoard renders the status board at the given width. When height > 0
+// and the natural layout would exceed it, the board switches to a compact
+// mode that drops blank spacer rows and the keyboard hint so the essential
+// content stays on-screen in short panes (e.g. small tmux splits).
+func renderBoard(status *StatusReport, ak *AnswerKey, agentID string, startTime time.Time, poll *pollSnapshot, width, height int) string {
 	innerWidth := width - 4 // 2 chars border + 2 chars padding (1 each side)
 	if innerWidth < 40 {
 		innerWidth = 40
@@ -234,14 +330,42 @@ func renderBoard(status *StatusReport, ak *AnswerKey, agentID string, startTime 
 	right := renderColumn(rightGroups, status, ak, colWidth)
 	cols := lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", right)
 
-	parts := []string{header, "", cols}
-	if len(status.UnmatchedFindings) > 0 {
-		parts = append(parts, "",
-			styleFaint.Italic(true).Render(fmt.Sprintf("  + %d additional finding(s) reported", len(status.UnmatchedFindings))))
+	hasUnmatched := len(status.UnmatchedFindings) > 0
+	hasPoll := poll != nil
+
+	contentRows := 1 + lipgloss.Height(cols) // header + columns
+	spacerRows := 1                          // after header
+	if hasUnmatched {
+		contentRows++
+		spacerRows++
 	}
-	if poll != nil {
-		parts = append(parts, "", renderPollFooter(poll))
-		parts = append(parts, styleFaint.Render("  q/ctrl-c quit · r reload"))
+	if hasPoll {
+		contentRows += 2 // footer + hint
+		spacerRows++
+	}
+	natural := contentRows + spacerRows + 2 // borders
+	compact := height > 0 && natural > height
+
+	parts := []string{header}
+	if !compact {
+		parts = append(parts, "")
+	}
+	parts = append(parts, cols)
+	if hasUnmatched {
+		if !compact {
+			parts = append(parts, "")
+		}
+		parts = append(parts, styleFaint.Italic(true).Render(fmt.Sprintf("  + %d additional finding(s) reported", len(status.UnmatchedFindings))))
+	}
+	if hasPoll {
+		if !compact {
+			parts = append(parts, "")
+		}
+		parts = append(parts, renderPollFooter(poll))
+		// Always show the hint when the live TUI is wired up: the scroll
+		// keys are critical when content overflows, and compact mode
+		// already saved the spacer above us.
+		parts = append(parts, styleFaint.Render("  q quit · r reload · j/k scroll · g/G top/bottom"))
 	}
 
 	return panelWithTitle("DreadGOAD STATUS BOARD", strings.Join(parts, "\n"), width)

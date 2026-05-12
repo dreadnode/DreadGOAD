@@ -174,10 +174,8 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		fmt.Printf("Warning: could not save report: %v\n", err)
 	}
 
-	if !useTUI {
-		fmt.Println()
-		fmt.Println(validate.RenderSummaryPanel(report, infra.Env, infra.Region, time.Since(runStart), terminalWidth()))
-	}
+	fmt.Println()
+	fmt.Println(validate.RenderSummaryPanel(report, infra.Env, infra.Region, time.Since(runStart), terminalWidth()))
 	fmt.Printf("\nResults saved to: %s\n", outputPath)
 
 	if !opts.noFail && report.Failed > 0 {

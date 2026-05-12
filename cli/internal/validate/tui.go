@@ -346,9 +346,31 @@ func (m *liveModel) View() string {
 
 	header := renderValidateHeader(&m.report, m.cfg.Env, m.cfg.Region, time.Since(m.startTime), innerWidth)
 	subhdr := styleGroupHdr.Render(fmt.Sprintf("  CHECK RESULTS  (%d/%d)", m.report.Passed, m.report.Passed+m.report.Failed+m.report.Warnings))
+	footer := m.renderFooter()
 
-	parts := []string{header, "", subhdr, "", cols, "", m.renderFooter()}
-	parts = append(parts, styleFaint.Render("  q/ctrl-c quit"))
+	// Compact mode: drop blank spacers and the keyboard hint when the
+	// natural layout exceeds the terminal height (e.g. short tmux pane).
+	contentRows := 1 + 1 + lipgloss.Height(cols) + 1 + 1 // header, subhdr, cols, footer, hint
+	spacerRows := 3                                      // header→subhdr, subhdr→cols, cols→footer
+	natural := contentRows + spacerRows + 2              // borders
+	compact := m.height > 0 && natural > m.height
+
+	parts := []string{header}
+	if !compact {
+		parts = append(parts, "")
+	}
+	parts = append(parts, subhdr)
+	if !compact {
+		parts = append(parts, "")
+	}
+	parts = append(parts, cols)
+	if !compact {
+		parts = append(parts, "")
+	}
+	parts = append(parts, footer)
+	if !compact {
+		parts = append(parts, styleFaint.Render("  q/ctrl-c quit"))
+	}
 
 	return panelWithTitle("DreadGOAD VALIDATION", strings.Join(parts, "\n"), width)
 }
