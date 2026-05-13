@@ -25,7 +25,7 @@ func TestLiveModel_ApplyAndRender(t *testing.T) {
 	}
 
 	m.width = 120
-	out := m.View()
+	out := m.View().Content
 	for _, want := range []string{"DreadGOAD VALIDATION", "ACL", "MSSQL", "Kerberos", "RUNNING", "prod-east", "us-west-1"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("View() missing %q\n%s", want, out)
@@ -33,7 +33,7 @@ func TestLiveModel_ApplyAndRender(t *testing.T) {
 	}
 
 	m.applyPhase(phaseEvent{kind: phaseDone})
-	out2 := m.View()
+	out2 := m.View().Content
 	if !strings.Contains(out2, "COMPLETE") {
 		t.Errorf("done View() missing COMPLETE\n%s", out2)
 	}
@@ -70,11 +70,11 @@ func TestLiveModel_PollPhases(t *testing.T) {
 	if m.phase != phaseWaiting {
 		t.Errorf("phase not waiting: %v", m.phase)
 	}
-	if !strings.Contains(m.View(), "WAITING") {
-		t.Errorf("View missing WAITING\n%s", m.View())
+	if !strings.Contains(m.View().Content, "WAITING") {
+		t.Errorf("View missing WAITING\n%s", m.View().Content)
 	}
-	if !strings.Contains(m.View(), "poll: 1m0s") {
-		t.Errorf("View missing poll cadence\n%s", m.View())
+	if !strings.Contains(m.View().Content, "poll: 1m0s") {
+		t.Errorf("View missing poll cadence\n%s", m.View().Content)
 	}
 
 	// Iteration 2 clears prior state (including Discovery seed).

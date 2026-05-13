@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // TUIConfig configures the live validation dashboard.
@@ -76,7 +76,7 @@ func RunTUI(ctx context.Context, cfg TUIConfig) error {
 	go runLoop(runCtx, cfg, results, phases, runDone)
 
 	m := newValidateModel(cfg, seed, results, phases)
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
+	p := tea.NewProgram(m, tea.WithContext(ctx))
 	_, err := p.Run()
 
 	// Make sure the run goroutine exits before we hand control back so the
@@ -240,7 +240,7 @@ func (m *liveModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "q", "ctrl+c", "esc":
 			m.quitting = true
@@ -319,9 +319,9 @@ func (m *liveModel) applyResult(r Result) {
 	}
 }
 
-func (m *liveModel) View() string {
+func (m *liveModel) View() tea.View {
 	if m.quitting {
-		return ""
+		return tea.NewView("")
 	}
 	width := m.width
 	if width <= 0 {
@@ -372,7 +372,9 @@ func (m *liveModel) View() string {
 		parts = append(parts, styleFaint.Render("  q/ctrl-c quit"))
 	}
 
-	return panelWithTitle("DreadGOAD VALIDATION", strings.Join(parts, "\n"), width)
+	v := tea.NewView(panelWithTitle("DreadGOAD VALIDATION", strings.Join(parts, "\n"), width))
+	v.AltScreen = true
+	return v
 }
 
 func (m *liveModel) sortedCategories() []categoryStats {
