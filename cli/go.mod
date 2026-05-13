@@ -15,7 +15,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.42.1
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
-	github.com/cowdogmoo/warpgate/v3 v3.2.1-0.20260508023420-85a4bbcda1f0
+	github.com/cowdogmoo/warpgate/v3 v3.2.1-0.20260510024418-e1c43016fc77
 	github.com/fatih/color v1.19.0
 	github.com/masterzen/winrm v0.0.0-20260407182533-5570be7f80cf
 	github.com/spf13/cobra v1.10.2
@@ -41,12 +41,12 @@ require (
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.24 // indirect
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.73.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/iam v1.53.10 // indirect
-	github.com/aws/aws-sdk-go-v2/service/imagebuilder v1.53.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/imagebuilder v1.54.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.9 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/checksum v1.9.15 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.13.23 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.19.23 // indirect
-	github.com/aws/aws-sdk-go-v2/service/s3 v1.100.1 // indirect
+	github.com/aws/aws-sdk-go-v2/service/s3 v1.101.0 // indirect
 	github.com/aws/aws-sdk-go-v2/service/signin v1.0.11 // indirect
 	github.com/aws/aws-sdk-go-v2/service/sso v1.30.17 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.35.21 // indirect
@@ -61,8 +61,8 @@ require (
 	github.com/containerd/stargz-snapshotter/estargz v0.18.2 // indirect
 	github.com/cowdogmoo/bcp v1.1.0 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
-	github.com/docker/cli v29.4.2+incompatible // indirect
-	github.com/docker/docker-credential-helpers v0.9.6 // indirect
+	github.com/docker/cli v29.4.3+incompatible // indirect
+	github.com/docker/docker-credential-helpers v0.9.7 // indirect
 	github.com/erikgeiser/coninput v0.0.0-20211004153227-1c3628e74d0f // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
