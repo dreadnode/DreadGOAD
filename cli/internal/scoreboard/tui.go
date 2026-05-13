@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 )
 
 // Dreadnode color palette.
@@ -82,7 +82,7 @@ func RunTUI(ctx context.Context, cfg TUIConfig) error {
 		cfg.PollInterval = 3 * time.Second
 	}
 	m := newModel(ctx, cfg)
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithContext(ctx))
+	p := tea.NewProgram(m, tea.WithContext(ctx))
 	final, err := p.Run()
 	if fm, ok := final.(*model); ok {
 		width := fm.width
@@ -160,7 +160,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case pollMsg:
 		return m.handlePoll(msg)
@@ -172,7 +172,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c", "esc":
 		m.quitting = true
@@ -230,9 +230,9 @@ func (m *model) handlePoll(msg pollMsg) (tea.Model, tea.Cmd) {
 
 type pollKickMsg struct{}
 
-func (m *model) View() string {
+func (m *model) View() tea.View {
 	if m.quitting {
-		return ""
+		return tea.NewView("")
 	}
 	width := m.width
 	if width <= 0 {
@@ -247,7 +247,9 @@ func (m *model) View() string {
 		interval:     m.cfg.PollInterval,
 	}
 	full := renderBoard(m.status, m.cfg.AnswerKey, m.report.AgentID, m.startTime, pollSnap, width, m.height)
-	return m.applyScroll(full)
+	v := tea.NewView(m.applyScroll(full))
+	v.AltScreen = true
+	return v
 }
 
 // pageSize returns the body-row count for one PgUp/PgDn jump. It matches
