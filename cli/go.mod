@@ -13,7 +13,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.301.0
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.68.6
 	github.com/aws/aws-sdk-go-v2/service/sts v1.42.1
-	github.com/charmbracelet/bubbletea v1.3.10
+	github.com/charmbracelet/bubbletea/v2 v2.0.6
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/cowdogmoo/warpgate/v3 v3.2.1-0.20260508023420-85a4bbcda1f0
 	github.com/fatih/color v1.19.0
