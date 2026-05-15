@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -228,6 +229,16 @@ func buildArgs(opts RunOptions, cfg *config.Config) []string {
 
 func buildEnv(opts RunOptions, cfg *config.Config) ([]string, error) {
 	env := os.Environ()
+
+	// On macOS, the ObjC runtime aborts forked child processes when class
+	// initialisation is in progress at fork time.  Ansible forks workers
+	// heavily, which triggers:
+	//   "+[NSNumber initialize] may have been in progress in another thread
+	//    when fork() was called … Crashing instead."
+	// Setting this variable tells the runtime to skip the check.
+	if runtime.GOOS == "darwin" {
+		env = append(env, "OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES")
+	}
 
 	ansibleEnv, err := cfg.AnsibleEnv()
 	if err != nil {
