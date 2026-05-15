@@ -2,6 +2,7 @@
 env: staging
 provider: aws  # Provider: aws, proxmox, ludus
 # region: us-west-2  # Override AWS region (default: from inventory)
+instance_profile: WarpgateImageBuilderInstanceProfile  # IAM instance profile for EC2 Image Builder
 debug: false
 max_retries: 3
 retry_delay: 30

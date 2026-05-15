@@ -86,21 +86,22 @@ func (l LudusConfig) SSHTarget() string {
 
 // Config holds all CLI configuration.
 type Config struct {
-	Env          string                       `mapstructure:"env"`
-	Provider     string                       `mapstructure:"provider"`
-	Region       string                       `mapstructure:"region"`
-	Debug        bool                         `mapstructure:"debug"`
-	MaxRetries   int                          `mapstructure:"max_retries"`
-	RetryDelay   int                          `mapstructure:"retry_delay"`
-	IdleTimeout  int                          `mapstructure:"idle_timeout"`
-	LogDir       string                       `mapstructure:"log_dir"`
-	Playbooks    []string                     `mapstructure:"playbooks"`
-	ProjectRoot  string                       `mapstructure:"project_root"`
-	Environments map[string]EnvironmentConfig `mapstructure:"environments"`
-	Extensions   map[string]ExtensionConfig   `mapstructure:"extensions"`
-	Infra        InfraConfig                  `mapstructure:"infra"`
-	Proxmox      ProxmoxConfig                `mapstructure:"proxmox"`
-	Ludus        LudusConfig                  `mapstructure:"ludus"`
+	Env             string                       `mapstructure:"env"`
+	Provider        string                       `mapstructure:"provider"`
+	Region          string                       `mapstructure:"region"`
+	InstanceProfile string                       `mapstructure:"instance_profile"`
+	Debug           bool                         `mapstructure:"debug"`
+	MaxRetries      int                          `mapstructure:"max_retries"`
+	RetryDelay      int                          `mapstructure:"retry_delay"`
+	IdleTimeout     int                          `mapstructure:"idle_timeout"`
+	LogDir          string                       `mapstructure:"log_dir"`
+	Playbooks       []string                     `mapstructure:"playbooks"`
+	ProjectRoot     string                       `mapstructure:"project_root"`
+	Environments    map[string]EnvironmentConfig `mapstructure:"environments"`
+	Extensions      map[string]ExtensionConfig   `mapstructure:"extensions"`
+	Infra           InfraConfig                  `mapstructure:"infra"`
+	Proxmox         ProxmoxConfig                `mapstructure:"proxmox"`
+	Ludus           LudusConfig                  `mapstructure:"ludus"`
 }
 
 var (

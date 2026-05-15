@@ -33,6 +33,7 @@ var RebootPlaybooks = []string{
 func setDefaults() {
 	viper.SetDefault("env", "staging")
 	viper.SetDefault("region", "")
+	viper.SetDefault("instance_profile", "")
 	viper.SetDefault("debug", false)
 	viper.SetDefault("max_retries", 3)
 	viper.SetDefault("retry_delay", 30)
