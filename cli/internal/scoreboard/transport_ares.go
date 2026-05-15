@@ -48,10 +48,11 @@ func NewAresTransport(ctx context.Context, instanceID, binaryPath, region string
 }
 
 type aresLoot struct {
-	OperationID string          `json:"operation_id"`
-	StartedAt   string          `json:"started_at"`
-	Credentials []aresCredEntry `json:"credentials"`
-	Hashes      []aresHashEntry `json:"hashes"`
+	OperationID      string                 `json:"operation_id"`
+	StartedAt        string                 `json:"started_at"`
+	Credentials      []aresCredEntry        `json:"credentials"`
+	Hashes           []aresHashEntry        `json:"hashes"`
+	DomainCompromise []aresDomainCompromise `json:"domain_compromise"`
 }
 
 type aresCredEntry struct {
@@ -69,6 +70,19 @@ type aresHashEntry struct {
 	Source    string `json:"source"`
 }
 
+// aresDomainCompromise mirrors entries in the ares loot JSON's
+// `domain_compromise[]` array. Ares filters krbtgt rows out of `hashes[]` by
+// design (see ares-cli `report_filter.rs`: krbtgt is "consumed internally by
+// Golden Ticket detection rather than tracked as a cred objective"), so this
+// metadata field is the only signal that survives the report boundary when a
+// domain was compromised via krbtgt extraction without cracking a DA cleartext.
+type aresDomainCompromise struct {
+	Domain          string   `json:"domain"`
+	HasDomainAdmin  bool     `json:"has_domain_admin"`
+	HasGoldenTicket bool     `json:"has_golden_ticket"`
+	KrbtgtHashTypes []string `json:"krbtgt_hash_types"`
+}
+
 // FetchReport runs `ares ops loot --latest --json` on the remote instance and,
 // if successful, also fetches the `ares:op:<id>:exploited` Redis set so
 // technique objectives can be credited directly. Both payloads are
@@ -77,7 +91,8 @@ type aresHashEntry struct {
 func (t *AresTransport) FetchReport(ctx context.Context) (string, error) {
 	const jqFilter = `{operation_id, started_at,` +
 		` credentials: [.credentials[] | {username, password, domain, is_admin}],` +
-		` hashes: [.hashes[] | {username, domain, hash_value, hash_type, source}]}`
+		` hashes: [.hashes[] | {username, domain, hash_value, hash_type, source}],` +
+		` domain_compromise: [.domain_compromise[] | {domain, has_domain_admin, has_golden_ticket, krbtgt_hash_types}]}`
 	cmd := fmt.Sprintf("%s ops loot --latest --json | jq -c %s | gzip -c | base64 -w0",
 		shellQuote(t.BinaryPath), shellQuote(jqFilter))
 	out, status, stderr, err := runSSMShell(ctx, t.Client, t.InstanceID, cmd)
@@ -284,6 +299,46 @@ func synthesizeJSONL(l *aresLoot, exploited []string) string {
 			eb, _ := json.Marshal(entry)
 			b.Write(eb)
 			b.WriteByte('\n')
+		}
+	}
+
+	// Synthesize findings from domain_compromise[] metadata. Ares filters
+	// krbtgt rows out of hashes[] (see aresDomainCompromise doc), so without
+	// this step DreadGOAD's domainsFromKrbtgt never sees the krbtgt extraction
+	// and the "DOMAINS OWNED" panel stays empty for domains compromised solely
+	// via krbtgt (no cracked DA cleartext). The placeholder evidence is a
+	// 32-zero hex string so extractNTHash accepts it as an NT-hash-shaped
+	// signal; the actual hash value is intentionally not exposed in the loot
+	// JSON, so the evidence is symbolic.
+	const krbtgtSyntheticEvidence = "00000000000000000000000000000000"
+	for _, dc := range l.DomainCompromise {
+		domain := strings.ToLower(strings.TrimSpace(dc.Domain))
+		if domain == "" {
+			continue
+		}
+		if dc.HasDomainAdmin && len(dc.KrbtgtHashTypes) > 0 {
+			entry := map[string]string{
+				"target":      "krbtgt@" + domain,
+				"evidence":    krbtgtSyntheticEvidence,
+				"description": "ares: synthetic krbtgt from domain_compromise (" + strings.Join(dc.KrbtgtHashTypes, ",") + ")",
+			}
+			eb, _ := json.Marshal(entry)
+			b.Write(eb)
+			b.WriteByte('\n')
+		}
+		if dc.HasGoldenTicket {
+			techID := "golden_ticket-" + domain
+			if !emitted[techID] {
+				emitted[techID] = true
+				entry := map[string]string{
+					"target":      "tech:" + techID,
+					"evidence":    "ares: domain_compromise has_golden_ticket",
+					"description": "exploited",
+				}
+				eb, _ := json.Marshal(entry)
+				b.Write(eb)
+				b.WriteByte('\n')
+			}
 		}
 	}
 	return b.String()

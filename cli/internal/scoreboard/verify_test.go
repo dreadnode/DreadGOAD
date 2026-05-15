@@ -178,6 +178,57 @@ func TestAnswerKeyAsrepCredentialsHaveHint(t *testing.T) {
 	}
 }
 
+// TestSynthesizeJSONLDomainCompromise covers the case where ares reports a
+// domain as compromised via krbtgt extraction (essos.local on a real op) but
+// the krbtgt row is filtered out of hashes[] by ares's report_filter. Without
+// the domain_compromise[] synthesis path, the scoreboard's DOMAINS OWNED panel
+// stays empty for these domains.
+func TestSynthesizeJSONLDomainCompromise(t *testing.T) {
+	loot := &aresLoot{
+		OperationID: "op-test",
+		StartedAt:   "2026-05-14T18:24:06Z",
+		DomainCompromise: []aresDomainCompromise{
+			{
+				Domain:          "essos.local",
+				HasDomainAdmin:  true,
+				HasGoldenTicket: true,
+				KrbtgtHashTypes: []string{"ntlm"},
+			},
+			{
+				// Uncompromised domain: must NOT produce a krbtgt finding.
+				Domain:         "uncompromised.local",
+				HasDomainAdmin: false,
+			},
+			{
+				// DA without krbtgt (e.g. DA via cleartext only): no synthetic
+				// krbtgt finding either, since domainsFromKrbtgt is the wrong
+				// path for that. The matched-credential path covers it.
+				Domain:          "creds-only.local",
+				HasDomainAdmin:  true,
+				KrbtgtHashTypes: nil,
+			},
+		},
+	}
+	jsonl := synthesizeJSONL(loot, nil)
+	report := ParseReport(jsonl)
+
+	owned := domainsFromKrbtgt(report.Findings)
+	if !owned["essos.local"] {
+		t.Errorf("essos.local should be inferred as owned from domain_compromise, got %v", owned)
+	}
+	if owned["uncompromised.local"] || owned["creds-only.local"] {
+		t.Errorf("only essos.local should be in krbtgt-inferred set, got %v", owned)
+	}
+
+	tech := techniquesFromFindings(report.Findings)
+	if !tech["golden_ticket-essos.local"] {
+		t.Errorf("golden_ticket-essos.local technique should be synthesized, got %v", tech)
+	}
+	if tech["golden_ticket-uncompromised.local"] || tech["golden_ticket-creds-only.local"] {
+		t.Errorf("only essos.local should produce a golden_ticket technique, got %v", tech)
+	}
+}
+
 func TestExtractUsernameFormats(t *testing.T) {
 	cases := map[string]string{
 		"alice@example.com": "alice",
