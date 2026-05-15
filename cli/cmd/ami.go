@@ -174,7 +174,7 @@ func runAMIBuild(cmd *cobra.Command, args []string) error {
 		region:          getFlagString(cmd, "region", cfg.Region, ""),
 		instanceType:    getFlagStringOpt(cmd, "instance-type"),
 		profile:         getFlagStringOpt(cmd, "profile"),
-		instanceProfile: getFlagStringOpt(cmd, "instance-profile"),
+		instanceProfile: getFlagString(cmd, "instance-profile", cfg.InstanceProfile, ""),
 		reuseResources:  getFlagBool(cmd, "reuse-resources"),
 	}
 

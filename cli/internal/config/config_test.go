@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -181,6 +182,36 @@ func TestLabConfigPath(t *testing.T) {
 		want := filepath.Join(dir, "ad", "GOAD", "data", "dev-config.json")
 		if got != want {
 			t.Errorf("LabConfigPath() = %q, want %q", got, want)
+		}
+	})
+}
+
+func TestConfigInstanceProfile(t *testing.T) {
+	t.Run("field accessible on struct", func(t *testing.T) {
+		c := &Config{InstanceProfile: "WarpgateImageBuilderInstanceProfile"}
+		if c.InstanceProfile != "WarpgateImageBuilderInstanceProfile" {
+			t.Errorf("InstanceProfile = %q, want %q", c.InstanceProfile, "WarpgateImageBuilderInstanceProfile")
+		}
+	})
+
+	t.Run("zero value is empty string", func(t *testing.T) {
+		c := &Config{}
+		if c.InstanceProfile != "" {
+			t.Errorf("InstanceProfile = %q, want empty", c.InstanceProfile)
+		}
+	})
+
+	t.Run("mapstructure tag is instance_profile", func(t *testing.T) {
+		// Verify the struct tag so viper unmarshals the YAML key correctly.
+		var c Config
+		typ := reflect.TypeOf(c)
+		f, ok := typ.FieldByName("InstanceProfile")
+		if !ok {
+			t.Fatal("Config struct missing InstanceProfile field")
+		}
+		tag := f.Tag.Get("mapstructure")
+		if tag != "instance_profile" {
+			t.Errorf("mapstructure tag = %q, want %q", tag, "instance_profile")
 		}
 	})
 }
