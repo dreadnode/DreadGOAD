@@ -84,7 +84,7 @@ Create a randomized copy of any lab with unique names but identical attack paths
 
 ## Documentation
 
-- [CLI configuration](docs/cli.md) -- Viper-based config, environment variables, per-environment settings
+- [CLI reference](docs/cli.md) -- command index plus Viper-based config, environment variables, and per-environment settings
 - [Domains and users](docs/domains-and-users.md) -- full network topology, credentials, and attack paths
 - [Vulnerability catalog](docs/GOAD-vulnerabilities-comprehensive.md) -- all 50+ vulnerabilities with exploitation techniques
 - [Validation guide](docs/validation.md) -- automated vulnerability validation (with live dashboard and polling)

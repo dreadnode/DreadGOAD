@@ -54,6 +54,27 @@ key, and renders the live board.
 | `--restart`     | `false`                          | Delete the report file on the target before starting               |
 | `--once`        | `false`                          | Fetch and verify once, print the static board, exit (no TUI)       |
 
+### Keybindings
+
+The live TUI accepts the following keys (a subset is shown in the
+footer hint when the board is not in compact mode):
+
+| Key                       | Action                              |
+|---------------------------|-------------------------------------|
+| `q`, `ctrl+c`, `esc`      | Quit                                |
+| `r`                       | Force an immediate re-poll          |
+| `j` / `down`              | Scroll down one row                 |
+| `k` / `up`                | Scroll up one row                   |
+| `space`, `pgdown`, `ctrl+d` | Scroll down one page              |
+| `pgup`, `ctrl+u`          | Scroll up one page                  |
+| `g`, `home`               | Jump to top                         |
+| `G`, `end`                | Pin to bottom (follows new findings) |
+
+When the natural board layout would overflow the terminal height (e.g.
+running in a short tmux pane), the TUI automatically switches to a
+compact mode that drops blank spacers — the scroll keys above are how
+you reach content that is below the viewport.
+
 ### Transports
 
 - **`local`**: read a JSONL file from the host running the CLI. Best

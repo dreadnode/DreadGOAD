@@ -26,7 +26,7 @@ xp_cmdshell, sysadmins), ADCS (templates), ACLs, trusts, SID filtering, schedule
 LLMNR/NBT-NS, GPO abuse, gMSA, LAPS, and services.`,
 	Example: `  dreadgoad validate
   dreadgoad validate --env staging --verbose
-  dreadgoad validate --format json --output /tmp/results.json
+  dreadgoad validate --output /tmp/results.json
   dreadgoad validate --no-fail
   dreadgoad validate --quick
   dreadgoad validate --plain        # disable the live dashboard
@@ -38,7 +38,6 @@ LLMNR/NBT-NS, GPO abuse, gMSA, LAPS, and services.`,
 func init() {
 	rootCmd.AddCommand(validateCmd)
 
-	validateCmd.Flags().String("format", "table", "Output format: table or json")
 	validateCmd.Flags().String("output", "", "JSON report output path")
 	validateCmd.Flags().Bool("verbose", false, "Enable verbose output")
 	validateCmd.Flags().Bool("no-fail", false, "Don't exit with error on failed checks")

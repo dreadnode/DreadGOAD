@@ -8,11 +8,12 @@ are wired up correctly.
 ## Quick Start
 
 ```bash
-dreadgoad validate                # full validation, active env
-dreadgoad validate --env dev      # specific environment
-dreadgoad validate --quick        # critical vulnerabilities only
-dreadgoad validate --verbose      # extra per-check detail
-dreadgoad validate --no-fail      # always exit 0
+dreadgoad validate                       # full validation, active env
+dreadgoad validate --env dev             # specific environment
+dreadgoad validate --quick               # critical vulnerabilities only
+dreadgoad validate --verbose             # extra per-check detail
+dreadgoad validate --no-fail             # always exit 0
+dreadgoad validate --output report.json  # write JSON report to a custom path
 ```
 
 ### Live Dashboard
@@ -37,6 +38,10 @@ dreadgoad validate --poll 5m
 Keys: `q`, `ctrl+c`, or `esc` to quit. The JSON report on disk is the
 canonical record; it is rewritten at the end of each pass and the path is
 printed on exit.
+
+When the terminal is too short to fit the full layout (e.g. a short tmux
+pane), the dashboard automatically switches to a compact mode that drops
+blank spacers and the keyboard hint so the category grid stays visible.
 
 `--poll` requires the live dashboard (ignored with `--plain` or non-TTY).
 Intervals shorter than `1m` are rejected. Accepted "off" values: `never`,

@@ -1,4 +1,34 @@
-# DreadGOAD CLI Configuration
+# DreadGOAD CLI Reference
+
+## Commands
+
+Run `dreadgoad <command> --help` for full flag listings. Major commands:
+
+| Command         | What it does                                                                                  |
+|-----------------|-----------------------------------------------------------------------------------------------|
+| `init`          | Interactive setup wizard — writes a ready-to-use `dreadgoad.yaml`                             |
+| `doctor`        | Pre-flight system checks (toolchain, credentials, project layout)                             |
+| `config`        | Manage CLI configuration (`init`, `show`, `set`, `get`) — see [Configuration](#configuration) |
+| `env`           | Manage deployment environments and per-env overlays                                           |
+| `infra`         | Plan/apply/destroy Terragrunt infrastructure                                                  |
+| `provision`     | Run GOAD provisioning playbooks with retry logic                                              |
+| `up`            | End-to-end deploy: `doctor` → `infra` → `provision` → `health-check`                          |
+| `lab`           | Manage lab lifecycle (`list`, `status`, `reset`, ...)                                         |
+| `inventory`     | Generate/inspect Ansible inventory                                                            |
+| `health-check`  | Verify all lab instances are reachable and healthy                                            |
+| `verify-trusts` | Verify domain trust relationships between all lab domains                                     |
+| `validate`      | Run vulnerability checks against the live lab — see [validation.md](./validation.md)          |
+| `scoreboard`    | Live engagement status board (answer key + agent report) — see [scoreboard.md](./scoreboard.md) |
+| `variant`       | Generate randomized graph-isomorphic lab variants                                             |
+| `extension`     | Manage pluggable lab extensions (ELK, Exchange, Wazuh, ...)                                   |
+| `ami`           | Build and manage golden AMIs (warpgate)                                                       |
+| `ssm`           | Manage AWS SSM sessions to lab hosts                                                          |
+| `bastion`       | Connect to lab VMs via Azure Bastion (SSH, RDP, port tunnel)                                  |
+| `runcmd`        | Run commands and open shells via Azure Run Command                                            |
+| `diagnose`      | Run diagnostic checks against domain controllers                                              |
+| `ad-users`      | Ensure AD users exist (runs `ad-data.yml`)                                                    |
+
+## Configuration
 
 The `dreadgoad` CLI uses [Viper](https://github.com/spf13/viper) for
 configuration, with values resolved in this priority order:
