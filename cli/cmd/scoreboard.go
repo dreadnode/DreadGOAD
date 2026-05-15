@@ -16,7 +16,7 @@ import (
 
 var scoreboardCmd = &cobra.Command{
 	Use:   "scoreboard",
-	Short: "Live status board for GOAD engagements",
+	Short: "Live scoreboard for GOAD engagements",
 	Long: `Tracks an agent's progress against a GOAD lab: parses the lab config
 into a checklist of objectives ("answer key"), polls a JSONL report file
 locally or from an EC2 instance via SSM, and verifies findings against the
@@ -40,7 +40,7 @@ TUI. Use --transport=local to read a local file, or --transport=ssm with
 
 var scoreboardDemoCmd = &cobra.Command{
 	Use:   "demo",
-	Short: "Render a sample status board with mock findings",
+	Short: "Render a sample scoreboard with mock findings",
 	RunE:  runScoreboardDemo,
 }
 

@@ -370,7 +370,7 @@ func renderBoard(status *StatusReport, ak *AnswerKey, agentID string, startTime 
 		parts = append(parts, styleFaint.Render("  q quit · r reload · j/k scroll · g/G top/bottom"))
 	}
 
-	return panelWithTitle("DreadGOAD STATUS BOARD", strings.Join(parts, "\n"), width)
+	return panelWithTitle("DreadGOAD SCOREBOARD", strings.Join(parts, "\n"), width)
 }
 
 // panelWithTitle frames `body` in a rounded border with `title` embedded in
