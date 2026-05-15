@@ -73,13 +73,15 @@ type aresHashEntry struct {
 // aresDomainCompromise mirrors entries in the ares loot JSON's
 // `domain_compromise[]` array. Ares filters krbtgt rows out of `hashes[]` by
 // design (see ares-cli `report_filter.rs`: krbtgt is "consumed internally by
-// Golden Ticket detection rather than tracked as a cred objective"), so this
-// metadata field is the only signal that survives the report boundary when a
-// domain was compromised via krbtgt extraction without cracking a DA cleartext.
+// Golden Ticket detection rather than tracked as a cred objective"), and some
+// DA paths use built-in users that are not answer-key credential objectives.
+// This metadata is therefore the authoritative report-boundary signal for
+// domain ownership.
 type aresDomainCompromise struct {
 	Domain          string   `json:"domain"`
 	HasDomainAdmin  bool     `json:"has_domain_admin"`
 	HasGoldenTicket bool     `json:"has_golden_ticket"`
+	AdminUsers      []string `json:"admin_users"`
 	KrbtgtHashTypes []string `json:"krbtgt_hash_types"`
 }
 
@@ -92,7 +94,7 @@ func (t *AresTransport) FetchReport(ctx context.Context) (string, error) {
 	const jqFilter = `{operation_id, started_at,` +
 		` credentials: [.credentials[] | {username, password, domain, is_admin}],` +
 		` hashes: [.hashes[] | {username, domain, hash_value, hash_type, source}],` +
-		` domain_compromise: [.domain_compromise[] | {domain, has_domain_admin, has_golden_ticket, krbtgt_hash_types}]}`
+		` domain_compromise: [.domain_compromise[] | {domain, has_domain_admin, has_golden_ticket, admin_users, krbtgt_hash_types}]}`
 	cmd := fmt.Sprintf("%s ops loot --latest --json | jq -c %s | gzip -c | base64 -w0",
 		shellQuote(t.BinaryPath), shellQuote(jqFilter))
 	out, status, stderr, err := runSSMShell(ctx, t.Client, t.InstanceID, cmd)
@@ -308,19 +310,28 @@ func writeExploitedEntries(b *strings.Builder, exploited []string, emitted map[s
 }
 
 // writeDomainCompromiseEntries synthesizes findings from domain_compromise[]
-// metadata. Ares filters krbtgt rows out of hashes[] (see aresDomainCompromise
-// doc), so without this step DreadGOAD's domainsFromKrbtgt never sees the
-// krbtgt extraction and the "DOMAINS OWNED" panel stays empty for domains
-// compromised solely via krbtgt (no cracked DA cleartext). The placeholder
-// evidence is a 32-zero hex string so extractNTHash accepts it as an
-// NT-hash-shaped signal; the actual hash value is intentionally not exposed
-// in the loot JSON, so the evidence is symbolic.
+// metadata. The explicit domain_admin signal credits real DA-level compromise
+// even when the DA account is built-in (for example ESSOS\administrator) and
+// therefore absent from the answer-key credential objectives. The krbtgt
+// compatibility signal remains for older inference paths that key off an
+// NT-hash-shaped krbtgt finding.
 func writeDomainCompromiseEntries(b *strings.Builder, entries []aresDomainCompromise, emitted map[string]bool) {
 	const krbtgtSyntheticEvidence = "00000000000000000000000000000000"
 	for _, dc := range entries {
 		domain := strings.ToLower(strings.TrimSpace(dc.Domain))
 		if domain == "" {
 			continue
+		}
+		if dc.HasDomainAdmin {
+			signalID := "domain_admin:" + domain
+			if !emitted[signalID] {
+				emitted[signalID] = true
+				writeJSONLEntry(b, map[string]string{
+					"target":      signalID,
+					"evidence":    domainAdminEvidence(dc),
+					"description": "ares: domain_compromise has_domain_admin",
+				})
+			}
 		}
 		if dc.HasDomainAdmin && len(dc.KrbtgtHashTypes) > 0 {
 			writeJSONLEntry(b, map[string]string{
@@ -341,4 +352,18 @@ func writeDomainCompromiseEntries(b *strings.Builder, entries []aresDomainCompro
 			}
 		}
 	}
+}
+
+func domainAdminEvidence(dc aresDomainCompromise) string {
+	var admins []string
+	for _, admin := range dc.AdminUsers {
+		admin = strings.TrimSpace(admin)
+		if admin != "" {
+			admins = append(admins, admin)
+		}
+	}
+	if len(admins) == 0 {
+		return "ares: domain_compromise has_domain_admin"
+	}
+	return "ares: domain_compromise has_domain_admin via " + strings.Join(admins, ",")
 }

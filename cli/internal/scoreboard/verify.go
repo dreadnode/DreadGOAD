@@ -28,6 +28,8 @@ var serviceToTechnique = map[string]string{
 	"ADCS":         "",
 }
 
+const domainAdminSignalPrefix = "domain_admin:"
+
 // VerifyReport runs all findings in a report against an answer key and
 // returns the resulting status (matched objectives + group stats).
 func VerifyReport(report *Report, ak *AnswerKey) *StatusReport {
@@ -61,6 +63,9 @@ func matchCredentials(report *Report, ak *AnswerKey, status *StatusReport, match
 			matchedAny = true
 		}
 		if !matchedAny {
+			if isSyntheticFinding(finding.Target) {
+				continue
+			}
 			status.UnmatchedFindings = append(status.UnmatchedFindings, *finding)
 		}
 	}
@@ -103,9 +108,14 @@ func inferRemaining(report *Report, ak *AnswerKey, status *StatusReport, matched
 	}
 	inferredHostIDs := inferHosts(matchedObjs, hostObjs)
 	inferredDomains := inferDomains(matchedObjs)
+	domainAdminSignals := domainsFromDomainAdminFindings(report.Findings)
+	for d := range domainAdminSignals {
+		inferredDomains[d] = true
+	}
 	for d := range domainsFromKrbtgt(report.Findings) {
 		inferredDomains[d] = true
 	}
+	inferDCHostsFromDomainAdmin(hostObjs, domainAdminSignals, inferredHostIDs)
 
 	hostInferenceInputs := append([]*Objective{}, matchedObjs...)
 	for _, o := range hostObjs {
@@ -125,16 +135,16 @@ func inferRemaining(report *Report, ak *AnswerKey, status *StatusReport, matched
 		}
 		switch obj.Group {
 		case "hosts":
-			markHostInferred(obj, status, matched, matchedObjs, inferredHostIDs)
+			markHostInferred(obj, status, matched, matchedObjs, inferredHostIDs, domainAdminSignals)
 		case "domains":
-			markDomainInferred(obj, status, matched, matchedObjs, inferredDomains)
+			markDomainInferred(obj, status, matched, matchedObjs, inferredDomains, domainAdminSignals)
 		case "techniques":
 			markTechniqueInferred(obj, status, matched, inferredTech)
 		}
 	}
 }
 
-func markHostInferred(obj *Objective, status *StatusReport, matched map[string]bool, matchedObjs []*Objective, inferredHostIDs map[string]bool) {
+func markHostInferred(obj *Objective, status *StatusReport, matched map[string]bool, matchedObjs []*Objective, inferredHostIDs map[string]bool, domainAdminSignals map[string]Finding) {
 	if !inferredHostIDs[obj.ID] {
 		return
 	}
@@ -150,10 +160,14 @@ func markHostInferred(obj *Objective, status *StatusReport, matched map[string]b
 			break
 		}
 	}
-	ev, tech := "(inferred)", ""
+	ev, tech, reason := "(inferred)", "", "Inferred from admin credential"
 	if via != "" {
 		ev = fmt.Sprintf("admin credential: %s", via)
 		tech = fmt.Sprintf("via %s", via)
+	} else if sig, ok := domainAdminSignals[strings.ToLower(obj.Domain)]; ok && strings.EqualFold(obj.HostType, "dc") {
+		ev = sig.Evidence
+		tech = "Ares domain_compromise"
+		reason = "Inferred from domain admin state"
 	}
 	status.Verified = append(status.Verified, VerifiedObjective{
 		ObjectiveID:   obj.ID,
@@ -162,14 +176,14 @@ func markHostInferred(obj *Objective, status *StatusReport, matched map[string]b
 		Verified:      true,
 		AgentEvidence: ev,
 		Technique:     tech,
-		Reason:        "Inferred from admin credential",
+		Reason:        reason,
 	})
 	if g := status.Groups["hosts"]; g != nil {
 		g.Achieved++
 	}
 }
 
-func markDomainInferred(obj *Objective, status *StatusReport, matched map[string]bool, matchedObjs []*Objective, inferredDomains map[string]bool) {
+func markDomainInferred(obj *Objective, status *StatusReport, matched map[string]bool, matchedObjs []*Objective, inferredDomains map[string]bool, domainAdminSignals map[string]Finding) {
 	if !inferredDomains[obj.Domain] {
 		return
 	}
@@ -181,10 +195,14 @@ func markDomainInferred(obj *Objective, status *StatusReport, matched map[string
 			break
 		}
 	}
-	ev, tech := "(inferred)", ""
+	ev, tech, reason := "(inferred)", "", "Inferred from DA credential"
 	if daCred != "" {
 		ev = fmt.Sprintf("DA credential: %s", daCred)
 		tech = fmt.Sprintf("via %s", daCred)
+	} else if sig, ok := domainAdminSignals[strings.ToLower(obj.Domain)]; ok {
+		ev = sig.Evidence
+		tech = "Ares domain_compromise"
+		reason = "Inferred from domain admin state"
 	}
 	status.Verified = append(status.Verified, VerifiedObjective{
 		ObjectiveID:   obj.ID,
@@ -193,7 +211,7 @@ func markDomainInferred(obj *Objective, status *StatusReport, matched map[string
 		Verified:      true,
 		AgentEvidence: ev,
 		Technique:     tech,
-		Reason:        "Inferred from DA credential",
+		Reason:        reason,
 	})
 	if g := status.Groups["domains"]; g != nil {
 		g.Achieved++
@@ -371,6 +389,38 @@ func domainsFromKrbtgt(findings []Finding) map[string]bool {
 		}
 	}
 	return owned
+}
+
+func domainsFromDomainAdminFindings(findings []Finding) map[string]Finding {
+	owned := map[string]Finding{}
+	for _, f := range findings {
+		target := strings.ToLower(strings.TrimSpace(f.Target))
+		if !strings.HasPrefix(target, domainAdminSignalPrefix) {
+			continue
+		}
+		domain := strings.TrimSpace(strings.TrimPrefix(target, domainAdminSignalPrefix))
+		if domain != "" {
+			owned[domain] = f
+		}
+	}
+	return owned
+}
+
+func inferDCHostsFromDomainAdmin(hostObjs []*Objective, domainAdminSignals map[string]Finding, owned map[string]bool) {
+	for _, h := range hostObjs {
+		if !strings.EqualFold(h.HostType, "dc") {
+			continue
+		}
+		if _, ok := domainAdminSignals[strings.ToLower(h.Domain)]; ok {
+			owned[h.ID] = true
+		}
+	}
+}
+
+func isSyntheticFinding(target string) bool {
+	target = strings.ToLower(strings.TrimSpace(target))
+	return strings.HasPrefix(target, "tech:") ||
+		strings.HasPrefix(target, domainAdminSignalPrefix)
 }
 
 func inferHosts(matched []*Objective, hostObjs []*Objective) map[string]bool {

@@ -178,11 +178,9 @@ func TestAnswerKeyAsrepCredentialsHaveHint(t *testing.T) {
 	}
 }
 
-// TestSynthesizeJSONLDomainCompromise covers the case where ares reports a
-// domain as compromised via krbtgt extraction (essos.local on a real op) but
-// the krbtgt row is filtered out of hashes[] by ares's report_filter. Without
-// the domain_compromise[] synthesis path, the scoreboard's DOMAINS OWNED panel
-// stays empty for these domains.
+// TestSynthesizeJSONLDomainCompromise covers the report-boundary signals Ares
+// emits when a domain is compromised. has_domain_admin owns the domain even
+// without krbtgt, while has_golden_ticket is still credited separately.
 func TestSynthesizeJSONLDomainCompromise(t *testing.T) {
 	loot := &aresLoot{
 		OperationID: "op-test",
@@ -192,20 +190,20 @@ func TestSynthesizeJSONLDomainCompromise(t *testing.T) {
 				Domain:          "essos.local",
 				HasDomainAdmin:  true,
 				HasGoldenTicket: true,
+				AdminUsers:      []string{"administrator"},
 				KrbtgtHashTypes: []string{"ntlm"},
 			},
 			{
-				// Uncompromised domain: must NOT produce a krbtgt finding.
+				// Uncompromised domain: must NOT produce ownership or GT signals.
 				Domain:         "uncompromised.local",
 				HasDomainAdmin: false,
 			},
 			{
-				// DA without krbtgt (e.g. DA via cleartext only): no synthetic
-				// krbtgt finding either, since domainsFromKrbtgt is the wrong
-				// path for that. The matched-credential path covers it.
-				Domain:          "creds-only.local",
-				HasDomainAdmin:  true,
-				KrbtgtHashTypes: nil,
+				// DA without krbtgt still owns the domain; this is the ESC1/admin
+				// path where the old krbtgt-only inference missed ESSOS.
+				Domain:         "admin-only.local",
+				HasDomainAdmin: true,
+				AdminUsers:     []string{"administrator"},
 			},
 		},
 	}
@@ -214,19 +212,80 @@ func TestSynthesizeJSONLDomainCompromise(t *testing.T) {
 
 	owned := domainsFromKrbtgt(report.Findings)
 	if !owned["essos.local"] {
-		t.Errorf("essos.local should be inferred as owned from domain_compromise, got %v", owned)
+		t.Errorf("essos.local should still produce the krbtgt compatibility signal, got %v", owned)
 	}
-	if owned["uncompromised.local"] || owned["creds-only.local"] {
+	if owned["uncompromised.local"] || owned["admin-only.local"] {
 		t.Errorf("only essos.local should be in krbtgt-inferred set, got %v", owned)
+	}
+
+	ownedFromDA := domainsFromDomainAdminFindings(report.Findings)
+	if _, ok := ownedFromDA["essos.local"]; !ok {
+		t.Errorf("essos.local should be inferred from has_domain_admin, got %v", ownedFromDA)
+	}
+	if _, ok := ownedFromDA["admin-only.local"]; !ok {
+		t.Errorf("admin-only.local should be inferred from has_domain_admin without krbtgt, got %v", ownedFromDA)
+	}
+	if _, ok := ownedFromDA["uncompromised.local"]; ok {
+		t.Errorf("uncompromised.local should not be inferred from has_domain_admin, got %v", ownedFromDA)
 	}
 
 	tech := techniquesFromFindings(report.Findings)
 	if !tech["golden_ticket-essos.local"] {
 		t.Errorf("golden_ticket-essos.local technique should be synthesized, got %v", tech)
 	}
-	if tech["golden_ticket-uncompromised.local"] || tech["golden_ticket-creds-only.local"] {
+	if tech["golden_ticket-uncompromised.local"] || tech["golden_ticket-admin-only.local"] {
 		t.Errorf("only essos.local should produce a golden_ticket technique, got %v", tech)
 	}
+}
+
+func TestVerifyDomainCompromiseWithoutGoldenTicket(t *testing.T) {
+	ak := loadGOADAnswerKey(t)
+	loot := &aresLoot{
+		OperationID: "op-20260515-145348",
+		StartedAt:   "2026-05-15T14:53:48Z",
+		Credentials: []aresCredEntry{
+			{Username: "missandei", Password: "fr3edom", Domain: "essos.local"},
+		},
+		Hashes: []aresHashEntry{
+			{
+				Username:  "administrator",
+				Domain:    "essos.local",
+				HashValue: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+				HashType:  "ntlm",
+				Source:    "certipy_esc1_full_chain",
+			},
+		},
+		DomainCompromise: []aresDomainCompromise{
+			{
+				Domain:          "essos.local",
+				HasDomainAdmin:  true,
+				HasGoldenTicket: false,
+				AdminUsers:      []string{"administrator"},
+			},
+		},
+	}
+	report := ParseReport(synthesizeJSONL(loot, []string{"adcs_esc1_10.1.2.254"}))
+	status := VerifyReport(report, ak)
+	verified := verifiedObjectiveIDs(status)
+
+	for _, id := range []string{"cred-essos.local-missandei", "domain-essos.local", "host-meereen", "tech-adcs_esc1"} {
+		if !verified[id] {
+			t.Errorf("%s should be verified from ESC1/domain_compromise path; verified=%v", id, verified)
+		}
+	}
+	if verified["tech-golden_ticket-essos.local"] {
+		t.Errorf("golden ticket must not be verified when has_golden_ticket is false; verified=%v", verified)
+	}
+}
+
+func verifiedObjectiveIDs(status *StatusReport) map[string]bool {
+	out := map[string]bool{}
+	for _, vo := range status.Verified {
+		if vo.Verified {
+			out[vo.ObjectiveID] = true
+		}
+	}
+	return out
 }
 
 func TestExtractUsernameFormats(t *testing.T) {
