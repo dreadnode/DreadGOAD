@@ -231,115 +231,114 @@ func aresExploitedToTechniqueIDs(entry string) []string {
 
 func synthesizeJSONL(l *aresLoot, exploited []string) string {
 	var b strings.Builder
-	startTime := l.StartedAt
-	header := map[string]string{
+	writeJSONLEntry(&b, map[string]string{
 		"agent_id":   "ares:" + l.OperationID,
-		"start_time": startTime,
-	}
-	hb, _ := json.Marshal(header)
-	b.Write(hb)
-	b.WriteByte('\n')
-
+		"start_time": l.StartedAt,
+	})
 	for _, c := range l.Credentials {
-		if c.Username == "" || c.Password == "" {
-			continue
-		}
-		target := c.Username
-		if c.Domain != "" {
-			target = c.Username + "@" + c.Domain
-		}
-		desc := "ares loot"
-		if c.IsAdmin {
-			desc = "ares loot (admin)"
-		}
-		entry := map[string]string{
-			"target":      target,
-			"evidence":    c.Password,
-			"description": desc,
-		}
-		eb, _ := json.Marshal(entry)
-		b.Write(eb)
-		b.WriteByte('\n')
+		writeCredentialEntry(&b, c)
 	}
-
 	for _, h := range l.Hashes {
-		if h.Username == "" || h.HashValue == "" {
-			continue
-		}
-		target := h.Username
-		if h.Domain != "" {
-			target = h.Username + "@" + strings.ToLower(h.Domain)
-		}
-		htype := h.HashType
-		if htype == "" {
-			htype = "hash"
-		}
-		entry := map[string]string{
-			"target":      target,
-			"evidence":    h.HashValue,
-			"description": "ares: " + strings.ToLower(htype) + " (" + h.Source + ")",
-		}
-		eb, _ := json.Marshal(entry)
-		b.Write(eb)
-		b.WriteByte('\n')
+		writeHashEntry(&b, h)
 	}
-
 	emitted := map[string]bool{}
+	writeExploitedEntries(&b, exploited, emitted)
+	writeDomainCompromiseEntries(&b, l.DomainCompromise, emitted)
+	return b.String()
+}
+
+func writeJSONLEntry(b *strings.Builder, entry map[string]string) {
+	eb, _ := json.Marshal(entry)
+	b.Write(eb)
+	b.WriteByte('\n')
+}
+
+func writeCredentialEntry(b *strings.Builder, c aresCredEntry) {
+	if c.Username == "" || c.Password == "" {
+		return
+	}
+	target := c.Username
+	if c.Domain != "" {
+		target = c.Username + "@" + c.Domain
+	}
+	desc := "ares loot"
+	if c.IsAdmin {
+		desc = "ares loot (admin)"
+	}
+	writeJSONLEntry(b, map[string]string{
+		"target":      target,
+		"evidence":    c.Password,
+		"description": desc,
+	})
+}
+
+func writeHashEntry(b *strings.Builder, h aresHashEntry) {
+	if h.Username == "" || h.HashValue == "" {
+		return
+	}
+	target := h.Username
+	if h.Domain != "" {
+		target = h.Username + "@" + strings.ToLower(h.Domain)
+	}
+	htype := h.HashType
+	if htype == "" {
+		htype = "hash"
+	}
+	writeJSONLEntry(b, map[string]string{
+		"target":      target,
+		"evidence":    h.HashValue,
+		"description": "ares: " + strings.ToLower(htype) + " (" + h.Source + ")",
+	})
+}
+
+func writeExploitedEntries(b *strings.Builder, exploited []string, emitted map[string]bool) {
 	for _, ex := range exploited {
 		for _, techID := range aresExploitedToTechniqueIDs(ex) {
 			if emitted[techID] {
 				continue
 			}
 			emitted[techID] = true
-			entry := map[string]string{
+			writeJSONLEntry(b, map[string]string{
 				"target":      "tech:" + techID,
 				"evidence":    "ares: " + ex,
 				"description": "exploited",
-			}
-			eb, _ := json.Marshal(entry)
-			b.Write(eb)
-			b.WriteByte('\n')
+			})
 		}
 	}
+}
 
-	// Synthesize findings from domain_compromise[] metadata. Ares filters
-	// krbtgt rows out of hashes[] (see aresDomainCompromise doc), so without
-	// this step DreadGOAD's domainsFromKrbtgt never sees the krbtgt extraction
-	// and the "DOMAINS OWNED" panel stays empty for domains compromised solely
-	// via krbtgt (no cracked DA cleartext). The placeholder evidence is a
-	// 32-zero hex string so extractNTHash accepts it as an NT-hash-shaped
-	// signal; the actual hash value is intentionally not exposed in the loot
-	// JSON, so the evidence is symbolic.
+// writeDomainCompromiseEntries synthesizes findings from domain_compromise[]
+// metadata. Ares filters krbtgt rows out of hashes[] (see aresDomainCompromise
+// doc), so without this step DreadGOAD's domainsFromKrbtgt never sees the
+// krbtgt extraction and the "DOMAINS OWNED" panel stays empty for domains
+// compromised solely via krbtgt (no cracked DA cleartext). The placeholder
+// evidence is a 32-zero hex string so extractNTHash accepts it as an
+// NT-hash-shaped signal; the actual hash value is intentionally not exposed
+// in the loot JSON, so the evidence is symbolic.
+func writeDomainCompromiseEntries(b *strings.Builder, entries []aresDomainCompromise, emitted map[string]bool) {
 	const krbtgtSyntheticEvidence = "00000000000000000000000000000000"
-	for _, dc := range l.DomainCompromise {
+	for _, dc := range entries {
 		domain := strings.ToLower(strings.TrimSpace(dc.Domain))
 		if domain == "" {
 			continue
 		}
 		if dc.HasDomainAdmin && len(dc.KrbtgtHashTypes) > 0 {
-			entry := map[string]string{
+			writeJSONLEntry(b, map[string]string{
 				"target":      "krbtgt@" + domain,
 				"evidence":    krbtgtSyntheticEvidence,
 				"description": "ares: synthetic krbtgt from domain_compromise (" + strings.Join(dc.KrbtgtHashTypes, ",") + ")",
-			}
-			eb, _ := json.Marshal(entry)
-			b.Write(eb)
-			b.WriteByte('\n')
+			})
 		}
 		if dc.HasGoldenTicket {
 			techID := "golden_ticket-" + domain
 			if !emitted[techID] {
 				emitted[techID] = true
-				entry := map[string]string{
+				writeJSONLEntry(b, map[string]string{
 					"target":      "tech:" + techID,
 					"evidence":    "ares: domain_compromise has_golden_ticket",
 					"description": "exploited",
-				}
-				eb, _ := json.Marshal(entry)
-				b.Write(eb)
-				b.WriteByte('\n')
+				})
 			}
 		}
 	}
-	return b.String()
 }
