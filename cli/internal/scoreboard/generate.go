@@ -358,6 +358,7 @@ func extractTechniques(lab map[string]any, asrep map[string][]string) []Objectiv
 	addKerberosTechniques(domains, asrep, add)
 	addHostTechniques(hosts, add)
 	addDomainTechniques(domains, add)
+	addADCSWebEnrollmentTechnique(domains, add)
 	addUniversalTechniques(add)
 
 	keys := make([]string, 0, len(techniques))
@@ -496,6 +497,22 @@ func addPrivescTechniques(h map[string]any, add techniqueAdd) {
 		if strings.Contains(getStr(p, "user"), "IIS") {
 			add("seimpersonate", "SeImpersonate (Potato/PrintSpoofer)", "privilege_escalation")
 		}
+	}
+}
+
+// addADCSWebEnrollmentTechnique credits ESC8 when any domain has Web Enrollment
+// installed. ESC8 isn't a per-host vulns marker (Ansible would try to dispatch
+// a non-existent vulns_adcs_esc8 role) — it's gated by the domain-level
+// ca_web_enrollment flag, which defaults to true. Mirrors validate/checks.go's
+// CAWebEnrollment() logic.
+func addADCSWebEnrollmentTechnique(domains map[string]any, add techniqueAdd) {
+	for _, dRaw := range domains {
+		d, _ := dRaw.(map[string]any)
+		if v, ok := d["ca_web_enrollment"].(bool); ok && !v {
+			continue
+		}
+		add("adcs_esc8", "ADCS ESC8", "adcs")
+		return
 	}
 }
 
