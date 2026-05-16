@@ -169,18 +169,36 @@ jobs:
           app-id: "${{ secrets.BOT_APP_ID }}"
           private-key: "${{ secrets.BOT_APP_PRIVATE_KEY }}"
 
+      - name: Check PR is still open
+        id: pr-state
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          state=$(gh pr view "${PR_NUMBER}" --repo "${GITHUB_REPOSITORY}" --json state --jq .state)
+          echo "PR #${PR_NUMBER} state: ${state}"
+          if [ "${state}" = "OPEN" ]; then
+            echo "open=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "open=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping autofix push: PR is ${state}."
+          fi
+
       - name: Checkout PR head
+        if: steps.pr-state.outputs.open == 'true'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ github.event.pull_request.head.ref }}
           persist-credentials: false
 
       - name: Download autofix patch
+        if: steps.pr-state.outputs.open == 'true'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: autofix-patch
 
       - name: Apply patch and push
+        if: steps.pr-state.outputs.open == 'true'
         env:
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
           APP_TOKEN: ${{ steps.app-token.outputs.token }}
