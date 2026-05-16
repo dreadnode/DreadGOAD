@@ -19,7 +19,7 @@
                 ]
             },
             "scripts" : ["sidhistory.ps1"],
-            "vulns" : ["disable_firewall", "adcs_esc10_case1", "adcs_esc10_case2"],
+            "vulns" : ["disable_firewall", "adcs_esc8", "adcs_esc10_case1", "adcs_esc10_case2"],
             "security": ["account_is_sensitive", "audit_policy"],
             "security_vars": {
                 "account_is_sensitive" : { "renly": {"account" : "renly.baratheon"} }
@@ -218,7 +218,7 @@
                 "essos\\Dothraki"
             ],
             "scripts" : [],
-            "vulns" : ["openshares","disable_firewall", "adcs_esc6", "adcs_esc11"],
+            "vulns" : ["openshares","disable_firewall", "adcs_esc6", "adcs_esc8", "adcs_esc11"],
             "security": ["enable_run_as_ppl"],
             "mssql":{
                 "sa_password": "sa_P@ssw0rd!Ess0s",

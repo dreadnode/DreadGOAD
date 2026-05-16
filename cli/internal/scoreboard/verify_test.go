@@ -114,7 +114,7 @@ func TestAnswerKeyHasAllExpectedTechniques(t *testing.T) {
 	want := []string{
 		"asrep_roast", "kerberoast",
 		"adcs_esc1", "adcs_esc2", "adcs_esc3", "adcs_esc4", "adcs_esc6",
-		"adcs_esc7", "adcs_esc9", "adcs_esc11", "adcs_esc13", "adcs_esc15",
+		"adcs_esc7", "adcs_esc8", "adcs_esc9", "adcs_esc11", "adcs_esc13", "adcs_esc15",
 		"adcs_esc10_case1", "adcs_esc10_case2",
 		"golden_ticket-essos.local",
 		"golden_ticket-north.sevenkingdoms.local",
@@ -126,6 +126,8 @@ func TestAnswerKeyHasAllExpectedTechniques(t *testing.T) {
 		"acl_abuse", "cross_forest_trust", "child_to_parent",
 		"constrained_delegation", "unconstrained_delegation",
 		"seimpersonate",
+		"nopac", "printnightmare", "zerologon", "cve_2019_1040",
+		"certifried", "krbrelayup", "machine_account_quota", "mitm6",
 	}
 	for _, w := range want {
 		if !techIDs[w] {

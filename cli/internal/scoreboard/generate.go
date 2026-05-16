@@ -315,13 +315,16 @@ var adcsLabels = map[string]string{
 	"adcs_esc2":        "ADCS ESC2",
 	"adcs_esc3":        "ADCS ESC3",
 	"adcs_esc4":        "ADCS ESC4",
+	"adcs_esc5":        "ADCS ESC5",
 	"adcs_esc6":        "ADCS ESC6",
 	"adcs_esc7":        "ADCS ESC7",
+	"adcs_esc8":        "ADCS ESC8",
 	"adcs_esc9":        "ADCS ESC9",
 	"adcs_esc10_case1": "ADCS ESC10 (Case 1)",
 	"adcs_esc10_case2": "ADCS ESC10 (Case 2)",
 	"adcs_esc11":       "ADCS ESC11",
 	"adcs_esc13":       "ADCS ESC13",
+	"adcs_esc14":       "ADCS ESC14",
 	"adcs_esc15":       "ADCS ESC15",
 }
 
@@ -355,7 +358,7 @@ func extractTechniques(lab map[string]any, asrep map[string][]string) []Objectiv
 	addKerberosTechniques(domains, asrep, add)
 	addHostTechniques(hosts, add)
 	addDomainTechniques(domains, add)
-	add("child_to_parent", "Child-to-Parent Domain Escalation", "domain_trust")
+	addUniversalTechniques(add)
 
 	keys := make([]string, 0, len(techniques))
 	for k := range techniques {
@@ -494,6 +497,24 @@ func addPrivescTechniques(h map[string]any, add techniqueAdd) {
 			add("seimpersonate", "SeImpersonate (Potato/PrintSpoofer)", "privilege_escalation")
 		}
 	}
+}
+
+// addUniversalTechniques credits techniques that are exploitable against any
+// default-configured GOAD lab: cross-domain escalation, unpatched DC CVEs,
+// ADCS-adjacent abuses (Certifried), IPv6 poisoning, and MAQ=10 chains. These
+// don't have per-host markers — the lab's defaults (unpatched Server roles,
+// MAQ=10, Print Spooler on, ca_web_enrollment=true) make them universally
+// applicable. Documented in docs/GOAD-vulnerabilities-comprehensive.md.
+func addUniversalTechniques(add techniqueAdd) {
+	add("child_to_parent", "Child-to-Parent Domain Escalation", "domain_trust")
+	add("nopac", "noPac (CVE-2021-42287/42278)", "cve")
+	add("printnightmare", "PrintNightmare (CVE-2021-1675)", "cve")
+	add("zerologon", "ZeroLogon (CVE-2020-1472)", "cve")
+	add("cve_2019_1040", "CVE-2019-1040 (Remove-MIC NTLM Bypass)", "cve")
+	add("certifried", "Certifried (CVE-2022-26923)", "adcs")
+	add("krbrelayup", "KrbRelayUp (RBCD self-relay)", "privilege_escalation")
+	add("machine_account_quota", "Machine Account Quota Abuse (MAQ=10)", "privilege_escalation")
+	add("mitm6", "MITM6 IPv6/DHCPv6 Poisoning", "network")
 }
 
 func addDomainTechniques(domains map[string]any, add techniqueAdd) {
