@@ -15,7 +15,7 @@
 | Name | Version |
 | ---- | ------- |
 | <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | 4.73.0 |
-| <a name="provider_local"></a> [local](#provider\_local) | 2.8.0 |
+| <a name="provider_local"></a> [local](#provider\_local) | 2.9.0 |
 | <a name="provider_tls"></a> [tls](#provider\_tls) | 4.3.0 |
 
 ## Modules
