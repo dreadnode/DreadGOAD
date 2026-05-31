@@ -15,7 +15,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/ec2 v1.304.0
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.68.6
 	github.com/aws/aws-sdk-go-v2/service/sts v1.42.1
-	github.com/cowdogmoo/warpgate/v3 v3.2.1-0.20260524030737-7e73a84c7e77
+	github.com/cowdogmoo/warpgate/v3 v3.2.1-0.20260527005229-370ea6812c1a
 	github.com/fatih/color v1.19.0
 	github.com/masterzen/winrm v0.0.0-20260407182533-5570be7f80cf
 	github.com/spf13/cobra v1.10.2
