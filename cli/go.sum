@@ -103,8 +103,8 @@ github.com/clipperhouse/uax29/v2 v2.7.0 h1:+gs4oBZ2gPfVrKPthwbMzWZDaAFPGYK72F0NJ
 github.com/clipperhouse/uax29/v2 v2.7.0/go.mod h1:EFJ2TJMRUaplDxHKj1qAEhCtQPW2tJSwu5BF98AuoVM=
 github.com/cowdogmoo/bcp v1.1.0 h1:r4m5TDpv6yy7VQ1R/SX3OJOBhNC4DT9OJOoKTeZGRXk=
 github.com/cowdogmoo/bcp v1.1.0/go.mod h1:7g4gfcnypJiAzWzggHzYoxAcwK1btNKn3UcwovQi+jE=
-github.com/cowdogmoo/warpgate/v3 v3.2.1-0.20260524030737-7e73a84c7e77 h1:AtDk8LwlpB22tvJshYWWBFBWUDsHeloxaYyfpqF8yo4=
-github.com/cowdogmoo/warpgate/v3 v3.2.1-0.20260524030737-7e73a84c7e77/go.mod h1:vH1Wy0dDIdtPRL1YQ+c5bBg+uRC7uGUOW+hJD94n+60=
+github.com/cowdogmoo/warpgate/v3 v3.2.1-0.20260527005229-370ea6812c1a h1:W/DrWuqFWd2n7SzsHGhjLoDclaNwlcQXDlBddwUGycw=
+github.com/cowdogmoo/warpgate/v3 v3.2.1-0.20260527005229-370ea6812c1a/go.mod h1:ZgfEiPDbCakkwWFSgseGZev/5sNzGB6sdVRkT0ont+U=
 github.com/cpuguy83/go-md2man/v2 v2.0.6/go.mod h1:oOW0eioCTA6cOiMLiUPZOpcVxMig6NIQQ7OS05n1F4g=
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
