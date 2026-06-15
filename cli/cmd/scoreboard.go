@@ -64,6 +64,7 @@ func init() {
 	scoreboardRunCmd.Flags().Duration("interval", 3*time.Second, "Poll interval (e.g. 3s, 1500ms)")
 	scoreboardRunCmd.Flags().Bool("restart", false, "Delete the existing report file on the target before starting (no-op for --transport=ares)")
 	scoreboardRunCmd.Flags().Bool("once", false, "Fetch + verify once, print the static board, exit (no TUI)")
+	scoreboardRunCmd.Flags().String("profile", "", "AWS profile (overrides AWS_PROFILE)")
 }
 
 func runScoreboardGenerateKey(cmd *cobra.Command, _ []string) error {
@@ -153,6 +154,7 @@ func buildTransport(ctx context.Context, cmd *cobra.Command, cfg *config.Config)
 	instanceID, _ := cmd.Flags().GetString("instance-id")
 	ssmRegion, _ := cmd.Flags().GetString("ssm-region")
 	aresBinary, _ := cmd.Flags().GetString("ares-binary")
+	profile, _ := cmd.Flags().GetString("profile")
 
 	switch transport {
 	case "local":
@@ -165,7 +167,7 @@ func buildTransport(ctx context.Context, cmd *cobra.Command, cfg *config.Config)
 		if region == "" {
 			region = cfg.Region
 		}
-		st, err := scoreboard.NewSSMTransport(ctx, instanceID, reportPath, region)
+		st, err := scoreboard.NewSSMTransport(ctx, instanceID, reportPath, region, profile)
 		if err != nil {
 			return nil, "", err
 		}
@@ -178,7 +180,7 @@ func buildTransport(ctx context.Context, cmd *cobra.Command, cfg *config.Config)
 		if region == "" {
 			region = cfg.Region
 		}
-		at, err := scoreboard.NewAresTransport(ctx, instanceID, aresBinary, region)
+		at, err := scoreboard.NewAresTransport(ctx, instanceID, aresBinary, region, profile)
 		if err != nil {
 			return nil, "", err
 		}

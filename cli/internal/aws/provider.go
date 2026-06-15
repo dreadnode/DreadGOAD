@@ -18,7 +18,7 @@ func init() {
 		if opts.Region == "" {
 			return nil, fmt.Errorf("AWS region is required")
 		}
-		client, err := NewClient(ctx, opts.Region)
+		client, err := NewClient(ctx, opts.Region, "")
 		if err != nil {
 			return nil, err
 		}

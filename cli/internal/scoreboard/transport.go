@@ -66,11 +66,11 @@ type SSMTransport struct {
 
 // NewSSMTransport builds an SSM transport. Region defaults to the SDK's
 // default if empty.
-func NewSSMTransport(ctx context.Context, instanceID, reportPath, region string) (*SSMTransport, error) {
+func NewSSMTransport(ctx context.Context, instanceID, reportPath, region, profile string) (*SSMTransport, error) {
 	if instanceID == "" {
 		return nil, fmt.Errorf("instance ID is required")
 	}
-	c, err := awsclient.NewClient(ctx, region)
+	c, err := awsclient.NewClient(ctx, region, profile)
 	if err != nil {
 		return nil, err
 	}
