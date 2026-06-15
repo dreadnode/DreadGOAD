@@ -64,7 +64,7 @@ func init() {
 	scoreboardRunCmd.Flags().Duration("interval", 3*time.Second, "Poll interval (e.g. 3s, 1500ms)")
 	scoreboardRunCmd.Flags().Bool("restart", false, "Delete the existing report file on the target before starting (no-op for --transport=ares)")
 	scoreboardRunCmd.Flags().Bool("once", false, "Fetch + verify once, print the static board, exit (no TUI)")
-	scoreboardRunCmd.Flags().String("profile", "", "AWS profile (overrides AWS_PROFILE)")
+	scoreboardRunCmd.Flags().String("profile", "", "AWS named profile for SSM/ares transports")
 }
 
 func runScoreboardGenerateKey(cmd *cobra.Command, _ []string) error {

@@ -42,7 +42,10 @@ func NewClient(ctx context.Context, region, profile string) (*Client, error) {
 	}
 	cfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("load AWS config for %s: %w", region, err)
+		if profile != "" {
+			return nil, fmt.Errorf("load AWS config for region=%s profile=%s: %w", region, profile, err)
+		}
+		return nil, fmt.Errorf("load AWS config for region=%s: %w", region, err)
 	}
 
 	c := &Client{
