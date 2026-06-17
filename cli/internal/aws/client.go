@@ -36,7 +36,10 @@ func NewClient(ctx context.Context, region, profile string) (*Client, error) {
 		return c, nil
 	}
 
-	opts := []func(*awsconfig.LoadOptions) error{awsconfig.WithRegion(region)}
+	var opts []func(*awsconfig.LoadOptions) error
+	if region != "" {
+		opts = append(opts, awsconfig.WithRegion(region))
+	}
 	if profile != "" {
 		opts = append(opts, awsconfig.WithSharedConfigProfile(profile))
 	}
