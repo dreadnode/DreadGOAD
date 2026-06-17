@@ -398,7 +398,7 @@ func purgeUnmanaged(ctx context.Context, cfg *config.Config, opts purgeOptions) 
 	if err != nil {
 		return err
 	}
-	client, err := daws.NewClient(ctx, region)
+	client, err := daws.NewClient(ctx, region, "")
 	if err != nil {
 		return err
 	}

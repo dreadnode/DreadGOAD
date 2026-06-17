@@ -25,18 +25,30 @@ var (
 	mu      sync.Mutex
 )
 
-// NewClient creates or returns a cached AWS client for the given region.
-func NewClient(ctx context.Context, region string) (*Client, error) {
+// NewClient creates or returns a cached AWS client for the given region and
+// optional profile. Pass an empty profile to use the SDK default chain.
+func NewClient(ctx context.Context, region, profile string) (*Client, error) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if c, ok := clients[region]; ok {
+	key := region + "\x00" + profile
+	if c, ok := clients[key]; ok {
 		return c, nil
 	}
 
-	cfg, err := awsconfig.LoadDefaultConfig(ctx, awsconfig.WithRegion(region))
+	var opts []func(*awsconfig.LoadOptions) error
+	if region != "" {
+		opts = append(opts, awsconfig.WithRegion(region))
+	}
+	if profile != "" {
+		opts = append(opts, awsconfig.WithSharedConfigProfile(profile))
+	}
+	cfg, err := awsconfig.LoadDefaultConfig(ctx, opts...)
 	if err != nil {
-		return nil, fmt.Errorf("load AWS config for %s: %w", region, err)
+		if profile != "" {
+			return nil, fmt.Errorf("load AWS config for region=%s profile=%s: %w", region, profile, err)
+		}
+		return nil, fmt.Errorf("load AWS config for region=%s: %w", region, err)
 	}
 
 	c := &Client{
@@ -45,7 +57,7 @@ func NewClient(ctx context.Context, region string) (*Client, error) {
 		STS:    sts.NewFromConfig(cfg),
 		Region: region,
 	}
-	clients[region] = c
+	clients[key] = c
 	return c, nil
 }
 

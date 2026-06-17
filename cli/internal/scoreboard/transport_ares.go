@@ -28,11 +28,11 @@ type AresTransport struct {
 
 // NewAresTransport constructs an AresTransport. binaryPath defaults to
 // /usr/local/bin/ares when empty.
-func NewAresTransport(ctx context.Context, instanceID, binaryPath, region string) (*AresTransport, error) {
+func NewAresTransport(ctx context.Context, instanceID, binaryPath, region, profile string) (*AresTransport, error) {
 	if instanceID == "" {
 		return nil, fmt.Errorf("instance ID is required")
 	}
-	c, err := awsclient.NewClient(ctx, region)
+	c, err := awsclient.NewClient(ctx, region, profile)
 	if err != nil {
 		return nil, err
 	}
