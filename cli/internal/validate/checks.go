@@ -320,54 +320,54 @@ func (v *Validator) checkMSSQL(ctx context.Context, w io.Writer) {
 		}
 		v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("MSSQL running on %s", hostLabel), "")
 
-		sqlQuery := func(sqlTmpl string, vars map[string]any) string {
-			out, err := runScriptText(ctx, v, host,
-				`$c = New-Object System.Data.SqlClient.SqlConnection 'Server=localhost;Integrated Security=True;TrustServerCertificate=True'; `+
-					`$c.Open(); $cmd = $c.CreateCommand(); `+
-					`$cmd.CommandText = @"`+"\n"+sqlTmpl+"\n"+`"@; `+
-					`$r = $cmd.ExecuteReader(); while ($r.Read()) { Write-Output $r[0].ToString() }; $r.Close(); $c.Close()`,
-				vars)
-			if err != nil {
-				return ""
-			}
-			return out
+		sqlQuery := func(sqlTmpl string, vars map[string]any) (string, bool) {
+			return v.mssqlProbe(ctx, host, sqlTmpl, vars)
 		}
 
 		for _, admin := range mf.MSSQL.SysAdmins {
-			output = sqlQuery(
+			rows, ok := sqlQuery(
 				`SELECT m.name FROM sys.server_role_members srm `+
 					`JOIN sys.server_principals r ON srm.role_principal_id = r.principal_id `+
 					`JOIN sys.server_principals m ON srm.member_principal_id = m.principal_id `+
 					`WHERE r.name = 'sysadmin' AND m.name = {{psq .Admin}}`,
 				map[string]any{"Admin": admin})
-			if output != "" {
+			switch {
+			case !ok:
+				v.addResult(w, "WARN", "MSSQL", fmt.Sprintf("Could not determine sysadmin status of %s on %s (host settling?)", admin, hostLabel), "")
+			case rows != "":
 				v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("%s is sysadmin on %s", admin, hostLabel), "")
-			} else {
+			default:
 				v.addResult(w, "FAIL", "MSSQL", fmt.Sprintf("%s is NOT sysadmin on %s", admin, hostLabel), "")
 			}
 		}
 
 		for grantee, target := range mf.MSSQL.ExecuteAsLogin {
-			output = sqlQuery(
+			rows, ok := sqlQuery(
 				`SELECT pr.name FROM sys.server_permissions sp `+
 					`JOIN sys.server_principals pr ON sp.grantee_principal_id = pr.principal_id `+
 					`JOIN sys.server_principals pr2 ON sp.major_id = pr2.principal_id `+
 					`WHERE sp.permission_name = 'IMPERSONATE' AND pr.name = {{psq .Grantee}} AND pr2.name = {{psq .Target}}`,
 				map[string]any{"Grantee": grantee, "Target": target})
-			if output != "" {
+			switch {
+			case !ok:
+				v.addResult(w, "WARN", "MSSQL", fmt.Sprintf("Could not determine IMPERSONATE grant for %s->%s on %s (host settling?)", grantee, target, hostLabel), "")
+			case rows != "":
 				v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("%s can impersonate %s on %s", grantee, target, hostLabel), "")
-			} else {
+			default:
 				v.addResult(w, "FAIL", "MSSQL", fmt.Sprintf("%s CANNOT impersonate %s on %s", grantee, target, hostLabel), "")
 			}
 		}
 
 		for name, ls := range mf.MSSQL.LinkedServers {
-			output = sqlQuery(
+			rows, ok := sqlQuery(
 				`SELECT name FROM sys.servers WHERE is_linked = 1 AND name = {{psq .Name}}`,
 				map[string]any{"Name": name})
-			if output != "" {
+			switch {
+			case !ok:
+				v.addResult(w, "WARN", "MSSQL", fmt.Sprintf("Could not determine linked server %s on %s (host settling?)", name, hostLabel), "")
+			case rows != "":
 				v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("Linked server %s -> %s on %s", name, ls.DataSrc, hostLabel), "")
-			} else {
+			default:
 				v.addResult(w, "FAIL", "MSSQL", fmt.Sprintf("Linked server %s NOT found on %s", name, hostLabel), "")
 			}
 		}
@@ -376,13 +376,47 @@ func (v *Validator) checkMSSQL(ctx context.Context, w io.Writer) {
 	}
 }
 
-type mssqlQueryFn func(sqlTmpl string, vars map[string]any) string
+// mssqlProbe runs a read-only SQL query on host over a local integrated-auth
+// connection and returns the rows (one per line). ok is false only when the
+// probe could not be completed after retries — a host still settling right
+// after provisioning returns empty or truncated stdout even though the WinRM
+// transport reports success. The sqlProbeSentinel, printed only after the
+// query finishes, separates that transient case from a genuine empty result
+// set: a completed query with no rows returns ("", true). Callers should WARN
+// (not FAIL) when ok is false so a healthy lab is never reported as broken.
+func (v *Validator) mssqlProbe(ctx context.Context, host, sqlTmpl string, vars map[string]any) (string, bool) {
+	script := `$c = New-Object System.Data.SqlClient.SqlConnection 'Server=localhost;Integrated Security=True;TrustServerCertificate=True'; ` +
+		`$c.Open(); $cmd = $c.CreateCommand(); ` +
+		`$cmd.CommandText = @"` + "\n" + sqlTmpl + "\n" + `"@; ` +
+		`$r = $cmd.ExecuteReader(); while ($r.Read()) { Write-Output $r[0].ToString() }; $r.Close(); $c.Close(); ` +
+		`Write-Output '` + sqlProbeSentinel + `'`
+	// runPSErr already retries empty-but-successful output (a settling host),
+	// so a single call suffices: a completed query always prints the sentinel
+	// — even with zero rows — so its presence means the result is authoritative
+	// (empty rows = a genuine negative). Its absence means the probe never
+	// completed (transport error, or empty output that outlived the retries):
+	// report ok=false so the caller WARNs instead of emitting a bogus FAIL.
+	out, err := runScriptText(ctx, v, host, script, vars)
+	if err != nil || !strings.Contains(out, sqlProbeSentinel) {
+		return "", false
+	}
+	return strings.TrimSpace(strings.Replace(out, sqlProbeSentinel, "", 1)), true
+}
+
+type mssqlQueryFn func(sqlTmpl string, vars map[string]any) (string, bool)
 
 func (v *Validator) checkMSSQLExtendedFeatures(w io.Writer, sqlQuery mssqlQueryFn, hostLabel string) {
-	output := sqlQuery(
+	xpOut, ok := sqlQuery(
 		`SELECT CONVERT(INT, ISNULL(value, value_in_use)) FROM sys.configurations WHERE name = 'xp_cmdshell'`,
 		nil)
-	xpEnabled := strings.TrimSpace(output) == "1"
+	if !ok {
+		// Couldn't get a definitive answer; the SeImpersonate probe below
+		// depends on xp_cmdshell, so skip the whole group rather than emit a
+		// bogus "NOT enabled".
+		v.addResult(w, "WARN", "MSSQL", fmt.Sprintf("Could not query xp_cmdshell on %s (host settling?)", hostLabel), "")
+		return
+	}
+	xpEnabled := strings.TrimSpace(xpOut) == "1"
 	if xpEnabled {
 		v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("xp_cmdshell enabled on %s", hostLabel), "")
 	} else {
@@ -390,17 +424,21 @@ func (v *Validator) checkMSSQLExtendedFeatures(w io.Writer, sqlQuery mssqlQueryF
 	}
 
 	if xpEnabled {
-		privOut := sqlQuery(`EXEC xp_cmdshell 'whoami /priv'`, nil)
-		if strings.Contains(privOut, "SeImpersonatePrivilege") {
-			v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("MSSQL service has SeImpersonatePrivilege on %s (potato escalation possible)", hostLabel), "")
-		} else if strings.TrimSpace(privOut) != "" {
-			v.addResult(w, "INFO", "MSSQL", fmt.Sprintf("SeImpersonatePrivilege NOT found on MSSQL service on %s", hostLabel), "")
+		if privOut, ok := sqlQuery(`EXEC xp_cmdshell 'whoami /priv'`, nil); ok {
+			if strings.Contains(privOut, "SeImpersonatePrivilege") {
+				v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("MSSQL service has SeImpersonatePrivilege on %s (potato escalation possible)", hostLabel), "")
+			} else if strings.TrimSpace(privOut) != "" {
+				v.addResult(w, "INFO", "MSSQL", fmt.Sprintf("SeImpersonatePrivilege NOT found on MSSQL service on %s", hostLabel), "")
+			}
 		}
 	}
 
-	trustworthy := sqlQuery(
+	trustworthy, ok := sqlQuery(
 		`SELECT name FROM sys.databases WHERE is_trustworthy_on = 1 AND name NOT IN ('master','tempdb')`,
 		nil)
+	if !ok {
+		return
+	}
 	dbs := parseOutputLines(trustworthy)
 	if len(dbs) > 0 {
 		v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("TRUSTWORTHY databases on %s: %s", hostLabel, strings.Join(dbs, ", ")), "")
