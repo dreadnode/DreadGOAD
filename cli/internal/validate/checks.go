@@ -15,6 +15,69 @@ func printHeader(w io.Writer, header string) {
 	_, _ = fmt.Fprintf(w, "\n== %s ==\n", header)
 }
 
+// probeOutcome classifies a "must-exist" probe so retryMustExist can tell a
+// genuine negative from a transient one.
+type probeOutcome int
+
+const (
+	probePositive   probeOutcome = iota // the expected thing is present (PASS-worthy)
+	probeNegative                       // the expected thing is genuinely absent (FAIL-worthy)
+	probeIncomplete                     // the probe could not complete (WARN-worthy)
+)
+
+// retryMustExist re-runs a probe for a condition that should always hold in a
+// correctly provisioned lab, returning as soon as it sees probePositive. Only
+// probeNegative is retried: a must-exist entity reported absent by a probe that
+// *completed* is far more often a transient blip (a DC mid-replication, an
+// admin share momentarily de-registered) than a real defect, and because the
+// probe completed the host is responsive, so re-running is cheap. A
+// probeIncomplete (transport error) is returned immediately — runPSErr has
+// already retried it and it feeds dead-host marking, so retrying again here
+// would only amplify latency against a slow or dead host. An outcome that
+// persists across every attempt is trusted, so a genuine defect still surfaces.
+func (v *Validator) retryMustExist(ctx context.Context, probe func() probeOutcome) probeOutcome {
+	var last probeOutcome
+	for attempt := 1; attempt <= transientRetries; attempt++ {
+		last = probe()
+		if last != probeNegative {
+			return last
+		}
+		if attempt < transientRetries {
+			if backoffSleep(ctx, attempt) != nil {
+				return last
+			}
+		}
+	}
+	return last
+}
+
+// scriptADUserExists checks whether an AD user exists, distinguishing a genuine
+// absence (USER_NOT_FOUND) from a transient directory error. Get-ADUser is run
+// with -ErrorAction Stop so a momentary RPC/timeout failure raises instead of
+// being silently swallowed into a false "not found"; only the AD-specific
+// not-found exception yields USER_NOT_FOUND, while any other error exits
+// non-zero and surfaces to the caller as a probe error (WARN, not FAIL).
+const scriptADUserExists = `try { Get-ADUser -Identity {{psq .Username}} -ErrorAction Stop > $null; 'USER_FOUND' } ` +
+	`catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] { 'USER_NOT_FOUND' } ` +
+	`catch { exit 1 }`
+
+// scriptADUserWithGroups is scriptADUserExists plus the user's group
+// memberships (one GROUP=<dn> line each) for membership assertions.
+const scriptADUserWithGroups = `try { $u = Get-ADUser -Identity {{psq .Username}} -Properties MemberOf -ErrorAction Stop } ` +
+	`catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] { Write-Output 'USER_NOT_FOUND'; exit 0 } ` +
+	`catch { exit 1 }; ` +
+	`Write-Output 'USER_FOUND'; ` +
+	`foreach ($g in $u.MemberOf) { Write-Output "GROUP=$g" }`
+
+// scriptAdminShares enumerates all SMB shares (failing loudly if the Server
+// service can't be queried) and emits the admin shares that are present. A
+// query error exits non-zero (WARN); a successful enumeration that is missing
+// a share is authoritative for that moment and is retried by the caller, since
+// ADMIN$/C$ can briefly de-register while the Server service settles.
+const scriptAdminShares = `$ErrorActionPreference='Stop'; ` +
+	`try { $s = Get-SmbShare } catch { exit 1 }; ` +
+	`$s | Where-Object { $_.Name -eq 'ADMIN$' -or $_.Name -eq 'C$' } | Select-Object -ExpandProperty Name`
+
 func (v *Validator) checkCredentialDiscovery(ctx context.Context, w io.Writer) {
 	printHeader(w, "Credential Discovery Vulnerabilities")
 
@@ -1542,22 +1605,32 @@ func (v *Validator) checkUsernamePasswordEqual(ctx context.Context, w io.Writer)
 		if !v.hasHost(dcRole) {
 			continue
 		}
-		output, err := runScriptText(ctx, v, dcRole,
-			`$u = Get-ADUser -Identity {{psq .Username}} -ErrorAction SilentlyContinue; if ($u) { 'USER_FOUND' } else { 'USER_NOT_FOUND' }`,
-			map[string]any{"Username": uf.Username})
-		switch {
-		case err != nil:
-			v.addResult(w, "WARN", "Credentials",
-				fmt.Sprintf("Could not verify %s in %s: %v", uf.Username, uf.Domain, err), "")
-		case strings.Contains(output, "USER_FOUND"):
+		var output string
+		var probeErr error
+		outcome := v.retryMustExist(ctx, func() probeOutcome {
+			output, probeErr = runScriptText(ctx, v, dcRole, scriptADUserExists,
+				map[string]any{"Username": uf.Username})
+			switch {
+			case probeErr != nil:
+				return probeIncomplete
+			case strings.Contains(output, "USER_FOUND"):
+				return probePositive
+			case strings.Contains(output, "USER_NOT_FOUND"):
+				return probeNegative
+			default:
+				return probeIncomplete
+			}
+		})
+		switch outcome {
+		case probePositive:
 			v.addResult(w, "PASS", "Credentials",
 				fmt.Sprintf("%s (password=%s) exists in %s", uf.Username, uf.User.Password, uf.Domain), "")
-		case strings.Contains(output, "USER_NOT_FOUND"):
+		case probeNegative:
 			v.addResult(w, "FAIL", "Credentials",
 				fmt.Sprintf("%s does NOT exist in %s (expected weak-cred user)", uf.Username, uf.Domain), "")
 		default:
 			v.addResult(w, "WARN", "Credentials",
-				fmt.Sprintf("Could not verify %s in %s", uf.Username, uf.Domain), "")
+				fmt.Sprintf("Could not verify %s in %s: %v", uf.Username, uf.Domain, probeErr), "")
 		}
 	}
 }
@@ -2766,18 +2839,28 @@ func (v *Validator) checkConfiguredUsers(ctx context.Context, w io.Writer) {
 		if !v.hasHost(dcRole) {
 			continue
 		}
-		output, err := runScriptText(ctx, v, dcRole,
-			`$u = Get-ADUser -Identity {{psq .Username}} -Properties MemberOf -ErrorAction SilentlyContinue; `+
-				`if (-not $u) { Write-Output 'USER_NOT_FOUND'; exit }; `+
-				`Write-Output 'USER_FOUND'; `+
-				`foreach ($g in $u.MemberOf) { Write-Output "GROUP=$g" }`,
-			map[string]any{"Username": uf.Username})
-		if err != nil {
+		var output string
+		var probeErr error
+		outcome := v.retryMustExist(ctx, func() probeOutcome {
+			output, probeErr = runScriptText(ctx, v, dcRole, scriptADUserWithGroups,
+				map[string]any{"Username": uf.Username})
+			switch {
+			case probeErr != nil:
+				return probeIncomplete
+			case strings.Contains(output, "USER_FOUND"):
+				return probePositive
+			case strings.Contains(output, "USER_NOT_FOUND"):
+				return probeNegative
+			default:
+				return probeIncomplete
+			}
+		})
+		switch outcome {
+		case probeIncomplete:
 			v.addResult(w, "WARN", "Users",
-				fmt.Sprintf("Could not verify %s in %s: %v", uf.Username, uf.Domain, err), "")
+				fmt.Sprintf("Could not verify %s in %s: %v", uf.Username, uf.Domain, probeErr), "")
 			continue
-		}
-		if !strings.Contains(output, "USER_FOUND") {
+		case probeNegative:
 			v.addResult(w, "FAIL", "Users",
 				fmt.Sprintf("%s does NOT exist in %s", uf.Username, uf.Domain), "")
 			continue
@@ -3033,26 +3116,37 @@ func (v *Validator) checkAdminShares(ctx context.Context, w io.Writer) {
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
 
-		output := v.runPS(ctx, host,
-			`Get-SmbShare -Name ADMIN$,C$ -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name`)
-		shares := parseOutputLines(output)
-		found := make(map[string]bool, len(shares))
-		for _, s := range shares {
-			found[strings.ToUpper(strings.TrimSpace(s))] = true
-		}
-
 		var missing []string
-		for _, want := range []string{"ADMIN$", "C$"} {
-			if !found[want] {
-				missing = append(missing, want)
+		outcome := v.retryMustExist(ctx, func() probeOutcome {
+			output, err := runScriptText(ctx, v, host, scriptAdminShares, nil)
+			if err != nil {
+				return probeIncomplete
 			}
-		}
-		if len(missing) == 0 {
+			found := make(map[string]bool)
+			for _, s := range parseOutputLines(output) {
+				found[strings.ToUpper(strings.TrimSpace(s))] = true
+			}
+			missing = nil
+			for _, want := range []string{"ADMIN$", "C$"} {
+				if !found[want] {
+					missing = append(missing, want)
+				}
+			}
+			if len(missing) == 0 {
+				return probePositive
+			}
+			return probeNegative
+		})
+		switch outcome {
+		case probePositive:
 			v.addResult(w, "PASS", "AdminShares",
 				fmt.Sprintf("%s exposes ADMIN$ and C$", hostLabel), "")
-		} else {
+		case probeNegative:
 			v.addResult(w, "FAIL", "AdminShares",
 				fmt.Sprintf("%s missing default shares: %s", hostLabel, strings.Join(missing, ", ")), "")
+		default:
+			v.addResult(w, "WARN", "AdminShares",
+				fmt.Sprintf("Could not enumerate shares on %s (host settling?)", hostLabel), "")
 		}
 	}
 }

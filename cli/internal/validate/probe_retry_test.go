@@ -188,6 +188,82 @@ func TestRunPSErr_NonEmptyReturnsImmediately(t *testing.T) {
 	}
 }
 
+// retryMustExist must return immediately on a positive result without retrying.
+func TestRetryMustExist_PositiveShortCircuits(t *testing.T) {
+	v, _ := newStubValidator(t, func(int, string) (*provider.CommandResult, error) {
+		return &provider.CommandResult{Status: "Success", Stdout: "x"}, nil
+	})
+	calls := 0
+	out := v.retryMustExist(context.Background(), func() probeOutcome {
+		calls++
+		return probePositive
+	})
+	if out != probePositive {
+		t.Fatalf("expected probePositive, got %d", out)
+	}
+	if calls != 1 {
+		t.Errorf("positive must not retry, got %d calls", calls)
+	}
+}
+
+// A must-exist entity reported absent is retried; a negative that persists
+// across every attempt is ultimately trusted (a genuine misconfiguration).
+func TestRetryMustExist_NegativeRetriedThenTrusted(t *testing.T) {
+	v, _ := newStubValidator(t, func(int, string) (*provider.CommandResult, error) {
+		return &provider.CommandResult{Status: "Success", Stdout: "x"}, nil
+	})
+	calls := 0
+	out := v.retryMustExist(context.Background(), func() probeOutcome {
+		calls++
+		return probeNegative
+	})
+	if out != probeNegative {
+		t.Fatalf("expected probeNegative after retries, got %d", out)
+	}
+	if calls != transientRetries {
+		t.Errorf("expected %d attempts, got %d", transientRetries, calls)
+	}
+}
+
+// A momentary negative that clears (DC mid-replication, share re-registering)
+// must recover to positive rather than reporting a false FAIL.
+func TestRetryMustExist_RecoversFromTransientNegative(t *testing.T) {
+	v, _ := newStubValidator(t, func(int, string) (*provider.CommandResult, error) {
+		return &provider.CommandResult{Status: "Success", Stdout: "x"}, nil
+	})
+	calls := 0
+	out := v.retryMustExist(context.Background(), func() probeOutcome {
+		calls++
+		if calls < transientRetries {
+			return probeNegative
+		}
+		return probePositive
+	})
+	if out != probePositive {
+		t.Fatalf("expected recovery to probePositive, got %d", out)
+	}
+}
+
+// A probeIncomplete (transport error) must NOT be retried — runPSErr already
+// retried it and it feeds dead-host marking, so re-running would amplify
+// latency against a slow or dead host.
+func TestRetryMustExist_IncompleteDoesNotRetry(t *testing.T) {
+	v, _ := newStubValidator(t, func(int, string) (*provider.CommandResult, error) {
+		return &provider.CommandResult{Status: "Success", Stdout: "x"}, nil
+	})
+	calls := 0
+	out := v.retryMustExist(context.Background(), func() probeOutcome {
+		calls++
+		return probeIncomplete
+	})
+	if out != probeIncomplete {
+		t.Fatalf("expected probeIncomplete, got %d", out)
+	}
+	if calls != 1 {
+		t.Errorf("incomplete must not retry (avoid amplifying a dead host), got %d calls", calls)
+	}
+}
+
 // runScriptJSON must retry when the JSON envelope is missing (a settling host
 // returns banner-only or empty stdout) and succeed once it appears.
 func TestRunScriptJSON_RetriesUntilEnvelopeAppears(t *testing.T) {
