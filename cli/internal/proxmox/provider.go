@@ -24,7 +24,7 @@ func init() {
 		}
 		node := opts.ProxmoxNode
 		if node == "" {
-			node = "pve"
+			node = "proxmox"
 		}
 		pool := opts.ProxmoxPool
 		if pool == "" {
