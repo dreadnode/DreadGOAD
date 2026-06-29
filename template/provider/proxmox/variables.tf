@@ -12,7 +12,7 @@ variable "pm_password" {
 }
 
 variable "pm_node" {
-  default = "{{config.get_value('proxmox', 'pm_node', 'GOAD')}}"
+  default = "{{config.get_value('proxmox', 'pm_node', 'proxmox')}}"
 }
 
 variable "pm_pool" {
