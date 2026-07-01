@@ -191,12 +191,26 @@ func bootstrapInventory(invPath string) error {
 }
 
 func bootstrapFromProviderTemplate(invPath string, cfg *config.Config) error {
-	labName := "GOAD"
-	if cfg.ResolvedProvider() == "proxmox" {
-		labName = cfg.ProxmoxLab()
-	}
 	providerName := cfg.ResolvedProvider()
-	templatePath := filepath.Join(cfg.ProjectRoot, "ad", labName, "providers", providerName, "inventory")
+
+	// Resolve the lab tree that holds the provider inventory template. For a
+	// variant environment, read from the variant target tree so the
+	// bootstrapped inventory (which carries domain_name and the asset layout)
+	// points at the variant's ad/<target>/ assets rather than the stock
+	// ad/GOAD/ tree. Falls back to the stock/proxmox path for non-variants.
+	var templatePath string
+	if ec := cfg.ActiveEnvironment(); ec.Variant {
+		if _, target := cfg.ResolvedVariantPaths(); target != "" {
+			templatePath = filepath.Join(target, "providers", providerName, "inventory")
+		}
+	}
+	if templatePath == "" {
+		labName := "GOAD"
+		if providerName == "proxmox" {
+			labName = cfg.ProxmoxLab()
+		}
+		templatePath = filepath.Join(cfg.ProjectRoot, "ad", labName, "providers", providerName, "inventory")
+	}
 
 	data, err := os.ReadFile(templatePath)
 	if err != nil {

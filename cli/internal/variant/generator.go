@@ -715,16 +715,62 @@ func (g *Generator) applyReplacements(content string) string {
 		}
 
 		if g.isNameComponent(r.Old) {
-			pattern := `\b` + regexp.QuoteMeta(r.Old) + `\b`
-			re, err := regexp.Compile(pattern)
-			if err == nil {
-				content = re.ReplaceAllString(content, r.New)
-			}
+			content = replaceNameComponent(content, r.Old, r.New)
 		} else {
 			content = strings.ReplaceAll(content, r.Old, r.New)
 		}
 	}
 	return content
+}
+
+// replaceNameComponent replaces every occurrence of a name-component token
+// (a firstname/surname fragment) with its replacement, honoring both normal
+// word boundaries AND CamelCase boundaries. Go's regexp (RE2) has no
+// lookahead, so we match a leading word boundary plus the token, then accept a
+// match only when the character immediately after it is:
+//
+//	(a) absent (end of string),
+//	(b) a non-word character (normal word boundary), or
+//	(c) an uppercase ASCII letter (CamelCase boundary, e.g. "StarkWallpaper").
+//
+// A trailing lowercase letter, digit, or underscore is rejected so that
+// "starky"/"starkey" are left intact.
+func replaceNameComponent(content, old, replacement string) string {
+	re, err := regexp.Compile(`\b` + regexp.QuoteMeta(old))
+	if err != nil {
+		return content
+	}
+
+	var b strings.Builder
+	last := 0
+	for _, loc := range re.FindAllStringIndex(content, -1) {
+		start, end := loc[0], loc[1]
+
+		accept := true
+		if end < len(content) {
+			c := content[end]
+			isWord := c == '_' ||
+				('0' <= c && c <= '9') ||
+				('a' <= c && c <= 'z') ||
+				('A' <= c && c <= 'Z')
+			isUpper := 'A' <= c && c <= 'Z'
+			// Reject only when the following char is a word char that is NOT
+			// an uppercase letter (i.e. lowercase letter, digit, or underscore).
+			if isWord && !isUpper {
+				accept = false
+			}
+		}
+
+		b.WriteString(content[last:start])
+		if accept {
+			b.WriteString(replacement)
+		} else {
+			b.WriteString(content[start:end])
+		}
+		last = end
+	}
+	b.WriteString(content[last:])
+	return b.String()
 }
 
 // isNameComponent returns true if old is a firstname/surname component needing word-boundary protection.
@@ -845,14 +891,23 @@ var textFilenames = map[string]bool{
 func (g *Generator) transformFile(srcPath, relPath string) (transformed bool) {
 	ext := filepath.Ext(srcPath)
 	base := filepath.Base(srcPath)
-	targetFile := filepath.Join(g.TargetPath, relPath)
+
+	// Rename the output basename so a file named after an identity
+	// (e.g. files/srv02/all/arya.txt) is written under the same rewritten
+	// name that config.json now references (kathleen.txt). Only the final
+	// path element is transformed; the directory portion of relPath is left
+	// untouched. Uses the same replacement machinery as file content.
+	relDir := filepath.Dir(relPath)
+	newBase := g.applyReplacements(base)
+	targetFile := filepath.Join(g.TargetPath, relDir, newBase)
 
 	if err := os.MkdirAll(filepath.Dir(targetFile), 0o755); err != nil {
 		fmt.Printf("Warning: mkdir failed for %s: %v\n", relPath, err)
 		return false
 	}
 
-	if textExtensions[ext] || textFilenames[base] {
+	isInventory := strings.HasPrefix(base, "inventory")
+	if textExtensions[ext] || textFilenames[base] || isInventory {
 		content, err := os.ReadFile(srcPath)
 		if err != nil {
 			fmt.Printf("Warning: Could not read %s: %v\n", relPath, err)
@@ -876,6 +931,10 @@ func (g *Generator) transformFile(srcPath, relPath string) (transformed bool) {
 			}
 		}
 
+		if isInventory {
+			newContent = g.repointDomainName(newContent)
+		}
+
 		if err := os.WriteFile(targetFile, []byte(newContent), 0o644); err != nil {
 			fmt.Printf("Warning: Could not write %s: %v\n", relPath, err)
 			return false
@@ -885,6 +944,22 @@ func (g *Generator) transformFile(srcPath, relPath string) (transformed bool) {
 
 	copyFile(srcPath, targetFile)
 	return false
+}
+
+// repointDomainName rewrites the Ansible `domain_name` inventory variable to
+// the variant target folder basename. Playbooks resolve vuln scripts/files as
+// ad/{{ domain_name }}/..., so for a variant this must point at the variant's
+// own ad/<target>/ tree rather than the stock ad/GOAD/ tree. Only the value is
+// changed; the key, indentation, and surrounding lines are preserved.
+func (g *Generator) repointDomainName(content string) string {
+	target := filepath.Base(g.TargetPath)
+	re := regexp.MustCompile(`(?m)^(\s*domain_name\s*=).*$`)
+	return re.ReplaceAllStringFunc(content, func(line string) string {
+		if idx := strings.Index(line, "="); idx >= 0 {
+			return line[:idx+1] + target
+		}
+		return line
+	})
 }
 
 // copyAndTransform copies the source directory, transforming text files.
