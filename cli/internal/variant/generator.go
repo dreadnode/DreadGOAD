@@ -983,9 +983,12 @@ func (g *Generator) copyAndTransform() error {
 			return nil
 		}
 
-		// Skip .git files
+		// Skip git metadata (the .git directory itself is skipped above), but KEEP
+		// .gitkeep placeholders: they preserve otherwise-empty directories the lab
+		// relies on (e.g. files/srv02/wwwroot/upload/), which would silently vanish
+		// from the variant if dropped.
 		rel, _ := filepath.Rel(g.SourcePath, path)
-		if strings.Contains(rel, ".git") {
+		if strings.Contains(rel, ".git") && d.Name() != ".gitkeep" {
 			return nil
 		}
 
