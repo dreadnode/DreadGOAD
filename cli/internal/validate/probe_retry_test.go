@@ -125,6 +125,42 @@ func TestMSSQLProbe_RecoversAfterSettling(t *testing.T) {
 	}
 }
 
+// A row value that contains the sentinel substring but is not the final line
+// must be treated as sentinel-absent (ok=false): the probe anchors on the last
+// line so truncated output or a poisoned row cannot fake completion.
+func TestMSSQLProbe_SentinelMustBeFinalLine(t *testing.T) {
+	v, _ := newStubValidator(t, func(_ int, _ string) (*provider.CommandResult, error) {
+		// Sentinel appears embedded in a row, but the final line is a real
+		// row rather than the sentinel — the query never completed.
+		return &provider.CommandResult{Status: "Success", Stdout: "prefix " + sqlProbeSentinel + " suffix\nrow-after-sentinel\n"}, nil
+	})
+
+	rows, ok := v.mssqlProbe(context.Background(), "SRV03", "SELECT 1", nil)
+	if ok {
+		t.Fatalf("sentinel not on final line must return ok=false, got ok=true rows=%q", rows)
+	}
+	if rows != "" {
+		t.Errorf("expected empty rows on incomplete probe, got %q", rows)
+	}
+}
+
+// A row whose value happens to contain the sentinel substring must survive
+// intact once the real sentinel arrives on its own final line.
+func TestMSSQLProbe_PreservesRowContainingSentinelSubstring(t *testing.T) {
+	poisoned := "value-with-" + sqlProbeSentinel + "-inside"
+	v, _ := newStubValidator(t, func(_ int, _ string) (*provider.CommandResult, error) {
+		return &provider.CommandResult{Status: "Success", Stdout: poisoned + "\n" + sqlProbeSentinel + "\n"}, nil
+	})
+
+	rows, ok := v.mssqlProbe(context.Background(), "SRV03", "SELECT 1", nil)
+	if !ok {
+		t.Fatal("completed probe must return ok=true even when rows contain the sentinel substring")
+	}
+	if rows != poisoned {
+		t.Errorf("row corrupted by sentinel stripping: expected %q, got %q", poisoned, rows)
+	}
+}
+
 // A transport error (slow/dead host) must NOT trigger the outer retry loop —
 // runPSErr already retried it, and re-running multiplies latency against a
 // host that is timing out. An unknown host makes runPSErr return immediately
@@ -261,6 +297,30 @@ func TestRetryMustExist_IncompleteDoesNotRetry(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Errorf("incomplete must not retry (avoid amplifying a dead host), got %d calls", calls)
+	}
+}
+
+// A ctx cancellation during backoff must surface as probeIncomplete (WARN),
+// not the last probeNegative — a negative observed mid-cancellation is not
+// authoritative and must not become a false FAIL.
+func TestRetryMustExist_CtxCancelDuringBackoffIsIncomplete(t *testing.T) {
+	v, _ := newStubValidator(t, func(int, string) (*provider.CommandResult, error) {
+		return &provider.CommandResult{Status: "Success", Stdout: "x"}, nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	calls := 0
+	out := v.retryMustExist(ctx, func() probeOutcome {
+		calls++
+		// Cancel after the first probe so the backoff between attempts
+		// bails out with ctx.Err().
+		cancel()
+		return probeNegative
+	})
+	if out != probeIncomplete {
+		t.Fatalf("ctx cancel during backoff must return probeIncomplete, got %d", out)
+	}
+	if calls != 1 {
+		t.Errorf("expected exactly one probe before cancellation, got %d", calls)
 	}
 }
 

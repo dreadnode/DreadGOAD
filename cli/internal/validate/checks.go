@@ -44,7 +44,11 @@ func (v *Validator) retryMustExist(ctx context.Context, probe func() probeOutcom
 		}
 		if attempt < transientRetries {
 			if backoffSleep(ctx, attempt) != nil {
-				return last
+				// Backoff was cut short (ctx cancelled or deadline hit); a
+				// probeNegative captured mid-cancellation is not authoritative,
+				// so surface probeIncomplete (WARN) rather than letting the
+				// cancellation masquerade as a genuine defect (FAIL).
+				return probeIncomplete
 			}
 		}
 	}
@@ -455,15 +459,31 @@ func (v *Validator) mssqlProbe(ctx context.Context, host, sqlTmpl string, vars m
 		`Write-Output '` + sqlProbeSentinel + `'`
 	// runPSErr already retries empty-but-successful output (a settling host),
 	// so a single call suffices: a completed query always prints the sentinel
-	// — even with zero rows — so its presence means the result is authoritative
-	// (empty rows = a genuine negative). Its absence means the probe never
-	// completed (transport error, or empty output that outlived the retries):
-	// report ok=false so the caller WARNs instead of emitting a bogus FAIL.
+	// as its final line, even with zero rows, so a matching last line means
+	// the result is authoritative (empty rows = a genuine negative). A missing
+	// (or non-final) sentinel means the probe never completed (transport
+	// error, or truncated output that outlived the retries): report ok=false
+	// so the caller WARNs instead of emitting a bogus FAIL.
 	out, err := runScriptText(ctx, v, host, script, vars)
-	if err != nil || !strings.Contains(out, sqlProbeSentinel) {
+	if err != nil {
 		return "", false
 	}
-	return strings.TrimSpace(strings.Replace(out, sqlProbeSentinel, "", 1)), true
+	// Anchor on the final line rather than substring-searching: a row value
+	// that happens to contain the sentinel (or output truncated mid-row but
+	// still including the sentinel substring) must not be able to fool the
+	// probe into ok=true or corrupt the returned rows.
+	idx := strings.LastIndex(out, "\n")
+	last := out
+	if idx >= 0 {
+		last = out[idx+1:]
+	}
+	if strings.TrimRight(last, "\r") != sqlProbeSentinel {
+		return "", false
+	}
+	if idx < 0 {
+		return "", true
+	}
+	return strings.TrimRight(out[:idx], "\r\n"), true
 }
 
 type mssqlQueryFn func(sqlTmpl string, vars map[string]any) (string, bool)
@@ -500,6 +520,10 @@ func (v *Validator) checkMSSQLExtendedFeatures(w io.Writer, sqlQuery mssqlQueryF
 		`SELECT name FROM sys.databases WHERE is_trustworthy_on = 1 AND name NOT IN ('master','tempdb')`,
 		nil)
 	if !ok {
+		// Same reasoning as xp_cmdshell above: emit WARN rather than silently
+		// dropping the check, so "couldn't query" is distinguishable from
+		// "no trustworthy DBs".
+		v.addResult(w, "WARN", "MSSQL", fmt.Sprintf("Could not query TRUSTWORTHY databases on %s (host settling?)", hostLabel), "")
 		return
 	}
 	dbs := parseOutputLines(trustworthy)
