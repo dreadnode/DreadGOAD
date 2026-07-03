@@ -2964,6 +2964,110 @@ func (v *Validator) checkConfiguredGroups(ctx context.Context, w io.Writer) {
 	}
 }
 
+// checkCrossDomainGroupMemberships verifies every configured
+// multi_domain_groups_member relation. Foreign members are represented in the
+// local domain as ForeignSecurityPrincipal objects, so the probe resolves each
+// configured principal's SID in its source domain and accepts either the
+// principal DN or the local FSP DN as proof.
+func (v *Validator) checkCrossDomainGroupMemberships(ctx context.Context, w io.Writer) {
+	printHeader(w, "Configured Cross-Domain Group Memberships")
+
+	facts := v.lab.CrossDomainGroupMemberships()
+	if len(facts) == 0 {
+		v.addResult(w, "SKIP", "Groups", "No cross-domain group memberships configured", "")
+		return
+	}
+
+	adminUser := v.lab.AdminUser
+	if adminUser == "" {
+		adminUser = "administrator"
+	}
+
+	for _, gf := range facts {
+		dcRole := strings.ToUpper(gf.DCRole)
+		if !v.hasHost(dcRole) {
+			continue
+		}
+		domainConfig, ok := v.lab.DomainConfigs[gf.Domain]
+		if !ok {
+			v.addResult(w, "WARN", "Groups",
+				fmt.Sprintf("Could not verify cross-domain members of '%s': domain %s is not configured", gf.Group, gf.Domain), "")
+			continue
+		}
+		domainUsernamePrefix := domainConfig.NetBIOSName
+		if domainUsernamePrefix == "" {
+			domainUsernamePrefix = gf.Domain
+		}
+
+		output, err := runScriptText(ctx, v, dcRole,
+			`$ErrorActionPreference = 'Stop'; `+
+				`$localDomain = {{psq .Domain}}; `+
+				`$domainUsername = {{psq .DomainUsername}}; `+
+				`$password = ConvertTo-SecureString {{psq .DomainPassword}} -AsPlainText -Force; `+
+				`$credential = New-Object System.Management.Automation.PSCredential($domainUsername, $password); `+
+				`$group = Get-ADGroup -Identity {{psq .Group}} -Properties Members -Server $localDomain -Credential $credential -ErrorAction Stop; `+
+				`$localBase = (Get-ADDomain -Server $localDomain -Credential $credential -ErrorAction Stop).DistinguishedName; `+
+				`foreach ($member in {{psarr .Members}}) { `+
+				`  $parts = $member -split '\\', 2; `+
+				`  if ($parts.Count -ne 2) { Write-Output "MEMBER_INVALID=$member"; continue }; `+
+				`  $memberDomain = $parts[0]; $memberName = $parts[1]; $adObject = $null; `+
+				`  try { $adObject = Get-ADUser -Identity $memberName -Server $memberDomain -Credential $credential -ErrorAction Stop } catch { `+
+				`    try { $adObject = Get-ADGroup -Identity $memberName -Server $memberDomain -Credential $credential -ErrorAction Stop } catch { `+
+				`      Write-Output "MEMBER_LOOKUP_ERROR=$member"; continue `+
+				`    } `+
+				`  }; `+
+				`  $expectedDNs = @($adObject.DistinguishedName, "CN=$($adObject.SID.Value),CN=ForeignSecurityPrincipals,$localBase"); `+
+				`  if (@($group.Members | Where-Object { $expectedDNs -contains $_ }).Count -gt 0) { `+
+				`    Write-Output "MEMBER_OK=$member" `+
+				`  } else { `+
+				`    Write-Output "MEMBER_MISSING=$member" `+
+				`  } `+
+				`}`,
+			map[string]any{
+				"Domain":         gf.Domain,
+				"DomainUsername": domainUsernamePrefix + `\` + adminUser,
+				"DomainPassword": domainConfig.DomainPassword,
+				"Group":          gf.Group,
+				"Members":        gf.Members,
+			})
+		if err != nil {
+			v.addResult(w, "WARN", "Groups",
+				fmt.Sprintf("Could not verify cross-domain members of '%s' in %s: %v", gf.Group, gf.Domain, err), "")
+			continue
+		}
+
+		var missing, unresolved []string
+		okCount := 0
+		for _, line := range parseOutputLines(output) {
+			switch {
+			case strings.HasPrefix(line, "MEMBER_OK="):
+				okCount++
+			case strings.HasPrefix(line, "MEMBER_MISSING="):
+				missing = append(missing, strings.TrimPrefix(line, "MEMBER_MISSING="))
+			case strings.HasPrefix(line, "MEMBER_LOOKUP_ERROR="):
+				unresolved = append(unresolved, strings.TrimPrefix(line, "MEMBER_LOOKUP_ERROR="))
+			case strings.HasPrefix(line, "MEMBER_INVALID="):
+				unresolved = append(unresolved, strings.TrimPrefix(line, "MEMBER_INVALID="))
+			}
+		}
+
+		switch {
+		case len(unresolved) > 0:
+			v.addResult(w, "WARN", "Groups",
+				fmt.Sprintf("Could not resolve configured members of '%s' in %s: %s", gf.Group, gf.Domain, strings.Join(unresolved, ", ")), "")
+		case len(missing) > 0:
+			v.addResult(w, "FAIL", "Groups",
+				fmt.Sprintf("Group '%s' missing configured members in %s: %s", gf.Group, gf.Domain, strings.Join(missing, ", ")), "")
+		case okCount != len(gf.Members):
+			v.addResult(w, "WARN", "Groups",
+				fmt.Sprintf("Could not confirm all configured members of '%s' in %s: got %d/%d proofs", gf.Group, gf.Domain, okCount, len(gf.Members)), "")
+		default:
+			v.addResult(w, "PASS", "Groups",
+				fmt.Sprintf("Group '%s' has %d/%d configured cross-domain members in %s", gf.Group, okCount, len(gf.Members), gf.Domain), "")
+		}
+	}
+}
+
 // ---- Section 11: Local Admin Access Map ----
 
 // localAdminsQuery is `net localgroup Administrators` parsed down to its
