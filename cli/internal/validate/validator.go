@@ -322,6 +322,40 @@ func (v *Validator) runPSErr(ctx context.Context, host, command string) (string,
 		return "", fmt.Errorf("host %s marked dead for this run", host)
 	}
 
+	// Absorb empty-but-successful responses: a host still settling right after
+	// provisioning returns blank stdout even though the call itself succeeded,
+	// which probes otherwise read as a real "thing not found" and report as a
+	// bogus failure. Retry such responses (without counting them as transport
+	// failures — the host is up), with backoff. A genuinely empty result
+	// converges to the same blank value, so this only costs a little latency
+	// in the rare case where empty is the real answer. Transport *errors* are
+	// not retried here; runPSTransport already handles those and feeds the
+	// dead-host machinery, so re-running would only amplify latency on a slow
+	// or dead host.
+	for emptyAttempt := 1; emptyAttempt <= transientRetries; emptyAttempt++ {
+		stdout, err := v.runPSTransport(ctx, instanceID, host, command)
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(stdout) != "" {
+			return stdout, nil
+		}
+		if emptyAttempt < transientRetries {
+			if berr := backoffSleep(ctx, emptyAttempt); berr != nil {
+				return "", berr
+			}
+		}
+	}
+	// Empty after retries: a genuine empty result (caller decides what that
+	// means). Returned with nil error to preserve the existing contract.
+	return "", nil
+}
+
+// runPSTransport runs command once against instanceID, retrying only transient
+// transport failures (SSM/WinRM hiccups, throttles) and marking the host dead
+// after deadThreshold sustained failures. Empty-but-successful output is
+// returned as-is; runPSErr owns the settling-retry policy for that case.
+func (v *Validator) runPSTransport(ctx context.Context, instanceID, host, command string) (string, error) {
 	var lastErr error
 	for attempt := 1; attempt <= runPSAttempts; attempt++ {
 		result, err := v.provider.RunCommand(ctx, instanceID, command, runPSTimeout)
