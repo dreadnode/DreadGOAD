@@ -292,11 +292,14 @@ func (g *Generator) generateMappings(config *LabConfig) {
 	fmt.Println("\nMapping cities...")
 	g.mapCities(config)
 
-	// Reconcile Misc entries that conflict with Groups. Group names are
-	// explicit AD entities and take precedence over capitalized-surname
-	// convenience entries (e.g., "Targaryen" is both a group and a surname).
+	// Reconcile name-component Misc entries that conflict with Groups.
+	// Group names are explicit AD entities and take precedence over
+	// capitalized-surname convenience entries (e.g., "Targaryen" is both
+	// a group and a surname). Only remove entries that are name components
+	// (firstname/surname) — other Misc entries like hostnames, gMSA names,
+	// and cities must be preserved.
 	for groupName := range g.mappings.Groups {
-		if _, inMisc := g.mappings.Misc[groupName]; inMisc {
+		if g.nameComponents[groupName] {
 			delete(g.mappings.Misc, groupName)
 			delete(g.nameComponents, groupName)
 		}
