@@ -8,6 +8,44 @@ import (
 	"testing"
 )
 
+// setupTestSourceFull creates a test source with extensionless files, user files,
+// and compound group name scripts to exercise all known edge cases.
+func setupTestSourceFull(t *testing.T) (sourceDir, targetDir string) {
+	t.Helper()
+	sourceDir, targetDir = setupTestSource(t)
+
+	// Extensionless inventory file (Bug 1)
+	inventoryContent := `[all:vars]
+; sevenkingdoms.local
+ansible_user=administrator@sevenkingdoms.local
+`
+	if err := os.WriteFile(filepath.Join(sourceDir, "data", "inventory_disable_vagrant"), []byte(inventoryContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// File named after a user (Bug 2)
+	if err := os.MkdirAll(filepath.Join(sourceDir, "files", "srv02", "all"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(sourceDir, "files", "srv02", "all", "arya.txt"),
+		[]byte("Hey arya, here is your sword."),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// Script with compound group name (Bug 3)
+	gpoScript := `$gpo = "StarkWallpaper"
+Set-GPO -Name "StarkWallpaper" -Target "DC=north,DC=sevenkingdoms,DC=local"
+`
+	if err := os.WriteFile(filepath.Join(sourceDir, "scripts", "gpo_abuse.ps1"), []byte(gpoScript), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	return sourceDir, targetDir
+}
+
 func setupTestSource(t *testing.T) (sourceDir, targetDir string) {
 	t.Helper()
 	tmpDir := t.TempDir()
@@ -194,8 +232,8 @@ func TestApplyReplacements(t *testing.T) {
 	gen := NewGenerator("", "", "test")
 	gen.mappings.Misc["robert"] = "james"
 	gen.replacements = []replacement{
-		{"sevenkingdoms.local", "deltasystems.local"},
-		{"robert", "james"},
+		{Old: "sevenkingdoms.local", New: "deltasystems.local"},
+		{Old: "robert", New: "james", WordBoundary: true},
 	}
 
 	content := "domain: sevenkingdoms.local, user: robert"
@@ -209,11 +247,37 @@ func TestApplyReplacements(t *testing.T) {
 	}
 }
 
+func TestApplyReplacementsUnderscoreDelimited(t *testing.T) {
+	gen := NewGenerator("", "", "test")
+	gen.replacements = []replacement{
+		{Old: "missandei", New: "donna", WordBoundary: true},
+		{Old: "viserys", New: "alexander", WordBoundary: true},
+	}
+
+	content := `"GenericWrite_missandei_viserys": null`
+	result := gen.applyReplacements(content)
+
+	if strings.Contains(result, "missandei") {
+		t.Errorf("missandei not replaced in underscore-delimited key: %s", result)
+	}
+	if strings.Contains(result, "viserys") {
+		t.Errorf("viserys not replaced in underscore-delimited key: %s", result)
+	}
+	expected := `"GenericWrite_donna_alexander": null`
+	if result != expected {
+		t.Errorf("unexpected result:\n  got:  %s\n  want: %s", result, expected)
+	}
+}
+
 func TestIsNameComponent(t *testing.T) {
 	gen := NewGenerator("", "", "test")
 	gen.mappings.Misc["robert"] = "james"
+	gen.nameComponents["robert"] = true
 	gen.mappings.Misc["meereen$"] = "beacon$"
 	gen.mappings.Misc["winterfell.domain"] = "cascade.domain"
+	// Group name that happens to also be a surname — should NOT be a name component
+	// unless explicitly registered via mapUserNameComponents.
+	gen.mappings.Misc["Stark"] = "OperationsGroup"
 
 	tests := []struct {
 		name string
@@ -223,6 +287,7 @@ func TestIsNameComponent(t *testing.T) {
 		{"meereen$", false},
 		{"winterfell.domain", false},
 		{"notinmisc", false},
+		{"Stark", false}, // group name, not registered as name component
 	}
 
 	for _, tt := range tests {
@@ -265,6 +330,138 @@ func TestSimplifyEntity(t *testing.T) {
 		got := simplifyEntity(tt.input)
 		if got != tt.want {
 			t.Errorf("simplifyEntity(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestTransformEdgeCases(t *testing.T) {
+	sourceDir, targetDir := setupTestSourceFull(t)
+
+	gen := NewGenerator(sourceDir, targetDir, "test-edges")
+	if err := gen.Run(); err != nil {
+		t.Fatalf("generator failed: %v", err)
+	}
+
+	// Bug 1: extensionless files should be detected as text and transformed.
+	t.Run("extensionless_file", func(t *testing.T) {
+		data, err := os.ReadFile(filepath.Join(targetDir, "data", "inventory_disable_vagrant"))
+		if err != nil {
+			t.Fatal("inventory_disable_vagrant not created in target")
+		}
+		if strings.Contains(strings.ToLower(string(data)), "sevenkingdoms") {
+			t.Error("original domain 'sevenkingdoms' still found in extensionless inventory file")
+		}
+	})
+
+	// Bug 2: files named after entities should be renamed on disk.
+	t.Run("file_renamed", func(t *testing.T) {
+		oldPath := filepath.Join(targetDir, "files", "srv02", "all", "arya.txt")
+		if _, err := os.Stat(oldPath); err == nil {
+			t.Error("arya.txt still exists at original path — file was not renamed")
+		}
+		newFirstname := gen.mappings.Misc["arya"]
+		if newFirstname == "" {
+			t.Fatal("no mapping found for 'arya' in Misc")
+		}
+		newPath := filepath.Join(targetDir, "files", "srv02", "all", newFirstname+".txt")
+		if _, err := os.Stat(newPath); err != nil {
+			t.Errorf("renamed file %s.txt not found at expected path", newFirstname)
+		}
+	})
+
+	// Bug 3: group names in compound strings (e.g., "StarkWallpaper") should be replaced.
+	t.Run("compound_group_name", func(t *testing.T) {
+		data, err := os.ReadFile(filepath.Join(targetDir, "scripts", "gpo_abuse.ps1"))
+		if err != nil {
+			t.Fatal("gpo_abuse.ps1 not created in target")
+		}
+		if strings.Contains(string(data), "Stark") {
+			t.Errorf("original group name 'Stark' still found in gpo_abuse.ps1: %s", string(data))
+		}
+	})
+}
+
+func TestFirstnameCollisionNoOverwrite(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "source")
+	targetDir := filepath.Join(tmpDir, "target")
+
+	if err := os.MkdirAll(filepath.Join(sourceDir, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two users with the same firstname in the same domain.
+	config := &LabConfig{}
+	config.Lab.Hosts = map[string]*HostConfig{
+		"dc01": {
+			Hostname:           "kingslanding",
+			Type:               "dc",
+			Domain:             "sevenkingdoms.local",
+			LocalAdminPassword: "TestPass123!",
+		},
+	}
+	config.Lab.Domains = map[string]*DomainConfig{
+		"sevenkingdoms.local": {
+			DomainPassword: "DomainPass1!",
+			Users: map[string]*UserConfig{
+				"brandon.stark": {
+					Firstname: "brandon",
+					Surname:   "stark",
+					Password:  "BranPass1!",
+				},
+				"brandon.lannister": {
+					Firstname: "brandon",
+					Surname:   "lannister",
+					Password:  "BranPass2!",
+				},
+			},
+			Groups: GroupsConfig{},
+		},
+	}
+	configData, _ := json.MarshalIndent(config, "", "  ")
+	if err := os.WriteFile(filepath.Join(sourceDir, "data", "config.json"), configData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gen := NewGenerator(sourceDir, targetDir, "test-collision")
+	if err := gen.Run(); err != nil {
+		t.Fatalf("generator failed: %v", err)
+	}
+
+	// Both users should have distinct mappings.
+	user1 := gen.mappings.Users["brandon.stark"]
+	user2 := gen.mappings.Users["brandon.lannister"]
+	if user1 == "" || user2 == "" {
+		t.Fatal("one or both users not mapped")
+	}
+	if user1 == user2 {
+		t.Errorf("both users mapped to same username: %s", user1)
+	}
+
+	// The Misc entry for "brandon" should exist and not be empty.
+	miscBrandon := gen.mappings.Misc["brandon"]
+	if miscBrandon == "" {
+		t.Error("Misc mapping for 'brandon' is empty")
+	}
+
+	// Verify both users exist in the output config with correct firstname/surname.
+	varData, err := os.ReadFile(filepath.Join(targetDir, "data", "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var varConfig LabConfig
+	if err := json.Unmarshal(varData, &varConfig); err != nil {
+		t.Fatal(err)
+	}
+	for domainName, domain := range varConfig.Lab.Domains {
+		for username, user := range domain.Users {
+			if strings.Contains(username, ".") {
+				parts := strings.SplitN(username, ".", 2)
+				if user.Firstname != parts[0] {
+					t.Errorf("domain %s user %s: firstname=%q doesn't match username prefix %q",
+						domainName, username, user.Firstname, parts[0])
+				}
+			}
 		}
 	}
 }
