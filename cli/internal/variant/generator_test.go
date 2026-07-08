@@ -381,6 +381,34 @@ func TestTransformEdgeCases(t *testing.T) {
 	})
 }
 
+func TestGroupSurnameMappingConsistency(t *testing.T) {
+	sourceDir, targetDir := setupTestSourceFull(t)
+
+	gen := NewGenerator(sourceDir, targetDir, "test-group-surname")
+	if err := gen.Run(); err != nil {
+		t.Fatalf("generator failed: %v", err)
+	}
+
+	// "Stark" is both a group name and a capitalized surname (from arya.stark).
+	// The group mapping should win — Misc should not have a conflicting entry.
+	groupNew := gen.mappings.Groups["Stark"]
+	if groupNew == "" {
+		t.Fatal("group 'Stark' not found in mappings")
+	}
+	if miscNew, exists := gen.mappings.Misc["Stark"]; exists {
+		t.Errorf("Misc still has 'Stark' -> %q, should have been removed in favor of group mapping %q", miscNew, groupNew)
+	}
+
+	// Verify the config.json actually uses the group name, not the surname.
+	varData, err := os.ReadFile(filepath.Join(targetDir, "data", "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(varData), groupNew) {
+		t.Errorf("group name %q not found in variant config.json", groupNew)
+	}
+}
+
 func TestFirstnameCollisionNoOverwrite(t *testing.T) {
 	tmpDir := t.TempDir()
 	sourceDir := filepath.Join(tmpDir, "source")
