@@ -29,7 +29,7 @@ output "private_subnet_id" {
 }
 
 output "private_subnet_cidr" {
-  value       = var.private_subnet_cidr
+  value       = local.private_subnet
   description = "Private subnet CIDR."
 }
 

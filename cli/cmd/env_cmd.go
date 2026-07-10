@@ -495,7 +495,12 @@ func createAzureRegionHCL(regionDir, location string) error {
 func generateAzureInventory(projectRoot, envName, reference string) error {
 	refInvPath, err := resolveReferenceInventory(projectRoot, reference)
 	if err != nil {
-		return err
+		// Fall back to the base GOAD Azure provider inventory template.
+		fallback := filepath.Join(projectRoot, "ad", "GOAD", "providers", "azure", "inventory")
+		if _, ferr := os.Stat(fallback); ferr != nil {
+			return err // return original error
+		}
+		refInvPath = fallback
 	}
 	dstInvPath := filepath.Join(projectRoot, envName+"-inventory")
 
