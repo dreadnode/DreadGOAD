@@ -402,7 +402,7 @@ func checkPyPSRP() CheckResult {
 		return CheckResult{
 			Name:   "pypsrp + PySocks",
 			Status: "fail",
-			Message: "missing Python packages required for SSH-mode provisioning. " +
+			Message: "missing Python packages required for WinRM/PSRP provisioning. " +
 				"Install with: pip install pypsrp requests[socks]",
 		}
 	}

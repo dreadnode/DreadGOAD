@@ -443,6 +443,9 @@ func deriveAzureSubnets(vnetCIDR string) (bastionSubnet, controllerSubnet string
 		return "", "", fmt.Errorf("VNet CIDR must be a /16, got /%d", ones)
 	}
 	base := ipnet.IP.To4()
+	if base == nil {
+		return "", "", fmt.Errorf("VNet CIDR must be IPv4, got %q", vnetCIDR)
+	}
 	bastionSubnet = fmt.Sprintf("%d.%d.2.0/26", base[0], base[1])
 	controllerSubnet = fmt.Sprintf("%d.%d.3.0/28", base[0], base[1])
 	return bastionSubnet, controllerSubnet, nil
@@ -502,8 +505,11 @@ func generateAzureInventory(projectRoot, envName, reference string) error {
 	}
 	content := string(data)
 
-	envRe := regexp.MustCompile(`(?m)^(\s*env=)(.+)$`)
-	content = envRe.ReplaceAllString(content, "${1}"+envName)
+	envRe := regexp.MustCompile(`(?m)^(\s*env=).+$`)
+	content = envRe.ReplaceAllStringFunc(content, func(match string) string {
+		eq := strings.Index(match, "=")
+		return match[:eq+1] + envName
+	})
 
 	ipRe := regexp.MustCompile(`(ansible_host=)\S+`)
 	content = ipRe.ReplaceAllString(content, "${1}PENDING")
