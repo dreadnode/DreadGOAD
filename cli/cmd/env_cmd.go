@@ -448,6 +448,8 @@ func deriveAzureSubnets(vnetCIDR string) (bastionSubnet, controllerSubnet string
 	return bastionSubnet, controllerSubnet, nil
 }
 
+// createAzureEnvHCL writes an Azure-specific env.hcl with VNet, bastion, and
+// controller subnet CIDRs auto-derived from the VNet CIDR.
 func createAzureEnvHCL(envDir, envName, vnetCIDR string) error {
 	bastionSubnet, controllerSubnet, err := deriveAzureSubnets(vnetCIDR)
 	if err != nil {
@@ -473,6 +475,7 @@ func createAzureEnvHCL(envDir, envName, vnetCIDR string) error {
 	return os.WriteFile(filepath.Join(envDir, "env.hcl"), []byte(content), 0o644)
 }
 
+// createAzureRegionHCL writes an Azure region.hcl with the location field.
 func createAzureRegionHCL(regionDir, location string) error {
 	if err := os.MkdirAll(regionDir, 0o755); err != nil {
 		return err
@@ -484,6 +487,8 @@ func createAzureRegionHCL(regionDir, location string) error {
 	return os.WriteFile(filepath.Join(regionDir, "region.hcl"), []byte(content), 0o644)
 }
 
+// generateAzureInventory creates an inventory file for Azure by copying the
+// reference inventory and resetting host IPs to PENDING.
 func generateAzureInventory(projectRoot, envName, reference string) error {
 	refInvPath, err := resolveReferenceInventory(projectRoot, reference)
 	if err != nil {

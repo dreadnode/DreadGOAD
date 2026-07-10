@@ -280,7 +280,7 @@ func (cc charClasses) seedRequired() []byte {
 		seed = append(seed, secureChoiceByte(digitChars))
 	}
 	if cc.special {
-		seed = append(seed, secureChoiceByte("!@#$%^&*()-_=+"))
+		seed = append(seed, secureChoiceByte(specialChars))
 	}
 	return seed
 }
