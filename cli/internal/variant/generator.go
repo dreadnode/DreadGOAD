@@ -1031,7 +1031,7 @@ func (g *Generator) findNameViolations() ([]violation, int) {
 			return nil
 		}
 		ext := filepath.Ext(path)
-		if !textExtensions[ext] && !textFilenames[d.Name()] && !(ext == "" && g.isTextFile(path)) {
+		if !textExtensions[ext] && !textFilenames[d.Name()] && (ext != "" || !g.isTextFile(path)) {
 			return nil
 		}
 		filesChecked++
