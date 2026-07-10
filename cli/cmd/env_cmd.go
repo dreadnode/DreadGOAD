@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -50,9 +51,9 @@ func init() {
 	envCmd.AddCommand(envCreateCmd)
 	envCmd.AddCommand(envListCmd)
 
-	envCreateCmd.Flags().String("region", "", "AWS region for the environment (required; or set via dreadgoad.yaml / DREADGOAD_REGION / --region)")
-	envCreateCmd.Flags().String("vpc-cidr", "", "VPC CIDR block (default: auto-assigned)")
-	envCreateCmd.Flags().String("reference", "staging", "Reference environment to copy infrastructure from")
+	envCreateCmd.Flags().String("region", "", "Region for the environment (e.g. us-west-2 for AWS, centralus for Azure)")
+	envCreateCmd.Flags().String("vpc-cidr", "", "VPC/VNet CIDR block (default: auto-assigned)")
+	envCreateCmd.Flags().String("reference", "staging", "Reference environment to copy infrastructure from (default: staging for AWS, test for Azure)")
 	envCreateCmd.Flags().Bool("variant", false, "Generate randomized variant config")
 	envCreateCmd.Flags().Bool("force", false, "Overwrite existing environment")
 }
@@ -77,6 +78,9 @@ func runEnvCreate(cmd *cobra.Command, args []string) error {
 	}
 	vpcCIDR, _ := cmd.Flags().GetString("vpc-cidr")
 	reference, _ := cmd.Flags().GetString("reference")
+	if !cmd.Flags().Changed("reference") && cfg.ResolvedProvider() == "azure" {
+		reference = "test"
+	}
 	useVariant, _ := cmd.Flags().GetBool("variant")
 	force, _ := cmd.Flags().GetBool("force")
 
@@ -88,7 +92,8 @@ func runEnvCreate(cmd *cobra.Command, args []string) error {
 }
 
 func scaffoldEnv(cfg *config.Config, envName, region, vpcCIDR, reference string, useVariant, force bool) error {
-	infraBase := filepath.Join(cfg.ProjectRoot, "infra", cfg.Infra.Deployment)
+	provider := cfg.ResolvedProvider()
+	infraBase := cfg.InfraBasePathForProvider(provider)
 	envDir := filepath.Join(infraBase, envName)
 	regionDir := filepath.Join(envDir, region)
 
@@ -101,22 +106,39 @@ func scaffoldEnv(cfg *config.Config, envName, region, vpcCIDR, reference string,
 		return fmt.Errorf("reference environment %q not found in %s", reference, infraBase)
 	}
 
+	cidrLabel := "VPC CIDR:"
+	if provider == "azure" {
+		cidrLabel = "VNet CIDR:"
+	}
 	color.Cyan("Creating environment: %s", envName)
+	fmt.Printf("  %-14s %s\n", "Provider:", provider)
 	fmt.Printf("  %-14s %s\n", "Region:", region)
-	fmt.Printf("  %-14s %s\n", "VPC CIDR:", vpcCIDR)
+	fmt.Printf("  %-14s %s\n", cidrLabel, vpcCIDR)
 	fmt.Printf("  %-14s %s\n", "Reference:", reference)
 	fmt.Printf("  %-14s %v\n", "Variant:", useVariant)
 	fmt.Println()
 
-	if err := createEnvHCL(envDir, envName, vpcCIDR); err != nil {
-		return fmt.Errorf("create env.hcl: %w", err)
-	}
-	color.Green("  Created env.hcl")
+	if provider == "azure" {
+		if err := createAzureEnvHCL(envDir, envName, vpcCIDR); err != nil {
+			return fmt.Errorf("create env.hcl: %w", err)
+		}
+		color.Green("  Created env.hcl (Azure)")
 
-	if err := createRegionHCL(regionDir, region); err != nil {
-		return fmt.Errorf("create region.hcl: %w", err)
+		if err := createAzureRegionHCL(regionDir, region); err != nil {
+			return fmt.Errorf("create region.hcl: %w", err)
+		}
+		color.Green("  Created %s/region.hcl (location=%s)", region, region)
+	} else {
+		if err := createEnvHCL(envDir, envName, vpcCIDR); err != nil {
+			return fmt.Errorf("create env.hcl: %w", err)
+		}
+		color.Green("  Created env.hcl")
+
+		if err := createRegionHCL(regionDir, region); err != nil {
+			return fmt.Errorf("create region.hcl: %w", err)
+		}
+		color.Green("  Created %s/region.hcl", region)
 	}
-	color.Green("  Created %s/region.hcl", region)
 
 	if err := copyInfrastructure(refRegionDir, regionDir); err != nil {
 		return fmt.Errorf("copy infrastructure: %w", err)
@@ -139,8 +161,14 @@ func scaffoldEnv(cfg *config.Config, envName, region, vpcCIDR, reference string,
 	}
 
 	invPath := filepath.Join(cfg.ProjectRoot, envName+"-inventory")
-	if err := generateInventory(cfg.ProjectRoot, envName, region, reference); err != nil {
-		return fmt.Errorf("generate inventory: %w", err)
+	if provider == "azure" {
+		if err := generateAzureInventory(cfg.ProjectRoot, envName, reference); err != nil {
+			return fmt.Errorf("generate inventory: %w", err)
+		}
+	} else {
+		if err := generateInventory(cfg.ProjectRoot, envName, region, reference); err != nil {
+			return fmt.Errorf("generate inventory: %w", err)
+		}
 	}
 	color.Green("  Created inventory: %s", filepath.Base(invPath))
 
@@ -151,10 +179,14 @@ func scaffoldEnv(cfg *config.Config, envName, region, vpcCIDR, reference string,
 	fmt.Printf("  1. Review: %s\n", envDir)
 	fmt.Printf("  2. Review: %s\n", configPath)
 	fmt.Printf("  3. Review: %s\n", invPath)
-	fmt.Printf("  4. Initialize: dreadgoad --env %s --region %s infra init\n", envName, region)
-	fmt.Printf("  5. Plan:       dreadgoad --env %s --region %s infra plan\n", envName, region)
-	fmt.Printf("  6. Apply:      dreadgoad --env %s --region %s infra apply --auto-approve\n", envName, region)
-	fmt.Printf("  7. Sync IDs:   dreadgoad --env %s --region %s inventory sync\n", envName, region)
+	if provider == "azure" {
+		fmt.Printf("  4. Deploy: dreadgoad -p azure -e %s --region %s up\n", envName, region)
+	} else {
+		fmt.Printf("  4. Initialize: dreadgoad -e %s --region %s infra init\n", envName, region)
+		fmt.Printf("  5. Plan:       dreadgoad -e %s --region %s infra plan\n", envName, region)
+		fmt.Printf("  6. Apply:      dreadgoad -e %s --region %s infra apply --auto-approve\n", envName, region)
+		fmt.Printf("  7. Sync IDs:   dreadgoad -e %s --region %s inventory sync\n", envName, region)
+	}
 
 	return nil
 }
@@ -165,8 +197,7 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	deployment := cfg.Infra.Deployment
-	infraBase := filepath.Join(cfg.ProjectRoot, "infra", deployment)
+	infraBase := cfg.InfraBasePathForProvider(cfg.ResolvedProvider())
 
 	entries, err := os.ReadDir(infraBase)
 	if err != nil {
@@ -395,4 +426,82 @@ func generateVariantConfig(projectRoot, envName string) error {
 
 	gen := variant.NewGenerator(source, target, envName)
 	return gen.Run()
+}
+
+// deriveAzureSubnets computes bastion and controller subnet CIDRs from a /16
+// VNet CIDR. Given "10.X.0.0/16" it produces:
+//
+//	bastion:    10.X.2.0/26  (64 IPs, required by Azure Bastion)
+//	controller: 10.X.3.0/28  (16 IPs, single Ansible controller)
+func deriveAzureSubnets(vnetCIDR string) (bastionSubnet, controllerSubnet string, err error) {
+	_, ipnet, err := net.ParseCIDR(vnetCIDR)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid VNet CIDR %q: %w", vnetCIDR, err)
+	}
+	ones, _ := ipnet.Mask.Size()
+	if ones != 16 {
+		return "", "", fmt.Errorf("VNet CIDR must be a /16, got /%d", ones)
+	}
+	base := ipnet.IP.To4()
+	bastionSubnet = fmt.Sprintf("%d.%d.2.0/26", base[0], base[1])
+	controllerSubnet = fmt.Sprintf("%d.%d.3.0/28", base[0], base[1])
+	return bastionSubnet, controllerSubnet, nil
+}
+
+func createAzureEnvHCL(envDir, envName, vnetCIDR string) error {
+	bastionSubnet, controllerSubnet, err := deriveAzureSubnets(vnetCIDR)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(envDir, 0o755); err != nil {
+		return err
+	}
+	content := fmt.Sprintf(`locals {
+  deployment_name = "goad"
+  env             = %q
+  vnet_cidr       = %q
+
+  bastion_sku               = "Standard"
+  bastion_subnet_cidr       = %q
+  bastion_tunneling_enabled = true
+
+  controller_subnet_cidr               = %q
+  controller_ssh_source_address_prefix = %q
+  controller_instance_size = "Standard_D2s_v3"
+}
+`, envName, vnetCIDR, bastionSubnet, controllerSubnet, bastionSubnet)
+	return os.WriteFile(filepath.Join(envDir, "env.hcl"), []byte(content), 0o644)
+}
+
+func createAzureRegionHCL(regionDir, location string) error {
+	if err := os.MkdirAll(regionDir, 0o755); err != nil {
+		return err
+	}
+	content := fmt.Sprintf(`locals {
+  location = %q
+}
+`, location)
+	return os.WriteFile(filepath.Join(regionDir, "region.hcl"), []byte(content), 0o644)
+}
+
+func generateAzureInventory(projectRoot, envName, reference string) error {
+	refInvPath, err := resolveReferenceInventory(projectRoot, reference)
+	if err != nil {
+		return err
+	}
+	dstInvPath := filepath.Join(projectRoot, envName+"-inventory")
+
+	data, err := os.ReadFile(refInvPath)
+	if err != nil {
+		return fmt.Errorf("read reference inventory %s: %w", filepath.Base(refInvPath), err)
+	}
+	content := string(data)
+
+	envRe := regexp.MustCompile(`(?m)^(\s*env=)(.+)$`)
+	content = envRe.ReplaceAllString(content, "${1}"+envName)
+
+	ipRe := regexp.MustCompile(`(ansible_host=)\S+`)
+	content = ipRe.ReplaceAllString(content, "${1}PENDING")
+
+	return os.WriteFile(dstInvPath, []byte(content), 0o644)
 }
