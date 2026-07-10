@@ -1,6 +1,11 @@
 locals {
   name_prefix = "${var.env}-${var.deployment_name}"
 
+  # Auto-derive subnet CIDRs from vnet_cidr when not explicitly provided.
+  # cidrsubnet(..., 8, 1) on a /16 gives the second /24 (e.g. 10.8.1.0/24).
+  private_subnet = var.private_subnet_cidr != "" ? var.private_subnet_cidr : cidrsubnet(var.vnet_cidr, 8, 1)
+  public_subnet  = var.public_subnet_cidr != "" ? var.public_subnet_cidr : cidrsubnet(var.vnet_cidr, 8, 0)
+
   base_tags = {
     Module      = "terraform-azure-net"
     Environment = var.env
@@ -28,7 +33,7 @@ resource "azurerm_subnet" "private" {
   name                 = "${local.name_prefix}-private"
   resource_group_name  = azurerm_resource_group.this.name
   virtual_network_name = azurerm_virtual_network.this.name
-  address_prefixes     = [var.private_subnet_cidr]
+  address_prefixes     = [local.private_subnet]
 }
 
 resource "azurerm_subnet" "public" {
@@ -36,7 +41,7 @@ resource "azurerm_subnet" "public" {
   name                 = "${local.name_prefix}-public"
   resource_group_name  = azurerm_resource_group.this.name
   virtual_network_name = azurerm_virtual_network.this.name
-  address_prefixes     = [var.public_subnet_cidr]
+  address_prefixes     = [local.public_subnet]
 }
 
 # NAT gateway gives outbound-only internet to private-subnet VMs.
