@@ -187,10 +187,16 @@ func scaffoldLabConfig(projectRoot, envName string, useVariant bool) (string, er
 }
 
 func scaffoldInventory(provider, projectRoot, envName, region, reference string) error {
+	var err error
 	if provider == "azure" {
-		return generateAzureInventory(projectRoot, envName, reference)
+		err = generateAzureInventory(projectRoot, envName, reference)
+	} else {
+		err = generateInventory(projectRoot, envName, region, reference)
 	}
-	return generateInventory(projectRoot, envName, region, reference)
+	if err != nil {
+		return fmt.Errorf("generate inventory: %w", err)
+	}
+	return nil
 }
 
 func printNextSteps(provider, envName, region, envDir, configPath, invPath string) {
