@@ -1179,7 +1179,7 @@ func (g *Generator) isTextFile(path string) bool {
 
 	// Only read the first 8 KiB — enough to detect binary content.
 	buf := make([]byte, 8192)
-	n, err := f.Read(buf)
+	n, _ := f.Read(buf)
 	if n == 0 {
 		return false
 	}
