@@ -382,8 +382,10 @@ func (g *Generator) mapUsers(config *LabConfig) {
 
 			newUsername := g.nameGen.GenerateUsername()
 			// Preserve single-name pattern: if original has no ".", use only firstname.
+			// Pass through EnsureUnique to avoid collisions when multiple dotless
+			// usernames truncate to the same firstname.
 			if !strings.Contains(username, ".") {
-				newUsername = strings.Split(newUsername, ".")[0]
+				newUsername = g.nameGen.ensureUnique(strings.Split(newUsername, ".")[0])
 			}
 			g.mappings.Users[username] = newUsername
 
