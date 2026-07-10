@@ -405,48 +405,40 @@ func (g *Generator) mapUserNameComponents(user *UserConfig, newUsername string) 
 	if user == nil {
 		return
 	}
-	if user.Firstname != "" {
-		firstname := user.Firstname
+	if user.Firstname != "" && user.Firstname != "sql" {
 		newFirst := strings.Split(newUsername, ".")[0]
-		// Only set if not already mapped — prevents collisions when two users
-		// share a firstname (e.g., both map to "brandon").
-		if _, exists := g.mappings.Misc[firstname]; !exists {
-			g.mappings.Misc[firstname] = newFirst
-			g.nameComponents[firstname] = true
-		}
-		if !isAllLower(firstname) && firstname != "sql" {
-			lower := strings.ToLower(firstname)
-			if _, exists := g.mappings.Misc[lower]; !exists {
-				g.mappings.Misc[lower] = strings.ToLower(newFirst)
-				g.nameComponents[lower] = true
-			}
-		}
-		if isAllLower(firstname) && firstname != "sql" {
-			cap := capitalize(firstname)
-			if _, exists := g.mappings.Misc[cap]; !exists {
-				g.mappings.Misc[cap] = capitalize(newFirst)
-				g.nameComponents[cap] = true
-			}
-		}
+		g.setNameComponent(user.Firstname, newFirst)
 	}
 
 	if user.Surname != "" && user.Surname != "-" {
-		surname := user.Surname
 		parts := strings.SplitN(newUsername, ".", 2)
 		newSurname := parts[0]
 		if len(parts) > 1 {
 			newSurname = parts[1]
 		}
-		if _, exists := g.mappings.Misc[surname]; !exists {
-			g.mappings.Misc[surname] = newSurname
-			g.nameComponents[surname] = true
+		g.setNameComponent(user.Surname, newSurname)
+	}
+}
+
+// setNameComponent adds a name mapping (and its case variant) to Misc,
+// skipping entries that already exist to prevent collisions.
+func (g *Generator) setNameComponent(original, replacement string) {
+	if _, exists := g.mappings.Misc[original]; !exists {
+		g.mappings.Misc[original] = replacement
+		g.nameComponents[original] = true
+	}
+	// Add the opposite case variant (lowercase ↔ capitalized).
+	if isAllLower(original) {
+		cap := capitalize(original)
+		if _, exists := g.mappings.Misc[cap]; !exists {
+			g.mappings.Misc[cap] = capitalize(replacement)
+			g.nameComponents[cap] = true
 		}
-		if isAllLower(surname) {
-			cap := capitalize(surname)
-			if _, exists := g.mappings.Misc[cap]; !exists {
-				g.mappings.Misc[cap] = capitalize(newSurname)
-				g.nameComponents[cap] = true
-			}
+	} else {
+		lower := strings.ToLower(original)
+		if _, exists := g.mappings.Misc[lower]; !exists {
+			g.mappings.Misc[lower] = strings.ToLower(replacement)
+			g.nameComponents[lower] = true
 		}
 	}
 }
@@ -1183,7 +1175,7 @@ func (g *Generator) isTextFile(path string) bool {
 	if err != nil {
 		return false
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Only read the first 8 KiB — enough to detect binary content.
 	buf := make([]byte, 8192)

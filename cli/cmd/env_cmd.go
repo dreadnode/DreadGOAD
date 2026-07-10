@@ -106,6 +106,33 @@ func scaffoldEnv(cfg *config.Config, envName, region, vpcCIDR, reference string,
 		return fmt.Errorf("reference environment %q not found in %s", reference, infraBase)
 	}
 
+	printEnvSummary(provider, envName, region, vpcCIDR, reference, useVariant)
+
+	if err := scaffoldHCL(provider, envDir, regionDir, envName, region, vpcCIDR); err != nil {
+		return err
+	}
+
+	if err := copyInfrastructure(refRegionDir, regionDir); err != nil {
+		return fmt.Errorf("copy infrastructure: %w", err)
+	}
+	color.Green("  Copied infrastructure from %s", reference)
+
+	configPath, err := scaffoldLabConfig(cfg.ProjectRoot, envName, useVariant)
+	if err != nil {
+		return err
+	}
+
+	invPath := filepath.Join(cfg.ProjectRoot, envName+"-inventory")
+	if err := scaffoldInventory(provider, cfg.ProjectRoot, envName, region, reference); err != nil {
+		return err
+	}
+	color.Green("  Created inventory: %s", filepath.Base(invPath))
+
+	printNextSteps(provider, envName, region, envDir, configPath, invPath)
+	return nil
+}
+
+func printEnvSummary(provider, envName, region, vpcCIDR, reference string, useVariant bool) {
 	cidrLabel := "VPC CIDR:"
 	if provider == "azure" {
 		cidrLabel = "VNet CIDR:"
@@ -117,13 +144,14 @@ func scaffoldEnv(cfg *config.Config, envName, region, vpcCIDR, reference string,
 	fmt.Printf("  %-14s %s\n", "Reference:", reference)
 	fmt.Printf("  %-14s %v\n", "Variant:", useVariant)
 	fmt.Println()
+}
 
+func scaffoldHCL(provider, envDir, regionDir, envName, region, vpcCIDR string) error {
 	if provider == "azure" {
 		if err := createAzureEnvHCL(envDir, envName, vpcCIDR); err != nil {
 			return fmt.Errorf("create env.hcl: %w", err)
 		}
 		color.Green("  Created env.hcl (Azure)")
-
 		if err := createAzureRegionHCL(regionDir, region); err != nil {
 			return fmt.Errorf("create region.hcl: %w", err)
 		}
@@ -133,45 +161,39 @@ func scaffoldEnv(cfg *config.Config, envName, region, vpcCIDR, reference string,
 			return fmt.Errorf("create env.hcl: %w", err)
 		}
 		color.Green("  Created env.hcl")
-
 		if err := createRegionHCL(regionDir, region); err != nil {
 			return fmt.Errorf("create region.hcl: %w", err)
 		}
 		color.Green("  Created %s/region.hcl", region)
 	}
+	return nil
+}
 
-	if err := copyInfrastructure(refRegionDir, regionDir); err != nil {
-		return fmt.Errorf("copy infrastructure: %w", err)
-	}
-	color.Green("  Copied infrastructure from %s", reference)
-
-	var configPath string
+func scaffoldLabConfig(projectRoot, envName string, useVariant bool) (string, error) {
 	if useVariant {
-		if err := generateVariantConfig(cfg.ProjectRoot, envName); err != nil {
-			return fmt.Errorf("generate variant config: %w", err)
+		if err := generateVariantConfig(projectRoot, envName); err != nil {
+			return "", fmt.Errorf("generate variant config: %w", err)
 		}
-		configPath = filepath.Join(cfg.ProjectRoot, "ad", "GOAD-"+envName, "data")
+		configPath := filepath.Join(projectRoot, "ad", "GOAD-"+envName, "data")
 		color.Green("  Generated variant config in %s", configPath)
-	} else {
-		if err := copyBaseConfig(cfg.ProjectRoot, envName); err != nil {
-			return fmt.Errorf("copy base config: %w", err)
-		}
-		configPath = filepath.Join(cfg.ProjectRoot, "ad", "GOAD", "data", envName+"-overlay.json")
-		color.Green("  Created overlay: %s-overlay.json", envName)
+		return configPath, nil
 	}
+	if err := copyBaseConfig(projectRoot, envName); err != nil {
+		return "", fmt.Errorf("copy base config: %w", err)
+	}
+	configPath := filepath.Join(projectRoot, "ad", "GOAD", "data", envName+"-overlay.json")
+	color.Green("  Created overlay: %s-overlay.json", envName)
+	return configPath, nil
+}
 
-	invPath := filepath.Join(cfg.ProjectRoot, envName+"-inventory")
+func scaffoldInventory(provider, projectRoot, envName, region, reference string) error {
 	if provider == "azure" {
-		if err := generateAzureInventory(cfg.ProjectRoot, envName, reference); err != nil {
-			return fmt.Errorf("generate inventory: %w", err)
-		}
-	} else {
-		if err := generateInventory(cfg.ProjectRoot, envName, region, reference); err != nil {
-			return fmt.Errorf("generate inventory: %w", err)
-		}
+		return generateAzureInventory(projectRoot, envName, reference)
 	}
-	color.Green("  Created inventory: %s", filepath.Base(invPath))
+	return generateInventory(projectRoot, envName, region, reference)
+}
 
+func printNextSteps(provider, envName, region, envDir, configPath, invPath string) {
 	fmt.Println()
 	color.Green("Environment %q created successfully!", envName)
 	fmt.Println()
@@ -187,8 +209,6 @@ func scaffoldEnv(cfg *config.Config, envName, region, vpcCIDR, reference string,
 		fmt.Printf("  6. Apply:      dreadgoad -e %s --region %s infra apply --auto-approve\n", envName, region)
 		fmt.Printf("  7. Sync IDs:   dreadgoad -e %s --region %s inventory sync\n", envName, region)
 	}
-
-	return nil
 }
 
 func runEnvList(cmd *cobra.Command, args []string) error {
