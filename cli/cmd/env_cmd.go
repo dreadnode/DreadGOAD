@@ -381,9 +381,15 @@ func generateInventory(projectRoot, envName, region, reference string) error {
 		refRegion = strings.TrimSpace(m[2])
 	}
 
-	content = envRe.ReplaceAllString(content, "${1}"+envName)
+	content = envRe.ReplaceAllStringFunc(content, func(match string) string {
+		eq := strings.Index(match, "=")
+		return match[:eq+1] + envName
+	})
 
-	content = regionRe.ReplaceAllString(content, "${1}"+region)
+	content = regionRe.ReplaceAllStringFunc(content, func(match string) string {
+		eq := strings.Index(match, "=")
+		return match[:eq+1] + region
+	})
 
 	if refRegion != "" {
 		if m := bucketRe.FindStringSubmatch(content); len(m) > 2 {
