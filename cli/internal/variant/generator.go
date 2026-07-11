@@ -1,6 +1,7 @@
 package variant
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -9,6 +10,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // LabConfig is the top-level structure of a GOAD config.json.
@@ -159,8 +161,9 @@ type HostMapping struct {
 
 // replacement is an ordered old->new string replacement.
 type replacement struct {
-	Old string
-	New string
+	Old          string
+	New          string
+	WordBoundary bool // use word-boundary regex instead of plain replacement
 }
 
 // Generator creates GOAD variants with randomized entity names.
@@ -175,6 +178,7 @@ type Generator struct {
 	userPasswordMap map[string]string // new_username -> new_password
 	preservedUsers  map[string]bool
 	pwdInDescUsers  map[string]bool // new_username -> has password in description
+	nameComponents  map[string]bool // Misc keys that are firstname/surname components
 }
 
 // hostnameAliases maps canonical hostnames to known typos/aliases in upstream GOAD.
@@ -204,6 +208,7 @@ func NewGenerator(source, target, name string) *Generator {
 		userPasswordMap: make(map[string]string),
 		preservedUsers:  map[string]bool{"sql_svc": true},
 		pwdInDescUsers:  make(map[string]bool),
+		nameComponents:  make(map[string]bool),
 	}
 }
 
@@ -287,6 +292,19 @@ func (g *Generator) generateMappings(config *LabConfig) {
 	fmt.Println("\nMapping cities...")
 	g.mapCities(config)
 
+	// Reconcile name-component Misc entries that conflict with Groups.
+	// Group names are explicit AD entities and take precedence over
+	// capitalized-surname convenience entries (e.g., "Targaryen" is both
+	// a group and a surname). Only remove entries that are name components
+	// (firstname/surname) — other Misc entries like hostnames, gMSA names,
+	// and cities must be preserved.
+	for groupName := range g.mappings.Groups {
+		if g.nameComponents[groupName] {
+			delete(g.mappings.Misc, groupName)
+			delete(g.nameComponents, groupName)
+		}
+	}
+
 	fmt.Println("\n=== Mapping Generation Complete ===")
 }
 
@@ -363,6 +381,12 @@ func (g *Generator) mapUsers(config *LabConfig) {
 			}
 
 			newUsername := g.nameGen.GenerateUsername()
+			// Preserve single-name pattern: if original has no ".", use only firstname.
+			// Pass through EnsureUnique to avoid collisions when multiple dotless
+			// usernames truncate to the same firstname.
+			if !strings.Contains(username, ".") {
+				newUsername = g.nameGen.ensureUnique(strings.Split(newUsername, ".")[0])
+			}
 			g.mappings.Users[username] = newUsername
 
 			if user != nil && user.Password != "" && user.Description != "" &&
@@ -381,28 +405,40 @@ func (g *Generator) mapUserNameComponents(user *UserConfig, newUsername string) 
 	if user == nil {
 		return
 	}
-	if user.Firstname != "" {
-		firstname := user.Firstname
+	if user.Firstname != "" && user.Firstname != "sql" {
 		newFirst := strings.Split(newUsername, ".")[0]
-		g.mappings.Misc[firstname] = newFirst
-		if !isAllLower(firstname) && firstname != "sql" {
-			g.mappings.Misc[strings.ToLower(firstname)] = strings.ToLower(newFirst)
-		}
-		if isAllLower(firstname) && firstname != "sql" {
-			g.mappings.Misc[capitalize(firstname)] = capitalize(newFirst)
-		}
+		g.setNameComponent(user.Firstname, newFirst)
 	}
 
 	if user.Surname != "" && user.Surname != "-" {
-		surname := user.Surname
 		parts := strings.SplitN(newUsername, ".", 2)
 		newSurname := parts[0]
 		if len(parts) > 1 {
 			newSurname = parts[1]
 		}
-		g.mappings.Misc[surname] = newSurname
-		if isAllLower(surname) {
-			g.mappings.Misc[capitalize(surname)] = capitalize(newSurname)
+		g.setNameComponent(user.Surname, newSurname)
+	}
+}
+
+// setNameComponent adds a name mapping (and its case variant) to Misc,
+// skipping entries that already exist to prevent collisions.
+func (g *Generator) setNameComponent(original, replacement string) {
+	if _, exists := g.mappings.Misc[original]; !exists {
+		g.mappings.Misc[original] = replacement
+		g.nameComponents[original] = true
+	}
+	// Add the opposite case variant (lowercase ↔ capitalized).
+	if isAllLower(original) {
+		cap := capitalize(original)
+		if _, exists := g.mappings.Misc[cap]; !exists {
+			g.mappings.Misc[cap] = capitalize(replacement)
+			g.nameComponents[cap] = true
+		}
+	} else {
+		lower := strings.ToLower(original)
+		if _, exists := g.mappings.Misc[lower]; !exists {
+			g.mappings.Misc[lower] = strings.ToLower(replacement)
+			g.nameComponents[lower] = true
 		}
 	}
 }
@@ -602,6 +638,18 @@ func (g *Generator) buildOrderedReplacements() {
 	repls = appendMapReplacements(repls, g.mappings.NetBIOS, nil)
 	repls = appendMapReplacements(repls, g.mappings.Misc, withoutSuffix("$"))
 
+	// Tag name-component replacements for word-boundary matching.
+	// Skip word-boundary for entries that also exist as group names —
+	// group names need plain string replacement to catch compound strings
+	// like "StarkWallpaper".
+	for i := range repls {
+		if _, isGroup := g.mappings.Groups[repls[i].Old]; isGroup {
+			repls[i].WordBoundary = false
+		} else {
+			repls[i].WordBoundary = g.isNameComponent(repls[i].Old)
+		}
+	}
+
 	sort.Slice(repls, func(i, j int) bool {
 		return len(repls[i].Old) > len(repls[j].Old)
 	})
@@ -633,17 +681,17 @@ func appendMapReplacements(repls []replacement, m map[string]string, filter func
 		if filter != nil && !filter(old) {
 			continue
 		}
-		repls = append(repls, replacement{old, new})
+		repls = append(repls, replacement{Old: old, New: new})
 	}
 	return repls
 }
 
 func (g *Generator) appendHostReplacements(repls []replacement) []replacement {
 	for _, hm := range g.mappings.Hosts {
-		repls = append(repls, replacement{hm.OldFQDN, hm.NewFQDN})
+		repls = append(repls, replacement{Old: hm.OldFQDN, New: hm.NewFQDN})
 	}
 	for _, hm := range g.mappings.Hosts {
-		repls = append(repls, replacement{hm.OldHostname, hm.NewHostname})
+		repls = append(repls, replacement{Old: hm.OldHostname, New: hm.NewHostname})
 	}
 	return repls
 }
@@ -664,8 +712,8 @@ func (g *Generator) appendQualifiedUserReplacements(repls []replacement) []repla
 		}
 		for oldUser, newUser := range g.mappings.Users {
 			repls = append(repls,
-				replacement{oldNB + "\\\\" + oldUser, newNB + "\\\\" + newUser},
-				replacement{oldDomain + "\\\\" + oldUser, newDomain + "\\\\" + newUser},
+				replacement{Old: oldNB + "\\\\" + oldUser, New: newNB + "\\\\" + newUser},
+				replacement{Old: oldDomain + "\\\\" + oldUser, New: newDomain + "\\\\" + newUser},
 			)
 		}
 	}
@@ -685,8 +733,8 @@ func (g *Generator) appendDNReplacements(repls []replacement) []replacement {
 			newDCs = append(newDCs, "DC="+p)
 		}
 		repls = append(repls, replacement{
-			strings.Join(oldDCs, ",") + ",DC=local",
-			strings.Join(newDCs, ",") + ",DC=local",
+			Old: strings.Join(oldDCs, ",") + ",DC=local",
+			New: strings.Join(newDCs, ",") + ",DC=local",
 		})
 	}
 	return repls
@@ -702,7 +750,7 @@ func (g *Generator) appendDomainReplacements(repls []replacement) []replacement 
 		return len(pairs[i].old) > len(pairs[j].old)
 	})
 	for _, dp := range pairs {
-		repls = append(repls, replacement{dp.old, dp.new})
+		repls = append(repls, replacement{Old: dp.old, New: dp.new})
 	}
 	return repls
 }
@@ -714,12 +762,21 @@ func (g *Generator) applyReplacements(content string) string {
 			continue
 		}
 
-		if g.isNameComponent(r.Old) {
-			pattern := `\b` + regexp.QuoteMeta(r.Old) + `\b`
+		if r.WordBoundary {
+			// Match name at boundaries, treating underscore as a word
+			// separator. Go's \b considers _ a word character, but GOAD
+			// uses underscore-delimited keys (e.g., "GenericWrite_missandei_viserys").
+			// We pre-process underscores to temporary placeholders so \b works,
+			// then restore them.
+			escaped := regexp.QuoteMeta(r.Old)
+			const placeholder = "\x00USCORE\x00"
+			temp := strings.ReplaceAll(content, "_", placeholder)
+			pattern := `\b` + escaped + `\b`
 			re, err := regexp.Compile(pattern)
 			if err == nil {
-				content = re.ReplaceAllString(content, r.New)
+				temp = re.ReplaceAllString(temp, r.New)
 			}
+			content = strings.ReplaceAll(temp, placeholder, "_")
 		} else {
 			content = strings.ReplaceAll(content, r.Old, r.New)
 		}
@@ -729,22 +786,7 @@ func (g *Generator) applyReplacements(content string) string {
 
 // isNameComponent returns true if old is a firstname/surname component needing word-boundary protection.
 func (g *Generator) isNameComponent(old string) bool {
-	if _, ok := g.mappings.Misc[old]; !ok {
-		return false
-	}
-	if strings.HasSuffix(old, "$") || strings.Contains(old, ".") || strings.Contains(old, "\\") {
-		return false
-	}
-	if len(old) >= 50 {
-		return false
-	}
-	cleaned := strings.ReplaceAll(strings.ReplaceAll(old, "-", ""), "'", "")
-	for _, c := range cleaned {
-		if ('a' > c || c > 'z') && ('A' > c || c > 'Z') {
-			return false
-		}
-	}
-	return true
+	return g.nameComponents[old]
 }
 
 // fixUserFirstnameSurname corrects firstname/surname fields to match generated usernames.
@@ -843,16 +885,18 @@ var textFilenames = map[string]bool{
 
 // transformFile transforms a single file with replacements and writes to target.
 func (g *Generator) transformFile(srcPath, relPath string) (transformed bool) {
+	// Rename file paths based on entity mappings (e.g., arya.txt -> thomas.txt).
+	newRelPath := g.applyReplacements(relPath)
 	ext := filepath.Ext(srcPath)
 	base := filepath.Base(srcPath)
-	targetFile := filepath.Join(g.TargetPath, relPath)
+	targetFile := filepath.Join(g.TargetPath, newRelPath)
 
 	if err := os.MkdirAll(filepath.Dir(targetFile), 0o755); err != nil {
 		fmt.Printf("Warning: mkdir failed for %s: %v\n", relPath, err)
 		return false
 	}
 
-	if textExtensions[ext] || textFilenames[base] {
+	if textExtensions[ext] || textFilenames[base] || (ext == "" && g.isTextFile(srcPath)) {
 		content, err := os.ReadFile(srcPath)
 		if err != nil {
 			fmt.Printf("Warning: Could not read %s: %v\n", relPath, err)
@@ -987,7 +1031,7 @@ func (g *Generator) findNameViolations() ([]violation, int) {
 			return nil
 		}
 		ext := filepath.Ext(path)
-		if !textExtensions[ext] && !textFilenames[d.Name()] {
+		if !textExtensions[ext] && !textFilenames[d.Name()] && (ext != "" || !g.isTextFile(path)) {
 			return nil
 		}
 		filesChecked++
@@ -1122,6 +1166,28 @@ func copyFile(src, dst string) {
 	if err := os.WriteFile(dst, data, 0o644); err != nil {
 		fmt.Printf("Warning: Could not write %s: %v\n", dst, err)
 	}
+}
+
+// isTextFile returns true if the file appears to contain text (valid UTF-8 with
+// no NUL bytes). Used as a fallback for extensionless files like "inventory_disable_vagrant".
+func (g *Generator) isTextFile(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+
+	// Only read the first 8 KiB — enough to detect binary content.
+	buf := make([]byte, 8192)
+	n, _ := f.Read(buf)
+	if n == 0 {
+		return false
+	}
+	check := buf[:n]
+	if bytes.ContainsRune(check, 0) {
+		return false
+	}
+	return utf8.Valid(check)
 }
 
 func capitalize(s string) string {

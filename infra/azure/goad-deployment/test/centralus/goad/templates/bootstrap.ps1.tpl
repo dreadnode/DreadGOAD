@@ -5,6 +5,13 @@
 $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
 
+# Pre-install NuGet provider. Azure Marketplace images sometimes ship with a
+# corrupted PackageManagement.dll that breaks Install-PackageProvider later.
+# Force-installing NuGet up front avoids errors in Ansible DSC module steps.
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+try { Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -ErrorAction Stop }
+catch { Write-Warning "NuGet provider pre-install failed: $_" }
+
 # Azure provisioning renames the built-in Administrator (SID-500) to whatever
 # admin_username we passed (here: goadadmin). The GOAD playbooks expect the
 # SID-500 account to be named 'administrator' — that's what becomes the domain

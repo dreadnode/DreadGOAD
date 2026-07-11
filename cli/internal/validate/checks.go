@@ -15,6 +15,73 @@ func printHeader(w io.Writer, header string) {
 	_, _ = fmt.Fprintf(w, "\n== %s ==\n", header)
 }
 
+// probeOutcome classifies a "must-exist" probe so retryMustExist can tell a
+// genuine negative from a transient one.
+type probeOutcome int
+
+const (
+	probePositive   probeOutcome = iota // the expected thing is present (PASS-worthy)
+	probeNegative                       // the expected thing is genuinely absent (FAIL-worthy)
+	probeIncomplete                     // the probe could not complete (WARN-worthy)
+)
+
+// retryMustExist re-runs a probe for a condition that should always hold in a
+// correctly provisioned lab, returning as soon as it sees probePositive. Only
+// probeNegative is retried: a must-exist entity reported absent by a probe that
+// *completed* is far more often a transient blip (a DC mid-replication, an
+// admin share momentarily de-registered) than a real defect, and because the
+// probe completed the host is responsive, so re-running is cheap. A
+// probeIncomplete (transport error) is returned immediately — runPSErr has
+// already retried it and it feeds dead-host marking, so retrying again here
+// would only amplify latency against a slow or dead host. An outcome that
+// persists across every attempt is trusted, so a genuine defect still surfaces.
+func (v *Validator) retryMustExist(ctx context.Context, probe func() probeOutcome) probeOutcome {
+	var last probeOutcome
+	for attempt := 1; attempt <= transientRetries; attempt++ {
+		last = probe()
+		if last != probeNegative {
+			return last
+		}
+		if attempt < transientRetries {
+			if backoffSleep(ctx, attempt) != nil {
+				// Backoff was cut short (ctx cancelled or deadline hit); a
+				// probeNegative captured mid-cancellation is not authoritative,
+				// so surface probeIncomplete (WARN) rather than letting the
+				// cancellation masquerade as a genuine defect (FAIL).
+				return probeIncomplete
+			}
+		}
+	}
+	return last
+}
+
+// scriptADUserExists checks whether an AD user exists, distinguishing a genuine
+// absence (USER_NOT_FOUND) from a transient directory error. Get-ADUser is run
+// with -ErrorAction Stop so a momentary RPC/timeout failure raises instead of
+// being silently swallowed into a false "not found"; only the AD-specific
+// not-found exception yields USER_NOT_FOUND, while any other error exits
+// non-zero and surfaces to the caller as a probe error (WARN, not FAIL).
+const scriptADUserExists = `try { Get-ADUser -Identity {{psq .Username}} -ErrorAction Stop > $null; 'USER_FOUND' } ` +
+	`catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] { 'USER_NOT_FOUND' } ` +
+	`catch { exit 1 }`
+
+// scriptADUserWithGroups is scriptADUserExists plus the user's group
+// memberships (one GROUP=<dn> line each) for membership assertions.
+const scriptADUserWithGroups = `try { $u = Get-ADUser -Identity {{psq .Username}} -Properties MemberOf -ErrorAction Stop } ` +
+	`catch [Microsoft.ActiveDirectory.Management.ADIdentityNotFoundException] { Write-Output 'USER_NOT_FOUND'; exit 0 } ` +
+	`catch { exit 1 }; ` +
+	`Write-Output 'USER_FOUND'; ` +
+	`foreach ($g in $u.MemberOf) { Write-Output "GROUP=$g" }`
+
+// scriptAdminShares enumerates all SMB shares (failing loudly if the Server
+// service can't be queried) and emits the admin shares that are present. A
+// query error exits non-zero (WARN); a successful enumeration that is missing
+// a share is authoritative for that moment and is retried by the caller, since
+// ADMIN$/C$ can briefly de-register while the Server service settles.
+const scriptAdminShares = `$ErrorActionPreference='Stop'; ` +
+	`try { $s = Get-SmbShare } catch { exit 1 }; ` +
+	`$s | Where-Object { $_.Name -eq 'ADMIN$' -or $_.Name -eq 'C$' } | Select-Object -ExpandProperty Name`
+
 func (v *Validator) checkCredentialDiscovery(ctx context.Context, w io.Writer) {
 	printHeader(w, "Credential Discovery Vulnerabilities")
 
@@ -320,54 +387,54 @@ func (v *Validator) checkMSSQL(ctx context.Context, w io.Writer) {
 		}
 		v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("MSSQL running on %s", hostLabel), "")
 
-		sqlQuery := func(sqlTmpl string, vars map[string]any) string {
-			out, err := runScriptText(ctx, v, host,
-				`$c = New-Object System.Data.SqlClient.SqlConnection 'Server=localhost;Integrated Security=True;TrustServerCertificate=True'; `+
-					`$c.Open(); $cmd = $c.CreateCommand(); `+
-					`$cmd.CommandText = @"`+"\n"+sqlTmpl+"\n"+`"@; `+
-					`$r = $cmd.ExecuteReader(); while ($r.Read()) { Write-Output $r[0].ToString() }; $r.Close(); $c.Close()`,
-				vars)
-			if err != nil {
-				return ""
-			}
-			return out
+		sqlQuery := func(sqlTmpl string, vars map[string]any) (string, bool) {
+			return v.mssqlProbe(ctx, host, sqlTmpl, vars)
 		}
 
 		for _, admin := range mf.MSSQL.SysAdmins {
-			output = sqlQuery(
+			rows, ok := sqlQuery(
 				`SELECT m.name FROM sys.server_role_members srm `+
 					`JOIN sys.server_principals r ON srm.role_principal_id = r.principal_id `+
 					`JOIN sys.server_principals m ON srm.member_principal_id = m.principal_id `+
 					`WHERE r.name = 'sysadmin' AND m.name = {{psq .Admin}}`,
 				map[string]any{"Admin": admin})
-			if output != "" {
+			switch {
+			case !ok:
+				v.addResult(w, "WARN", "MSSQL", fmt.Sprintf("Could not determine sysadmin status of %s on %s (host settling?)", admin, hostLabel), "")
+			case rows != "":
 				v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("%s is sysadmin on %s", admin, hostLabel), "")
-			} else {
+			default:
 				v.addResult(w, "FAIL", "MSSQL", fmt.Sprintf("%s is NOT sysadmin on %s", admin, hostLabel), "")
 			}
 		}
 
 		for grantee, target := range mf.MSSQL.ExecuteAsLogin {
-			output = sqlQuery(
+			rows, ok := sqlQuery(
 				`SELECT pr.name FROM sys.server_permissions sp `+
 					`JOIN sys.server_principals pr ON sp.grantee_principal_id = pr.principal_id `+
 					`JOIN sys.server_principals pr2 ON sp.major_id = pr2.principal_id `+
 					`WHERE sp.permission_name = 'IMPERSONATE' AND pr.name = {{psq .Grantee}} AND pr2.name = {{psq .Target}}`,
 				map[string]any{"Grantee": grantee, "Target": target})
-			if output != "" {
+			switch {
+			case !ok:
+				v.addResult(w, "WARN", "MSSQL", fmt.Sprintf("Could not determine IMPERSONATE grant for %s->%s on %s (host settling?)", grantee, target, hostLabel), "")
+			case rows != "":
 				v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("%s can impersonate %s on %s", grantee, target, hostLabel), "")
-			} else {
+			default:
 				v.addResult(w, "FAIL", "MSSQL", fmt.Sprintf("%s CANNOT impersonate %s on %s", grantee, target, hostLabel), "")
 			}
 		}
 
 		for name, ls := range mf.MSSQL.LinkedServers {
-			output = sqlQuery(
+			rows, ok := sqlQuery(
 				`SELECT name FROM sys.servers WHERE is_linked = 1 AND name = {{psq .Name}}`,
 				map[string]any{"Name": name})
-			if output != "" {
+			switch {
+			case !ok:
+				v.addResult(w, "WARN", "MSSQL", fmt.Sprintf("Could not determine linked server %s on %s (host settling?)", name, hostLabel), "")
+			case rows != "":
 				v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("Linked server %s -> %s on %s", name, ls.DataSrc, hostLabel), "")
-			} else {
+			default:
 				v.addResult(w, "FAIL", "MSSQL", fmt.Sprintf("Linked server %s NOT found on %s", name, hostLabel), "")
 			}
 		}
@@ -376,13 +443,63 @@ func (v *Validator) checkMSSQL(ctx context.Context, w io.Writer) {
 	}
 }
 
-type mssqlQueryFn func(sqlTmpl string, vars map[string]any) string
+// mssqlProbe runs a read-only SQL query on host over a local integrated-auth
+// connection and returns the rows (one per line). ok is false only when the
+// probe could not be completed after retries — a host still settling right
+// after provisioning returns empty or truncated stdout even though the WinRM
+// transport reports success. The sqlProbeSentinel, printed only after the
+// query finishes, separates that transient case from a genuine empty result
+// set: a completed query with no rows returns ("", true). Callers should WARN
+// (not FAIL) when ok is false so a healthy lab is never reported as broken.
+func (v *Validator) mssqlProbe(ctx context.Context, host, sqlTmpl string, vars map[string]any) (string, bool) {
+	script := `$c = New-Object System.Data.SqlClient.SqlConnection 'Server=localhost;Integrated Security=True;TrustServerCertificate=True'; ` +
+		`$c.Open(); $cmd = $c.CreateCommand(); ` +
+		`$cmd.CommandText = @"` + "\n" + sqlTmpl + "\n" + `"@; ` +
+		`$r = $cmd.ExecuteReader(); while ($r.Read()) { Write-Output $r[0].ToString() }; $r.Close(); $c.Close(); ` +
+		`Write-Output '` + sqlProbeSentinel + `'`
+	// runPSErr already retries empty-but-successful output (a settling host),
+	// so a single call suffices: a completed query always prints the sentinel
+	// as its final line, even with zero rows, so a matching last line means
+	// the result is authoritative (empty rows = a genuine negative). A missing
+	// (or non-final) sentinel means the probe never completed (transport
+	// error, or truncated output that outlived the retries): report ok=false
+	// so the caller WARNs instead of emitting a bogus FAIL.
+	out, err := runScriptText(ctx, v, host, script, vars)
+	if err != nil {
+		return "", false
+	}
+	// Anchor on the final line rather than substring-searching: a row value
+	// that happens to contain the sentinel (or output truncated mid-row but
+	// still including the sentinel substring) must not be able to fool the
+	// probe into ok=true or corrupt the returned rows.
+	idx := strings.LastIndex(out, "\n")
+	last := out
+	if idx >= 0 {
+		last = out[idx+1:]
+	}
+	if strings.TrimRight(last, "\r") != sqlProbeSentinel {
+		return "", false
+	}
+	if idx < 0 {
+		return "", true
+	}
+	return strings.TrimRight(out[:idx], "\r\n"), true
+}
+
+type mssqlQueryFn func(sqlTmpl string, vars map[string]any) (string, bool)
 
 func (v *Validator) checkMSSQLExtendedFeatures(w io.Writer, sqlQuery mssqlQueryFn, hostLabel string) {
-	output := sqlQuery(
+	xpOut, ok := sqlQuery(
 		`SELECT CONVERT(INT, ISNULL(value, value_in_use)) FROM sys.configurations WHERE name = 'xp_cmdshell'`,
 		nil)
-	xpEnabled := strings.TrimSpace(output) == "1"
+	if !ok {
+		// Couldn't get a definitive answer; the SeImpersonate probe below
+		// depends on xp_cmdshell, so skip the whole group rather than emit a
+		// bogus "NOT enabled".
+		v.addResult(w, "WARN", "MSSQL", fmt.Sprintf("Could not query xp_cmdshell on %s (host settling?)", hostLabel), "")
+		return
+	}
+	xpEnabled := strings.TrimSpace(xpOut) == "1"
 	if xpEnabled {
 		v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("xp_cmdshell enabled on %s", hostLabel), "")
 	} else {
@@ -390,17 +507,25 @@ func (v *Validator) checkMSSQLExtendedFeatures(w io.Writer, sqlQuery mssqlQueryF
 	}
 
 	if xpEnabled {
-		privOut := sqlQuery(`EXEC xp_cmdshell 'whoami /priv'`, nil)
-		if strings.Contains(privOut, "SeImpersonatePrivilege") {
-			v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("MSSQL service has SeImpersonatePrivilege on %s (potato escalation possible)", hostLabel), "")
-		} else if strings.TrimSpace(privOut) != "" {
-			v.addResult(w, "INFO", "MSSQL", fmt.Sprintf("SeImpersonatePrivilege NOT found on MSSQL service on %s", hostLabel), "")
+		if privOut, ok := sqlQuery(`EXEC xp_cmdshell 'whoami /priv'`, nil); ok {
+			if strings.Contains(privOut, "SeImpersonatePrivilege") {
+				v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("MSSQL service has SeImpersonatePrivilege on %s (potato escalation possible)", hostLabel), "")
+			} else if strings.TrimSpace(privOut) != "" {
+				v.addResult(w, "INFO", "MSSQL", fmt.Sprintf("SeImpersonatePrivilege NOT found on MSSQL service on %s", hostLabel), "")
+			}
 		}
 	}
 
-	trustworthy := sqlQuery(
+	trustworthy, ok := sqlQuery(
 		`SELECT name FROM sys.databases WHERE is_trustworthy_on = 1 AND name NOT IN ('master','tempdb')`,
 		nil)
+	if !ok {
+		// Same reasoning as xp_cmdshell above: emit WARN rather than silently
+		// dropping the check, so "couldn't query" is distinguishable from
+		// "no trustworthy DBs".
+		v.addResult(w, "WARN", "MSSQL", fmt.Sprintf("Could not query TRUSTWORTHY databases on %s (host settling?)", hostLabel), "")
+		return
+	}
 	dbs := parseOutputLines(trustworthy)
 	if len(dbs) > 0 {
 		v.addResult(w, "PASS", "MSSQL", fmt.Sprintf("TRUSTWORTHY databases on %s: %s", hostLabel, strings.Join(dbs, ", ")), "")
@@ -1504,22 +1629,32 @@ func (v *Validator) checkUsernamePasswordEqual(ctx context.Context, w io.Writer)
 		if !v.hasHost(dcRole) {
 			continue
 		}
-		output, err := runScriptText(ctx, v, dcRole,
-			`$u = Get-ADUser -Identity {{psq .Username}} -ErrorAction SilentlyContinue; if ($u) { 'USER_FOUND' } else { 'USER_NOT_FOUND' }`,
-			map[string]any{"Username": uf.Username})
-		switch {
-		case err != nil:
-			v.addResult(w, "WARN", "Credentials",
-				fmt.Sprintf("Could not verify %s in %s: %v", uf.Username, uf.Domain, err), "")
-		case strings.Contains(output, "USER_FOUND"):
+		var output string
+		var probeErr error
+		outcome := v.retryMustExist(ctx, func() probeOutcome {
+			output, probeErr = runScriptText(ctx, v, dcRole, scriptADUserExists,
+				map[string]any{"Username": uf.Username})
+			switch {
+			case probeErr != nil:
+				return probeIncomplete
+			case strings.Contains(output, "USER_FOUND"):
+				return probePositive
+			case strings.Contains(output, "USER_NOT_FOUND"):
+				return probeNegative
+			default:
+				return probeIncomplete
+			}
+		})
+		switch outcome {
+		case probePositive:
 			v.addResult(w, "PASS", "Credentials",
 				fmt.Sprintf("%s (password=%s) exists in %s", uf.Username, uf.User.Password, uf.Domain), "")
-		case strings.Contains(output, "USER_NOT_FOUND"):
+		case probeNegative:
 			v.addResult(w, "FAIL", "Credentials",
 				fmt.Sprintf("%s does NOT exist in %s (expected weak-cred user)", uf.Username, uf.Domain), "")
 		default:
 			v.addResult(w, "WARN", "Credentials",
-				fmt.Sprintf("Could not verify %s in %s", uf.Username, uf.Domain), "")
+				fmt.Sprintf("Could not verify %s in %s: %v", uf.Username, uf.Domain, probeErr), "")
 		}
 	}
 }
@@ -2728,18 +2863,28 @@ func (v *Validator) checkConfiguredUsers(ctx context.Context, w io.Writer) {
 		if !v.hasHost(dcRole) {
 			continue
 		}
-		output, err := runScriptText(ctx, v, dcRole,
-			`$u = Get-ADUser -Identity {{psq .Username}} -Properties MemberOf -ErrorAction SilentlyContinue; `+
-				`if (-not $u) { Write-Output 'USER_NOT_FOUND'; exit }; `+
-				`Write-Output 'USER_FOUND'; `+
-				`foreach ($g in $u.MemberOf) { Write-Output "GROUP=$g" }`,
-			map[string]any{"Username": uf.Username})
-		if err != nil {
+		var output string
+		var probeErr error
+		outcome := v.retryMustExist(ctx, func() probeOutcome {
+			output, probeErr = runScriptText(ctx, v, dcRole, scriptADUserWithGroups,
+				map[string]any{"Username": uf.Username})
+			switch {
+			case probeErr != nil:
+				return probeIncomplete
+			case strings.Contains(output, "USER_FOUND"):
+				return probePositive
+			case strings.Contains(output, "USER_NOT_FOUND"):
+				return probeNegative
+			default:
+				return probeIncomplete
+			}
+		})
+		switch outcome {
+		case probeIncomplete:
 			v.addResult(w, "WARN", "Users",
-				fmt.Sprintf("Could not verify %s in %s: %v", uf.Username, uf.Domain, err), "")
+				fmt.Sprintf("Could not verify %s in %s: %v", uf.Username, uf.Domain, probeErr), "")
 			continue
-		}
-		if !strings.Contains(output, "USER_FOUND") {
+		case probeNegative:
 			v.addResult(w, "FAIL", "Users",
 				fmt.Sprintf("%s does NOT exist in %s", uf.Username, uf.Domain), "")
 			continue
@@ -2995,26 +3140,37 @@ func (v *Validator) checkAdminShares(ctx context.Context, w io.Writer) {
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
 
-		output := v.runPS(ctx, host,
-			`Get-SmbShare -Name ADMIN$,C$ -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name`)
-		shares := parseOutputLines(output)
-		found := make(map[string]bool, len(shares))
-		for _, s := range shares {
-			found[strings.ToUpper(strings.TrimSpace(s))] = true
-		}
-
 		var missing []string
-		for _, want := range []string{"ADMIN$", "C$"} {
-			if !found[want] {
-				missing = append(missing, want)
+		outcome := v.retryMustExist(ctx, func() probeOutcome {
+			output, err := runScriptText(ctx, v, host, scriptAdminShares, nil)
+			if err != nil {
+				return probeIncomplete
 			}
-		}
-		if len(missing) == 0 {
+			found := make(map[string]bool)
+			for _, s := range parseOutputLines(output) {
+				found[strings.ToUpper(strings.TrimSpace(s))] = true
+			}
+			missing = nil
+			for _, want := range []string{"ADMIN$", "C$"} {
+				if !found[want] {
+					missing = append(missing, want)
+				}
+			}
+			if len(missing) == 0 {
+				return probePositive
+			}
+			return probeNegative
+		})
+		switch outcome {
+		case probePositive:
 			v.addResult(w, "PASS", "AdminShares",
 				fmt.Sprintf("%s exposes ADMIN$ and C$", hostLabel), "")
-		} else {
+		case probeNegative:
 			v.addResult(w, "FAIL", "AdminShares",
 				fmt.Sprintf("%s missing default shares: %s", hostLabel, strings.Join(missing, ", ")), "")
+		default:
+			v.addResult(w, "WARN", "AdminShares",
+				fmt.Sprintf("Could not enumerate shares on %s (host settling?)", hostLabel), "")
 		}
 	}
 }

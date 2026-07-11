@@ -41,13 +41,13 @@ func NewNameGenerator() *NameGenerator {
 			"ventures", "enterprises", "group", "labs", "dynamics", "works",
 		},
 		firstNames: []string{
-			"James", "Michael", "Robert", "John", "David", "William",
+			"James", "Michael", "John", "David", "William",
 			"Richard", "Joseph", "Thomas", "Charles", "Christopher", "Daniel",
 			"Matthew", "Anthony", "Mark", "Donald", "Steven", "Paul",
 			"Andrew", "Joshua", "Kenneth", "Kevin", "Brian", "George",
 			"Timothy", "Ronald", "Edward", "Jason", "Jeffrey", "Ryan",
 			"Jacob", "Gary", "Nicholas", "Eric", "Jonathan", "Stephen",
-			"Larry", "Justin", "Scott", "Brandon", "Benjamin", "Samuel",
+			"Larry", "Justin", "Scott", "Benjamin", "Samuel",
 			"Raymond", "Gregory", "Alexander", "Patrick", "Frank", "Dennis",
 			"Mary", "Patricia", "Jennifer", "Linda", "Barbara", "Elizabeth",
 			"Susan", "Jessica", "Sarah", "Karen", "Nancy", "Lisa",
@@ -224,7 +224,7 @@ const (
 	lowerChars   = "abcdefghijklmnopqrstuvwxyz"
 	upperChars   = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	digitChars   = "0123456789"
-	specialChars = "!@#$%^&*()-_=+[]{}|;:,.<>?"
+	specialChars = "!@#$%^&*()-_=+|;:,.<>?"
 )
 
 type charClasses struct {
@@ -280,7 +280,7 @@ func (cc charClasses) seedRequired() []byte {
 		seed = append(seed, secureChoiceByte(digitChars))
 	}
 	if cc.special {
-		seed = append(seed, secureChoiceByte("!@#$%^&*()-_=+"))
+		seed = append(seed, secureChoiceByte(specialChars))
 	}
 	return seed
 }

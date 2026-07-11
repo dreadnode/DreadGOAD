@@ -1,6 +1,14 @@
+[all:vars]
+domain_name=GOAD-Light
+admin_user=administrator
+force_dns_server=no
+dns_server=1.1.1.1
+dns_server_forwarder=1.1.1.1
+enable_http_proxy=no
+ad_http_proxy=http://x.x.x.x:xxxx
+ad_https_proxy=http://x.x.x.x:xxxx
+
 [default]
-; Note: ansible_host *MUST* be an IPv4 address or setting things like DNS
-; servers will break.
 ; ------------------------------------------------
 ; sevenkingdoms.local
 ; ------------------------------------------------
@@ -11,5 +19,61 @@ dc01 ansible_host={{ip_range}}.10 dns_domain=dc01 dict_key=dc01 ansible_user=ans
 dc02 ansible_host={{ip_range}}.11 dns_domain=dc01 dict_key=dc02 ansible_user=ansible ansible_password=NgtI75cKV+Pu
 srv02 ansible_host={{ip_range}}.22 dns_domain=dc02 dict_key=srv02 ansible_user=ansible ansible_password=NgtI75cKV+Pu
 
-[all:vars]
-admin_user=goadmin
+[domain]
+dc01
+dc02
+srv02
+
+[dc]
+dc01
+dc02
+
+[server]
+srv02
+
+[workstation]
+
+[parent_dc]
+dc01
+
+[child_dc]
+dc02
+
+[trust]
+
+[adcs]
+dc01
+
+[adcs_customtemplates]
+
+[iis]
+srv02
+
+[mssql]
+srv02
+
+[mssql_ssms]
+srv02
+
+[webdav]
+srv02
+
+[laps_dc]
+[laps_server]
+[laps_workstation]
+
+[update]
+srv02
+
+[no_update]
+dc01
+dc02
+
+[defender_on]
+dc01
+dc02
+
+[defender_off]
+srv02
+
+[extensions]

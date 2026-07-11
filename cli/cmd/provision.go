@@ -133,7 +133,7 @@ func isSSMInventory(cfg *config.Config) bool {
 // preflightChecks validates tooling, builds the Ansible collection, and
 // prepares artifacts needed before provisioning playbooks run.
 func preflightChecks(ctx context.Context, cfg *config.Config) error {
-	if err := doctor.CheckAnsibleCoreVersion(); err != nil {
+	if err := doctor.CheckAnsibleCoreVersion(cfg.ResolvedProvider()); err != nil {
 		return fmt.Errorf("ansible-core version check failed: %w", err)
 	}
 	if err := ansible.InstallRequirements(cfg.ProjectRoot); err != nil {
@@ -192,7 +192,9 @@ func bootstrapInventory(invPath string) error {
 
 func bootstrapFromProviderTemplate(invPath string, cfg *config.Config) error {
 	labName := "GOAD"
-	if cfg.ResolvedProvider() == "proxmox" {
+	if ec := cfg.ActiveEnvironment(); ec.Variant && ec.VariantTarget != "" {
+		labName = filepath.Base(ec.VariantTarget)
+	} else if cfg.ResolvedProvider() == "proxmox" {
 		labName = cfg.ProxmoxLab()
 	}
 	providerName := cfg.ResolvedProvider()
