@@ -161,9 +161,9 @@ type HostMapping struct {
 
 // replacement is an ordered old->new string replacement.
 type replacement struct {
-	Old           string
-	New           string
-	WordBoundary  bool // use word-boundary regex instead of plain replacement
+	Old          string
+	New          string
+	WordBoundary bool // use word-boundary regex instead of plain replacement
 }
 
 // Generator creates GOAD variants with randomized entity names.
@@ -177,8 +177,8 @@ type Generator struct {
 	replacements    []replacement
 	userPasswordMap map[string]string // new_username -> new_password
 	preservedUsers  map[string]bool
-	pwdInDescUsers  map[string]bool   // new_username -> has password in description
-	nameComponents  map[string]bool   // Misc keys that are firstname/surname components
+	pwdInDescUsers  map[string]bool // new_username -> has password in description
+	nameComponents  map[string]bool // Misc keys that are firstname/surname components
 }
 
 // hostnameAliases maps canonical hostnames to known typos/aliases in upstream GOAD.

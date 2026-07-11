@@ -4,11 +4,11 @@ import "testing"
 
 func TestDeriveAzureSubnets(t *testing.T) {
 	tests := []struct {
-		name       string
-		vnetCIDR   string
-		wantBast   string
-		wantCtrl   string
-		wantErr    bool
+		name     string
+		vnetCIDR string
+		wantBast string
+		wantCtrl string
+		wantErr  bool
 	}{
 		{"standard", "10.8.0.0/16", "10.8.2.0/26", "10.8.3.0/28", false},
 		{"different octet", "10.1.0.0/16", "10.1.2.0/26", "10.1.3.0/28", false},
