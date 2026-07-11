@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strings"
 	"text/template"
+	"time"
 )
 
 // jsonBegin/jsonEnd bracket the JSON payload emitted by every embedded
@@ -18,7 +19,36 @@ import (
 const (
 	jsonBegin = "===BEGIN_JSON==="
 	jsonEnd   = "===END_JSON==="
+
+	// sqlProbeSentinel is appended to every MSSQL probe script and printed
+	// only after the query completes. Its presence distinguishes a genuine
+	// empty result set (sentinel present, zero rows) from a transient blip
+	// (sentinel absent: a host still settling right after provisioning
+	// returns truncated or empty stdout even though the transport reported
+	// success). See [Validator.mssqlProbe].
+	sqlProbeSentinel = "__SQLPROBE_OK__"
+
+	// transientRetries is how many times a probe whose output is empty or
+	// missing its expected JSON envelope / SQL sentinel is re-run before
+	// giving up. Envelope and sentinel scripts never legitimately emit empty
+	// output, so retrying here cannot mask a real "thing not found" result —
+	// it only absorbs the post-provision settling window that would otherwise
+	// turn a healthy lab into bogus failures.
+	transientRetries = 3
 )
+
+var backoffBase = time.Second
+
+// backoffSleep waits attempt*backoffBase or returns ctx.Err() if the context
+// is cancelled first.
+func backoffSleep(ctx context.Context, attempt int) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(time.Duration(attempt) * backoffBase):
+		return nil
+	}
+}
 
 // scriptFuncs are the template helpers available to embedded PowerShell
 // scripts via text/template.
@@ -115,17 +145,38 @@ func runScriptJSON[T any](ctx context.Context, v *Validator, host, tmpl string, 
 	if err != nil {
 		return zero, err
 	}
-	raw := v.runPS(ctx, host, script)
-	if raw == "" {
-		return zero, errors.New("empty output (host unreachable or marked dead)")
+	// A non-empty response that lacks the JSON envelope happens transiently for
+	// these scripts (a host still settling emits a banner or partial stream
+	// before the real payload), never as a legitimate result. Retry that case.
+	// The empty-output case is already handled one layer down by runPSErr, and
+	// transport errors there feed the dead-host machinery, so neither is
+	// retried again here.
+	var lastErr error
+	for attempt := 1; attempt <= transientRetries; attempt++ {
+		raw, err := v.runPSErr(ctx, host, script)
+		if err != nil {
+			return zero, err
+		}
+		if raw == "" {
+			return zero, errors.New("empty output despite successful transport (host settling?)")
+		}
+		payload, perr := extractJSON(raw)
+		if perr != nil {
+			lastErr = perr
+			if attempt < transientRetries {
+				if berr := backoffSleep(ctx, attempt); berr != nil {
+					return zero, berr
+				}
+			}
+			continue
+		}
+		var out T
+		if uerr := json.Unmarshal(payload, &out); uerr != nil {
+			// A malformed envelope is a script bug, not a transient blip —
+			// fail fast rather than retrying pointlessly.
+			return zero, fmt.Errorf("unmarshal payload: %w", uerr)
+		}
+		return out, nil
 	}
-	payload, err := extractJSON(raw)
-	if err != nil {
-		return zero, err
-	}
-	var out T
-	if err := json.Unmarshal(payload, &out); err != nil {
-		return zero, fmt.Errorf("unmarshal payload: %w", err)
-	}
-	return out, nil
+	return zero, lastErr
 }
