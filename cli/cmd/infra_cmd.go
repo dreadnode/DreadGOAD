@@ -93,6 +93,7 @@ func init() {
 	for _, cmd := range []*cobra.Command{infraApplyCmd, infraDestroyCmd, infraPlanCmd} {
 		cmd.Flags().Bool("with-bastion", false, "(Azure) Include the optional Azure Bastion module")
 		cmd.Flags().Bool("with-controller", false, "(Azure) Include the optional in-VNet Ansible controller module")
+		cmd.Flags().Bool("with-kali", false, "(Azure) Include the optional Kali Linux attack box")
 	}
 
 	infraCmd.PersistentFlags().StringP("deployment", "d", "", "Deployment name (default: from config)")
@@ -178,6 +179,18 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 	}
 	if withController, _ := cmd.Flags().GetBool("with-controller"); withController {
 		opts.ExtraEnv = append(opts.ExtraEnv, "DREADGOAD_ENABLE_AZURE_CONTROLLER=true")
+	}
+	withKali, _ := cmd.Flags().GetBool("with-kali")
+	// On destroy, always include the kali module so orphaned VMs are cleaned up
+	// even if the user forgets --with-kali.
+	if !withKali && action == "destroy" {
+		kaliDir := filepath.Join(cfg.ProjectRoot, "infra", "azure", deployment, cfg.Env, region, "kali")
+		if _, err := os.Stat(kaliDir); err == nil {
+			withKali = true
+		}
+	}
+	if withKali {
+		opts.ExtraEnv = append(opts.ExtraEnv, "DREADGOAD_ENABLE_AZURE_KALI=true")
 	}
 
 	if action == "apply" || action == "destroy" {

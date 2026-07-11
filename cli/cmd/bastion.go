@@ -29,6 +29,9 @@ before 'infra apply', or use 'infra apply --with-bastion'). Tunneling-enabled
 Standard/Premium SKUs are required for ssh/rdp/tunnel; the Developer SKU only
 supports the browser console.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		if err := config.Init(); err != nil {
+			return err
+		}
 		cfg, err := config.Get()
 		if err != nil {
 			return err
@@ -198,23 +201,37 @@ func runBastionSSH(cmd *cobra.Command, args []string) error {
 	authType, _ := cmd.Flags().GetString("auth-type")
 	sshKey, _ := cmd.Flags().GetString("ssh-key")
 
-	// Auto-pick the ephemeral key for the in-VNet Ansible controller. The
-	// terraform-azure-controller module writes its private key to a
-	// well-known path and stamps Role=AnsibleController on the VM, so we
-	// can reach it without making the operator type --auth-type ssh-key
-	// --ssh-key <path> -u dreadadmin every time. A failed live lookup is
-	// non-fatal — we just fall back to the user-supplied flag values.
-	if inst, err := client.FindInstanceByHostname(ctx, cfg.Env, args[0]); err == nil && inst.Tags["Role"] == "AnsibleController" {
-		if !cmd.Flags().Changed("auth-type") {
-			authType = "ssh-key"
-		}
-		if !cmd.Flags().Changed("ssh-key") && authType == "ssh-key" {
-			if path := controllerKeyPath(cfg.Env, inst.Name); path != "" {
-				sshKey = path
+	// Auto-pick the ephemeral key for known VM roles. The terraform modules
+	// write private keys to well-known paths and stamp Role tags on the VMs,
+	// so we can reach them without making the operator type --auth-type
+	// ssh-key --ssh-key <path> -u <user> every time. A failed live lookup
+	// is non-fatal — we just fall back to the user-supplied flag values.
+	if inst, err := client.FindInstanceByHostname(ctx, cfg.Env, args[0]); err == nil {
+		switch inst.Tags["Role"] {
+		case "AnsibleController":
+			if !cmd.Flags().Changed("auth-type") {
+				authType = "ssh-key"
 			}
-		}
-		if !cmd.Flags().Changed("user") {
-			user = "dreadadmin"
+			if !cmd.Flags().Changed("ssh-key") && authType == "ssh-key" {
+				if path := controllerKeyPath(cfg.Env, inst.Name); path != "" {
+					sshKey = path
+				}
+			}
+			if !cmd.Flags().Changed("user") {
+				user = "dreadadmin"
+			}
+		case "AttackBox":
+			if !cmd.Flags().Changed("auth-type") {
+				authType = "ssh-key"
+			}
+			if !cmd.Flags().Changed("ssh-key") && authType == "ssh-key" {
+				if path := kaliKeyPath(cfg.Env, inst.Name); path != "" {
+					sshKey = path
+				}
+			}
+			if !cmd.Flags().Changed("user") {
+				user = "kali"
+			}
 		}
 	}
 
@@ -237,6 +254,26 @@ func controllerKeyPath(env, vmName string) string {
 		return ""
 	}
 	path := filepath.Join(home, ".dreadgoad", "keys", fmt.Sprintf("azure-%s-%s-controller", env, deployment))
+	if _, err := os.Stat(path); err != nil {
+		return ""
+	}
+	return path
+}
+
+// kaliKeyPath derives the conventional ephemeral private-key path the
+// terraform-azure-kali module writes. VM names follow
+// "{env}-{deployment}-kali-vm"; the module writes to
+// "~/.dreadgoad/keys/azure-{env}-{deployment}-kali".
+func kaliKeyPath(env, vmName string) string {
+	deployment := strings.TrimSuffix(strings.TrimPrefix(vmName, env+"-"), "-kali-vm")
+	if deployment == "" || deployment == vmName {
+		return ""
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	path := filepath.Join(home, ".dreadgoad", "keys", fmt.Sprintf("azure-%s-%s-kali", env, deployment))
 	if _, err := os.Stat(path); err != nil {
 		return ""
 	}

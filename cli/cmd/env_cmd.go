@@ -460,33 +460,43 @@ func generateVariantConfig(projectRoot, envName string) error {
 	return gen.Run()
 }
 
-// deriveAzureSubnets computes bastion and controller subnet CIDRs from a /16
-// VNet CIDR. Given "10.X.0.0/16" it produces:
+// azureSubnets holds the computed subnet CIDRs for an Azure deployment.
+type azureSubnets struct {
+	Bastion    string
+	Controller string
+	Kali       string
+}
+
+// deriveAzureSubnets computes bastion, controller, and kali subnet CIDRs from
+// a /16 VNet CIDR. Given "10.X.0.0/16" it produces:
 //
 //	bastion:    10.X.2.0/26  (64 IPs, required by Azure Bastion)
 //	controller: 10.X.3.0/28  (16 IPs, single Ansible controller)
-func deriveAzureSubnets(vnetCIDR string) (bastionSubnet, controllerSubnet string, err error) {
+//	kali:       10.X.4.0/28  (16 IPs, optional attack box)
+func deriveAzureSubnets(vnetCIDR string) (azureSubnets, error) {
 	_, ipnet, err := net.ParseCIDR(vnetCIDR)
 	if err != nil {
-		return "", "", fmt.Errorf("invalid VNet CIDR %q: %w", vnetCIDR, err)
+		return azureSubnets{}, fmt.Errorf("invalid VNet CIDR %q: %w", vnetCIDR, err)
 	}
 	ones, _ := ipnet.Mask.Size()
 	if ones != 16 {
-		return "", "", fmt.Errorf("VNet CIDR must be a /16, got /%d", ones)
+		return azureSubnets{}, fmt.Errorf("VNet CIDR must be a /16, got /%d", ones)
 	}
 	base := ipnet.IP.To4()
 	if base == nil {
-		return "", "", fmt.Errorf("VNet CIDR must be IPv4, got %q", vnetCIDR)
+		return azureSubnets{}, fmt.Errorf("VNet CIDR must be IPv4, got %q", vnetCIDR)
 	}
-	bastionSubnet = fmt.Sprintf("%d.%d.2.0/26", base[0], base[1])
-	controllerSubnet = fmt.Sprintf("%d.%d.3.0/28", base[0], base[1])
-	return bastionSubnet, controllerSubnet, nil
+	return azureSubnets{
+		Bastion:    fmt.Sprintf("%d.%d.2.0/26", base[0], base[1]),
+		Controller: fmt.Sprintf("%d.%d.3.0/28", base[0], base[1]),
+		Kali:       fmt.Sprintf("%d.%d.4.0/28", base[0], base[1]),
+	}, nil
 }
 
-// createAzureEnvHCL writes an Azure-specific env.hcl with VNet, bastion, and
-// controller subnet CIDRs auto-derived from the VNet CIDR.
+// createAzureEnvHCL writes an Azure-specific env.hcl with VNet, bastion,
+// controller, and kali subnet CIDRs auto-derived from the VNet CIDR.
 func createAzureEnvHCL(envDir, envName, vnetCIDR string) error {
-	bastionSubnet, controllerSubnet, err := deriveAzureSubnets(vnetCIDR)
+	subnets, err := deriveAzureSubnets(vnetCIDR)
 	if err != nil {
 		return err
 	}
@@ -505,8 +515,14 @@ func createAzureEnvHCL(envDir, envName, vnetCIDR string) error {
   controller_subnet_cidr               = %q
   controller_ssh_source_address_prefix = %q
   controller_instance_size = "Standard_D2s_v3"
+
+  # Optional Kali attack box. Enable with --with-kali on infra commands.
+  kali_subnet_cidr               = %q
+  kali_ssh_source_address_prefix = %q
+  kali_instance_size             = "Standard_D2s_v3"
 }
-`, envName, vnetCIDR, bastionSubnet, controllerSubnet, bastionSubnet)
+`, envName, vnetCIDR, subnets.Bastion, subnets.Controller, subnets.Bastion,
+		subnets.Kali, subnets.Bastion)
 	return os.WriteFile(filepath.Join(envDir, "env.hcl"), []byte(content), 0o644)
 }
 

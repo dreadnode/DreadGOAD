@@ -85,6 +85,7 @@ func runAzureChecks() []CheckResult {
 	results = append(results, checkTerragrunt())
 	results = append(results, checkTerraformOrTofu())
 	results = append(results, checkPyPSRP())
+	results = append(results, checkKaliMarketplaceTerms())
 	return results
 }
 
@@ -407,6 +408,36 @@ func checkPyPSRP() CheckResult {
 		}
 	}
 	return CheckResult{Name: "pypsrp + PySocks", Status: "pass", Message: "installed"}
+}
+
+func checkKaliMarketplaceTerms() CheckResult {
+	out, err := exec.Command(
+		"az", "vm", "image", "terms", "show",
+		"--publisher", "kali-linux", "--offer", "kali", "--plan", "kali-2026-2",
+		"-o", "tsv", "--query", "accepted",
+	).CombinedOutput()
+	if err != nil {
+		return CheckResult{
+			Name:   "Kali marketplace terms",
+			Status: "warn",
+			Message: "could not check (run: az vm image terms accept " +
+				"--publisher kali-linux --offer kali --plan kali-2026-2). " +
+				"Required if using --with-kali",
+		}
+	}
+	if strings.TrimSpace(string(out)) == "true" {
+		return CheckResult{
+			Name:    "Kali marketplace terms",
+			Status:  "pass",
+			Message: "accepted",
+		}
+	}
+	return CheckResult{
+		Name:   "Kali marketplace terms",
+		Status: "warn",
+		Message: "not accepted. Required if using --with-kali. Run: " +
+			"az vm image terms accept --publisher kali-linux --offer kali --plan kali-2026-2",
+	}
 }
 
 func checkLudusSSH(opts LudusOptions) []CheckResult {
