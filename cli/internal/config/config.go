@@ -449,6 +449,15 @@ func (c *Config) InfraBasePath() string {
 	return filepath.Join(c.ProjectRoot, "infra", c.Infra.Deployment)
 }
 
+// InfraBasePathForProvider returns the base infra directory for the given provider.
+// Azure uses infra/azure/{deployment}; other providers use infra/{deployment}.
+func (c *Config) InfraBasePathForProvider(provider string) string {
+	if provider == "azure" {
+		return filepath.Join(c.ProjectRoot, "infra", "azure", c.Infra.Deployment)
+	}
+	return c.InfraBasePath()
+}
+
 // InfraWorkDir returns the working directory for terragrunt operations
 // at the region level: infra/{deployment}/{env}/{region}/
 func (c *Config) InfraWorkDir() (string, error) {
