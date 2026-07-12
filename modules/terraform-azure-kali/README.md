@@ -40,7 +40,7 @@ No modules.
 | <a name="input_admin_username"></a> [admin\_username](#input\_admin\_username) | Local admin username for the Kali VM. | `string` | `"kali"` | no |
 | <a name="input_deployment_name"></a> [deployment\_name](#input\_deployment\_name) | Name of the deployment (e.g. "goad"). | `string` | n/a | yes |
 | <a name="input_env"></a> [env](#input\_env) | Environment name (e.g. test, staging). | `string` | n/a | yes |
-| <a name="input_ephemeral_key_output_path"></a> [ephemeral\_key\_output\_path](#input\_ephemeral\_key\_output\_path) | Filesystem path to write the generated private key when admin\_ssh\_public\_key is null. | `string` | `null` | no |
+| <a name="input_ephemeral_key_output_path"></a> [ephemeral\_key\_output\_path](#input\_ephemeral\_key\_output\_path) | Filesystem path to write the generated private key when admin\_ssh\_public\_key is null. Required in that case; ignored when an explicit public key is supplied. | `string` | `null` | no |
 | <a name="input_instance_size"></a> [instance\_size](#input\_instance\_size) | Azure VM size. D2s\_v3 (2 vCPU, 8 GB) handles concurrent attack tooling comfortably. | `string` | `"Standard_D2s_v3"` | no |
 | <a name="input_kali_subnet_cidr"></a> [kali\_subnet\_cidr](#input\_kali\_subnet\_cidr) | CIDR for the Kali attack box's dedicated subnet. /28 is plenty for one VM. | `string` | `"10.8.4.0/28"` | no |
 | <a name="input_location"></a> [location](#input\_location) | Azure region. | `string` | n/a | yes |

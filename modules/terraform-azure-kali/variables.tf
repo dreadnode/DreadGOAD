@@ -59,7 +59,7 @@ variable "admin_ssh_public_key" {
 }
 
 variable "ephemeral_key_output_path" {
-  description = "Filesystem path to write the generated private key when admin_ssh_public_key is null."
+  description = "Filesystem path to write the generated private key when admin_ssh_public_key is null. Required in that case; ignored when an explicit public key is supplied."
   type        = string
   default     = null
 }
