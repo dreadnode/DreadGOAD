@@ -6,10 +6,10 @@ import (
 	"testing"
 )
 
-// TestVerifyReportSampleEngagement exercises the full verify flow against a
-// sample agent report. The expected counts and inferred objectives are the
-// same set the reference Python implementation produces for the in-tree
-// answer key.
+// TestVerifyReportSampleEngagement exercises the static-only verify flow
+// against a sample agent report. With inference removed, only credentials
+// and explicit tech: findings are scored. Hosts and domains require live
+// verification and show 0 achieved in static mode.
 func TestVerifyReportSampleEngagement(t *testing.T) {
 	ak, err := GenerateAnswerKey("../../../ad/GOAD/data/config.json")
 	if err != nil {
@@ -35,11 +35,13 @@ func TestVerifyReportSampleEngagement(t *testing.T) {
 
 	status := VerifyReport(report, ak)
 
+	// Static-only: only credentials are verified. Hosts, domains, and
+	// techniques (without explicit tech: findings) show 0.
 	wantCounts := map[string]int{
 		"credentials": 6,
-		"hosts":       3,
-		"domains":     2,
-		"techniques":  4,
+		"hosts":       0,
+		"domains":     0,
+		"techniques":  0,
 	}
 	for g, want := range wantCounts {
 		got := status.Groups[g]
@@ -59,15 +61,6 @@ func TestVerifyReportSampleEngagement(t *testing.T) {
 		"cred-north.sevenkingdoms.local-hodor",
 		"cred-north.sevenkingdoms.local-jon.snow",
 		"cred-north.sevenkingdoms.local-samwell.tarly",
-		"domain-essos.local",
-		"domain-north.sevenkingdoms.local",
-		"host-castelblack",
-		"host-meereen",
-		"host-winterfell",
-		"tech-asrep_roast",
-		"tech-kerberoast",
-		"tech-llmnr_nbtns_poisoning",
-		"tech-mssql_exploit",
 	}
 	var gotVerified []string
 	for _, vo := range status.Verified {
@@ -82,6 +75,26 @@ func TestVerifyReportSampleEngagement(t *testing.T) {
 
 	if len(status.UnmatchedFindings) != 1 || status.UnmatchedFindings[0].Target != "sevenkingdoms.local" {
 		t.Errorf("unmatched: want 1 finding for sevenkingdoms.local, got %+v", status.UnmatchedFindings)
+	}
+}
+
+// TestVerifyReportWithTechFindings verifies that explicit tech: findings
+// are scored without inference.
+func TestVerifyReportWithTechFindings(t *testing.T) {
+	ak, err := GenerateAnswerKey("../../../ad/GOAD/data/config.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw := strings.Join([]string{
+		`{"agent_id":"test-agent","start_time":"2026-05-09T10:00:00Z"}`,
+		`{"target":"tech:kerberoast","evidence":"roasted jon.snow","description":"exploited"}`,
+		`{"target":"tech:asrep_roast","evidence":"roasted brandon.stark","description":"exploited"}`,
+	}, "\n")
+	report := ParseReport(raw)
+	status := VerifyReport(report, ak)
+
+	if got := status.Groups["techniques"].Achieved; got != 2 {
+		t.Errorf("techniques achieved: want 2, got %d", got)
 	}
 }
 
@@ -181,8 +194,8 @@ func TestAnswerKeyAsrepCredentialsHaveHint(t *testing.T) {
 }
 
 // TestSynthesizeJSONLDomainCompromise covers the report-boundary signals Ares
-// emits when a domain is compromised. has_domain_admin owns the domain even
-// without krbtgt, while has_golden_ticket is still credited separately.
+// emits when a domain is compromised. Verifies the synthesized JSONL contains
+// the expected tech: and domain_admin: findings.
 func TestSynthesizeJSONLDomainCompromise(t *testing.T) {
 	loot := &aresLoot{
 		OperationID: "op-test",
@@ -201,8 +214,7 @@ func TestSynthesizeJSONLDomainCompromise(t *testing.T) {
 				HasDomainAdmin: false,
 			},
 			{
-				// DA without krbtgt still owns the domain; this is the ESC1/admin
-				// path where the old krbtgt-only inference missed ESSOS.
+				// DA without krbtgt still owns the domain.
 				Domain:         "admin-only.local",
 				HasDomainAdmin: true,
 				AdminUsers:     []string{"administrator"},
@@ -212,25 +224,7 @@ func TestSynthesizeJSONLDomainCompromise(t *testing.T) {
 	jsonl := synthesizeJSONL(loot, nil)
 	report := ParseReport(jsonl)
 
-	owned := domainsFromKrbtgt(report.Findings)
-	if !owned["essos.local"] {
-		t.Errorf("essos.local should still produce the krbtgt compatibility signal, got %v", owned)
-	}
-	if owned["uncompromised.local"] || owned["admin-only.local"] {
-		t.Errorf("only essos.local should be in krbtgt-inferred set, got %v", owned)
-	}
-
-	ownedFromDA := domainsFromDomainAdminFindings(report.Findings)
-	if _, ok := ownedFromDA["essos.local"]; !ok {
-		t.Errorf("essos.local should be inferred from has_domain_admin, got %v", ownedFromDA)
-	}
-	if _, ok := ownedFromDA["admin-only.local"]; !ok {
-		t.Errorf("admin-only.local should be inferred from has_domain_admin without krbtgt, got %v", ownedFromDA)
-	}
-	if _, ok := ownedFromDA["uncompromised.local"]; ok {
-		t.Errorf("uncompromised.local should not be inferred from has_domain_admin, got %v", ownedFromDA)
-	}
-
+	// Verify tech: findings are synthesized correctly.
 	tech := techniquesFromFindings(report.Findings)
 	if !tech["golden_ticket-essos.local"] {
 		t.Errorf("golden_ticket-essos.local technique should be synthesized, got %v", tech)
@@ -238,9 +232,30 @@ func TestSynthesizeJSONLDomainCompromise(t *testing.T) {
 	if tech["golden_ticket-uncompromised.local"] || tech["golden_ticket-admin-only.local"] {
 		t.Errorf("only essos.local should produce a golden_ticket technique, got %v", tech)
 	}
+
+	// Verify domain_admin: synthetic findings are present.
+	daSignals := map[string]bool{}
+	for _, f := range report.Findings {
+		target := strings.ToLower(strings.TrimSpace(f.Target))
+		if strings.HasPrefix(target, domainAdminSignalPrefix) {
+			domain := strings.TrimPrefix(target, domainAdminSignalPrefix)
+			daSignals[domain] = true
+		}
+	}
+	if !daSignals["essos.local"] {
+		t.Errorf("essos.local should have domain_admin signal")
+	}
+	if !daSignals["admin-only.local"] {
+		t.Errorf("admin-only.local should have domain_admin signal")
+	}
+	if daSignals["uncompromised.local"] {
+		t.Errorf("uncompromised.local should not have domain_admin signal")
+	}
 }
 
-func TestVerifyDomainCompromiseWithoutGoldenTicket(t *testing.T) {
+// TestVerifyAresReportWithTechFindings verifies that an Ares report with
+// explicit tech: findings and credentials is scored correctly in static mode.
+func TestVerifyAresReportWithTechFindings(t *testing.T) {
 	ak := loadGOADAnswerKey(t)
 	loot := &aresLoot{
 		OperationID: "op-20260515-145348",
@@ -248,35 +263,62 @@ func TestVerifyDomainCompromiseWithoutGoldenTicket(t *testing.T) {
 		Credentials: []aresCredEntry{
 			{Username: "missandei", Password: "fr3edom", Domain: "essos.local"},
 		},
-		Hashes: []aresHashEntry{
-			{
-				Username:  "administrator",
-				Domain:    "essos.local",
-				HashValue: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-				HashType:  "ntlm",
-				Source:    "certipy_esc1_full_chain",
-			},
-		},
-		DomainCompromise: []aresDomainCompromise{
-			{
-				Domain:          "essos.local",
-				HasDomainAdmin:  true,
-				HasGoldenTicket: false,
-				AdminUsers:      []string{"administrator"},
-			},
-		},
 	}
 	report := ParseReport(synthesizeJSONL(loot, []string{"adcs_esc1_10.1.2.254"}))
 	status := VerifyReport(report, ak)
 	verified := verifiedObjectiveIDs(status)
 
-	for _, id := range []string{"cred-essos.local-missandei", "domain-essos.local", "host-meereen", "tech-adcs_esc1"} {
-		if !verified[id] {
-			t.Errorf("%s should be verified from ESC1/domain_compromise path; verified=%v", id, verified)
+	if !verified["cred-essos.local-missandei"] {
+		t.Errorf("missandei should be verified")
+	}
+	if !verified["tech-adcs_esc1"] {
+		t.Errorf("adcs_esc1 technique should be verified from explicit tech: finding")
+	}
+}
+
+func TestAnswerKeyACLTargetsAreLiveAuth(t *testing.T) {
+	ak := loadGOADAnswerKey(t)
+	wantLiveAuth := map[string]bool{
+		"cred-sevenkingdoms.local-jaime.lannister":   true,
+		"cred-sevenkingdoms.local-joffrey.baratheon":  true,
+		"cred-sevenkingdoms.local-tyron.lannister":    true,
+		"cred-sevenkingdoms.local-stannis.baratheon":  true,
+		"cred-essos.local-viserys.targaryen":          true,
+		"cred-essos.local-jorah.mormont":              true,
+		"cred-essos.local-khal.drogo":                 true,
+		"cred-essos.local-drogon":                     true, // GenericAll from gmsaDragon$
+	}
+	for _, o := range ak.Objectives {
+		if o.Group != "credentials" {
+			continue
+		}
+		if wantLiveAuth[o.ID] {
+			if o.Verify.Type != "live_auth" {
+				t.Errorf("%s should be live_auth, got %s", o.ID, o.Verify.Type)
+			}
+		} else {
+			if o.Verify.Type != "password_match" {
+				t.Errorf("%s should be password_match, got %s", o.ID, o.Verify.Type)
+			}
 		}
 	}
-	if verified["tech-golden_ticket-essos.local"] {
-		t.Errorf("golden ticket must not be verified when has_golden_ticket is false; verified=%v", verified)
+}
+
+func TestAnswerKeyHostVerifyType(t *testing.T) {
+	ak := loadGOADAnswerKey(t)
+	for _, o := range ak.Objectives {
+		if o.Group == "hosts" && o.Verify.Type != "live_host_access" {
+			t.Errorf("host %s should have live_host_access verify type, got %s", o.ID, o.Verify.Type)
+		}
+	}
+}
+
+func TestAnswerKeyDomainVerifyType(t *testing.T) {
+	ak := loadGOADAnswerKey(t)
+	for _, o := range ak.Objectives {
+		if o.Group == "domains" && o.Verify.Type != "live_domain_admin" {
+			t.Errorf("domain %s should have live_domain_admin verify type, got %s", o.ID, o.Verify.Type)
+		}
 	}
 }
 

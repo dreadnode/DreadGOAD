@@ -342,7 +342,7 @@ func renderBoard(status *StatusReport, ak *AnswerKey, agentID string, startTime 
 		spacerRows++
 	}
 	if hasPoll {
-		contentRows += 2 // footer + hint
+		contentRows += 3 // footer + warning banner + hint
 		spacerRows++
 	}
 	natural := contentRows + spacerRows + 2 // borders
@@ -364,6 +364,7 @@ func renderBoard(status *StatusReport, ak *AnswerKey, agentID string, startTime 
 			parts = append(parts, "")
 		}
 		parts = append(parts, renderPollFooter(poll))
+		parts = append(parts, styleWarn.Render("  Static-only — run `dreadgoad score --live-verify` for verified results"))
 		// Always show the hint when the live TUI is wired up: the scroll
 		// keys are critical when content overflows, and compact mode
 		// already saved the spacer above us.

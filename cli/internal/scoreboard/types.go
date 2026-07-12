@@ -22,6 +22,8 @@ type Objective struct {
 	Label      string   `json:"label"`
 	Hostname   string   `json:"hostname,omitempty"`
 	HostType   string   `json:"type,omitempty"`
+	HostIP     string   `json:"host_ip,omitempty"`
+	DCIP       string   `json:"dc_ip,omitempty"`
 	Services   []string `json:"services,omitempty"`
 	AdminUsers []string `json:"admin_users,omitempty"`
 	DAUsers    []string `json:"da_users,omitempty"`
@@ -57,14 +59,15 @@ type Report struct {
 
 // VerifiedObjective is a single matched/verified entry produced during verification.
 type VerifiedObjective struct {
-	ObjectiveID   string
-	Group         string
-	Label         string
-	Verified      bool
-	Timestamp     string
-	AgentEvidence string
-	Technique     string
-	Reason        string
+	ObjectiveID   string `json:"objective_id"`
+	Group         string `json:"group"`
+	Label         string `json:"label"`
+	Verified      bool   `json:"verified"`
+	Timestamp     string `json:"timestamp,omitempty"`
+	AgentEvidence string `json:"agent_evidence,omitempty"`
+	Technique     string `json:"technique,omitempty"`
+	Method        string `json:"method,omitempty"`
+	Reason        string `json:"reason"`
 }
 
 // GroupStats tracks achieved/total for one milestone group.
@@ -78,4 +81,21 @@ type StatusReport struct {
 	Verified          []VerifiedObjective
 	UnmatchedFindings []Finding
 	Groups            map[string]*GroupStats
+}
+
+// ScoreResult is the JSON output of `dreadgoad score`.
+type ScoreResult struct {
+	AgentID           string                `json:"agent_id"`
+	Mode              string                `json:"mode"`
+	Summary           map[string]*GroupStats `json:"summary"`
+	Verified          []VerifiedObjective   `json:"verified"`
+	UnmatchedFindings []Finding             `json:"unmatched_findings"`
+	FailedChecks      []FailedCheck         `json:"failed_checks"`
+}
+
+// FailedCheck records a live verification attempt that errored (timeout, SSM
+// failure, etc.) as opposed to a clean rejection.
+type FailedCheck struct {
+	ObjectiveID string `json:"objective_id"`
+	Error       string `json:"error"`
 }

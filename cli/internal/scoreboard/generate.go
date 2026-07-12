@@ -92,6 +92,48 @@ func parseASREPTargets(labPath string, lab map[string]any) map[string][]string {
 	return result
 }
 
+// aclWriteRights are ACL rights that allow an attacker to change a user's
+// password. If a user is the target of any of these rights, their credential
+// objective uses live_auth instead of password_match.
+var aclWriteRights = []string{
+	"genericall",
+	"genericwrite",
+	"writeproperty",
+	"writedacl",
+	"writeowner",
+	"ext-user-force-change-password",
+}
+
+// buildACLTargets returns the set of usernames (lowercased) that are targets
+// of write-capable ACL rights in the given domain. These users' passwords may
+// be changed during exploitation.
+func buildACLTargets(domain map[string]any) map[string]bool {
+	targets := map[string]bool{}
+	acls, _ := domain["acls"].(map[string]any)
+	for _, aRaw := range acls {
+		a, _ := aRaw.(map[string]any)
+		right := strings.ToLower(getStr(a, "right"))
+		to := getStr(a, "to")
+		isWriteRight := false
+		for _, wr := range aclWriteRights {
+			if strings.Contains(right, wr) {
+				isWriteRight = true
+				break
+			}
+		}
+		if !isWriteRight {
+			continue
+		}
+		// Only flag user objects (not computer accounts, OUs, or DNs).
+		if strings.HasSuffix(to, "$") || strings.HasPrefix(to, "CN=") ||
+			strings.HasPrefix(to, "OU=") || strings.HasPrefix(to, "DC=") {
+			continue
+		}
+		targets[strings.ToLower(to)] = true
+	}
+	return targets
+}
+
 func extractCredentials(lab map[string]any, asrep map[string][]string) []Objective {
 	var out []Objective
 	domains := mapMap(lab, "domains")
@@ -104,6 +146,7 @@ func extractCredentials(lab map[string]any, asrep map[string][]string) []Objecti
 		for _, u := range asrep[domainName] {
 			asrepSet[u] = struct{}{}
 		}
+		aclTargets := buildACLTargets(domain)
 		for _, username := range userNames {
 			user, _ := users[username].(map[string]any)
 			password := getStr(user, "password")
@@ -134,6 +177,12 @@ func extractCredentials(lab map[string]any, asrep map[string][]string) []Objecti
 			if role != "" {
 				label = fmt.Sprintf("%s (%s)", label, role)
 			}
+
+			verifyType := "password_match"
+			if aclTargets[strings.ToLower(username)] {
+				verifyType = "live_auth"
+			}
+
 			out = append(out, Objective{
 				ID:     fmt.Sprintf("cred-%s-%s", domainName, username),
 				Group:  "credentials",
@@ -142,7 +191,7 @@ func extractCredentials(lab map[string]any, asrep map[string][]string) []Objecti
 				Role:   role,
 				Hint:   strings.Join(methods, ", "),
 				Label:  label,
-				Verify: Verify{Type: "password_match", Expected: password},
+				Verify: Verify{Type: verifyType, Expected: password},
 			})
 		}
 	}
@@ -177,7 +226,7 @@ func extractHosts(lab map[string]any) []Objective {
 			Services:   services,
 			AdminUsers: adminList,
 			Label:      label,
-			Verify:     Verify{Type: "proves_host_access"},
+			Verify:     Verify{Type: "live_host_access"},
 		})
 	}
 	return out
@@ -304,7 +353,7 @@ func extractDomains(lab map[string]any) []Objective {
 			Domain:  domainName,
 			DAUsers: das,
 			Label:   domainName,
-			Verify:  Verify{Type: "proves_domain_admin"},
+			Verify:  Verify{Type: "live_domain_admin"},
 		})
 	}
 	return out
