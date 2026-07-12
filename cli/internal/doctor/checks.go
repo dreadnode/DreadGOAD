@@ -425,7 +425,7 @@ func checkKaliMarketplaceTerms() CheckResult {
 				"Required if using --with-kali",
 		}
 	}
-	if strings.TrimSpace(string(out)) == "true" {
+	if strings.EqualFold(strings.TrimSpace(string(out)), "true") {
 		return CheckResult{
 			Name:    "Kali marketplace terms",
 			Status:  "pass",

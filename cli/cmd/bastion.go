@@ -203,11 +203,11 @@ func runBastionSSH(cmd *cobra.Command, args []string) error {
 
 	// Auto-pick the ephemeral key for known VM roles. A failed live lookup
 	// is non-fatal — we just fall back to the user-supplied flag values.
-	if defaults := resolveRoleDefaults(client, ctx, cfg.Env, args[0]); defaults != nil {
-		if !cmd.Flags().Changed("auth-type") && defaults.sshKey != "" {
+	if defaults := resolveRoleDefaults(client, ctx, cfg.Env, args[0]); defaults != nil && defaults.sshKey != "" {
+		if !cmd.Flags().Changed("auth-type") {
 			authType = defaults.authType
 		}
-		if !cmd.Flags().Changed("ssh-key") && authType == "ssh-key" && defaults.sshKey != "" {
+		if !cmd.Flags().Changed("ssh-key") && authType == "ssh-key" {
 			sshKey = defaults.sshKey
 		}
 		if !cmd.Flags().Changed("user") {
