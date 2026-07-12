@@ -1,3 +1,6 @@
+# terraform-azure-kali
+
+<!-- BEGIN_TF_DOCS -->
 ## Requirements
 
 | Name | Version |
@@ -65,3 +68,4 @@ No modules.
 | <a name="output_subnet_id"></a> [subnet\_id](#output\_subnet\_id) | Subnet ID created for the Kali attack box. |
 | <a name="output_vm_id"></a> [vm\_id](#output\_vm\_id) | Azure VM resource ID for the Kali attack box. |
 | <a name="output_vm_name"></a> [vm\_name](#output\_vm\_name) | Azure VM resource name for the Kali attack box. |
+<!-- END_TF_DOCS -->

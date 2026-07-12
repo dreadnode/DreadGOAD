@@ -201,42 +201,54 @@ func runBastionSSH(cmd *cobra.Command, args []string) error {
 	authType, _ := cmd.Flags().GetString("auth-type")
 	sshKey, _ := cmd.Flags().GetString("ssh-key")
 
-	// Auto-pick the ephemeral key for known VM roles. The terraform modules
-	// write private keys to well-known paths and stamp Role tags on the VMs,
-	// so we can reach them without making the operator type --auth-type
-	// ssh-key --ssh-key <path> -u <user> every time. A failed live lookup
+	// Auto-pick the ephemeral key for known VM roles. A failed live lookup
 	// is non-fatal — we just fall back to the user-supplied flag values.
-	if inst, err := client.FindInstanceByHostname(ctx, cfg.Env, args[0]); err == nil {
-		switch inst.Tags["Role"] {
-		case "AnsibleController":
-			if !cmd.Flags().Changed("auth-type") {
-				authType = "ssh-key"
-			}
-			if !cmd.Flags().Changed("ssh-key") && authType == "ssh-key" {
-				if path := controllerKeyPath(cfg.Env, inst.Name); path != "" {
-					sshKey = path
-				}
-			}
-			if !cmd.Flags().Changed("user") {
-				user = "dreadadmin"
-			}
-		case "AttackBox":
-			if !cmd.Flags().Changed("auth-type") {
-				authType = "ssh-key"
-			}
-			if !cmd.Flags().Changed("ssh-key") && authType == "ssh-key" {
-				if path := kaliKeyPath(cfg.Env, inst.Name); path != "" {
-					sshKey = path
-				}
-			}
-			if !cmd.Flags().Changed("user") {
-				user = "kali"
-			}
+	if defaults := resolveRoleDefaults(client, ctx, cfg.Env, args[0]); defaults != nil {
+		if !cmd.Flags().Changed("auth-type") {
+			authType = defaults.authType
+		}
+		if !cmd.Flags().Changed("ssh-key") && authType == "ssh-key" && defaults.sshKey != "" {
+			sshKey = defaults.sshKey
+		}
+		if !cmd.Flags().Changed("user") {
+			user = defaults.user
 		}
 	}
 
 	fmt.Printf("Bastion SSH to %s via %s...\n", args[0], host.Name)
 	return client.OpenBastionSSH(ctx, host, vmID, user, authType, sshKey)
+}
+
+// roleDefaults holds auto-detected SSH defaults for a known VM role.
+type roleDefaults struct {
+	authType string
+	user     string
+	sshKey   string
+}
+
+// resolveRoleDefaults looks up a VM by hostname and returns SSH defaults based
+// on its Role tag. Returns nil if the VM is not found or has no known role.
+func resolveRoleDefaults(client *azure.Client, ctx context.Context, env, hostname string) *roleDefaults {
+	inst, err := client.FindInstanceByHostname(ctx, env, hostname)
+	if err != nil {
+		return nil
+	}
+	switch inst.Tags["Role"] {
+	case "AnsibleController":
+		return &roleDefaults{
+			authType: "ssh-key",
+			user:     "dreadadmin",
+			sshKey:   controllerKeyPath(env, inst.Name),
+		}
+	case "AttackBox":
+		return &roleDefaults{
+			authType: "ssh-key",
+			user:     "kali",
+			sshKey:   kaliKeyPath(env, inst.Name),
+		}
+	default:
+		return nil
+	}
 }
 
 // controllerKeyPath derives the conventional ephemeral private-key path the
