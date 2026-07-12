@@ -11,9 +11,9 @@
 
 | Name | Version |
 | ---- | ------- |
-| <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | ~> 4.0 |
-| <a name="provider_local"></a> [local](#provider\_local) | ~> 2.5 |
-| <a name="provider_tls"></a> [tls](#provider\_tls) | ~> 4.0 |
+| <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | 4.80.0 |
+| <a name="provider_local"></a> [local](#provider\_local) | 2.9.0 |
+| <a name="provider_tls"></a> [tls](#provider\_tls) | 4.3.0 |
 
 ## Modules
 
@@ -41,7 +41,7 @@ No modules.
 | <a name="input_deployment_name"></a> [deployment\_name](#input\_deployment\_name) | Name of the deployment (e.g. "goad"). | `string` | n/a | yes |
 | <a name="input_env"></a> [env](#input\_env) | Environment name (e.g. test, staging). | `string` | n/a | yes |
 | <a name="input_ephemeral_key_output_path"></a> [ephemeral\_key\_output\_path](#input\_ephemeral\_key\_output\_path) | Filesystem path to write the generated private key when admin\_ssh\_public\_key is null. | `string` | `null` | no |
-| <a name="input_instance_size"></a> [instance\_size](#input\_instance\_size) | Azure VM size. B2s (2 vCPU, 4 GB) is sufficient for CLI-based AD attack tooling. | `string` | `"Standard_B2s"` | no |
+| <a name="input_instance_size"></a> [instance\_size](#input\_instance\_size) | Azure VM size. D2s\_v3 (2 vCPU, 8 GB) handles concurrent attack tooling comfortably. | `string` | `"Standard_D2s_v3"` | no |
 | <a name="input_kali_subnet_cidr"></a> [kali\_subnet\_cidr](#input\_kali\_subnet\_cidr) | CIDR for the Kali attack box's dedicated subnet. /28 is plenty for one VM. | `string` | `"10.8.4.0/28"` | no |
 | <a name="input_location"></a> [location](#input\_location) | Azure region. | `string` | n/a | yes |
 | <a name="input_os_disk_size_gb"></a> [os\_disk\_size\_gb](#input\_os\_disk\_size\_gb) | Size of the OS disk in GB. 32 is enough for stock Kali tooling. | `number` | `32` | no |
