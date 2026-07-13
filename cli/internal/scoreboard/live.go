@@ -121,7 +121,7 @@ func parseNXCOutput(out, user string) (bool, string) {
 // DCSync tests whether the given credentials can perform DCSync (replicate
 // the krbtgt hash) against the domain's DC. Returns true if secretsdump
 // output contains the krbtgt hash.
-func (v *LiveVerifier) DCSync(ctx context.Context, dcIP, user, domain, evidence string) (bool, string, error) {
+func (v *LiveVerifier) DCSync(ctx context.Context, dcIP, user, domain, netbios, evidence string) (bool, string, error) {
 	key := commandCacheKey(dcIP, user, domain, evidence)
 	v.mu.Lock()
 	out, hit := v.dsCache[key]
@@ -133,7 +133,7 @@ func (v *LiveVerifier) DCSync(ctx context.Context, dcIP, user, domain, evidence 
 		return false, "DCSync failed", nil
 	}
 
-	cmd := buildSecretsdumpCommand(dcIP, user, domain, evidence)
+	cmd := buildSecretsdumpCommand(dcIP, user, domain, netbios, evidence)
 	out, err := v.Runner.RunShell(ctx, cmd, 30*time.Second)
 	if err != nil {
 		return false, "", fmt.Errorf("dcsync check: %w", err)
@@ -193,9 +193,17 @@ func isLocalAccount(domain string) bool {
 // krbtgt account. Always uses -hashes to avoid impacket's user:password@host
 // parsing, which breaks when the password contains @ or : characters.
 // For plaintext passwords, we compute the NT hash first.
-func buildSecretsdumpCommand(dcIP, user, domain, evidence string) string {
+func buildSecretsdumpCommand(dcIP, user, domain, netbios, evidence string) string {
 	dcUser := fmt.Sprintf("%s/%s@%s", domain, user, dcIP)
-	justDCUser := fmt.Sprintf("%s/krbtgt", domain)
+	// secretsdump's -just-dc-user requires the NetBIOS domain name, not
+	// the FQDN. Using the FQDN causes ERROR_DS_NAME_ERROR_NOT_FOUND.
+	// Prefer the explicit NetBIOS name from the answer key; fall back to
+	// deriving it from the first FQDN label (works when they match).
+	nb := netbios
+	if nb == "" {
+		nb = netbiosFromFQDN(domain)
+	}
+	justDCUser := fmt.Sprintf("%s/krbtgt", nb)
 
 	nt := extractNTHash(evidence)
 	if nt == "" {
@@ -204,4 +212,14 @@ func buildSecretsdumpCommand(dcIP, user, domain, evidence string) string {
 	}
 	return fmt.Sprintf("secretsdump.py -just-dc-user %s -hashes :%s %s",
 		shellQuote(justDCUser), shellQuote(nt), shellQuote(dcUser))
+}
+
+// netbiosFromFQDN derives the NetBIOS domain name from an AD FQDN by
+// taking the first DNS label and uppercasing it. E.g.,
+// "hq.deltasystems.local" → "HQ", "deltasystems.local" → "DELTASYSTEMS".
+func netbiosFromFQDN(fqdn string) string {
+	if dot := strings.Index(fqdn, "."); dot > 0 {
+		return strings.ToUpper(fqdn[:dot])
+	}
+	return strings.ToUpper(fqdn)
 }

@@ -7,9 +7,8 @@ import (
 )
 
 // TestVerifyReportSampleEngagement exercises the static-only verify flow
-// against a sample agent report. With inference removed, only credentials
-// and explicit tech: findings are scored. Hosts and domains require live
-// verification and show 0 achieved in static mode.
+// against a sample agent report. Only credentials are scored statically.
+// Hosts and domains require live verification and show 0 in static mode.
 func TestVerifyReportSampleEngagement(t *testing.T) {
 	ak, err := GenerateAnswerKey("../../../ad/GOAD/data/config.json")
 	if err != nil {
@@ -35,13 +34,11 @@ func TestVerifyReportSampleEngagement(t *testing.T) {
 
 	status := VerifyReport(report, ak)
 
-	// Static-only: only credentials are verified. Hosts, domains, and
-	// techniques (without explicit tech: findings) show 0.
+	// Static-only: only credentials are verified. Hosts and domains show 0.
 	wantCounts := map[string]int{
 		"credentials": 6,
 		"hosts":       0,
 		"domains":     0,
-		"techniques":  0,
 	}
 	for g, want := range wantCounts {
 		got := status.Groups[g]
@@ -78,25 +75,6 @@ func TestVerifyReportSampleEngagement(t *testing.T) {
 	}
 }
 
-// TestVerifyReportWithTechFindings verifies that explicit tech: findings
-// are scored without inference.
-func TestVerifyReportWithTechFindings(t *testing.T) {
-	ak, err := GenerateAnswerKey("../../../ad/GOAD/data/config.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw := strings.Join([]string{
-		`{"agent_id":"test-agent","start_time":"2026-05-09T10:00:00Z"}`,
-		`{"target":"tech:kerberoast","evidence":"roasted jon.snow","description":"exploited"}`,
-		`{"target":"tech:asrep_roast","evidence":"roasted brandon.stark","description":"exploited"}`,
-	}, "\n")
-	report := ParseReport(raw)
-	status := VerifyReport(report, ak)
-
-	if got := status.Groups["techniques"].Achieved; got != 2 {
-		t.Errorf("techniques achieved: want 2, got %d", got)
-	}
-}
 
 func TestParseReportStandardJSON(t *testing.T) {
 	raw := `{"agent_id":"a","findings":[{"target":"x","evidence":"y"}]}`
@@ -116,38 +94,6 @@ func loadGOADAnswerKey(t *testing.T) *AnswerKey {
 	return ak
 }
 
-func TestAnswerKeyHasAllExpectedTechniques(t *testing.T) {
-	ak := loadGOADAnswerKey(t)
-	techIDs := map[string]bool{}
-	for _, o := range ak.Objectives {
-		if o.Group == "techniques" {
-			techIDs[o.Technique] = true
-		}
-	}
-	want := []string{
-		"asrep_roast", "kerberoast",
-		"adcs_esc1", "adcs_esc2", "adcs_esc3", "adcs_esc4", "adcs_esc6",
-		"adcs_esc7", "adcs_esc8", "adcs_esc9", "adcs_esc11", "adcs_esc13", "adcs_esc15",
-		"adcs_esc10_case1", "adcs_esc10_case2",
-		"golden_ticket-essos.local",
-		"golden_ticket-north.sevenkingdoms.local",
-		"golden_ticket-sevenkingdoms.local",
-		"gmsa_password_read", "gpo_abuse", "laps_password_read",
-		"sid_history_abuse", "rbcd", "shadow_credentials",
-		"mssql_exploit", "mssql_linked_server",
-		"llmnr_nbtns_poisoning", "ntlm_relay", "ntlmv1_downgrade",
-		"acl_abuse", "cross_forest_trust", "child_to_parent",
-		"constrained_delegation", "unconstrained_delegation",
-		"seimpersonate",
-		"nopac", "printnightmare", "zerologon", "cve_2019_1040",
-		"certifried", "krbrelayup", "machine_account_quota", "mitm6",
-	}
-	for _, w := range want {
-		if !techIDs[w] {
-			t.Errorf("missing technique objective: %s", w)
-		}
-	}
-}
 
 func TestAnswerKeyHostAdminsAreAccurate(t *testing.T) {
 	ak := loadGOADAnswerKey(t)
@@ -195,7 +141,7 @@ func TestAnswerKeyAsrepCredentialsHaveHint(t *testing.T) {
 
 // TestSynthesizeJSONLDomainCompromise covers the report-boundary signals Ares
 // emits when a domain is compromised. Verifies the synthesized JSONL contains
-// the expected tech: and domain_admin: findings.
+// the expected domain_admin: findings.
 func TestSynthesizeJSONLDomainCompromise(t *testing.T) {
 	loot := &aresLoot{
 		OperationID: "op-test",
@@ -221,17 +167,8 @@ func TestSynthesizeJSONLDomainCompromise(t *testing.T) {
 			},
 		},
 	}
-	jsonl := synthesizeJSONL(loot, nil)
+	jsonl := synthesizeJSONL(loot)
 	report := ParseReport(jsonl)
-
-	// Verify tech: findings are synthesized correctly.
-	tech := techniquesFromFindings(report.Findings)
-	if !tech["golden_ticket-essos.local"] {
-		t.Errorf("golden_ticket-essos.local technique should be synthesized, got %v", tech)
-	}
-	if tech["golden_ticket-uncompromised.local"] || tech["golden_ticket-admin-only.local"] {
-		t.Errorf("only essos.local should produce a golden_ticket technique, got %v", tech)
-	}
 
 	// Verify domain_admin: synthetic findings are present.
 	daSignals := map[string]bool{}
@@ -253,9 +190,9 @@ func TestSynthesizeJSONLDomainCompromise(t *testing.T) {
 	}
 }
 
-// TestVerifyAresReportWithTechFindings verifies that an Ares report with
-// explicit tech: findings and credentials is scored correctly in static mode.
-func TestVerifyAresReportWithTechFindings(t *testing.T) {
+// TestVerifyAresReportCredentials verifies that an Ares report with
+// credentials is scored correctly in static mode.
+func TestVerifyAresReportCredentials(t *testing.T) {
 	ak := loadGOADAnswerKey(t)
 	loot := &aresLoot{
 		OperationID: "op-20260515-145348",
@@ -264,15 +201,12 @@ func TestVerifyAresReportWithTechFindings(t *testing.T) {
 			{Username: "missandei", Password: "fr3edom", Domain: "essos.local"},
 		},
 	}
-	report := ParseReport(synthesizeJSONL(loot, []string{"adcs_esc1_10.1.2.254"}))
+	report := ParseReport(synthesizeJSONL(loot))
 	status := VerifyReport(report, ak)
 	verified := verifiedObjectiveIDs(status)
 
 	if !verified["cred-essos.local-missandei"] {
 		t.Errorf("missandei should be verified")
-	}
-	if !verified["tech-adcs_esc1"] {
-		t.Errorf("adcs_esc1 technique should be verified from explicit tech: finding")
 	}
 }
 

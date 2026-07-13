@@ -43,17 +43,15 @@ var groupTitles = map[string]string{
 	"credentials": "CREDENTIALS DISCOVERED",
 	"hosts":       "HOSTS COMPROMISED",
 	"domains":     "DOMAINS OWNED",
-	"techniques":  "ATTACK TECHNIQUES USED",
 }
 
 var groupShort = map[string]string{
 	"credentials": "CREDENTIALS",
 	"hosts":       "HOSTS",
 	"domains":     "DOMAINS",
-	"techniques":  "ATTACK TECHNIQUES",
 }
 
-var leftGroups = []string{"domains", "hosts", "techniques"}
+var leftGroups = []string{"domains", "hosts"}
 var rightGroups = []string{"credentials"}
 
 type pollResult int
@@ -412,7 +410,7 @@ func panelWithTitle(title, body string, width int) string {
 func renderHeader(status *StatusReport, agentID string, startTime time.Time, width int) string {
 	left := strings.Builder{}
 	first := true
-	groupOrder := []string{"credentials", "hosts", "domains", "techniques"}
+	groupOrder := []string{"credentials", "hosts", "domains"}
 	for _, g := range groupOrder {
 		stats, ok := status.Groups[g]
 		if !ok {

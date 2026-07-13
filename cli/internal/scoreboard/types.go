@@ -11,7 +11,7 @@ type Verify struct {
 }
 
 // Objective is a single milestone in the answer key (a credential to find,
-// a host to compromise, a domain to own, or a technique to use).
+// a host to compromise, or a domain to own).
 type Objective struct {
 	ID         string   `json:"id"`
 	Group      string   `json:"group"`
@@ -27,8 +27,7 @@ type Objective struct {
 	Services   []string `json:"services,omitempty"`
 	AdminUsers []string `json:"admin_users,omitempty"`
 	DAUsers    []string `json:"da_users,omitempty"`
-	Technique  string   `json:"technique,omitempty"`
-	Category   string   `json:"category,omitempty"`
+	NetBIOS    string   `json:"netbios,omitempty"`
 	Verify     Verify   `json:"verify"`
 }
 

@@ -83,13 +83,13 @@ json.dump(ak, open('scoreboard/answer_key.json', 'w'), indent=2)
 ```
 
 Without IPs, `--live-verify` will report `failed_checks` for hosts and
-domains but still score credentials and techniques.
+domains but still score credentials.
 
 ## Static Scoring
 
 Scores credentials by comparing reported evidence against the expected
-password in the answer key. Techniques are scored from explicit `tech:`
-findings. Hosts and domains are not scored (they require live checks).
+password in the answer key. Hosts and domains are not scored (they
+require live checks).
 
 ```bash
 dreadgoad score --report /tmp/report.jsonl
@@ -112,7 +112,6 @@ Commands run on the Kali attack box via SSM (AWS) or Bastion SSH
 | Hosts | `nxc smb` | `(Pwn3d!)` = local admin on host |
 | Domains | `secretsdump.py -just-dc-user krbtgt` | krbtgt hash returned = DCSync capability |
 | Credentials (`password_match`) | none | Static comparison only |
-| Techniques | none | Explicit `tech:` findings only |
 
 ### AWS
 
@@ -178,8 +177,7 @@ JSON to stdout (or `--output <path>`):
   "summary": {
     "credentials": {"achieved": 28, "total": 30},
     "hosts": {"achieved": 4, "total": 5},
-    "domains": {"achieved": 3, "total": 3},
-    "techniques": {"achieved": 18, "total": 22}
+    "domains": {"achieved": 3, "total": 3}
   },
   "verified": [
     {
@@ -214,7 +212,6 @@ full spec. Key points:
 - `target` is always `user@domain`
 - `evidence` is the password or NT hash
 - `hostname` is required for host compromise findings
-- `tech:<technique_id>` findings credit attack techniques
 
 ## Scoreboard vs Score
 
