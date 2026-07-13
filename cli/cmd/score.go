@@ -43,6 +43,12 @@ func init() {
 	scoreCmd.Flags().String("region", "", "AWS region for SSM")
 	scoreCmd.Flags().String("profile", "", "AWS named profile")
 
+	// Azure-specific flags for live verification.
+	scoreCmd.Flags().String("bastion-name", "", "Azure Bastion resource name (required for Azure live-verify)")
+	scoreCmd.Flags().String("bastion-rg", "", "Azure Bastion resource group (required for Azure live-verify)")
+	scoreCmd.Flags().String("ssh-key", "", "Path to SSH private key for the Kali VM (Azure)")
+	scoreCmd.Flags().String("ssh-user", "kali", "SSH username for the Kali VM (Azure)")
+
 	scoreGenerateKeyCmd.Flags().String("config", "", "Path to GOAD config.json (default: ad/GOAD/data/config.json)")
 	scoreGenerateKeyCmd.Flags().String("output", "", "Output path for answer_key.json (default: scoreboard/answer_key.json)")
 }
@@ -110,8 +116,22 @@ func buildShellRunner(ctx context.Context, cmd *cobra.Command, cfg *config.Confi
 		return nil, fmt.Errorf("--attack-box is required with --live-verify")
 	}
 
+	// Azure: attack-box is a full resource ID starting with /subscriptions/.
 	if strings.HasPrefix(attackBox, "/subscriptions/") {
-		return &scoreboard.BastionShellRunner{VMResource: attackBox}, nil
+		bastionName, _ := cmd.Flags().GetString("bastion-name")
+		bastionRG, _ := cmd.Flags().GetString("bastion-rg")
+		if bastionName == "" || bastionRG == "" {
+			return nil, fmt.Errorf("--bastion-name and --bastion-rg are required for Azure live verification")
+		}
+		sshKey, _ := cmd.Flags().GetString("ssh-key")
+		sshUser, _ := cmd.Flags().GetString("ssh-user")
+		return &scoreboard.BastionShellRunner{
+			BastionName:   bastionName,
+			ResourceGroup: bastionRG,
+			VMResourceID:  attackBox,
+			SSHKeyPath:    sshKey,
+			Username:      sshUser,
+		}, nil
 	}
 
 	// Default: AWS SSM.

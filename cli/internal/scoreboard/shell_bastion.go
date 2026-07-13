@@ -1,19 +1,71 @@
 package scoreboard
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"os/exec"
 	"time"
 )
 
-// BastionShellRunner executes shell commands on an Azure Linux VM via Bastion
-// SSH tunnel. Not yet implemented — Azure live verification requires the
-// Bastion SSH tunnel plumbing to be wired up.
+// BastionShellRunner executes shell commands on an Azure Linux VM via
+// `az network bastion ssh`. The command is run non-interactively by
+// appending `-- <command>` to the ssh invocation.
 type BastionShellRunner struct {
-	VMResource string
+	BastionName     string // Azure Bastion resource name
+	ResourceGroup   string // Bastion's resource group
+	VMResourceID    string // Full Azure resource ID of the Kali VM
+	SSHKeyPath      string // Path to the SSH private key
+	Username        string // SSH username (default: "kali")
 }
 
-// RunShell is not yet implemented for Azure.
-func (r *BastionShellRunner) RunShell(_ context.Context, _ string, _ time.Duration) (string, error) {
-	return "", fmt.Errorf("azure live verification not yet implemented (VM: %s)", r.VMResource)
+// RunShell executes a shell command on the Kali VM via Bastion SSH and
+// returns stdout. The command is passed as a single argument to bash -c
+// on the remote side via ssh's `-- bash -c '<command>'` mechanism.
+func (r *BastionShellRunner) RunShell(ctx context.Context, command string, timeout time.Duration) (string, error) {
+	if r.BastionName == "" || r.ResourceGroup == "" {
+		return "", fmt.Errorf("bastion name and resource group are required")
+	}
+	if r.VMResourceID == "" {
+		return "", fmt.Errorf("VM resource ID is required")
+	}
+
+	username := r.Username
+	if username == "" {
+		username = "kali"
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, timeout+30*time.Second)
+	defer cancel()
+
+	args := []string{
+		"network", "bastion", "ssh",
+		"--name", r.BastionName,
+		"--resource-group", r.ResourceGroup,
+		"--target-resource-id", r.VMResourceID,
+		"--auth-type", "ssh-key",
+		"--username", username,
+	}
+	if r.SSHKeyPath != "" {
+		args = append(args, "--ssh-key", r.SSHKeyPath)
+	}
+	// Everything after -- is forwarded to the underlying ssh process.
+	// -o IdentitiesOnly=yes prevents ssh-agent from burning through
+	// MaxAuthTries with unrelated keys.
+	args = append(args, "--", "-o", "IdentitiesOnly=yes", "bash", "-c", command)
+
+	cmd := exec.CommandContext(ctx, "az", args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		// Like SSM, the command may return non-zero (e.g., nxc auth
+		// failure) but still produce useful stdout.
+		if stdout.Len() > 0 {
+			return stdout.String(), nil
+		}
+		return "", fmt.Errorf("bastion ssh: %w: %s", err, stderr.String())
+	}
+	return stdout.String(), nil
 }
