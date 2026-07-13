@@ -93,8 +93,9 @@ type ScoreResult struct {
 	FailedChecks      []FailedCheck         `json:"failed_checks"`
 }
 
-// FailedCheck records a live verification attempt that errored (timeout, SSM
-// failure, etc.) as opposed to a clean rejection.
+// FailedCheck records a live verification attempt that could not confirm an
+// objective — either due to an error (timeout, SSM failure, missing IPs) or
+// a clean rejection (no credential achieved admin/DCSync).
 type FailedCheck struct {
 	ObjectiveID string `json:"objective_id"`
 	Error       string `json:"error"`

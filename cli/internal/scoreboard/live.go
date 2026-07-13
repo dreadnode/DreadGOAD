@@ -98,6 +98,9 @@ func (v *LiveVerifier) AdminCheck(ctx context.Context, targetIP, user, domain, e
 // positives. Also detects account lockout/disabled status codes.
 func parseNXCOutput(out, user string) (bool, string) {
 	userLower := strings.ToLower(user)
+	if userLower == "" {
+		return false, "empty username"
+	}
 	for _, line := range strings.Split(out, "\n") {
 		lineLower := strings.ToLower(line)
 		if strings.Contains(lineLower, "[+]") && strings.Contains(lineLower, userLower) {

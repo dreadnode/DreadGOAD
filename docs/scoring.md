@@ -201,7 +201,7 @@ JSON to stdout (or `--output <path>`):
 | `summary` | Per-group achieved/total counts |
 | `verified` | Each objective that was matched and verified (or rejected) |
 | `unmatched_findings` | Agent findings that don't match any answer key objective |
-| `failed_checks` | Live checks that errored (SSM timeout, missing IPs, etc.) |
+| `failed_checks` | Live checks that could not confirm an objective (errors, missing IPs, or no credential achieved access) |
 
 ## Agent Report Format
 
