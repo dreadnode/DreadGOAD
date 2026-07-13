@@ -148,6 +148,15 @@ func scoreHosts(ctx context.Context, report *Report, ak *AnswerKey, status *Stat
 				*failed = append(*failed, FailedCheck{ObjectiveID: obj.ID, Error: err.Error()})
 				continue
 			}
+			// If domain auth failed and the finding looks like a local
+			// account (e.g. SAM dump), retry with local auth.
+			if !ok && domain != "" {
+				ok, reason, err = lv.AdminCheck(ctx, hostIP, user, ".", f.Evidence)
+				if err != nil {
+					*failed = append(*failed, FailedCheck{ObjectiveID: obj.ID, Error: err.Error()})
+					continue
+				}
+			}
 			if ok {
 				status.Verified = append(status.Verified, VerifiedObjective{
 					ObjectiveID:   obj.ID,

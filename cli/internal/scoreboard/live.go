@@ -162,16 +162,20 @@ func commandCacheKey(targetIP, user, domain, evidence string) string {
 // a local account (empty, ".", or matching the hostname-style patterns).
 func buildNXCCommand(targetIP, user, domain, evidence string) string {
 	localAuth := isLocalAccount(domain)
-	var cmd string
+	var credFlag string
 	if nt := extractNTHash(evidence); nt != "" {
-		cmd = fmt.Sprintf("nxc smb %s -u %s -d %s -H %s",
-			shellQuote(targetIP), shellQuote(user), shellQuote(domain), shellQuote(nt))
+		credFlag = fmt.Sprintf("-H %s", shellQuote(nt))
 	} else {
-		cmd = fmt.Sprintf("nxc smb %s -u %s -d %s -p %s",
-			shellQuote(targetIP), shellQuote(user), shellQuote(domain), shellQuote(evidence))
+		credFlag = fmt.Sprintf("-p %s", shellQuote(evidence))
 	}
+	// nxc treats -d and --local-auth as mutually exclusive.
+	var cmd string
 	if localAuth {
-		cmd += " --local-auth"
+		cmd = fmt.Sprintf("nxc smb %s -u %s %s --local-auth",
+			shellQuote(targetIP), shellQuote(user), credFlag)
+	} else {
+		cmd = fmt.Sprintf("nxc smb %s -u %s -d %s %s",
+			shellQuote(targetIP), shellQuote(user), shellQuote(domain), credFlag)
 	}
 	return cmd
 }

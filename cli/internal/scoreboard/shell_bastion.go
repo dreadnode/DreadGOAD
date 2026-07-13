@@ -57,7 +57,12 @@ func (r *BastionShellRunner) RunShell(ctx context.Context, command string, timeo
 	// Everything after -- is forwarded to the underlying ssh process.
 	// -o IdentitiesOnly=yes prevents ssh-agent from burning through
 	// MaxAuthTries with unrelated keys.
-	args = append(args, "--", "-o", "IdentitiesOnly=yes", "bash", "-c", command)
+	// The command is passed as a single argument — SSH concatenates all
+	// args with spaces before sending to the remote shell, so passing
+	// "bash", "-c", command as 3 args would break (bash -c only takes the
+	// next word as the script). Passing the command directly works because
+	// SSH runs it via the remote user's login shell.
+	args = append(args, "--", "-o", "IdentitiesOnly=yes", command)
 
 	cmd := exec.CommandContext(ctx, "az", args...)
 	cmd.Stdin = nil // prevent hangs if ssh prompts for passphrase
