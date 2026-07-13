@@ -169,7 +169,7 @@ func buildAzureRunner(ctx context.Context, cmd *cobra.Command, cfg *config.Confi
 	}
 	ap, ok := prov.(*azure.AzureProvider)
 	if !ok {
-		return nil, fmt.Errorf("expected azure provider, got %s", prov.Name())
+		return nil, fmt.Errorf("expected azure provider, got %s — pass -p azure when using an Azure resource ID for --attack-box", prov.Name())
 	}
 	client := ap.Client()
 
