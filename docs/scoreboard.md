@@ -40,7 +40,7 @@ key, and renders the live board.
 | Flag            | Default                          | Description                                                        |
 |-----------------|----------------------------------|--------------------------------------------------------------------|
 | `--transport`   | `local`                          | `local`, `ssm`, or `ares`                                          |
-| `--report`      | `/tmp/report.jsonl`              | Path to the agent's report on the target                           |
+| `--report`      | `./report.jsonl`              | Path to the agent's report on the target                           |
 | `--answer-key`  | `scoreboard/answer_key.json`     | Path to the answer key                                             |
 | `--instance-id` |                                  | EC2 instance ID (required for `ssm` and `ares`)                    |
 | `--ssm-region`  | falls back to `--region`         | AWS region for SSM                                                 |

@@ -34,7 +34,7 @@ var scoreboardRunCmd = &cobra.Command{
 	Short: "Run the live scoreboard against an agent's report",
 	Long: `Polls the agent's JSONL report and renders a live verification
 TUI. Use --transport=local to read a local file, or --transport=ssm with
---instance-id to read /tmp/report.jsonl from a remote EC2 instance.`,
+--instance-id to read the report from a remote EC2 instance.`,
 	RunE: runScoreboardRun,
 }
 
@@ -56,7 +56,7 @@ func init() {
 	scoreboardDemoCmd.Flags().String("config", "", "Path to GOAD config.json (default: ad/GOAD/data/config.json)")
 
 	scoreboardRunCmd.Flags().String("transport", "local", "Transport: local, ssm, or ares")
-	scoreboardRunCmd.Flags().String("report", "/tmp/report.jsonl", "Path to the agent's report file (on the target, for local/ssm)")
+	scoreboardRunCmd.Flags().String("report", "./report.jsonl", "Path to the agent's report file (on the target, for local/ssm)")
 	scoreboardRunCmd.Flags().String("answer-key", "", "Path to answer_key.json (default: scoreboard/answer_key.json)")
 	scoreboardRunCmd.Flags().String("instance-id", "", "EC2 instance ID (required for --transport=ssm or --transport=ares)")
 	scoreboardRunCmd.Flags().String("ssm-region", "", "AWS region for SSM (defaults to --region or SDK default)")
