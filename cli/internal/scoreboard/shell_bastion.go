@@ -19,6 +19,10 @@ type BastionShellRunner struct {
 	Username        string // SSH username (default: "kali")
 }
 
+// bastionOverhead is extra time budgeted for Bastion API call, tunnel setup,
+// and SSH handshake before the remote command starts executing.
+const bastionOverhead = 60 * time.Second
+
 // RunShell executes a shell command on the Kali VM via Bastion SSH and
 // returns stdout. The command is passed as a single argument to bash -c
 // on the remote side via ssh's `-- bash -c '<command>'` mechanism.
@@ -29,13 +33,16 @@ func (r *BastionShellRunner) RunShell(ctx context.Context, command string, timeo
 	if r.VMResourceID == "" {
 		return "", fmt.Errorf("VM resource ID is required")
 	}
+	if r.SSHKeyPath == "" {
+		return "", fmt.Errorf("--ssh-key is required for Azure Bastion SSH (auth-type is ssh-key)")
+	}
 
 	username := r.Username
 	if username == "" {
 		username = "kali"
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, timeout+30*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, timeout+bastionOverhead)
 	defer cancel()
 
 	args := []string{
@@ -45,9 +52,7 @@ func (r *BastionShellRunner) RunShell(ctx context.Context, command string, timeo
 		"--target-resource-id", r.VMResourceID,
 		"--auth-type", "ssh-key",
 		"--username", username,
-	}
-	if r.SSHKeyPath != "" {
-		args = append(args, "--ssh-key", r.SSHKeyPath)
+		"--ssh-key", r.SSHKeyPath,
 	}
 	// Everything after -- is forwarded to the underlying ssh process.
 	// -o IdentitiesOnly=yes prevents ssh-agent from burning through
@@ -55,6 +60,7 @@ func (r *BastionShellRunner) RunShell(ctx context.Context, command string, timeo
 	args = append(args, "--", "-o", "IdentitiesOnly=yes", "bash", "-c", command)
 
 	cmd := exec.CommandContext(ctx, "az", args...)
+	cmd.Stdin = nil // prevent hangs if ssh prompts for passphrase
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

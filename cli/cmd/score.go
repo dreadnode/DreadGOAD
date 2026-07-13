@@ -124,6 +124,9 @@ func buildShellRunner(ctx context.Context, cmd *cobra.Command, cfg *config.Confi
 			return nil, fmt.Errorf("--bastion-name and --bastion-rg are required for Azure live verification")
 		}
 		sshKey, _ := cmd.Flags().GetString("ssh-key")
+		if sshKey == "" {
+			return nil, fmt.Errorf("--ssh-key is required for Azure live verification")
+		}
 		sshUser, _ := cmd.Flags().GetString("ssh-user")
 		return &scoreboard.BastionShellRunner{
 			BastionName:   bastionName,
