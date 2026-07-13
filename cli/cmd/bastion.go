@@ -244,7 +244,7 @@ func resolveRoleDefaults(client *azure.Client, ctx context.Context, env, hostnam
 		return &roleDefaults{
 			authType: "ssh-key",
 			user:     "kali",
-			sshKey:   kaliKeyPath(env, inst.Name),
+			sshKey:   azure.KaliKeyPath(env, inst.Name),
 		}
 	default:
 		return nil
@@ -266,26 +266,6 @@ func controllerKeyPath(env, vmName string) string {
 		return ""
 	}
 	path := filepath.Join(home, ".dreadgoad", "keys", fmt.Sprintf("azure-%s-%s-controller", env, deployment))
-	if _, err := os.Stat(path); err != nil {
-		return ""
-	}
-	return path
-}
-
-// kaliKeyPath derives the conventional ephemeral private-key path the
-// terraform-azure-kali module writes. VM names follow
-// "{env}-{deployment}-kali-vm"; the module writes to
-// "~/.dreadgoad/keys/azure-{env}-{deployment}-kali".
-func kaliKeyPath(env, vmName string) string {
-	deployment := strings.TrimSuffix(strings.TrimPrefix(vmName, env+"-"), "-kali-vm")
-	if deployment == "" || deployment == vmName {
-		return ""
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	path := filepath.Join(home, ".dreadgoad", "keys", fmt.Sprintf("azure-%s-%s-kali", env, deployment))
 	if _, err := os.Stat(path); err != nil {
 		return ""
 	}
