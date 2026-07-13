@@ -199,7 +199,7 @@ JSON to stdout (or `--output <path>`):
 |-------|-------------|
 | `mode` | `"static"` or `"live"` |
 | `summary` | Per-group achieved/total counts |
-| `verified` | Each objective that was matched and verified (or rejected) |
+| `verified` | Credential objectives that were matched (with pass/fail result); host/domain objectives on success only |
 | `unmatched_findings` | Agent findings that don't match any answer key objective |
 | `failed_checks` | Live checks that could not confirm an objective (errors, missing IPs, or no credential achieved access) |
 

@@ -49,7 +49,10 @@ func (r *SSMShellRunner) RunShell(ctx context.Context, command string, timeout t
 	}
 	commandID := aws.ToString(send.Command.CommandId)
 
-	deadline := time.Now().Add(timeout + 5*time.Second)
+	// Polling deadline must be at least as long as the SSM timeout (clamped
+	// to 30s minimum) plus buffer for API latency.
+	effectiveTimeout := time.Duration(max(30, int64(timeout.Seconds()))) * time.Second
+	deadline := time.Now().Add(effectiveTimeout + 5*time.Second)
 	for {
 		if time.Now().After(deadline) {
 			return "", fmt.Errorf("ssm command poll timed out")

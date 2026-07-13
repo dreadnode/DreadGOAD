@@ -100,6 +100,7 @@ func scoreCredentials(ctx context.Context, report *Report, ak *AnswerKey, status
 					g.Achieved++
 				}
 			}
+			break // one finding matches at most one credential objective
 		}
 		if !matchedAny && !isSyntheticFinding(finding.Target) {
 			status.UnmatchedFindings = append(status.UnmatchedFindings, *finding)
