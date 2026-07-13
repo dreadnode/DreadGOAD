@@ -8,34 +8,29 @@ the key in a Bubbletea/Lipgloss TUI.
 ## Quick Start
 
 ```bash
-dreadgoad scoreboard generate-key            # build answer_key.json once per lab
+dreadgoad score generate-key                 # build answer_key.json once per lab
 dreadgoad scoreboard run --report ./report.jsonl
 dreadgoad scoreboard demo                    # preview the layout with mock findings
 ```
+
+> The scoreboard uses static-only scoring for fast polling. For
+> authoritative results with live credential verification, use
+> [`dreadgoad score --live-verify`](./scoring.md).
 
 Point the agent at `/tmp/report.jsonl` using
 [`scoreboard/agent_prompt.md`](../scoreboard/agent_prompt.md). For remote
 reports use `--transport ssm` or `--transport ares` (see below).
 
-## `scoreboard generate-key`
+## Generating the Answer Key
 
-Builds the verification checklist (`answer_key.json`) from a GOAD
-`config.json`. Each objective covers one provable finding (a password,
-hash, kerberoastable SPN, ADCS template, ACL chain step, etc.), grouped
-by category. Regenerate after lab edits or variant generation. The output
-is gitignored.
-
-| Flag        | Description                                                       |
-|-------------|-------------------------------------------------------------------|
-| `--config`  | Path to GOAD `config.json` (default `ad/GOAD/data/config.json`)   |
-| `--output`  | Output path (default `scoreboard/answer_key.json`)                |
+See [`scoring.md`](./scoring.md#generating-the-answer-key). The command
+moved to `dreadgoad score generate-key` (`dreadgoad scoreboard
+generate-key` still works as a hidden alias).
 
 ```bash
-dreadgoad scoreboard generate-key
-dreadgoad scoreboard generate-key --config ad/GOAD-variant-1/data/config.json
+dreadgoad score generate-key
+dreadgoad score generate-key --config ad/GOAD-variant-1/data/config.json
 ```
-
-The command prints the total objective count and a per-group breakdown.
 
 ## `scoreboard run`
 
@@ -131,5 +126,6 @@ canonical spec and is suitable to hand to an agent verbatim.
 
 ## Related Documentation
 
+- [`scoring.md`](./scoring.md): standalone scoring with live verification (`dreadgoad score`)
 - [`validation.md`](./validation.md): operator-side vulnerability validation
 - [`GOAD-vulnerabilities-comprehensive.md`](./GOAD-vulnerabilities-comprehensive.md): vulnerability catalog the answer key is derived from
