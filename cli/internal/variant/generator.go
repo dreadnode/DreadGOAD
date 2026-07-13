@@ -906,6 +906,11 @@ func (g *Generator) transformFile(srcPath, relPath string) (transformed bool) {
 
 		newContent := g.applyReplacements(string(content))
 
+		// Re-encrypt PowerShell SecureString blobs with mapped passwords.
+		if ext == ".ps1" {
+			newContent = g.fixSecureStrings(newContent)
+		}
+
 		isFullConfig := (base == "config.json" || strings.HasSuffix(base, "-config.json")) &&
 			!strings.HasSuffix(base, "-overlay.json")
 		if isFullConfig {
