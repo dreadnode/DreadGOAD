@@ -39,7 +39,7 @@ func NewLiveVerifier(runner ShellRunner) *LiveVerifier {
 // (targetIP, user, domain, evidence). AuthCheck and AdminCheck both use
 // the same nxc invocation — this avoids duplicate SSM round-trips.
 func (v *LiveVerifier) runNXC(ctx context.Context, targetIP, user, domain, evidence string) (string, error) {
-	key := nxcCacheKey(targetIP, user, domain, evidence)
+	key := commandCacheKey(targetIP, user, domain, evidence)
 	v.mu.Lock()
 	out, hit := v.nxcCache[key]
 	v.mu.Unlock()
@@ -60,16 +60,19 @@ func (v *LiveVerifier) runNXC(ctx context.Context, targetIP, user, domain, evide
 }
 
 // AuthCheck tests whether the given credentials can authenticate to the
-// target via SMB. Returns true if nxc output contains "[+]".
+// target via SMB. Verifies that nxc output contains "[+]" on a line
+// that also contains the username (avoids false positives from
+// informational nxc output).
 func (v *LiveVerifier) AuthCheck(ctx context.Context, targetIP, user, domain, evidence string) (bool, string, error) {
 	out, err := v.runNXC(ctx, targetIP, user, domain, evidence)
 	if err != nil {
 		return false, "", fmt.Errorf("auth check: %w", err)
 	}
-	if strings.Contains(out, "[+]") {
+	ok, reason := parseNXCOutput(out, user)
+	if ok {
 		return true, "Live auth succeeded (nxc smb [+])", nil
 	}
-	return false, "Live auth failed", nil
+	return false, reason, nil
 }
 
 // AdminCheck tests whether the given credentials have local admin access on
@@ -79,17 +82,47 @@ func (v *LiveVerifier) AdminCheck(ctx context.Context, targetIP, user, domain, e
 	if err != nil {
 		return false, "", fmt.Errorf("admin check: %w", err)
 	}
+	ok, reason := parseNXCOutput(out, user)
+	if !ok {
+		return false, reason, nil
+	}
 	if strings.Contains(out, "(Pwn3d!)") {
 		return true, "Admin access confirmed (nxc smb Pwn3d!)", nil
 	}
 	return false, "Admin check failed (no Pwn3d!)", nil
 }
 
+// parseNXCOutput checks nxc smb output for authentication result.
+// Returns (true, "") on success, (false, reason) on failure.
+// Checks for [+] on a line containing the username to avoid false
+// positives. Also detects account lockout/disabled status codes.
+func parseNXCOutput(out, user string) (bool, string) {
+	userLower := strings.ToLower(user)
+	for _, line := range strings.Split(out, "\n") {
+		lineLower := strings.ToLower(line)
+		if strings.Contains(lineLower, "[+]") && strings.Contains(lineLower, userLower) {
+			// nxc marks guest-fallback auth with (Guest) — this means the
+			// credential was NOT valid; the target just allows guest access.
+			if strings.Contains(lineLower, "(guest)") {
+				return false, "Guest auth fallback (credential not valid)"
+			}
+			return true, ""
+		}
+		if strings.Contains(lineLower, "status_account_locked_out") {
+			return false, "Account locked out (STATUS_ACCOUNT_LOCKED_OUT)"
+		}
+		if strings.Contains(lineLower, "status_account_disabled") {
+			return false, "Account disabled (STATUS_ACCOUNT_DISABLED)"
+		}
+	}
+	return false, "Live auth failed"
+}
+
 // DCSync tests whether the given credentials can perform DCSync (replicate
 // the krbtgt hash) against the domain's DC. Returns true if secretsdump
 // output contains the krbtgt hash.
 func (v *LiveVerifier) DCSync(ctx context.Context, dcIP, user, domain, evidence string) (bool, string, error) {
-	key := nxcCacheKey(dcIP, user, domain, evidence)
+	key := commandCacheKey(dcIP, user, domain, evidence)
 	v.mu.Lock()
 	out, hit := v.dsCache[key]
 	v.mu.Unlock()
@@ -116,32 +149,59 @@ func (v *LiveVerifier) DCSync(ctx context.Context, dcIP, user, domain, evidence 
 	return false, "DCSync failed", nil
 }
 
-func nxcCacheKey(targetIP, user, domain, evidence string) string {
+func commandCacheKey(targetIP, user, domain, evidence string) string {
 	h := sha256.Sum256([]byte(evidence))
 	return fmt.Sprintf("%s:%s:%s:%x", targetIP, user, domain, h[:8])
 }
 
 // buildNXCCommand builds an nxc smb command string. Uses -H for NT hashes,
-// -p for plaintext passwords.
+// -p for plaintext passwords. Adds --local-auth when the domain looks like
+// a local account (empty, ".", or matching the hostname-style patterns).
 func buildNXCCommand(targetIP, user, domain, evidence string) string {
+	localAuth := isLocalAccount(domain)
+	var cmd string
 	if nt := extractNTHash(evidence); nt != "" {
-		return fmt.Sprintf("nxc smb %s -u %s -d %s -H %s",
+		cmd = fmt.Sprintf("nxc smb %s -u %s -d %s -H %s",
 			shellQuote(targetIP), shellQuote(user), shellQuote(domain), shellQuote(nt))
+	} else {
+		cmd = fmt.Sprintf("nxc smb %s -u %s -d %s -p %s",
+			shellQuote(targetIP), shellQuote(user), shellQuote(domain), shellQuote(evidence))
 	}
-	return fmt.Sprintf("nxc smb %s -u %s -d %s -p %s",
-		shellQuote(targetIP), shellQuote(user), shellQuote(domain), shellQuote(evidence))
+	if localAuth {
+		cmd += " --local-auth"
+	}
+	return cmd
+}
+
+// isLocalAccount returns true when the domain suggests a local account rather
+// than a domain account. Heuristics:
+// - domain is empty or "."
+// - domain has no dots (looks like a hostname, not a FQDN)
+func isLocalAccount(domain string) bool {
+	if domain == "" || domain == "." {
+		return true
+	}
+	// A domain FQDN always has dots (e.g., "north.sevenkingdoms.local").
+	// A bare hostname like "CASTELBLACK" does not.
+	if !strings.Contains(domain, ".") {
+		return true
+	}
+	return false
 }
 
 // buildSecretsdumpCommand builds a secretsdump.py command to DCSync the
-// krbtgt account.
+// krbtgt account. Always uses -hashes to avoid impacket's user:password@host
+// parsing, which breaks when the password contains @ or : characters.
+// For plaintext passwords, we compute the NT hash first.
 func buildSecretsdumpCommand(dcIP, user, domain, evidence string) string {
-	target := fmt.Sprintf("%s/krbtgt", domain)
-	if nt := extractNTHash(evidence); nt != "" {
-		return fmt.Sprintf("secretsdump.py %s/%s@%s -just-dc-user %s -hashes :%s",
-			shellQuote(domain), shellQuote(user), shellQuote(dcIP),
-			shellQuote(target), shellQuote(nt))
+	dcUser := fmt.Sprintf("%s/%s@%s", domain, user, dcIP)
+	justDCUser := fmt.Sprintf("%s/krbtgt", domain)
+
+	nt := extractNTHash(evidence)
+	if nt == "" {
+		// Plaintext password — compute NT hash to avoid special char issues.
+		nt = ntHashHex(evidence)
 	}
-	return fmt.Sprintf("secretsdump.py %s/%s:%s@%s -just-dc-user %s",
-		shellQuote(domain), shellQuote(user), shellQuote(evidence),
-		shellQuote(dcIP), shellQuote(target))
+	return fmt.Sprintf("secretsdump.py -just-dc-user %s -hashes :%s %s",
+		shellQuote(justDCUser), shellQuote(nt), shellQuote(dcUser))
 }

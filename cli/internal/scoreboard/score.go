@@ -45,6 +45,9 @@ func ScoreReport(ctx context.Context, report *Report, ak *AnswerKey, lv *LiveVer
 	}
 }
 
+// scoreCredentials matches report findings against credential objectives.
+// For password_match objectives, uses static comparison. For live_auth
+// objectives, falls back to a live nxc auth check if static fails.
 func scoreCredentials(ctx context.Context, report *Report, ak *AnswerKey, status *StatusReport, matched map[string]bool, lv *LiveVerifier, failed *[]FailedCheck) {
 	for i := range report.Findings {
 		finding := &report.Findings[i]
@@ -102,6 +105,9 @@ func scoreCredentials(ctx context.Context, report *Report, ak *AnswerKey, status
 	}
 }
 
+// scoreHosts verifies host compromise via live nxc admin checks. Matches
+// findings to hosts by hostname, then tests the reported credential for
+// local admin access (Pwn3d!). No-op when lv is nil (static-only mode).
 func scoreHosts(ctx context.Context, report *Report, ak *AnswerKey, status *StatusReport, matched map[string]bool, lv *LiveVerifier, failed *[]FailedCheck) {
 	if lv == nil {
 		return
@@ -120,11 +126,13 @@ func scoreHosts(ctx context.Context, report *Report, ak *AnswerKey, status *Stat
 			continue
 		}
 		// Find findings that reference this host by hostname.
+		found := false
 		for i := range report.Findings {
 			f := &report.Findings[i]
-			if !strings.EqualFold(f.Hostname, obj.Hostname) {
+			if !hostnameMatches(f.Hostname, obj.Hostname) {
 				continue
 			}
+			found = true
 			user := extractUsername(f.Target)
 			domain := extractDomain(f.Target)
 			if domain == "" {
@@ -153,9 +161,18 @@ func scoreHosts(ctx context.Context, report *Report, ak *AnswerKey, status *Stat
 				break
 			}
 		}
+		if !found {
+			*failed = append(*failed, FailedCheck{
+				ObjectiveID: obj.ID,
+				Error:       "no findings reference hostname " + obj.Hostname,
+			})
+		}
 	}
 }
 
+// scoreDomains verifies domain compromise via live secretsdump DCSync checks.
+// Collects candidate findings whose domain matches, tries known DAs first,
+// then falls back to other users. No-op when lv is nil (static-only mode).
 func scoreDomains(ctx context.Context, report *Report, ak *AnswerKey, status *StatusReport, matched map[string]bool, lv *LiveVerifier, failed *[]FailedCheck) {
 	if lv == nil {
 		return
@@ -174,66 +191,41 @@ func scoreDomains(ctx context.Context, report *Report, ak *AnswerKey, status *St
 			continue
 		}
 
-		// Build set of known DA users for this domain.
+		// Collect candidate findings: any credential finding whose domain
+		// matches this domain objective. We try known DAs first (cheap —
+		// likely to succeed), then fall back to other domain users.
+		// Secretsdump itself is the verification: if it works, the user
+		// truly has DCSync rights regardless of the static DA list.
 		daUsers := map[string]bool{}
 		for _, u := range obj.DAUsers {
 			daUsers[strings.ToLower(u)] = true
 		}
 
-		// Only test findings that are plausibly DA: known DA users for
-		// this domain, or synthetic domain_admin: signals.
-		verified := false
+		var candidates []candidate
 		for i := range report.Findings {
 			f := &report.Findings[i]
-
-			// Check for synthetic domain_admin:<domain> signal.
-			target := strings.ToLower(strings.TrimSpace(f.Target))
-			if strings.HasPrefix(target, domainAdminSignalPrefix) {
-				sigDomain := strings.TrimPrefix(target, domainAdminSignalPrefix)
-				if !strings.EqualFold(sigDomain, obj.Domain) {
-					continue
-				}
-				// domain_admin signal — extract user from evidence if possible.
-				user := extractUsername(f.Evidence)
-				if user == "" {
-					continue
-				}
-				ok, reason, err := lv.DCSync(ctx, dcIP, user, obj.Domain, f.Evidence)
-				if err != nil {
-					*failed = append(*failed, FailedCheck{ObjectiveID: obj.ID, Error: err.Error()})
-					continue
-				}
-				if ok {
-					status.Verified = append(status.Verified, VerifiedObjective{
-						ObjectiveID:   obj.ID,
-						Group:         "domains",
-						Label:         obj.Label,
-						Verified:      true,
-						AgentEvidence: f.Evidence,
-						Method:        "live_domain_admin",
-						Reason:        reason,
-					})
-					matched[obj.ID] = true
-					if g := status.Groups["domains"]; g != nil {
-						g.Achieved++
-					}
-					verified = true
-					break
-				}
-				continue
-			}
-
-			// Check for known DA user@domain findings.
 			domain := extractDomain(f.Target)
 			if !strings.EqualFold(domain, obj.Domain) {
 				continue
 			}
-			user := extractUsername(f.Target)
-			if !daUsers[strings.ToLower(user)] {
+			if isSyntheticFinding(f.Target) {
 				continue
 			}
+			user := extractUsername(f.Target)
+			if user == "" || f.Evidence == "" {
+				continue
+			}
+			candidates = append(candidates, candidate{
+				user:     user,
+				evidence: f.Evidence,
+				isDA:     daUsers[strings.ToLower(user)],
+			})
+		}
+		// Sort known DAs first so we try the most likely candidates first.
+		sortDAFirst(candidates)
 
-			ok, reason, err := lv.DCSync(ctx, dcIP, user, obj.Domain, f.Evidence)
+		for _, c := range candidates {
+			ok, reason, err := lv.DCSync(ctx, dcIP, c.user, obj.Domain, c.evidence)
 			if err != nil {
 				*failed = append(*failed, FailedCheck{ObjectiveID: obj.ID, Error: err.Error()})
 				continue
@@ -244,7 +236,7 @@ func scoreDomains(ctx context.Context, report *Report, ak *AnswerKey, status *St
 					Group:         "domains",
 					Label:         obj.Label,
 					Verified:      true,
-					AgentEvidence: f.Evidence,
+					AgentEvidence: c.evidence,
 					Method:        "live_domain_admin",
 					Reason:        reason,
 				})
@@ -252,12 +244,51 @@ func scoreDomains(ctx context.Context, report *Report, ak *AnswerKey, status *St
 				if g := status.Groups["domains"]; g != nil {
 					g.Achieved++
 				}
-				verified = true
 				break
 			}
 		}
-		_ = verified
 	}
+}
+
+// candidate is a potential DA credential for domain verification.
+type candidate struct {
+	user     string
+	evidence string
+	isDA     bool // true if user is in the static DA list
+}
+
+// sortDAFirst reorders candidates so known DAs come before non-DAs,
+// reducing unnecessary secretsdump calls.
+func sortDAFirst(candidates []candidate) {
+	i := 0
+	for j := range candidates {
+		if candidates[j].isDA {
+			candidates[i], candidates[j] = candidates[j], candidates[i]
+			i++
+		}
+	}
+}
+
+// normalizeHostname extracts the short hostname from a finding's hostname
+// field. Strips FQDN domain suffix, trailing $ (machine account), and
+// lowercases. E.g., "CASTELBLACK.north.sevenkingdoms.local" → "castelblack",
+// "CASTELBLACK$" → "castelblack".
+func normalizeHostname(h string) string {
+	h = strings.TrimSpace(h)
+	h = strings.TrimSuffix(h, "$")
+	if dot := strings.Index(h, "."); dot > 0 {
+		h = h[:dot]
+	}
+	return strings.ToLower(h)
+}
+
+// hostnameMatches returns true if the finding hostname refers to the same
+// host as the objective hostname, after normalization.
+func hostnameMatches(findingHostname, objectiveHostname string) bool {
+	if findingHostname == "" {
+		return false
+	}
+	return normalizeHostname(findingHostname) == normalizeHostname(objectiveHostname)
 }
 
 // dcIPForDomain finds the DC IP for a domain from the answer key's host

@@ -42,7 +42,7 @@ func (r *SSMShellRunner) RunShell(ctx context.Context, command string, timeout t
 		InstanceIds:    []string{r.InstanceID},
 		DocumentName:   aws.String("AWS-RunShellScript"),
 		Parameters:     map[string][]string{"commands": {command}},
-		TimeoutSeconds: aws.Int32(int32(timeout.Seconds())),
+		TimeoutSeconds: aws.Int32(max(30, int32(timeout.Seconds()))),
 	})
 	if err != nil {
 		return "", fmt.Errorf("ssm send-command: %w", err)

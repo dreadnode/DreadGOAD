@@ -1,7 +1,7 @@
-// Package scoreboard implements the DreadGOAD live status board: it parses
-// a GOAD lab config into a checklist of objectives ("answer key"), polls an
-// agent's JSONL report from local disk or a remote EC2 instance via SSM, and
-// renders verification progress as a live TUI.
+// Package scoreboard implements GOAD agent scoring and the live status board.
+// It parses a GOAD lab config into a checklist of objectives ("answer key"),
+// scores agent reports against the key (with optional live credential
+// verification via nxc/secretsdump), and renders progress as a TUI.
 package scoreboard
 
 // Verify describes how an objective is checked against agent evidence.
@@ -72,11 +72,12 @@ type VerifiedObjective struct {
 
 // GroupStats tracks achieved/total for one milestone group.
 type GroupStats struct {
-	Achieved int
-	Total    int
+	Achieved int `json:"achieved"`
+	Total    int `json:"total"`
 }
 
-// StatusReport is the verified state derived from a report against an answer key.
+// StatusReport is the internal verified state used by the TUI. Not serialized
+// to JSON — use ScoreResult for the CLI output format.
 type StatusReport struct {
 	Verified          []VerifiedObjective
 	UnmatchedFindings []Finding
