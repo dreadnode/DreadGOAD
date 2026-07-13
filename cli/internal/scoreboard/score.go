@@ -63,7 +63,12 @@ func scoreCredentials(ctx context.Context, report *Report, ak *AnswerKey, status
 			// For live_auth objectives, try live check if static failed.
 			if !ok && obj.Verify.Type == "live_auth" && lv != nil {
 				dcIP := dcIPForDomain(ak, obj.Domain)
-				if dcIP != "" {
+				if dcIP == "" {
+					*failed = append(*failed, FailedCheck{
+						ObjectiveID: obj.ID,
+						Error:       "live_auth skipped — no dc_ip for " + obj.Domain,
+					})
+				} else {
 					liveOK, liveReason, err := lv.AuthCheck(ctx, dcIP, obj.User, obj.Domain, finding.Evidence)
 					if err != nil {
 						*failed = append(*failed, FailedCheck{ObjectiveID: obj.ID, Error: err.Error()})

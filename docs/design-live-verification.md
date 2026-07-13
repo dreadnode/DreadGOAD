@@ -640,9 +640,12 @@ dreadgoad score \
 | `--attack-box` | Instance ID (AWS) or resource ID (Azure) of the Kali attack box |
 | `--output` | Write JSON result to file instead of stdout |
 
-The provider is auto-detected from the `--attack-box` value format:
+When `--attack-box` is provided, the provider is detected from the value:
 - AWS instance IDs start with `i-`
 - Azure resource IDs start with `/subscriptions/`
+
+When `--attack-box` is omitted, use `-p azure` for auto-discovery of
+Bastion, Kali VM, and SSH key from environment tags.
 
 ### `dreadgoad score generate-key` (moved from scoreboard)
 

@@ -140,6 +140,9 @@ func buildShellRunner(ctx context.Context, cmd *cobra.Command, cfg *config.Confi
 
 	// Explicit AWS instance ID.
 	if attackBox != "" {
+		if !strings.HasPrefix(attackBox, "i-") {
+			return nil, fmt.Errorf("unrecognized --attack-box format %q (expected AWS instance ID like i-0abc123 or Azure resource ID starting with /subscriptions/)", attackBox)
+		}
 		return buildAWSRunner(ctx, cmd, cfg, attackBox)
 	}
 

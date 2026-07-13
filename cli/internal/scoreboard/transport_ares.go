@@ -211,8 +211,8 @@ func writeHashEntry(b *strings.Builder, h aresHashEntry) {
 // writeDomainCompromiseEntries synthesizes findings from domain_compromise[]
 // metadata. The domain_admin signal credits DA-level compromise even when the
 // DA account is built-in (e.g., ESSOS\administrator) and absent from the
-// answer-key credential objectives. The synthetic krbtgt finding is emitted
-// so scoreDomains can use it as a candidate for live DCSync verification.
+// answer-key credential objectives. The synthetic krbtgt finding is kept for
+// backward compatibility but is filtered out by scoreDomains.
 func writeDomainCompromiseEntries(b *strings.Builder, entries []aresDomainCompromise) {
 	const krbtgtSyntheticEvidence = "00000000000000000000000000000000"
 	emitted := map[string]bool{}
