@@ -124,6 +124,7 @@ func scoreHosts(ctx context.Context, report *Report, ak *AnswerKey, status *Stat
 		}
 		// Find findings that reference this host by hostname.
 		found := false
+		verified := false
 		for i := range report.Findings {
 			f := &report.Findings[i]
 			if !hostnameMatches(f.Hostname, obj.Hostname) {
@@ -155,6 +156,7 @@ func scoreHosts(ctx context.Context, report *Report, ak *AnswerKey, status *Stat
 				if g := status.Groups["hosts"]; g != nil {
 					g.Achieved++
 				}
+				verified = true
 				break
 			}
 		}
@@ -162,6 +164,11 @@ func scoreHosts(ctx context.Context, report *Report, ak *AnswerKey, status *Stat
 			*failed = append(*failed, FailedCheck{
 				ObjectiveID: obj.ID,
 				Error:       "no findings reference hostname " + obj.Hostname,
+			})
+		} else if !verified && !matched[obj.ID] {
+			*failed = append(*failed, FailedCheck{
+				ObjectiveID: obj.ID,
+				Error:       "no reported credential has admin access on " + obj.Hostname,
 			})
 		}
 	}
@@ -212,12 +219,24 @@ func scoreDomains(ctx context.Context, report *Report, ak *AnswerKey, status *St
 			if user == "" || f.Evidence == "" {
 				continue
 			}
+			// Skip krbtgt — synthetic finding with placeholder evidence.
+			if user == "krbtgt" {
+				continue
+			}
 			candidates = append(candidates, candidate{
 				user:     user,
 				evidence: f.Evidence,
 				isDA:     daUsers[strings.ToLower(user)],
 			})
 		}
+		if len(candidates) == 0 {
+			*failed = append(*failed, FailedCheck{
+				ObjectiveID: obj.ID,
+				Error:       "no credential findings for domain " + obj.Domain,
+			})
+			continue
+		}
+
 		// Sort known DAs first so we try the most likely candidates first.
 		sortDAFirst(candidates)
 
@@ -243,6 +262,12 @@ func scoreDomains(ctx context.Context, report *Report, ak *AnswerKey, status *St
 				}
 				break
 			}
+		}
+		if !matched[obj.ID] {
+			*failed = append(*failed, FailedCheck{
+				ObjectiveID: obj.ID,
+				Error:       "no reported credential has DCSync rights on " + obj.Domain,
+			})
 		}
 	}
 }
