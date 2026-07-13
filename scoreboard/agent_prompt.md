@@ -85,7 +85,7 @@ Credentials are the proof. If you can't provide a working password or hash for a
 
 ### Tips
 
-- Use your tools available.
+- Use all tools available to you.
 - Keep notes, record failed approaches. Use memories.
-- Be methodic. Look for different approaches
+- Be methodical. Look for different approaches.
 

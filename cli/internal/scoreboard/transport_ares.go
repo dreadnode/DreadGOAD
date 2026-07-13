@@ -85,9 +85,8 @@ type aresDomainCompromise struct {
 	KrbtgtHashTypes []string `json:"krbtgt_hash_types"`
 }
 
-// FetchReport runs `ares ops loot --latest --json` on the remote instance and,
-// if successful, also fetches the `ares:op:<id>:exploited` Redis set.
-// Both payloads are gzip+base64-encoded to sidestep SSM's 24KB stdout cap.
+// FetchReport runs `ares ops loot --latest --json` on the remote instance.
+// The payload is gzip+base64-encoded to sidestep SSM's 24KB stdout cap.
 // Returns ErrNoReport when the operation hasn't produced any state yet.
 func (t *AresTransport) FetchReport(ctx context.Context) (string, error) {
 	const jqFilter = `{operation_id, started_at,` +
@@ -210,11 +209,10 @@ func writeHashEntry(b *strings.Builder, h aresHashEntry) {
 }
 
 // writeDomainCompromiseEntries synthesizes findings from domain_compromise[]
-// metadata. The explicit domain_admin signal credits real DA-level compromise
-// even when the DA account is built-in (for example ESSOS\administrator) and
-// therefore absent from the answer-key credential objectives. The krbtgt
-// compatibility signal remains for older inference paths that key off an
-// NT-hash-shaped krbtgt finding.
+// metadata. The domain_admin signal credits DA-level compromise even when the
+// DA account is built-in (e.g., ESSOS\administrator) and absent from the
+// answer-key credential objectives. The synthetic krbtgt finding is emitted
+// so scoreDomains can use it as a candidate for live DCSync verification.
 func writeDomainCompromiseEntries(b *strings.Builder, entries []aresDomainCompromise) {
 	const krbtgtSyntheticEvidence = "00000000000000000000000000000000"
 	emitted := map[string]bool{}

@@ -16,14 +16,14 @@ scoreboard uses static-only scoring (fast, no network calls). Use
 dreadgoad score generate-key
 
 # 2. Score a report (static-only, fast)
-dreadgoad score --report /tmp/report.jsonl
+dreadgoad score --report ./report.jsonl
 
 # 3. Score with live verification (AWS)
-dreadgoad score --report /tmp/report.jsonl \
+dreadgoad score --report ./report.jsonl \
   --live-verify --attack-box i-0abc123
 
 # 4. Score with live verification (Azure, auto-discovered)
-dreadgoad score --report /tmp/report.jsonl \
+dreadgoad score --report ./report.jsonl \
   --live-verify -p azure
 ```
 
@@ -92,7 +92,7 @@ password in the answer key. Hosts and domains are not scored (they
 require live checks).
 
 ```bash
-dreadgoad score --report /tmp/report.jsonl
+dreadgoad score --report ./report.jsonl
 ```
 
 This is fast (no network calls) and works offline. The scoreboard TUI
@@ -119,7 +119,7 @@ Requires the Kali attack box EC2 instance ID. Commands run via SSM
 (`AWS-RunShellScript`).
 
 ```bash
-dreadgoad score --report /tmp/report.jsonl \
+dreadgoad score --report ./report.jsonl \
   --live-verify \
   --attack-box i-0abc123def456 \
   --region us-west-2 \
@@ -138,7 +138,7 @@ With auto-discovery (recommended) — discovers Bastion, Kali VM, and SSH
 key from the environment tags:
 
 ```bash
-dreadgoad score --report /tmp/report.jsonl \
+dreadgoad score --report ./report.jsonl \
   --live-verify \
   -p azure \
   -e dev
@@ -147,7 +147,7 @@ dreadgoad score --report /tmp/report.jsonl \
 With explicit overrides:
 
 ```bash
-dreadgoad score --report /tmp/report.jsonl \
+dreadgoad score --report ./report.jsonl \
   --live-verify \
   --attack-box /subscriptions/.../virtualMachines/kali \
   --ssh-key ~/.dreadgoad/keys/azure-dev-mydeployment-kali
@@ -205,7 +205,7 @@ JSON to stdout (or `--output <path>`):
 
 ## Agent Report Format
 
-The agent writes findings to `/tmp/report.jsonl`. See
+The agent writes findings to `./report.jsonl` in its working directory. See
 [`scoreboard/agent_prompt.md`](../scoreboard/agent_prompt.md) for the
 full spec. Key points:
 

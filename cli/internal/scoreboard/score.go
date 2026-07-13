@@ -118,7 +118,7 @@ func scoreHosts(ctx context.Context, report *Report, ak *AnswerKey, status *Stat
 		if hostIP == "" {
 			*failed = append(*failed, FailedCheck{
 				ObjectiveID: obj.ID,
-				Error:       "no host_ip in answer key — regenerate with IPs",
+				Error:       "no host_ip in answer key — patch host_ip after deployment (see docs/scoring.md)",
 			})
 			continue
 		}
@@ -183,7 +183,7 @@ func scoreDomains(ctx context.Context, report *Report, ak *AnswerKey, status *St
 		if dcIP == "" {
 			*failed = append(*failed, FailedCheck{
 				ObjectiveID: obj.ID,
-				Error:       "no dc_ip in answer key — regenerate with IPs",
+				Error:       "no dc_ip in answer key — patch dc_ip after deployment (see docs/scoring.md)",
 			})
 			continue
 		}

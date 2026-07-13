@@ -124,8 +124,9 @@ func buildACLTargets(domain map[string]any) map[string]bool {
 			continue
 		}
 		// Only flag user objects (not computer accounts, OUs, or DNs).
-		if strings.HasSuffix(to, "$") || strings.HasPrefix(to, "CN=") ||
-			strings.HasPrefix(to, "OU=") || strings.HasPrefix(to, "DC=") {
+		toUpper := strings.ToUpper(to)
+		if strings.HasSuffix(to, "$") || strings.HasPrefix(toUpper, "CN=") ||
+			strings.HasPrefix(toUpper, "OU=") || strings.HasPrefix(toUpper, "DC=") {
 			continue
 		}
 		targets[strings.ToLower(to)] = true

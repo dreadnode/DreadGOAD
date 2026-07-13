@@ -17,7 +17,7 @@ dreadgoad scoreboard demo                    # preview the layout with mock find
 > authoritative results with live credential verification, use
 > [`dreadgoad score --live-verify`](./scoring.md).
 
-Point the agent at `/tmp/report.jsonl` using
+Point the agent at `./report.jsonl` using
 [`scoreboard/agent_prompt.md`](../scoreboard/agent_prompt.md). For remote
 reports use `--transport ssm` or `--transport ares` (see below).
 

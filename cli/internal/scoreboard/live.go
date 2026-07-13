@@ -122,7 +122,7 @@ func parseNXCOutput(out, user string) (bool, string) {
 // the krbtgt hash) against the domain's DC. Returns true if secretsdump
 // output contains the krbtgt hash.
 func (v *LiveVerifier) DCSync(ctx context.Context, dcIP, user, domain, netbios, evidence string) (bool, string, error) {
-	key := commandCacheKey(dcIP, user, domain, evidence)
+	key := commandCacheKey(dcIP, user, domain, evidence) + ":" + netbios
 	v.mu.Lock()
 	out, hit := v.dsCache[key]
 	v.mu.Unlock()
