@@ -25,6 +25,7 @@ type NameGenerator struct {
 	animals          []string
 	subdomainWords   []string
 	cityNames        []string
+	shareNames       []string
 }
 
 // NewNameGenerator creates a new NameGenerator with default word lists.
@@ -116,6 +117,12 @@ func NewNameGenerator() *NameGenerator {
 			"Boston", "Chicago", "Dallas", "Denver", "Houston",
 			"Phoenix", "Seattle", "Portland", "Austin", "Atlanta",
 			"Miami", "Philadelphia", "San Diego", "San Francisco", "New York",
+		},
+		shareNames: []string{
+			"fileshare", "teamdata", "xferdata", "dropzone", "hotfolder",
+			"netdrive", "workdocs", "collab", "pubfiles", "sharebox",
+			"fileserv", "datashare", "teamdrop", "filevault", "deptfiles",
+			"sharedocs", "groupdata", "netfiles", "batchdrop", "datapool",
 		},
 	}
 }
@@ -218,6 +225,11 @@ func (ng *NameGenerator) GenerateHostname() string {
 // GenerateGMSAName generates a gMSA account name like "gmsaPhoenix".
 func (ng *NameGenerator) GenerateGMSAName() string {
 	return ng.ensureUnique("gmsa" + secureChoice(ng.animals))
+}
+
+// GenerateShareName generates a realistic network share name.
+func (ng *NameGenerator) GenerateShareName() string {
+	return ng.ensureUnique(secureChoice(ng.shareNames))
 }
 
 const (

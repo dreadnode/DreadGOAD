@@ -292,6 +292,9 @@ func (g *Generator) generateMappings(config *LabConfig) {
 	fmt.Println("\nMapping cities...")
 	g.mapCities(config)
 
+	fmt.Println("\nMapping shares...")
+	g.mapShares(config)
+
 	// Reconcile name-component Misc entries that conflict with Groups.
 	// Group names are explicit AD entities and take precedence over
 	// capitalized-surname convenience entries (e.g., "Targaryen" is both
@@ -620,6 +623,56 @@ func (g *Generator) mapCities(config *LabConfig) {
 	}
 }
 
+// mapShares extracts share names from VulnsVars and generates new names.
+// Share names like "thewall" are GOAD-themed and must be randomized to
+// prevent agents from recognizing the original lab structure.
+func (g *Generator) mapShares(config *LabConfig) {
+	seen := make(map[string]bool)
+	for _, host := range config.Lab.Hosts {
+		shares, ok := host.VulnsVars["shares"]
+		if !ok {
+			continue
+		}
+		sharesMap, ok := shares.(map[string]any)
+		if !ok {
+			continue
+		}
+		for shareName := range sharesMap {
+			if seen[shareName] {
+				continue
+			}
+			seen[shareName] = true
+			newName := g.nameGen.GenerateShareName()
+			g.mappings.Misc[shareName] = newName
+			fmt.Printf("  share %s -> %s\n", shareName, newName)
+		}
+	}
+}
+
+// rebuildShareKeys renames share map keys in VulnsVars after text
+// replacement has updated the share values but not the JSON map keys.
+func (g *Generator) rebuildShareKeys(config *LabConfig) {
+	for _, host := range config.Lab.Hosts {
+		shares, ok := host.VulnsVars["shares"]
+		if !ok {
+			continue
+		}
+		sharesMap, ok := shares.(map[string]any)
+		if !ok {
+			continue
+		}
+		newShares := make(map[string]any)
+		for oldKey, val := range sharesMap {
+			newKey := oldKey
+			if mapped, ok := g.mappings.Misc[oldKey]; ok {
+				newKey = mapped
+			}
+			newShares[newKey] = val
+		}
+		host.VulnsVars["shares"] = newShares
+	}
+}
+
 // buildOrderedReplacements builds the ordered replacement list (longest first).
 func (g *Generator) buildOrderedReplacements() {
 	fmt.Println("\n=== Building Ordered Replacements ===")
@@ -919,6 +972,7 @@ func (g *Generator) transformFile(srcPath, relPath string) (transformed bool) {
 				g.fixUserFirstnameSurname(&configData)
 				g.fixPasswords(&configData)
 				g.rebuildACLKeys(&configData)
+				g.rebuildShareKeys(&configData)
 				if pretty, err := json.MarshalIndent(configData, "", "  "); err == nil {
 					newContent = string(pretty)
 				}
