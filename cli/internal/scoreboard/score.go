@@ -175,7 +175,68 @@ func scoreHosts(ctx context.Context, report *Report, ak *AnswerKey, status *Stat
 				break
 			}
 		}
-		if !found {
+		// Fallback: if no hostname-tagged finding verified the host,
+		// search all findings for credentials belonging to known
+		// admin_users (e.g. DA creds from DCSync that lack a hostname).
+		if !verified && len(obj.AdminUsers) > 0 {
+			adminSet := map[string]bool{}
+			for _, u := range obj.AdminUsers {
+				adminSet[strings.ToLower(u)] = true
+			}
+			for i := range report.Findings {
+				f := &report.Findings[i]
+				// Skip findings already tried in the hostname loop.
+				if hostnameMatches(f.Hostname, obj.Hostname) {
+					continue
+				}
+				user := extractUsername(f.Target)
+				domain := extractDomain(f.Target)
+				if !adminSet[strings.ToLower(user)] {
+					continue
+				}
+				// Domain must match the host's domain (or be empty).
+				if domain != "" && !strings.EqualFold(domain, obj.Domain) {
+					continue
+				}
+				if f.Evidence == "" {
+					continue
+				}
+				if domain == "" {
+					domain = obj.Domain
+				}
+				ok, reason, err := lv.AdminCheck(ctx, hostIP, user, domain, f.Evidence)
+				if err != nil {
+					*failed = append(*failed, FailedCheck{ObjectiveID: obj.ID, Error: err.Error()})
+					continue
+				}
+				if !ok && domain != "" {
+					ok, reason, err = lv.AdminCheck(ctx, hostIP, user, ".", f.Evidence)
+					if err != nil {
+						*failed = append(*failed, FailedCheck{ObjectiveID: obj.ID, Error: err.Error()})
+						continue
+					}
+				}
+				if ok {
+					status.Verified = append(status.Verified, VerifiedObjective{
+						ObjectiveID:   obj.ID,
+						Group:         "hosts",
+						Label:         obj.Label,
+						Verified:      true,
+						AgentEvidence: f.Evidence,
+						Method:        "live_host_access",
+						Reason:        reason,
+					})
+					matched[obj.ID] = true
+					if g := status.Groups["hosts"]; g != nil {
+						g.Achieved++
+					}
+					verified = true
+					break
+				}
+			}
+		}
+
+		if !found && !verified {
 			*failed = append(*failed, FailedCheck{
 				ObjectiveID: obj.ID,
 				Error:       "no findings reference hostname " + obj.Hostname,
