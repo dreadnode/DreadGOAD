@@ -54,11 +54,12 @@ func init() {
 const resetResultMarker = "---DREADGOAD-RESET-RESULT---"
 
 // resetResult tracks cleanup outcomes for a single target.
+// "Issues" covers files, rogue accounts, and rogue group memberships.
 type resetResult struct {
-	Host         string   `json:"host"`
-	FilesFound   int      `json:"files_found"`
-	FilesRemoved int      `json:"files_removed"`
-	Errors       []string `json:"errors,omitempty"`
+	Host          string   `json:"host"`
+	IssuesFound   int      `json:"issues_found"`
+	IssuesRemoved int      `json:"issues_removed"`
+	Errors        []string `json:"errors,omitempty"`
 }
 
 func runScoreReset(cmd *cobra.Command, _ []string) error {
@@ -263,7 +264,7 @@ func buildKaliCleanupScript(apply bool) string {
 	}
 
 	sb.WriteString(fmt.Sprintf("\necho '%s'\n", resetResultMarker))
-	sb.WriteString(`printf '{"host":"kali","files_found":%d,"files_removed":%d}\n' "$total_found" "$total_removed"`)
+	sb.WriteString(`printf '{"host":"kali","issues_found":%d,"issues_removed":%d}\n' "$total_found" "$total_removed"`)
 	sb.WriteString("\n")
 
 	return sb.String()
@@ -313,7 +314,7 @@ func resetWindows(ctx context.Context, cfg *config.Config, apply bool) []string 
 		wg.Add(1)
 		go func(idx int, j hostJob) {
 			defer wg.Done()
-			out, err := runWindowsCleanup(ctx, infra.Provider, j.instanceID, j.hc, apply)
+			out, err := runWindowsCleanup(ctx, infra.Provider, j.instanceID, j.hc, infra.Lab, apply)
 			results[idx] = hostResult{
 				hostname: strings.ToUpper(j.hc.Hostname),
 				output:   out,
@@ -354,21 +355,95 @@ func resetWindows(ctx context.Context, cfg *config.Config, apply bool) []string 
 
 // windowsResetArgs is the JSON payload sent to each Windows host's PowerShell.
 type windowsResetArgs struct {
-	Apply        bool     `json:"Apply"`
-	AllowedFiles []string `json:"AllowedFiles"`
-	CleanIIS     bool     `json:"CleanIIS"`
-	CleanShares  bool     `json:"CleanShares"`
+	Apply            bool                `json:"Apply"`
+	AllowedFiles     []string            `json:"AllowedFiles"`
+	CleanIIS         bool                `json:"CleanIIS"`
+	CleanShares      bool                `json:"CleanShares"`
+	CheckLocalUsers  bool                `json:"CheckLocalUsers"`  // false on DCs (use --purge-ad instead)
+	AllowedUsers     []string            `json:"AllowedUsers"`     // expected local accounts
+	ExpectedGroups   map[string][]string `json:"ExpectedGroups"`   // group -> expected members (for membership diff)
+	BlacklistedExes  []string            `json:"BlacklistedExes"`  // attack tool executables to remove from Windows\Temp
+}
+
+// knownAttackToolExes is a blacklist of executables commonly dropped by agents.
+// Only these specific filenames are removed from Windows\Temp — other .exe files
+// (provisioning tools, installers) are left alone.
+var knownAttackToolExes = []string{
+	"godpotato.exe",
+	"godpotato-net4.exe",
+	"godpotato-net2.exe",
+	"godpotato-net35.exe",
+	"printspoofer.exe",
+	"printspoofer64.exe",
+	"printspoofer32.exe",
+	"juicypotato.exe",
+	"roguepotato.exe",
+	"sweetpotato.exe",
+	"efspotato.exe",
+	"rubeus.exe",
+	"mimikatz.exe",
+	"sharphound.exe",
+	"certify.exe",
+	"certipy.exe",
+	"seatbelt.exe",
+	"sharpview.exe",
+	"winpeas.exe",
+	"winpeasx64.exe",
+	"winpeasx86.exe",
+	"chisel.exe",
+	"ligolo-ng.exe",
+	"nc.exe",
+	"nc64.exe",
+	"ncat.exe",
+	"plink.exe",
+	"procdump.exe",
+	"procdump64.exe",
+	"psexec.exe",
+	"psexec64.exe",
+	"lazagne.exe",
+	"sharpkatz.exe",
+	"nanodump.exe",
+	"runascs.exe",
+	"sharpsccm.exe",
+	"snaffler.exe",
+	"kerbrute.exe",
+	"bloodhound.exe",
+	"adpeas.exe",
+	"whisker.exe",
+	"coercer.exe",
+	"petitpotam.exe",
+	"spoolsample.exe",
+	"sharpmad.exe",
+	"powermad.exe",
+	"standandalone.exe",
+	"invoke-mimikatz.exe",
+}
+
+// defaultLocalUsers are Windows built-in and provisioning accounts that should
+// never be flagged as rogue.
+var defaultLocalUsers = []string{
+	"administrator",
+	"guest",
+	"defaultaccount",
+	"wdagutilityaccount",
+	"ssm-user",
+	"ansible",
+	"goadmin",
 }
 
 // runWindowsCleanup executes the cleanup script on a single Windows host
 // and returns the raw stdout. Parsing is done by the caller so results
 // can be printed in deterministic order after parallel execution.
-func runWindowsCleanup(ctx context.Context, prov provider.Provider, instanceID string, hc labmap.HostConfig, apply bool) (string, error) {
+func runWindowsCleanup(ctx context.Context, prov provider.Provider, instanceID string, hc labmap.HostConfig, lab *labmap.LabMap, apply bool) (string, error) {
 	args := windowsResetArgs{
-		Apply:        apply,
-		AllowedFiles: parseFileAllowlist(hc),
-		CleanIIS:     hasIISContent(hc),
-		CleanShares:  hasShareContent(hc),
+		Apply:           apply,
+		AllowedFiles:    parseFileAllowlist(hc),
+		CleanIIS:        hasIISContent(hc),
+		CleanShares:     hasShareContent(hc),
+		CheckLocalUsers: hc.Type != "dc",
+		AllowedUsers:    buildLocalUserAllowlist(hc, lab),
+		ExpectedGroups:  buildExpectedGroups(hc),
+		BlacklistedExes: knownAttackToolExes,
 	}
 
 	raw, err := json.Marshal(args)
@@ -441,9 +516,11 @@ if ([bool]$cfg.CleanShares) {
     }
 }
 
-$suspiciousExts = @('.ps1','.bat','.dll','.kirbi','.ccache','.pfx','.hive','.aspx','.asp','.zip','.b64')
+$suspiciousExts = @('.ps1','.bat','.cmd','.vbs','.js','.dll','.kirbi','.ccache','.pfx','.hive','.aspx','.asp','.zip','.b64','.com','.scr','.msi')
+$blacklistedExes = @{}
+foreach ($e in $cfg.BlacklistedExes) { $blacklistedExes[$e.ToLower()] = $true }
 $tempFiles = Get-ChildItem 'C:\Windows\Temp' -File -ErrorAction SilentlyContinue |
-    Where-Object { $suspiciousExts -contains $_.Extension }
+    Where-Object { ($suspiciousExts -contains $_.Extension) -or ($blacklistedExes.ContainsKey($_.Name.ToLower())) }
 $count = ($tempFiles | Measure-Object).Count
 $totalFound += $count
 if ($apply -and $count -gt 0) {
@@ -466,6 +543,74 @@ if ($apply -and $count -gt 0) {
 }
 Write-Output "  Users\Public: $count files"
 
+if ([bool]$cfg.CheckLocalUsers) {
+    $allowedUsers = @{}
+    foreach ($u in $cfg.AllowedUsers) { $allowedUsers[$u.ToLower()] = $true }
+    $rogueUsers = @()
+    try {
+        $localUsers = Get-LocalUser -ErrorAction Stop
+        foreach ($u in $localUsers) {
+            if (-not $allowedUsers.ContainsKey($u.Name.ToLower())) {
+                $rogueUsers += $u.Name
+                $totalFound++
+                if ($apply) {
+                    try { Remove-LocalUser -Name $u.Name -ErrorAction Stop; $totalRemoved++ }
+                    catch { $errors += "local-user: $($u.Name): $_" }
+                }
+            }
+        }
+    } catch {
+        $errors += "Get-LocalUser: $_"
+    }
+    if ($rogueUsers.Count -gt 0) {
+        Write-Output "  Rogue local accounts: $($rogueUsers -join ', ')"
+    } else {
+        Write-Output "  Local accounts: clean"
+    }
+}
+
+if ($cfg.ExpectedGroups -and [bool]$cfg.CheckLocalUsers) {
+    $groupIssues = @()
+    foreach ($prop in $cfg.ExpectedGroups.PSObject.Properties) {
+        $groupName = $prop.Name
+        # Build a set of expected usernames (strip domain prefix for comparison).
+        $expectedUsers = @{}
+        foreach ($m in $prop.Value) {
+            $u = $m.ToLower()
+            if ($u -match '\\(.+)$') { $u = $Matches[1] }
+            $expectedUsers[$u] = $true
+        }
+        try {
+            $actual = Get-LocalGroupMember -Group $groupName -ErrorAction Stop
+        } catch {
+            $errors += "Get-LocalGroupMember ${groupName}: $_"
+            continue
+        }
+        foreach ($member in $actual) {
+            # Extract just the username part (strip DOMAIN\ or COMPUTERNAME\ prefix).
+            $memberFull = $member.Name.ToLower()
+            $memberShort = if ($memberFull -match '\\(.+)$') { $Matches[1] } else { $memberFull }
+            if ($expectedUsers.ContainsKey($memberShort)) { continue }
+            # Skip well-known built-in principals.
+            $builtIn = @('administrator','domain admins','enterprise admins')
+            if ($builtIn -contains $memberShort) { continue }
+            $groupIssues += "${groupName}: $($member.Name)"
+            $totalFound++
+            if ($apply) {
+                try {
+                    Remove-LocalGroupMember -Group $groupName -Member $member.Name -ErrorAction Stop
+                    $totalRemoved++
+                } catch { $errors += "remove-member ${groupName}\$($member.Name): $_" }
+            }
+        }
+    }
+    if ($groupIssues.Count -gt 0) {
+        Write-Output "  Rogue group members: $($groupIssues -join '; ')"
+    } else {
+        Write-Output "  Group membership: clean"
+    }
+}
+
 Write-Output '` + resetResultMarker + `'
 $errJson = '[]'
 if ($errors.Count -gt 0) {
@@ -476,7 +621,7 @@ if ($errors.Count -gt 0) {
     $errJson = '[' + ($escaped -join ',') + ']'
 }
 $hostName = $env:COMPUTERNAME -replace '[\\"]', ''
-Write-Output ('{"host":"' + $hostName + '","files_found":' + $totalFound + ',"files_removed":' + $totalRemoved + ',"errors":' + $errJson + '}')
+Write-Output ('{"host":"' + $hostName + '","issues_found":' + $totalFound + ',"issues_removed":' + $totalRemoved + ',"errors":' + $errJson + '}')
 `
 
 // parseFileAllowlist extracts destination file basenames from VulnsVars["files"].
@@ -504,6 +649,59 @@ func parseFileAllowlist(hc labmap.HostConfig) []string {
 		allowed = append(allowed, base)
 	}
 	return allowed
+}
+
+// buildLocalUserAllowlist constructs the list of expected local accounts for a host.
+// Includes Windows built-ins, provisioning accounts, and any accounts defined in the
+// lab config's local_groups (users granted local admin, RDP, etc.).
+func buildLocalUserAllowlist(hc labmap.HostConfig, lab *labmap.LabMap) []string {
+	seen := map[string]bool{}
+	for _, u := range defaultLocalUsers {
+		seen[strings.ToLower(u)] = true
+	}
+	// Add the lab admin user (e.g. "goadmin" or "administrator").
+	if lab != nil && lab.AdminUser != "" {
+		seen[strings.ToLower(lab.AdminUser)] = true
+	}
+	// Add users referenced in this host's local_groups config.
+	for _, members := range hc.LocalGroups {
+		for _, m := range members {
+			// Members can be "domain\user" — extract the user part.
+			if idx := strings.LastIndex(m, "\\"); idx >= 0 {
+				m = m[idx+1:]
+			}
+			seen[strings.ToLower(m)] = true
+		}
+	}
+	allowed := make([]string, 0, len(seen))
+	for u := range seen {
+		allowed = append(allowed, u)
+	}
+	return allowed
+}
+
+// buildExpectedGroups returns the expected local group memberships from the lab config.
+// Only includes groups explicitly configured in local_groups. Provisioning accounts
+// (ansible, ssm-user, goadmin, Administrator) are always added to Administrators.
+func buildExpectedGroups(hc labmap.HostConfig) map[string][]string {
+	if len(hc.LocalGroups) == 0 {
+		return nil
+	}
+	groups := make(map[string][]string, len(hc.LocalGroups))
+	for group, members := range hc.LocalGroups {
+		normalized := make([]string, 0, len(members)+4)
+		for _, m := range members {
+			normalized = append(normalized, strings.ToLower(m))
+		}
+		// Provisioning accounts always have local admin.
+		if strings.EqualFold(group, "Administrators") {
+			for _, u := range []string{"administrator", "ansible", "ssm-user", "goadmin"} {
+				normalized = append(normalized, u)
+			}
+		}
+		groups[group] = normalized
+	}
+	return groups
 }
 
 // hasIISContent checks if the host has files destined for the IIS upload directory.
@@ -565,10 +763,10 @@ func printResetSummary(host string, r *resetResult, apply bool) {
 	if apply {
 		verb = "removed"
 	}
-	if r.FilesFound == 0 {
+	if r.IssuesFound == 0 {
 		color.Green("  clean (no artifacts)")
 	} else {
-		fmt.Printf("  Total: %d files found, %d %s\n", r.FilesFound, r.FilesRemoved, verb)
+		fmt.Printf("  Total: %d issues found, %d %s\n", r.IssuesFound, r.IssuesRemoved, verb)
 	}
 	for _, e := range r.Errors {
 		color.Red("  ERROR: %s", e)
