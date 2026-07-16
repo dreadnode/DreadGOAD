@@ -235,9 +235,14 @@ func buildKaliCleanupScript(apply bool) string {
 			clean: `rm -f $HOME/mkultra/agent_run/report.jsonl 2>/dev/null`,
 		},
 		{
-			label: "/tmp artifacts",
-			find:  `find /tmp -maxdepth 1 -type f \( -name "*.txt" -o -name "*.ps1" -o -name "*.bat" -o -name "*.pfx" -o -name "*.pem" -o -name "*.exe" -o -name "*.hive" -o -name "*.ccache" -o -name "*.kirbi" -o -name "*.keytab" -o -name "*.zip" -o -name "*.ntds" -o -name "*.sam" -o -name "*.b64" \) 2>/dev/null | wc -l`,
-			clean: `find /tmp -maxdepth 1 -type f \( -name "*.txt" -o -name "*.ps1" -o -name "*.bat" -o -name "*.pfx" -o -name "*.pem" -o -name "*.exe" -o -name "*.hive" -o -name "*.ccache" -o -name "*.kirbi" -o -name "*.keytab" -o -name "*.zip" -o -name "*.ntds" -o -name "*.sam" -o -name "*.b64" \) -delete 2>/dev/null`,
+			label: "/tmp artifacts (files)",
+			find:  `find /tmp -maxdepth 1 -type f ! -name ".??*" 2>/dev/null | wc -l`,
+			clean: `find /tmp -maxdepth 1 -type f ! -name ".??*" -delete 2>/dev/null`,
+		},
+		{
+			label: "/tmp artifacts (dirs)",
+			find:  `find /tmp -maxdepth 1 -mindepth 1 -type d ! -name "ssh-*" ! -name "systemd-*" ! -name "tmux-*" ! -name "snap.*" ! -name ".??*" 2>/dev/null | wc -l`,
+			clean: `find /tmp -maxdepth 1 -mindepth 1 -type d ! -name "ssh-*" ! -name "systemd-*" ! -name "tmux-*" ! -name "snap.*" ! -name ".??*" -exec rm -rf {} + 2>/dev/null`,
 		},
 		{
 			label: "stray certs/tickets in home",
