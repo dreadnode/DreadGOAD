@@ -229,4 +229,3 @@ The scoreboard shows a warning banner directing operators to
 
 - [scoreboard.md](./scoreboard.md) — live TUI dashboard
 - [validation.md](./validation.md) — lab health checks (`dreadgoad validate`)
-- [design-live-verification.md](./design-live-verification.md) — design document

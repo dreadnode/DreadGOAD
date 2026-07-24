@@ -11,11 +11,11 @@ Before cleaning, always retrieve the agent's report so it can be scored:
 aws ssm send-command \
   --instance-id <kali-instance-id> \
   --document-name AWS-RunShellScript \
-  --parameters 'commands=["cat /home/ssm-user/mkultra/agent_run/report.jsonl"]' \
+  --parameters 'commands=["cat $HOME/report.jsonl"]' \
   --region <region> --profile <profile> --query 'Command.CommandId'
 ```
 
-Save the output to `/tmp/report_runN.jsonl` locally before proceeding.
+Save the output locally before proceeding.
 
 ## Kali attack box
 
@@ -32,7 +32,7 @@ rm -f /tmp/*.txt /tmp/*.ps1 /tmp/*.bat /tmp/*.pfx /tmp/*.pem /tmp/*.exe \
 ### Agent report
 
 ```bash
-rm -f /home/ssm-user/mkultra/agent_run/report.jsonl
+rm -f $HOME/report.jsonl
 ```
 
 ### NetExec (nxc) data
@@ -41,22 +41,22 @@ nxc caches credential dumps, Kerberos tickets, share spider output, and host dat
 
 ```bash
 # Temp scripts and coercion files
-rm -rf /home/ssm-user/.nxc/tmp/*
+rm -rf $HOME/.nxc/tmp/*
 
 # Credential dumps (LSA secrets, SAM, NTDS, DPAPI)
-rm -rf /home/ssm-user/.nxc/logs/*
+rm -rf $HOME/.nxc/logs/*
 
 # Lsassy-extracted Kerberos tickets (.ccache files)
-rm -rf /home/ssm-user/.nxc/modules/lsassy/*
+rm -rf $HOME/.nxc/modules/lsassy/*
 
 # Share enumeration output
-rm -rf /home/ssm-user/.nxc/modules/nxc_spider_plus/*
+rm -rf $HOME/.nxc/modules/nxc_spider_plus/*
 
 # Pre-created computer account lists
-rm -rf /home/ssm-user/.nxc/modules/pre2k/*
+rm -rf $HOME/.nxc/modules/pre2k/*
 
 # Host/credential databases (smb.db, ldap.db, mssql.db, etc.)
-rm -f /home/ssm-user/.nxc/workspaces/default/*.db
+rm -f $HOME/.nxc/workspaces/default/*.db
 ```
 
 **Keep:** `nxc.conf` (tool configuration, not run data).
@@ -75,7 +75,7 @@ rm -f /home/ssm-user/.nxc/workspaces/default/*.db
 Legacy tool, same structure as nxc:
 
 ```bash
-rm -rf /home/ssm-user/.cme/
+rm -rf $HOME/.cme/
 ```
 
 ### Responder logs
@@ -83,7 +83,7 @@ rm -rf /home/ssm-user/.cme/
 Captured NTLM hashes from poisoning:
 
 ```bash
-rm -rf /home/ssm-user/Responder/logs/*
+rm -rf $HOME/Responder/logs/*
 ```
 
 ### Dreadnode agent sessions
@@ -91,8 +91,8 @@ rm -rf /home/ssm-user/Responder/logs/*
 Session spans and prompt history from prior agent runs:
 
 ```bash
-rm -rf /home/ssm-user/.dreadnode/sessions/*
-rm -f /home/ssm-user/.dreadnode/prompt-history.jsonl
+rm -rf $HOME/.dreadnode/sessions/*
+rm -f $HOME/.dreadnode/prompt-history.jsonl
 ```
 
 ### Stray credential material anywhere in home
@@ -100,10 +100,10 @@ rm -f /home/ssm-user/.dreadnode/prompt-history.jsonl
 Certipy, bloodyAD, and impacket may write certificates, tickets, or keys to the working directory or home:
 
 ```bash
-find /home/ssm-user -maxdepth 3 \
+find $HOME -maxdepth 3 \
   \( -name "*.ccache" -o -name "*.kirbi" -o -name "*.keytab" \
      -o -name "*.pfx" -o -name "*.pem" -o -name "*.crt" -o -name "*.key" \) \
-  ! -path "*/mkultra/*" ! -path "*/.local/*" 2>/dev/null
+  ! -path "*/.local/*" 2>/dev/null
 ```
 
 Review and delete any matches. Don't delete keys under `.local/` (those are tool installations).
@@ -233,25 +233,25 @@ rm -f /tmp/*.txt /tmp/*.ps1 /tmp/*.bat /tmp/*.pfx /tmp/*.pem /tmp/*.exe \
       /tmp/*.zip /tmp/*.ntds /tmp/*.sam /tmp/*.b64
 
 # Agent report
-rm -f /home/ssm-user/mkultra/agent_run/report.jsonl
+rm -f $HOME/report.jsonl
 
 # nxc
-rm -rf /home/ssm-user/.nxc/tmp/* \
-       /home/ssm-user/.nxc/logs/* \
-       /home/ssm-user/.nxc/modules/lsassy/* \
-       /home/ssm-user/.nxc/modules/nxc_spider_plus/* \
-       /home/ssm-user/.nxc/modules/pre2k/*
-rm -f  /home/ssm-user/.nxc/workspaces/default/*.db
+rm -rf $HOME/.nxc/tmp/* \
+       $HOME/.nxc/logs/* \
+       $HOME/.nxc/modules/lsassy/* \
+       $HOME/.nxc/modules/nxc_spider_plus/* \
+       $HOME/.nxc/modules/pre2k/*
+rm -f  $HOME/.nxc/workspaces/default/*.db
 
 # cme
-rm -rf /home/ssm-user/.cme/
+rm -rf $HOME/.cme/
 
 # Responder
-rm -rf /home/ssm-user/Responder/logs/*
+rm -rf $HOME/Responder/logs/*
 
 # Dreadnode sessions
-rm -rf /home/ssm-user/.dreadnode/sessions/*
-rm -f  /home/ssm-user/.dreadnode/prompt-history.jsonl
+rm -rf $HOME/.dreadnode/sessions/*
+rm -f  $HOME/.dreadnode/prompt-history.jsonl
 ```
 
 ## Quick reference — one-shot SUMMIT IIS cleanup

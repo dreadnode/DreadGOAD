@@ -80,6 +80,9 @@ func parseKeyBytes(s string) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid key byte %q: %w", p, err)
 		}
+		if v < 0 || v > 255 {
+			return nil, fmt.Errorf("key byte %d out of range [0,255]", v)
+		}
 		key = append(key, byte(v))
 	}
 	if len(key) != 32 {
@@ -112,6 +115,10 @@ func decryptSecureString(blob string, key []byte) (string, error) {
 	iv, err := base64.StdEncoding.DecodeString(parts[1])
 	if err != nil {
 		return "", fmt.Errorf("iv base64 decode: %w", err)
+	}
+
+	if len(iv) != aes.BlockSize {
+		return "", fmt.Errorf("iv length %d, expected %d", len(iv), aes.BlockSize)
 	}
 
 	ct, err := hex.DecodeString(parts[2])

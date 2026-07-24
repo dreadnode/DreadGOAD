@@ -132,7 +132,7 @@ func resetKali(ctx context.Context, cmd *cobra.Command, cfg *config.Config, appl
 
 	// Save the agent report before cleaning.
 	if saveReport {
-		reportContent, err := runner.RunShell(ctx, "cat $HOME/mkultra/agent_run/report.jsonl 2>/dev/null || true", 30*time.Second)
+		reportContent, err := runner.RunShell(ctx, "cat $HOME/report.jsonl 2>/dev/null || cat $HOME/agent_run/report.jsonl 2>/dev/null || true", 30*time.Second)
 		if err != nil {
 			color.Yellow("  WARN: could not fetch report: %v", err)
 		} else if strings.TrimSpace(reportContent) != "" {
@@ -231,8 +231,13 @@ func buildKaliCleanupScript(apply bool) string {
 		},
 		{
 			label: "agent report",
-			find:  `test -f $HOME/mkultra/agent_run/report.jsonl && echo 1 || echo 0`,
-			clean: `rm -f $HOME/mkultra/agent_run/report.jsonl 2>/dev/null`,
+			find:  `( test -f $HOME/report.jsonl && echo 1 || echo 0 )`,
+			clean: `rm -f $HOME/report.jsonl $HOME/agent_run/report.jsonl 2>/dev/null`,
+		},
+		{
+			label: "hashcat potfile",
+			find:  `test -f $HOME/.local/share/hashcat/hashcat.potfile && echo 1 || echo 0`,
+			clean: `rm -f $HOME/.local/share/hashcat/hashcat.potfile 2>/dev/null`,
 		},
 		{
 			label: "/tmp artifacts (files)",
@@ -246,8 +251,8 @@ func buildKaliCleanupScript(apply bool) string {
 		},
 		{
 			label: "stray certs/tickets in home",
-			find:  `find $HOME -maxdepth 3 \( -name "*.ccache" -o -name "*.kirbi" -o -name "*.keytab" -o -name "*.pfx" \) ! -path "*/mkultra/*" ! -path "*/.local/*" 2>/dev/null | wc -l`,
-			clean: `find $HOME -maxdepth 3 \( -name "*.ccache" -o -name "*.kirbi" -o -name "*.keytab" -o -name "*.pfx" \) ! -path "*/mkultra/*" ! -path "*/.local/*" -delete 2>/dev/null`,
+			find:  `find $HOME -maxdepth 3 \( -name "*.ccache" -o -name "*.kirbi" -o -name "*.keytab" -o -name "*.pfx" \) ! -path "*/.local/*" 2>/dev/null | wc -l`,
+			clean: `find $HOME -maxdepth 3 \( -name "*.ccache" -o -name "*.kirbi" -o -name "*.keytab" -o -name "*.pfx" \) ! -path "*/.local/*" -delete 2>/dev/null`,
 		},
 	}
 
@@ -420,7 +425,7 @@ var knownAttackToolExes = []string{
 	"spoolsample.exe",
 	"sharpmad.exe",
 	"powermad.exe",
-	"standandalone.exe",
+	"standalone.exe",
 	"invoke-mimikatz.exe",
 }
 
@@ -458,9 +463,49 @@ func runWindowsCleanup(ctx context.Context, prov provider.Provider, instanceID s
 	encoded := base64.StdEncoding.EncodeToString(raw)
 	script := fmt.Sprintf(windowsCleanupScriptTpl, encoded)
 
-	result, err := prov.RunCommand(ctx, instanceID, script, 5*time.Minute)
+	// The cleanup script (~5 KB) exceeds the cmd.exe 8191-char limit once
+	// masterzen/winrm wraps it as UTF-16LE base64 for powershell.exe
+	// -EncodedCommand (~14 KB). Work around this by writing the script to
+	// a temp file in small chunks, then invoking it.
+	const tempPS = `C:\Windows\Temp\dreadgoad_reset.ps1`
+
+	// Split into chunks small enough to survive the encoding expansion.
+	// Each chunk is sent as: [IO.File]::AppendAllText('path','chunk')
+	// The wrapper overhead is ~80 chars; 1500-char chunks stay well under
+	// the 8191 limit after UTF-16LE base64 (1500*2*4/3 + 80 ≈ 4080).
+	const chunkSize = 1500
+
+	// Step 1: truncate any leftover from a prior failed attempt.
+	truncCmd := fmt.Sprintf("[IO.File]::WriteAllText('%s','')", tempPS)
+	if _, err := prov.RunCommand(ctx, instanceID, truncCmd, 30*time.Second); err != nil {
+		return "", fmt.Errorf("create temp script: %w", err)
+	}
+
+	// Step 2: append the script in chunks.
+	cleanup := func() {
+		delCmd := fmt.Sprintf("Remove-Item '%s' -Force -ErrorAction SilentlyContinue", tempPS)
+		_, _ = prov.RunCommand(ctx, instanceID, delCmd, 15*time.Second)
+	}
+	for i := 0; i < len(script); i += chunkSize {
+		end := i + chunkSize
+		if end > len(script) {
+			end = len(script)
+		}
+		chunk := script[i:end]
+		// Escape single quotes for PowerShell single-quoted string literal.
+		escaped := strings.ReplaceAll(chunk, "'", "''")
+		writeCmd := fmt.Sprintf("[IO.File]::AppendAllText('%s','%s')", tempPS, escaped)
+		if _, err := prov.RunCommand(ctx, instanceID, writeCmd, 30*time.Second); err != nil {
+			cleanup()
+			return "", fmt.Errorf("write script chunk %d: %w", i/chunkSize, err)
+		}
+	}
+
+	// Step 3: execute the script and clean up the temp file.
+	runCmd := fmt.Sprintf("try { & '%s' } finally { Remove-Item '%s' -Force -ErrorAction SilentlyContinue }", tempPS, tempPS)
+	result, err := prov.RunCommand(ctx, instanceID, runCmd, 5*time.Minute)
 	if err != nil {
-		return "", fmt.Errorf("run command: %w", err)
+		return "", fmt.Errorf("run script: %w", err)
 	}
 	return result.Stdout, nil
 }
@@ -525,7 +570,7 @@ $suspiciousExts = @('.ps1','.bat','.cmd','.vbs','.js','.dll','.kirbi','.ccache',
 $blacklistedExes = @{}
 foreach ($e in $cfg.BlacklistedExes) { $blacklistedExes[$e.ToLower()] = $true }
 $tempFiles = Get-ChildItem 'C:\Windows\Temp' -File -ErrorAction SilentlyContinue |
-    Where-Object { ($suspiciousExts -contains $_.Extension) -or ($blacklistedExes.ContainsKey($_.Name.ToLower())) }
+    Where-Object { $_.Name -ne 'dreadgoad_reset.ps1' -and (($suspiciousExts -contains $_.Extension) -or ($blacklistedExes.ContainsKey($_.Name.ToLower()))) }
 $count = ($tempFiles | Measure-Object).Count
 $totalFound += $count
 if ($apply -and $count -gt 0) {
@@ -646,7 +691,11 @@ func parseFileAllowlist(hc labmap.HostConfig) []string {
 		return allowed
 	}
 	for _, e := range entries {
-		base := filepath.Base(e.Dest)
+		// filepath.Base uses OS-native separators, so on Linux/macOS it
+		// treats Windows backslash paths as a single component. Normalise
+		// to forward slashes first so we reliably extract the filename.
+		norm := strings.ReplaceAll(e.Dest, `\`, "/")
+		base := filepath.Base(norm)
 		// Skip directory-only destinations like "C:\inetpub\" where Base returns the dir name.
 		if base == "" || base == "." || !strings.Contains(base, ".") {
 			continue
