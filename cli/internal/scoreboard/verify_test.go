@@ -279,3 +279,131 @@ func TestExtractUsernameFormats(t *testing.T) {
 		}
 	}
 }
+
+// TestExtractNTHash verifies NT hash extraction from various evidence formats:
+// bare 32-char hex, LM:NT pairs, and secretsdump user:rid:LM:NT::: output.
+func TestExtractNTHash(t *testing.T) {
+	tests := []struct {
+		name     string
+		evidence string
+		want     string
+	}{
+		{"bare 32-char hash", "aad3b435b51404eeaad3b435b51404ee", "aad3b435b51404eeaad3b435b51404ee"},
+		{"uppercase normalised", "AAD3B435B51404EEAAD3B435B51404EE", "aad3b435b51404eeaad3b435b51404ee"},
+		{"LM:NT format", "aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0", "31d6cfe0d16ae931b73c59d7e0c089c0"},
+		{"secretsdump format", "Administrator:500:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::", "31d6cfe0d16ae931b73c59d7e0c089c0"},
+		{"plaintext password", "Heartsbane", ""},
+		{"empty string", "", ""},
+		{"wrong length", "aad3b435b51404eeaad3b435b51404e", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractNTHash(tt.evidence)
+			if got != tt.want {
+				t.Errorf("extractNTHash(%q) = %q, want %q", tt.evidence, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestNtHashHex checks the MD4-based NTLM hash computation against known
+// golden vectors (empty password, "password", "Password123").
+func TestNtHashHex(t *testing.T) {
+	tests := []struct {
+		password string
+		want     string
+	}{
+		{"", "31d6cfe0d16ae931b73c59d7e0c089c0"},           // empty password
+		{"password", "8846f7eaee8fb117ad06bdd830b7586c"},    // common test vector
+		{"Password123", "58a478135a93ac3bf058a5ea0e8fdb71"}, // mixed case + digits
+	}
+	for _, tt := range tests {
+		t.Run(tt.password, func(t *testing.T) {
+			got := ntHashHex(tt.password)
+			if got != tt.want {
+				t.Errorf("ntHashHex(%q) = %q, want %q", tt.password, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestVerifyEvidence covers all verification paths: exact match, case-insensitive,
+// substring in compound evidence, NT hash comparison, and the default type's
+// minimum-length check.
+func TestVerifyEvidence(t *testing.T) {
+	tests := []struct {
+		name     string
+		evidence string
+		objType  string
+		expected string
+		wantOK   bool
+		wantSub  string // substring in reason
+	}{
+		{"exact match", "Heartsbane", "password_match", "Heartsbane", true, "Password matches"},
+		{"case insensitive", "heartsbane", "password_match", "Heartsbane", true, "case-insensitive"},
+		{"embedded in compound", "NORTH\\samwell.tarly:Heartsbane", "password_match", "Heartsbane", true, "found in evidence"},
+		{"NT hash of expected", "b8d76e56e9dac90539aff05e3ccb1755", "password_match", "iknownothing", true, "NTLM hash matches"},
+		{"wrong password", "WrongPass", "password_match", "Heartsbane", false, "mismatch"},
+		{"empty evidence", "", "password_match", "Heartsbane", false, "No evidence"},
+		{"empty expected", "anything", "password_match", "", false, "mismatch"},
+		{"non-password long evidence", "some-long-evidence-string", "live_host_access", "", true, "Evidence accepted"},
+		{"non-password short evidence", "yes", "live_host_access", "", false, "too short"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &Finding{Evidence: tt.evidence}
+			o := &Objective{Verify: Verify{Type: tt.objType, Expected: tt.expected}}
+			ok, reason := verifyEvidence(f, o)
+			if ok != tt.wantOK {
+				t.Errorf("ok = %v, want %v (reason: %s)", ok, tt.wantOK, reason)
+			}
+			if tt.wantSub != "" && !strings.Contains(reason, tt.wantSub) {
+				t.Errorf("reason = %q, want substring %q", reason, tt.wantSub)
+			}
+		})
+	}
+}
+
+func TestMatchCredentialDomainCollision(t *testing.T) {
+	// A bare username (no @domain) matches objectives in ANY domain.
+	// This is by design — documents the known false-positive tradeoff.
+	bareFinding := &Finding{Target: "alice", Evidence: "pass123"}
+	obj1 := &Objective{User: "alice", Domain: "north.sevenkingdoms.local", Group: "credentials"}
+	obj2 := &Objective{User: "alice", Domain: "essos.local", Group: "credentials"}
+
+	if !matchCredential(bareFinding, obj1) {
+		t.Error("bare username should match first domain")
+	}
+	if !matchCredential(bareFinding, obj2) {
+		t.Error("bare username should match second domain (known design tradeoff)")
+	}
+
+	// Qualified username only matches its own domain.
+	qualifiedFinding := &Finding{Target: "alice@north.sevenkingdoms.local", Evidence: "pass123"}
+	if !matchCredential(qualifiedFinding, obj1) {
+		t.Error("qualified username should match its domain")
+	}
+	if matchCredential(qualifiedFinding, obj2) {
+		t.Error("qualified username should NOT match different domain")
+	}
+}
+
+// TestParseReportMalformedLines verifies that invalid JSONL lines (plain text,
+// truncated JSON) are silently skipped while valid lines are parsed.
+func TestParseReportMalformedLines(t *testing.T) {
+	raw := strings.Join([]string{
+		`{"agent_id":"test"}`,
+		`not json at all`,
+		`{"target":"alice@example.com","evidence":"pass"}`,
+		``,
+		`{"truncated": `,
+		`{"target":"bob","evidence":"secret"}`,
+	}, "\n")
+	report := ParseReport(raw)
+	if report.AgentID != "test" {
+		t.Errorf("agent_id: want test, got %s", report.AgentID)
+	}
+	if len(report.Findings) != 2 {
+		t.Errorf("findings: want 2 (skipping malformed), got %d", len(report.Findings))
+	}
+}

@@ -1,6 +1,7 @@
 package variant
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 )
@@ -38,6 +39,69 @@ func TestEncryptDecryptRoundtrip(t *testing.T) {
 	}
 	if got != password {
 		t.Errorf("roundtrip got %q, want %q", got, password)
+	}
+}
+
+// TestDecryptSecureStringErrors verifies that decryptSecureString returns
+// clear errors for malformed blobs rather than panicking.
+func TestDecryptSecureStringErrors(t *testing.T) {
+	key := []byte{177, 252, 228, 64, 28, 91, 12, 201, 20, 91, 21, 139, 255, 65, 9, 247, 41, 55, 164, 28, 75, 132, 143, 71, 62, 191, 211, 61, 154, 61, 216, 91}
+
+	tests := []struct {
+		name    string
+		blob    string
+		wantErr string
+	}{
+		{"wrong magic prefix", "00000000000000000000000000000000AAAA", "magic"},
+		{"truncated base64", secureStringMagic + "not-valid-base64!!!", "base64"},
+		{"bad IV length", secureStringMagic + buildBlobWithBadIV(), "iv length"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := decryptSecureString(tt.blob, key)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(strings.ToLower(err.Error()), tt.wantErr) {
+				t.Errorf("error = %q, want substring %q", err.Error(), tt.wantErr)
+			}
+		})
+	}
+}
+
+// buildBlobWithBadIV creates a SecureString blob whose inner "2|iv|ct" has a
+// 4-byte IV instead of the required 16-byte IV.
+func buildBlobWithBadIV() string {
+	inner := "2|AAAA|00112233" // AAAA decodes to 3 bytes, not 16
+	u16 := encodeUTF16LE(inner)
+	return base64.StdEncoding.EncodeToString(u16)
+}
+
+// TestEncryptDecryptRoundtripEdgeCases covers empty and unicode passwords.
+func TestEncryptDecryptRoundtripEdgeCases(t *testing.T) {
+	key := []byte{177, 252, 228, 64, 28, 91, 12, 201, 20, 91, 21, 139, 255, 65, 9, 247, 41, 55, 164, 28, 75, 132, 143, 71, 62, 191, 211, 61, 154, 61, 216, 91}
+
+	tests := []struct {
+		name     string
+		password string
+	}{
+		{"empty password", ""},
+		{"unicode emoji", "p@ss🔐word"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			blob, err := encryptSecureString(tt.password, key)
+			if err != nil {
+				t.Fatalf("encrypt: %v", err)
+			}
+			got, err := decryptSecureString(blob, key)
+			if err != nil {
+				t.Fatalf("decrypt: %v", err)
+			}
+			if got != tt.password {
+				t.Errorf("roundtrip got %q, want %q", got, tt.password)
+			}
+		})
 	}
 }
 
