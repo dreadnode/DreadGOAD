@@ -543,9 +543,12 @@ func LoadAnswerKey(path string) (*AnswerKey, error) {
 func WriteAnswerKey(ak *AnswerKey, path string) error {
 	data, err := json.MarshalIndent(ak, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("marshal answer key: %w", err)
 	}
-	return os.WriteFile(path, data, 0o644)
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		return fmt.Errorf("write answer key %s: %w", path, err)
+	}
+	return nil
 }
 
 // helpers

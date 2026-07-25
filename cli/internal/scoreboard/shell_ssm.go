@@ -79,10 +79,10 @@ func (r *SSMShellRunner) RunShell(ctx context.Context, command string, timeout t
 			if stdout != "" {
 				return stdout, nil
 			}
-			return "", fmt.Errorf("command failed: %s", stderr)
+			return "", fmt.Errorf("command failed on %s: %s", r.InstanceID, stderr)
 		case ssmtypes.CommandInvocationStatusCancelled,
 			ssmtypes.CommandInvocationStatusTimedOut:
-			return "", fmt.Errorf("command %s", inv.Status)
+			return "", fmt.Errorf("command %s on %s (id: %s)", inv.Status, r.InstanceID, commandID)
 		}
 	}
 }

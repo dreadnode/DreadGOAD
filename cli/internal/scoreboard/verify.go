@@ -12,11 +12,10 @@ import (
 
 const domainAdminSignalPrefix = "domain_admin:"
 
-// VerifyReport runs all findings in a report against an answer key and
-// returns the resulting status (matched objectives + group stats).
-// VerifyReport runs static credential matching only (no inference, no live
-// checks). Used by the scoreboard TUI for fast polling. For authoritative
-// scoring with live verification, use ScoreReport() instead.
+// VerifyReport runs static credential matching only — no inference, no live
+// checks. Returns matched objectives and group stats. Used by the scoreboard
+// TUI for fast polling. For authoritative scoring with live verification,
+// use ScoreReport() instead.
 func VerifyReport(report *Report, ak *AnswerKey) *StatusReport {
 	status := &StatusReport{Groups: map[string]*GroupStats{}}
 	for g, total := range ak.Groups {
@@ -144,6 +143,9 @@ func verifyEvidence(f *Finding, o *Objective) (bool, string) {
 		if strings.EqualFold(evidence, expected) {
 			return true, "Password matches (case-insensitive)"
 		}
+		// Substring match catches passwords embedded in compound evidence
+		// (e.g. "DOMAIN\user:Password123", "LM:NT:password"). Safe because
+		// GOAD passwords are 8+ chars, so false positives are unlikely.
 		if expected != "" && strings.Contains(evidence, expected) {
 			return true, "Password found in evidence"
 		}
@@ -154,10 +156,12 @@ func verifyEvidence(f *Finding, o *Objective) (bool, string) {
 		}
 		return false, "Password mismatch"
 	default:
+		// Minimum length sanity check: reject trivially short strings
+		// (e.g. "a", "yes", "true") that are clearly not real credentials.
 		if len(evidence) > 5 {
 			return true, "Evidence accepted"
 		}
-		return false, "Insufficient evidence"
+		return false, "Insufficient evidence (too short)"
 	}
 }
 

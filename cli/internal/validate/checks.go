@@ -937,19 +937,19 @@ func (v *Validator) checkACLPermissions(ctx context.Context, w io.Writer) {
 		//
 		// For well-known accounts (e.g. "NT AUTHORITY\ANONYMOUS LOGON"),
 		// we match the full identity reference string directly.
-		script := fmt.Sprintf(`
+		script, err := renderScript(`
 $ErrorActionPreference = 'Stop'
 Import-Module ActiveDirectory
 Set-Location AD:
-$target = '%s'
-$sourceSam = '%s'
-$sourceMatch = '*%s*'
+$target = {{psq .Target}}
+$sourceSam = {{psq .SourceSam}}
+$sourceMatch = ('*' + {{psq .SourceSam}} + '*')
 try {
   if ($target -match '=') {
     $objDN = $target
     $objAcl = Get-Acl -Path $objDN -ErrorAction Stop
   } else {
-    $obj = Get-ADObject -Filter "SamAccountName -eq '$target'" -ErrorAction Stop
+    $obj = Get-ADObject -Filter ('SamAccountName -eq ' + {{psq .Target}}) -ErrorAction Stop
     if (-not $obj) { Write-Output 'TARGET_NOT_FOUND'; exit }
     $objAcl = Get-Acl -Path $obj.DistinguishedName -ErrorAction Stop
   }
@@ -987,7 +987,11 @@ try {
   if ($ace) { Write-Output 'ACL_FOUND' } else { Write-Output 'ACL_NOT_FOUND' }
 } catch {
   Write-Output "CHECK_ERROR: $_"
-}`, target, sourceSam, sourceSam)
+}`, map[string]any{"Target": target, "SourceSam": sourceSam})
+		if err != nil {
+			v.addResult(w, "WARN", "ACL", fmt.Sprintf("Could not render ACL script %s -> %s: %v", source, target, err), "")
+			continue
+		}
 
 		output, err := v.runPSErr(ctx, dcRole, script)
 		if err != nil {
@@ -2214,7 +2218,7 @@ func (v *Validator) checkWebDAVRedirector(ctx context.Context, w io.Writer) {
 		return
 	}
 
-	any := false
+	found := false
 	for _, role := range servers {
 		host := strings.ToUpper(role)
 		if !v.hasHost(host) {
@@ -2233,7 +2237,7 @@ func (v *Validator) checkWebDAVRedirector(ctx context.Context, w io.Writer) {
 			v.addResult(w, "INFO", "Network",
 				fmt.Sprintf("WebDAV-Redirector feature not present on %s", hostLabel), "")
 		case r.State == "Installed":
-			any = true
+			found = true
 			v.addResult(w, "PASS", "Network",
 				fmt.Sprintf("WebDAV-Redirector installed on %s", hostLabel), "")
 		case r.State == "Available", r.State == "Removed":
@@ -2244,7 +2248,7 @@ func (v *Validator) checkWebDAVRedirector(ctx context.Context, w io.Writer) {
 				fmt.Sprintf("WebDAV-Redirector state %s on %s", r.State, hostLabel), "")
 		}
 	}
-	if !any {
+	if !found {
 		v.addResult(w, "INFO", "Network", "WebDAV-Redirector not installed on any Windows server", "")
 	}
 }
@@ -2551,7 +2555,7 @@ func (v *Validator) checkADCSESC9(ctx context.Context, w io.Writer) {
 		asrepDCs[strings.ToUpper(role)] = true
 	}
 
-	any := false
+	found := false
 	for _, role := range v.lab.DCs() {
 		dc := strings.ToUpper(role)
 		if !v.hasHost(dc) {
@@ -2580,11 +2584,11 @@ func (v *Validator) checkADCSESC9(ctx context.Context, w io.Writer) {
 				fmt.Sprintf("No DONT_REQ_PREAUTH users in %s (no ESC9 pivot)", domain), "")
 			continue
 		}
-		any = true
+		found = true
 		v.addResult(w, "PASS", "ADCS-ESC9",
 			fmt.Sprintf("ESC9 pivot users in %s: %s", domain, strings.Join(users, ", ")), "")
 	}
-	if len(asrepDCs) > 0 && !any {
+	if len(asrepDCs) > 0 && !found {
 		v.addResult(w, "FAIL", "ADCS-ESC9", "No ESC9 pivot users found in any AS-REP-configured domain", "")
 	}
 }
@@ -2889,7 +2893,7 @@ func (v *Validator) checkIISUploadPermissions(ctx context.Context, w io.Writer) 
 		return
 	}
 
-	any := false
+	found := false
 	for _, role := range hosts {
 		host := strings.ToUpper(role)
 		if !v.hasHost(host) {
@@ -2911,12 +2915,12 @@ func (v *Validator) checkIISUploadPermissions(ctx context.Context, w io.Writer) 
 			v.addResult(w, "FAIL", "IIS",
 				fmt.Sprintf("Upload dir on %s has no IIS_IUSRS write ACE", hostLabel), "")
 		default:
-			any = true
+			found = true
 			v.addResult(w, "PASS", "IIS",
 				fmt.Sprintf("IIS_IUSRS has %s on upload dir on %s", r.Rights, hostLabel), "")
 		}
 	}
-	if !any {
+	if !found {
 		// Not a failure — IIS is optional in some labs.
 		v.addResult(w, "INFO", "IIS", "No IIS_IUSRS upload permissions found", "")
 	}

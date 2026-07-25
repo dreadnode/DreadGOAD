@@ -138,11 +138,20 @@ func decryptSecureString(blob string, key []byte) (string, error) {
 	pt := make([]byte, len(ct))
 	mode.CryptBlocks(pt, ct)
 
-	// Remove PKCS7 padding.
+	// Remove PKCS7 padding — validate all padding bytes match.
 	if len(pt) > 0 {
 		padLen := int(pt[len(pt)-1])
-		if padLen > 0 && padLen <= aes.BlockSize {
-			pt = pt[:len(pt)-padLen]
+		if padLen > 0 && padLen <= aes.BlockSize && padLen <= len(pt) {
+			valid := true
+			for i := 0; i < padLen; i++ {
+				if pt[len(pt)-1-i] != byte(padLen) {
+					valid = false
+					break
+				}
+			}
+			if valid {
+				pt = pt[:len(pt)-padLen]
+			}
 		}
 	}
 
@@ -187,6 +196,8 @@ func encryptSecureString(plaintext string, key []byte) (string, error) {
 // decodeUTF16LE decodes a UTF-16LE byte slice to a Go string.
 func decodeUTF16LE(b []byte) string {
 	if len(b)%2 != 0 {
+		// Odd length means corrupted data — drop the trailing byte but warn.
+		fmt.Printf("  Warning: odd-length UTF-16LE data (%d bytes), truncating\n", len(b))
 		b = b[:len(b)-1]
 	}
 	u16 := make([]uint16, len(b)/2)

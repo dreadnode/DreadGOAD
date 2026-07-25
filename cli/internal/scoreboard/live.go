@@ -190,10 +190,7 @@ func isLocalAccount(domain string) bool {
 	}
 	// A domain FQDN always has dots (e.g., "north.sevenkingdoms.local").
 	// A bare hostname like "CASTELBLACK" does not.
-	if !strings.Contains(domain, ".") {
-		return true
-	}
-	return false
+	return !strings.Contains(domain, ".")
 }
 
 // buildSecretsdumpCommand builds a secretsdump.py command to DCSync the

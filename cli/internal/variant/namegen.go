@@ -141,16 +141,24 @@ func (ng *NameGenerator) ensureUnique(name string) string {
 	return name
 }
 
+// mustRandInt returns a cryptographically random *big.Int in [0, max).
+// Panics if crypto/rand is unavailable (system is fatally broken).
+func mustRandInt(max *big.Int) *big.Int {
+	n, err := rand.Int(rand.Reader, max)
+	if err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
+	return n
+}
+
 // secureChoice returns a cryptographically random element from a slice.
 func secureChoice(items []string) string {
-	n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(items))))
-	return items[n.Int64()]
+	return items[mustRandInt(big.NewInt(int64(len(items)))).Int64()]
 }
 
 // secureBool returns true with the given probability (0.0-1.0).
 func secureBool(probability float64) bool {
-	n, _ := rand.Int(rand.Reader, big.NewInt(1000))
-	return float64(n.Int64()) < probability*1000
+	return float64(mustRandInt(big.NewInt(1000)).Int64()) < probability*1000
 }
 
 // GenerateDomainName generates a corporate-style domain name fitting NetBIOS limits.
@@ -322,14 +330,12 @@ func (ng *NameGenerator) GenerateCityName() string {
 }
 
 func secureChoiceByte(s string) byte {
-	n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(s))))
-	return s[n.Int64()]
+	return s[mustRandInt(big.NewInt(int64(len(s)))).Int64()]
 }
 
 func secureShuffle(b []byte) {
 	for i := len(b) - 1; i > 0; i-- {
-		n, _ := rand.Int(rand.Reader, big.NewInt(int64(i+1)))
-		j := n.Int64()
+		j := mustRandInt(big.NewInt(int64(i + 1))).Int64()
 		b[i], b[j] = b[j], b[i]
 	}
 }

@@ -143,19 +143,10 @@ func scoreHosts(ctx context.Context, report *Report, ak *AnswerKey, status *Stat
 				domain = obj.Domain
 			}
 
-			ok, reason, err := lv.AdminCheck(ctx, hostIP, user, domain, f.Evidence)
+			ok, reason, err := tryAdminCheck(ctx, lv, hostIP, user, domain, f.Evidence)
 			if err != nil {
 				*failed = append(*failed, FailedCheck{ObjectiveID: obj.ID, Error: err.Error()})
 				continue
-			}
-			// If domain auth failed and the finding looks like a local
-			// account (e.g. SAM dump), retry with local auth.
-			if !ok && domain != "" {
-				ok, reason, err = lv.AdminCheck(ctx, hostIP, user, ".", f.Evidence)
-				if err != nil {
-					*failed = append(*failed, FailedCheck{ObjectiveID: obj.ID, Error: err.Error()})
-					continue
-				}
 			}
 			if ok {
 				status.Verified = append(status.Verified, VerifiedObjective{
@@ -204,17 +195,10 @@ func scoreHosts(ctx context.Context, report *Report, ak *AnswerKey, status *Stat
 				if domain == "" {
 					domain = obj.Domain
 				}
-				ok, reason, err := lv.AdminCheck(ctx, hostIP, user, domain, f.Evidence)
+				ok, reason, err := tryAdminCheck(ctx, lv, hostIP, user, domain, f.Evidence)
 				if err != nil {
 					*failed = append(*failed, FailedCheck{ObjectiveID: obj.ID, Error: err.Error()})
 					continue
-				}
-				if !ok && domain != "" {
-					ok, reason, err = lv.AdminCheck(ctx, hostIP, user, ".", f.Evidence)
-					if err != nil {
-						*failed = append(*failed, FailedCheck{ObjectiveID: obj.ID, Error: err.Error()})
-						continue
-					}
 				}
 				if ok {
 					status.Verified = append(status.Verified, VerifiedObjective{
@@ -365,6 +349,22 @@ func sortDAFirst(candidates []candidate) {
 			i++
 		}
 	}
+}
+
+// tryAdminCheck runs an nxc admin check with domain auth, falling back to
+// local auth ("." domain) if the first attempt fails. Returns (ok, reason, error).
+func tryAdminCheck(ctx context.Context, lv *LiveVerifier, hostIP, user, domain, evidence string) (bool, string, error) {
+	ok, reason, err := lv.AdminCheck(ctx, hostIP, user, domain, evidence)
+	if err != nil {
+		return false, "", err
+	}
+	if !ok && domain != "" {
+		ok, reason, err = lv.AdminCheck(ctx, hostIP, user, ".", evidence)
+		if err != nil {
+			return false, "", err
+		}
+	}
+	return ok, reason, nil
 }
 
 // normalizeHostname extracts the short hostname from a finding's hostname
