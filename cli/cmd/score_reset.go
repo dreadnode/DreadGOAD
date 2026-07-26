@@ -365,14 +365,14 @@ func resetWindows(ctx context.Context, cfg *config.Config, apply bool) []string 
 
 // windowsResetArgs is the JSON payload sent to each Windows host's PowerShell.
 type windowsResetArgs struct {
-	Apply            bool                `json:"Apply"`
-	AllowedFiles     []string            `json:"AllowedFiles"`
-	CleanIIS         bool                `json:"CleanIIS"`
-	CleanShares      bool                `json:"CleanShares"`
-	CheckLocalUsers  bool                `json:"CheckLocalUsers"`  // false on DCs (use --purge-ad instead)
-	AllowedUsers     []string            `json:"AllowedUsers"`     // expected local accounts
-	ExpectedGroups   map[string][]string `json:"ExpectedGroups"`   // group -> expected members (for membership diff)
-	BlacklistedExes  []string            `json:"BlacklistedExes"`  // attack tool executables to remove from Windows\Temp
+	Apply           bool                `json:"Apply"`
+	AllowedFiles    []string            `json:"AllowedFiles"`
+	CleanIIS        bool                `json:"CleanIIS"`
+	CleanShares     bool                `json:"CleanShares"`
+	CheckLocalUsers bool                `json:"CheckLocalUsers"` // false on DCs (use --purge-ad instead)
+	AllowedUsers    []string            `json:"AllowedUsers"`    // expected local accounts
+	ExpectedGroups  map[string][]string `json:"ExpectedGroups"`  // group -> expected members (for membership diff)
+	BlacklistedExes []string            `json:"BlacklistedExes"` // attack tool executables to remove from Windows\Temp
 }
 
 // knownAttackToolExes is a blacklist of executables commonly dropped by agents.

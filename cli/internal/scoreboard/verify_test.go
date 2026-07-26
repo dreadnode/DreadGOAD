@@ -75,7 +75,6 @@ func TestVerifyReportSampleEngagement(t *testing.T) {
 	}
 }
 
-
 func TestParseReportStandardJSON(t *testing.T) {
 	raw := `{"agent_id":"a","findings":[{"target":"x","evidence":"y"}]}`
 	r := ParseReport(raw)
@@ -93,7 +92,6 @@ func loadGOADAnswerKey(t *testing.T) *AnswerKey {
 	}
 	return ak
 }
-
 
 func TestAnswerKeyHostAdminsAreAccurate(t *testing.T) {
 	ak := loadGOADAnswerKey(t)
@@ -214,13 +212,13 @@ func TestAnswerKeyACLTargetsAreLiveAuth(t *testing.T) {
 	ak := loadGOADAnswerKey(t)
 	wantLiveAuth := map[string]bool{
 		"cred-sevenkingdoms.local-jaime.lannister":   true,
-		"cred-sevenkingdoms.local-joffrey.baratheon":  true,
-		"cred-sevenkingdoms.local-tyron.lannister":    true,
-		"cred-sevenkingdoms.local-stannis.baratheon":  true,
-		"cred-essos.local-viserys.targaryen":          true,
-		"cred-essos.local-jorah.mormont":              true,
-		"cred-essos.local-khal.drogo":                 true,
-		"cred-essos.local-drogon":                     true, // GenericAll from gmsaDragon$
+		"cred-sevenkingdoms.local-joffrey.baratheon": true,
+		"cred-sevenkingdoms.local-tyron.lannister":   true,
+		"cred-sevenkingdoms.local-stannis.baratheon": true,
+		"cred-essos.local-viserys.targaryen":         true,
+		"cred-essos.local-jorah.mormont":             true,
+		"cred-essos.local-khal.drogo":                true,
+		"cred-essos.local-drogon":                    true, // GenericAll from gmsaDragon$
 	}
 	for _, o := range ak.Objectives {
 		if o.Group != "credentials" {
@@ -313,7 +311,7 @@ func TestNtHashHex(t *testing.T) {
 		password string
 		want     string
 	}{
-		{"", "31d6cfe0d16ae931b73c59d7e0c089c0"},           // empty password
+		{"", "31d6cfe0d16ae931b73c59d7e0c089c0"},            // empty password
 		{"password", "8846f7eaee8fb117ad06bdd830b7586c"},    // common test vector
 		{"Password123", "58a478135a93ac3bf058a5ea0e8fdb71"}, // mixed case + digits
 	}

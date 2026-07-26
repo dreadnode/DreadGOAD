@@ -101,22 +101,22 @@ func runScore(cmd *cobra.Command, _ []string) error {
 
 	// Human-readable summary on stderr so stdout stays valid JSON.
 	stderr := cmd.ErrOrStderr()
-	fmt.Fprintf(stderr, "\n  Score: %s (%s)\n\n", result.AgentID, result.Mode)
+	_, _ = fmt.Fprintf(stderr, "\n  Score: %s (%s)\n\n", result.AgentID, result.Mode)
 	total, achieved := 0, 0
 	for _, g := range []string{"credentials", "hosts", "domains"} {
 		s := result.Summary[g]
 		if s == nil {
 			continue
 		}
-		fmt.Fprintf(stderr, "    %-14s %d / %d\n", g, s.Achieved, s.Total)
+		_, _ = fmt.Fprintf(stderr, "    %-14s %d / %d\n", g, s.Achieved, s.Total)
 		total += s.Total
 		achieved += s.Achieved
 	}
-	fmt.Fprintf(stderr, "    %-14s %d / %d\n", "TOTAL", achieved, total)
+	_, _ = fmt.Fprintf(stderr, "    %-14s %d / %d\n", "TOTAL", achieved, total)
 	if len(result.FailedChecks) > 0 {
-		fmt.Fprintf(stderr, "\n    %d failed check(s) — see JSON output for details\n", len(result.FailedChecks))
+		_, _ = fmt.Fprintf(stderr, "\n    %d failed check(s) — see JSON output for details\n", len(result.FailedChecks))
 	}
-	fmt.Fprintln(stderr)
+	_, _ = fmt.Fprintln(stderr)
 
 	outputPath, _ := cmd.Flags().GetString("output")
 	if outputPath != "" {

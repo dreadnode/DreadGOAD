@@ -360,7 +360,6 @@ func extractDomains(lab map[string]any) []Objective {
 	return out
 }
 
-
 func extractAdminUsername(entry string) string {
 	if i := strings.LastIndex(entry, "\\"); i >= 0 {
 		return strings.ToLower(entry[i+1:])

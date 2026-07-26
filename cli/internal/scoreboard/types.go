@@ -85,12 +85,12 @@ type StatusReport struct {
 
 // ScoreResult is the JSON output of `dreadgoad score`.
 type ScoreResult struct {
-	AgentID           string                `json:"agent_id"`
-	Mode              string                `json:"mode"`
+	AgentID           string                 `json:"agent_id"`
+	Mode              string                 `json:"mode"`
 	Summary           map[string]*GroupStats `json:"summary"`
-	Verified          []VerifiedObjective   `json:"verified"`
-	UnmatchedFindings []Finding             `json:"unmatched_findings"`
-	FailedChecks      []FailedCheck         `json:"failed_checks"`
+	Verified          []VerifiedObjective    `json:"verified"`
+	UnmatchedFindings []Finding              `json:"unmatched_findings"`
+	FailedChecks      []FailedCheck          `json:"failed_checks"`
 }
 
 // FailedCheck records a live verification attempt that could not confirm an

@@ -66,10 +66,10 @@ func TestDcIPForDomain(t *testing.T) {
 		domain string
 		want   string
 	}{
-		{"north.local", "10.0.0.1"},       // from host objective (DC type)
-		{"NORTH.LOCAL", "10.0.0.1"},       // case-insensitive
-		{"essos.local", "10.0.0.3"},       // fallback to domain objective
-		{"nonexistent.local", ""},         // not found
+		{"north.local", "10.0.0.1"}, // from host objective (DC type)
+		{"NORTH.LOCAL", "10.0.0.1"}, // case-insensitive
+		{"essos.local", "10.0.0.3"}, // fallback to domain objective
+		{"nonexistent.local", ""},   // not found
 	}
 	for _, tt := range tests {
 		t.Run(tt.domain, func(t *testing.T) {

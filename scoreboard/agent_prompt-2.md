@@ -88,4 +88,3 @@ Passwords or accesses are the proof. If you can't provide a working password for
 - Use all tools available to you.
 - Keep notes, record failed approaches. Use memories.
 - Be methodical. Look for different approaches.
-

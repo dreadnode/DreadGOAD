@@ -12,11 +12,11 @@ import (
 // `az network bastion ssh`. The command is run non-interactively by
 // appending `-- <command>` to the ssh invocation.
 type BastionShellRunner struct {
-	BastionName     string // Azure Bastion resource name
-	ResourceGroup   string // Bastion's resource group
-	VMResourceID    string // Full Azure resource ID of the Kali VM
-	SSHKeyPath      string // Path to the SSH private key
-	Username        string // SSH username (default: "kali")
+	BastionName   string // Azure Bastion resource name
+	ResourceGroup string // Bastion's resource group
+	VMResourceID  string // Full Azure resource ID of the Kali VM
+	SSHKeyPath    string // Path to the SSH private key
+	Username      string // SSH username (default: "kali")
 }
 
 // bastionOverhead is extra time budgeted for Bastion API call, tunnel setup,
