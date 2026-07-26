@@ -267,14 +267,14 @@ func buildKaliCleanupScript(apply bool) string {
 			fmt.Fprintf(&sb, "if [ \"$count_%d\" -gt 0 ] 2>/dev/null; then\n", i)
 			fmt.Fprintf(&sb, "  %s\n", t.clean)
 			fmt.Fprintf(&sb, "  after_%d=$(%s)\n", i, t.find)
-			sb.WriteString(fmt.Sprintf("  removed_%d=$((count_%d - after_%d))\n", i, i, i))
-			sb.WriteString(fmt.Sprintf("  total_removed=$((total_removed + removed_%d))\n", i))
+			fmt.Fprintf(&sb, "  removed_%d=$((count_%d - after_%d))\n", i, i, i)
+			fmt.Fprintf(&sb, "  total_removed=$((total_removed + removed_%d))\n", i)
 			sb.WriteString("fi\n")
 		}
-		sb.WriteString(fmt.Sprintf("echo \"  %s: $count_%d files\"\n", t.label, i))
+		fmt.Fprintf(&sb, "echo \"  %s: $count_%d files\"\n", t.label, i)
 	}
 
-	sb.WriteString(fmt.Sprintf("\necho '%s'\n", resetResultMarker))
+	fmt.Fprintf(&sb, "\necho '%s'\n", resetResultMarker)
 	sb.WriteString(`printf '{"host":"kali","issues_found":%d,"issues_removed":%d}\n' "$total_found" "$total_removed"`)
 	sb.WriteString("\n")
 

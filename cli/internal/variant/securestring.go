@@ -138,24 +138,27 @@ func decryptSecureString(blob string, key []byte) (string, error) {
 	pt := make([]byte, len(ct))
 	mode.CryptBlocks(pt, ct)
 
-	// Remove PKCS7 padding — validate all padding bytes match.
-	if len(pt) > 0 {
-		padLen := int(pt[len(pt)-1])
-		if padLen > 0 && padLen <= aes.BlockSize && padLen <= len(pt) {
-			valid := true
-			for i := 0; i < padLen; i++ {
-				if pt[len(pt)-1-i] != byte(padLen) {
-					valid = false
-					break
-				}
-			}
-			if valid {
-				pt = pt[:len(pt)-padLen]
-			}
-		}
-	}
+	pt = removePKCS7Padding(pt)
 
 	return decodeUTF16LE(pt), nil
+}
+
+// removePKCS7Padding strips valid PKCS7 padding from plaintext. Returns the
+// input unchanged if padding is invalid (best-effort for corrupted blobs).
+func removePKCS7Padding(pt []byte) []byte {
+	if len(pt) == 0 {
+		return pt
+	}
+	padLen := int(pt[len(pt)-1])
+	if padLen <= 0 || padLen > aes.BlockSize || padLen > len(pt) {
+		return pt
+	}
+	for i := 0; i < padLen; i++ {
+		if pt[len(pt)-1-i] != byte(padLen) {
+			return pt
+		}
+	}
+	return pt[:len(pt)-padLen]
 }
 
 // encryptSecureString encrypts a plaintext password into PowerShell

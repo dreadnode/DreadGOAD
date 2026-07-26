@@ -954,52 +954,59 @@ func (g *Generator) transformFile(srcPath, relPath string) (transformed bool) {
 		return false
 	}
 
-	if textExtensions[ext] || textFilenames[base] || (ext == "" && g.isTextFile(srcPath)) {
-		content, err := os.ReadFile(srcPath)
-		if err != nil {
-			fmt.Printf("Warning: Could not read %s: %v\n", relPath, err)
-			if cpErr := copyFile(srcPath, targetFile); cpErr != nil {
-				fmt.Printf("Warning: fallback copy also failed: %v\n", cpErr)
-			}
-			return false
+	if !textExtensions[ext] && !textFilenames[base] && !(ext == "" && g.isTextFile(srcPath)) {
+		if err := copyFile(srcPath, targetFile); err != nil {
+			fmt.Printf("Warning: Could not copy %s: %v\n", relPath, err)
 		}
-
-		newContent := g.applyReplacements(string(content))
-
-		// Re-encrypt PowerShell SecureString blobs with mapped passwords.
-		if ext == ".ps1" {
-			newContent = g.fixSecureStrings(newContent)
-		}
-
-		isFullConfig := (base == "config.json" || strings.HasSuffix(base, "-config.json")) &&
-			!strings.HasSuffix(base, "-overlay.json")
-		if isFullConfig {
-			var configData LabConfig
-			if err := json.Unmarshal([]byte(newContent), &configData); err == nil {
-				g.fixUserFirstnameSurname(&configData)
-				g.fixPasswords(&configData)
-				g.rebuildACLKeys(&configData)
-				g.rebuildShareKeys(&configData)
-				if pretty, err := json.MarshalIndent(configData, "", "  "); err == nil {
-					newContent = string(pretty)
-				}
-			}
-		}
-
-		if err := os.WriteFile(targetFile, []byte(newContent), 0o644); err != nil {
-			fmt.Printf("Warning: Could not write %s: %v\n", relPath, err)
-			return false
-		}
-		return true
+		return false
 	}
 
-	if err := copyFile(srcPath, targetFile); err != nil {
-		fmt.Printf("Warning: Could not copy %s: %v\n", relPath, err)
+	content, err := os.ReadFile(srcPath)
+	if err != nil {
+		fmt.Printf("Warning: Could not read %s: %v\n", relPath, err)
+		if cpErr := copyFile(srcPath, targetFile); cpErr != nil {
+			fmt.Printf("Warning: fallback copy also failed: %v\n", cpErr)
+		}
+		return false
 	}
-	return false
+
+	newContent := g.applyReplacements(string(content))
+	if ext == ".ps1" {
+		newContent = g.fixSecureStrings(newContent)
+	}
+	newContent = g.transformConfigJSON(base, newContent)
+
+	if err := os.WriteFile(targetFile, []byte(newContent), 0o644); err != nil {
+		fmt.Printf("Warning: Could not write %s: %v\n", relPath, err)
+		return false
+	}
+	return true
 }
 
 // copyAndTransform copies the source directory, transforming text files.
+// transformConfigJSON applies structural transformations to GOAD config JSON
+// files (firstname/surname fixup, password remapping, ACL/share key rebuilds).
+// Returns content unchanged if the file is not a full config JSON.
+func (g *Generator) transformConfigJSON(base, content string) string {
+	isFullConfig := (base == "config.json" || strings.HasSuffix(base, "-config.json")) &&
+		!strings.HasSuffix(base, "-overlay.json")
+	if !isFullConfig {
+		return content
+	}
+	var configData LabConfig
+	if err := json.Unmarshal([]byte(content), &configData); err != nil {
+		return content
+	}
+	g.fixUserFirstnameSurname(&configData)
+	g.fixPasswords(&configData)
+	g.rebuildACLKeys(&configData)
+	g.rebuildShareKeys(&configData)
+	if pretty, err := json.MarshalIndent(configData, "", "  "); err == nil {
+		return string(pretty)
+	}
+	return content
+}
+
 func (g *Generator) copyAndTransform() error {
 	fmt.Println("\n=== Copying and Transforming Files ===")
 
