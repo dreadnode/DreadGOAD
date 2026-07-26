@@ -613,26 +613,6 @@ func anyContains(slice []string, substr string) bool {
 	return false
 }
 
-// isTruthy returns true for non-empty maps, non-empty lists, non-empty
-// strings, non-zero numbers, and true booleans.
-func isTruthy(v any) bool {
-	switch x := v.(type) {
-	case nil:
-		return false
-	case bool:
-		return x
-	case string:
-		return x != ""
-	case []any:
-		return len(x) > 0
-	case map[string]any:
-		return len(x) > 0
-	case float64:
-		return x != 0
-	}
-	return true
-}
-
 func sortedKeys(m map[string]any) []string {
 	keys := make([]string, 0, len(m))
 	for k := range m {

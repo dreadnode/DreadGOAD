@@ -1025,13 +1025,14 @@ func (v *Validator) checkDomainTrusts(ctx context.Context, w io.Writer) {
 			if v.hasHost(srcHost) {
 				output, err := v.runPSErr(ctx, srcHost,
 					`Get-ADTrust -Filter * | Select-Object Name,Direction,TrustType | Format-Table -AutoSize | Out-String`)
-				if err != nil {
+				switch {
+				case err != nil:
 					v.addResult(w, "WARN", "Trusts",
 						fmt.Sprintf("Could not query trusts on %s: %v", tf.SourceDomain, err), "")
-				} else if strings.Contains(strings.ToLower(output), strings.ToLower(tf.TargetDomain)) {
+				case strings.Contains(strings.ToLower(output), strings.ToLower(tf.TargetDomain)):
 					v.addResult(w, "PASS", "Trusts",
 						fmt.Sprintf("Trust configured: %s -> %s", tf.SourceDomain, tf.TargetDomain), "")
-				} else {
+				default:
 					v.addResult(w, "FAIL", "Trusts",
 						fmt.Sprintf("Trust NOT found: %s -> %s", tf.SourceDomain, tf.TargetDomain), "")
 				}
@@ -1043,13 +1044,14 @@ func (v *Validator) checkDomainTrusts(ctx context.Context, w io.Writer) {
 			if v.hasHost(tgtHost) {
 				output, err := v.runPSErr(ctx, tgtHost,
 					`Get-ADTrust -Filter * | Select-Object Name,Direction,TrustType | Format-Table -AutoSize | Out-String`)
-				if err != nil {
+				switch {
+				case err != nil:
 					v.addResult(w, "WARN", "Trusts",
 						fmt.Sprintf("Could not query trusts on %s: %v", tf.TargetDomain, err), "")
-				} else if strings.Contains(strings.ToLower(output), strings.ToLower(tf.SourceDomain)) {
+				case strings.Contains(strings.ToLower(output), strings.ToLower(tf.SourceDomain)):
 					v.addResult(w, "PASS", "Trusts",
 						fmt.Sprintf("Trust configured: %s -> %s", tf.TargetDomain, tf.SourceDomain), "")
-				} else {
+				default:
 					v.addResult(w, "FAIL", "Trusts",
 						fmt.Sprintf("Trust NOT found: %s -> %s", tf.TargetDomain, tf.SourceDomain), "")
 				}

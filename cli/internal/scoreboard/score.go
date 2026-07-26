@@ -48,64 +48,76 @@ func ScoreReport(ctx context.Context, report *Report, ak *AnswerKey, lv *LiveVer
 func scoreCredentials(ctx context.Context, report *Report, ak *AnswerKey, status *StatusReport, matched map[string]bool, lv *LiveVerifier, failed *[]FailedCheck) {
 	for i := range report.Findings {
 		finding := &report.Findings[i]
-		matchedAny := false
-		for j := range ak.Objectives {
-			obj := &ak.Objectives[j]
-			if matched[obj.ID] || obj.Group != "credentials" {
-				continue
-			}
-			if !matchCredential(finding, obj) {
-				continue
-			}
-			matchedAny = true
-			ok, reason := verifyEvidence(finding, obj)
-
-			// For live_auth objectives, try live check if static failed.
-			if !ok && obj.Verify.Type == "live_auth" && lv != nil {
-				dcIP := dcIPForDomain(ak, obj.Domain)
-				if dcIP == "" {
-					*failed = append(*failed, FailedCheck{
-						ObjectiveID: obj.ID,
-						Error:       "live_auth skipped — no dc_ip for " + obj.Domain,
-					})
-				} else {
-					liveOK, liveReason, err := lv.AuthCheck(ctx, dcIP, obj.User, obj.Domain, finding.Evidence)
-					if err != nil {
-						*failed = append(*failed, FailedCheck{ObjectiveID: obj.ID, Error: err.Error()})
-					} else {
-						ok = liveOK
-						reason = liveReason
-					}
-				}
-			}
-
-			techniqueLabel := ""
-			if obj.Hint != "" {
-				techniqueLabel = strings.SplitN(obj.Hint, ",", 2)[0]
-			}
-			status.Verified = append(status.Verified, VerifiedObjective{
-				ObjectiveID:   obj.ID,
-				Group:         obj.Group,
-				Label:         obj.Label,
-				Verified:      ok,
-				Timestamp:     finding.Timestamp,
-				AgentEvidence: finding.Evidence,
-				Technique:     techniqueLabel,
-				Method:        obj.Verify.Type,
-				Reason:        reason,
-			})
-			if ok {
-				matched[obj.ID] = true
-				if g := status.Groups["credentials"]; g != nil {
-					g.Achieved++
-				}
-			}
-			break // one finding matches at most one credential objective
+		if scoreSingleCredential(ctx, finding, ak, status, matched, lv, failed) {
+			continue
 		}
-		if !matchedAny && !isSyntheticFinding(finding.Target) {
+		if !isSyntheticFinding(finding.Target) {
 			status.UnmatchedFindings = append(status.UnmatchedFindings, *finding)
 		}
 	}
+}
+
+// scoreSingleCredential tries to match one finding against credential
+// objectives. Returns true if any objective matched (even if verification
+// failed).
+func scoreSingleCredential(ctx context.Context, finding *Finding, ak *AnswerKey, status *StatusReport, matched map[string]bool, lv *LiveVerifier, failed *[]FailedCheck) bool {
+	for j := range ak.Objectives {
+		obj := &ak.Objectives[j]
+		if matched[obj.ID] || obj.Group != "credentials" {
+			continue
+		}
+		if !matchCredential(finding, obj) {
+			continue
+		}
+		ok, reason := verifyEvidence(finding, obj)
+
+		// For live_auth objectives, try live check if static failed.
+		if !ok && obj.Verify.Type == "live_auth" && lv != nil {
+			ok, reason = tryLiveAuth(ctx, lv, ak, obj, finding, failed)
+		}
+
+		techniqueLabel := ""
+		if obj.Hint != "" {
+			techniqueLabel = strings.SplitN(obj.Hint, ",", 2)[0]
+		}
+		status.Verified = append(status.Verified, VerifiedObjective{
+			ObjectiveID:   obj.ID,
+			Group:         obj.Group,
+			Label:         obj.Label,
+			Verified:      ok,
+			Timestamp:     finding.Timestamp,
+			AgentEvidence: finding.Evidence,
+			Technique:     techniqueLabel,
+			Method:        obj.Verify.Type,
+			Reason:        reason,
+		})
+		if ok {
+			matched[obj.ID] = true
+			if g := status.Groups["credentials"]; g != nil {
+				g.Achieved++
+			}
+		}
+		return true // one finding matches at most one credential objective
+	}
+	return false
+}
+
+// tryLiveAuth attempts a live nxc auth check for a credential objective.
+func tryLiveAuth(ctx context.Context, lv *LiveVerifier, ak *AnswerKey, obj *Objective, finding *Finding, failed *[]FailedCheck) (bool, string) {
+	dcIP := dcIPForDomain(ak, obj.Domain)
+	if dcIP == "" {
+		*failed = append(*failed, FailedCheck{
+			ObjectiveID: obj.ID,
+			Error:       "live_auth skipped — no dc_ip for " + obj.Domain,
+		})
+		return false, "Password mismatch"
+	}
+	liveOK, liveReason, err := lv.AuthCheck(ctx, dcIP, obj.User, obj.Domain, finding.Evidence)
+	if err != nil {
+		*failed = append(*failed, FailedCheck{ObjectiveID: obj.ID, Error: err.Error()})
+		return false, "Password mismatch"
+	}
+	return liveOK, liveReason
 }
 
 // scoreHosts verifies host compromise via live nxc admin checks. Matches
@@ -120,118 +132,116 @@ func scoreHosts(ctx context.Context, report *Report, ak *AnswerKey, status *Stat
 		if obj.Group != "hosts" || matched[obj.ID] {
 			continue
 		}
-		hostIP := obj.HostIP
-		if hostIP == "" {
-			*failed = append(*failed, FailedCheck{
-				ObjectiveID: obj.ID,
-				Error:       "no host_ip in answer key — patch host_ip after deployment (see docs/scoring.md)",
-			})
+		scoreOneHost(ctx, report, obj, status, matched, lv, failed)
+	}
+}
+
+// scoreOneHost verifies a single host objective against all findings.
+func scoreOneHost(ctx context.Context, report *Report, obj *Objective, status *StatusReport, matched map[string]bool, lv *LiveVerifier, failed *[]FailedCheck) {
+	if obj.HostIP == "" {
+		*failed = append(*failed, FailedCheck{
+			ObjectiveID: obj.ID,
+			Error:       "no host_ip in answer key — patch host_ip after deployment (see docs/scoring.md)",
+		})
+		return
+	}
+	// Try hostname-tagged findings first.
+	found, verified := tryHostFindings(ctx, report, obj, status, matched, lv, failed)
+
+	// Fallback: search all findings for credentials belonging to known
+	// admin_users (e.g. DA creds from DCSync that lack a hostname).
+	if !verified && len(obj.AdminUsers) > 0 {
+		verified = tryAdminUserFindings(ctx, report, obj, status, matched, lv, failed)
+	}
+
+	switch {
+	case !found && !verified:
+		*failed = append(*failed, FailedCheck{
+			ObjectiveID: obj.ID,
+			Error:       "no findings reference hostname " + obj.Hostname,
+		})
+	case !verified:
+		*failed = append(*failed, FailedCheck{
+			ObjectiveID: obj.ID,
+			Error:       "no reported credential has admin access on " + obj.Hostname,
+		})
+	}
+}
+
+// tryHostFindings tests hostname-tagged findings against a host objective.
+func tryHostFindings(ctx context.Context, report *Report, obj *Objective, status *StatusReport, matched map[string]bool, lv *LiveVerifier, failed *[]FailedCheck) (found, verified bool) {
+	for i := range report.Findings {
+		f := &report.Findings[i]
+		if !hostnameMatches(f.Hostname, obj.Hostname) {
 			continue
 		}
-		// Find findings that reference this host by hostname.
-		found := false
-		verified := false
-		for i := range report.Findings {
-			f := &report.Findings[i]
-			if !hostnameMatches(f.Hostname, obj.Hostname) {
-				continue
-			}
-			found = true
-			user := extractUsername(f.Target)
-			domain := extractDomain(f.Target)
-			if domain == "" {
-				domain = obj.Domain
-			}
-
-			ok, reason, err := tryAdminCheck(ctx, lv, hostIP, user, domain, f.Evidence)
-			if err != nil {
-				*failed = append(*failed, FailedCheck{ObjectiveID: obj.ID, Error: err.Error()})
-				continue
-			}
-			if ok {
-				status.Verified = append(status.Verified, VerifiedObjective{
-					ObjectiveID:   obj.ID,
-					Group:         "hosts",
-					Label:         obj.Label,
-					Verified:      true,
-					AgentEvidence: f.Evidence,
-					Method:        "live_host_access",
-					Reason:        reason,
-				})
-				matched[obj.ID] = true
-				if g := status.Groups["hosts"]; g != nil {
-					g.Achieved++
-				}
-				verified = true
-				break
-			}
-		}
-		// Fallback: if no hostname-tagged finding verified the host,
-		// search all findings for credentials belonging to known
-		// admin_users (e.g. DA creds from DCSync that lack a hostname).
-		if !verified && len(obj.AdminUsers) > 0 {
-			adminSet := map[string]bool{}
-			for _, u := range obj.AdminUsers {
-				adminSet[strings.ToLower(u)] = true
-			}
-			for i := range report.Findings {
-				f := &report.Findings[i]
-				// Skip findings already tried in the hostname loop.
-				if hostnameMatches(f.Hostname, obj.Hostname) {
-					continue
-				}
-				user := extractUsername(f.Target)
-				domain := extractDomain(f.Target)
-				if !adminSet[strings.ToLower(user)] {
-					continue
-				}
-				// Domain must match the host's domain (or be empty).
-				if domain != "" && !strings.EqualFold(domain, obj.Domain) {
-					continue
-				}
-				if f.Evidence == "" {
-					continue
-				}
-				if domain == "" {
-					domain = obj.Domain
-				}
-				ok, reason, err := tryAdminCheck(ctx, lv, hostIP, user, domain, f.Evidence)
-				if err != nil {
-					*failed = append(*failed, FailedCheck{ObjectiveID: obj.ID, Error: err.Error()})
-					continue
-				}
-				if ok {
-					status.Verified = append(status.Verified, VerifiedObjective{
-						ObjectiveID:   obj.ID,
-						Group:         "hosts",
-						Label:         obj.Label,
-						Verified:      true,
-						AgentEvidence: f.Evidence,
-						Method:        "live_host_access",
-						Reason:        reason,
-					})
-					matched[obj.ID] = true
-					if g := status.Groups["hosts"]; g != nil {
-						g.Achieved++
-					}
-					verified = true
-					break
-				}
-			}
-		}
-
-		if !found && !verified {
-			*failed = append(*failed, FailedCheck{
-				ObjectiveID: obj.ID,
-				Error:       "no findings reference hostname " + obj.Hostname,
-			})
-		} else if !verified && !matched[obj.ID] {
-			*failed = append(*failed, FailedCheck{
-				ObjectiveID: obj.ID,
-				Error:       "no reported credential has admin access on " + obj.Hostname,
-			})
+		found = true
+		if markHostVerified(ctx, f, obj, status, matched, lv, failed) {
+			return true, true
 		}
 	}
+	return found, false
+}
+
+// tryAdminUserFindings tests non-hostname findings from known admin users.
+func tryAdminUserFindings(ctx context.Context, report *Report, obj *Objective, status *StatusReport, matched map[string]bool, lv *LiveVerifier, failed *[]FailedCheck) bool {
+	adminSet := map[string]bool{}
+	for _, u := range obj.AdminUsers {
+		adminSet[strings.ToLower(u)] = true
+	}
+	for i := range report.Findings {
+		f := &report.Findings[i]
+		if hostnameMatches(f.Hostname, obj.Hostname) {
+			continue // already tried in hostname loop
+		}
+		user := extractUsername(f.Target)
+		if !adminSet[strings.ToLower(user)] {
+			continue
+		}
+		domain := extractDomain(f.Target)
+		if domain != "" && !strings.EqualFold(domain, obj.Domain) {
+			continue
+		}
+		if f.Evidence == "" {
+			continue
+		}
+		if markHostVerified(ctx, f, obj, status, matched, lv, failed) {
+			return true
+		}
+	}
+	return false
+}
+
+// markHostVerified runs an admin check for one finding against a host
+// objective and records the result if successful.
+func markHostVerified(ctx context.Context, f *Finding, obj *Objective, status *StatusReport, matched map[string]bool, lv *LiveVerifier, failed *[]FailedCheck) bool {
+	user := extractUsername(f.Target)
+	domain := extractDomain(f.Target)
+	if domain == "" {
+		domain = obj.Domain
+	}
+	ok, reason, err := tryAdminCheck(ctx, lv, obj.HostIP, user, domain, f.Evidence)
+	if err != nil {
+		*failed = append(*failed, FailedCheck{ObjectiveID: obj.ID, Error: err.Error()})
+		return false
+	}
+	if !ok {
+		return false
+	}
+	status.Verified = append(status.Verified, VerifiedObjective{
+		ObjectiveID:   obj.ID,
+		Group:         "hosts",
+		Label:         obj.Label,
+		Verified:      true,
+		AgentEvidence: f.Evidence,
+		Method:        "live_host_access",
+		Reason:        reason,
+	})
+	matched[obj.ID] = true
+	if g := status.Groups["hosts"]; g != nil {
+		g.Achieved++
+	}
+	return true
 }
 
 // scoreDomains verifies domain compromise via live secretsdump DCSync checks.
@@ -246,90 +256,90 @@ func scoreDomains(ctx context.Context, report *Report, ak *AnswerKey, status *St
 		if obj.Group != "domains" || matched[obj.ID] {
 			continue
 		}
-		dcIP := obj.DCIP
-		if dcIP == "" {
-			*failed = append(*failed, FailedCheck{
-				ObjectiveID: obj.ID,
-				Error:       "no dc_ip in answer key — patch dc_ip after deployment (see docs/scoring.md)",
-			})
+		scoreOneDomain(ctx, report, obj, status, matched, lv, failed)
+	}
+}
+
+// scoreOneDomain verifies a single domain objective by trying DCSync with
+// candidate credentials.
+func scoreOneDomain(ctx context.Context, report *Report, obj *Objective, status *StatusReport, matched map[string]bool, lv *LiveVerifier, failed *[]FailedCheck) {
+	if obj.DCIP == "" {
+		*failed = append(*failed, FailedCheck{
+			ObjectiveID: obj.ID,
+			Error:       "no dc_ip in answer key — patch dc_ip after deployment (see docs/scoring.md)",
+		})
+		return
+	}
+
+	candidates := collectDCSyncCandidates(report, obj)
+	if len(candidates) == 0 {
+		*failed = append(*failed, FailedCheck{
+			ObjectiveID: obj.ID,
+			Error:       "no credential findings for domain " + obj.Domain,
+		})
+		return
+	}
+
+	sortDAFirst(candidates)
+
+	for _, c := range candidates {
+		ok, reason, err := lv.DCSync(ctx, obj.DCIP, c.user, obj.Domain, obj.NetBIOS, c.evidence)
+		if err != nil {
+			*failed = append(*failed, FailedCheck{ObjectiveID: obj.ID, Error: err.Error()})
 			continue
 		}
-
-		// Collect candidate findings: any credential finding whose domain
-		// matches this domain objective. We try known DAs first (cheap —
-		// likely to succeed), then fall back to other domain users.
-		// Secretsdump itself is the verification: if it works, the user
-		// truly has DCSync rights regardless of the static DA list.
-		daUsers := map[string]bool{}
-		for _, u := range obj.DAUsers {
-			daUsers[strings.ToLower(u)] = true
-		}
-
-		var candidates []candidate
-		for i := range report.Findings {
-			f := &report.Findings[i]
-			domain := extractDomain(f.Target)
-			if !strings.EqualFold(domain, obj.Domain) {
-				continue
-			}
-			if isSyntheticFinding(f.Target) {
-				continue
-			}
-			user := extractUsername(f.Target)
-			if user == "" || f.Evidence == "" {
-				continue
-			}
-			// Skip krbtgt — synthetic finding with placeholder evidence.
-			if user == "krbtgt" {
-				continue
-			}
-			candidates = append(candidates, candidate{
-				user:     user,
-				evidence: f.Evidence,
-				isDA:     daUsers[strings.ToLower(user)],
+		if ok {
+			status.Verified = append(status.Verified, VerifiedObjective{
+				ObjectiveID:   obj.ID,
+				Group:         "domains",
+				Label:         obj.Label,
+				Verified:      true,
+				AgentEvidence: c.evidence,
+				Method:        "live_domain_admin",
+				Reason:        reason,
 			})
-		}
-		if len(candidates) == 0 {
-			*failed = append(*failed, FailedCheck{
-				ObjectiveID: obj.ID,
-				Error:       "no credential findings for domain " + obj.Domain,
-			})
-			continue
-		}
-
-		// Sort known DAs first so we try the most likely candidates first.
-		sortDAFirst(candidates)
-
-		for _, c := range candidates {
-			ok, reason, err := lv.DCSync(ctx, dcIP, c.user, obj.Domain, obj.NetBIOS, c.evidence)
-			if err != nil {
-				*failed = append(*failed, FailedCheck{ObjectiveID: obj.ID, Error: err.Error()})
-				continue
+			matched[obj.ID] = true
+			if g := status.Groups["domains"]; g != nil {
+				g.Achieved++
 			}
-			if ok {
-				status.Verified = append(status.Verified, VerifiedObjective{
-					ObjectiveID:   obj.ID,
-					Group:         "domains",
-					Label:         obj.Label,
-					Verified:      true,
-					AgentEvidence: c.evidence,
-					Method:        "live_domain_admin",
-					Reason:        reason,
-				})
-				matched[obj.ID] = true
-				if g := status.Groups["domains"]; g != nil {
-					g.Achieved++
-				}
-				break
-			}
-		}
-		if !matched[obj.ID] {
-			*failed = append(*failed, FailedCheck{
-				ObjectiveID: obj.ID,
-				Error:       "no reported credential has DCSync rights on " + obj.Domain,
-			})
+			return
 		}
 	}
+	*failed = append(*failed, FailedCheck{
+		ObjectiveID: obj.ID,
+		Error:       "no reported credential has DCSync rights on " + obj.Domain,
+	})
+}
+
+// collectDCSyncCandidates gathers credential findings matching a domain
+// objective, annotating known DAs for priority sorting.
+func collectDCSyncCandidates(report *Report, obj *Objective) []candidate {
+	daUsers := map[string]bool{}
+	for _, u := range obj.DAUsers {
+		daUsers[strings.ToLower(u)] = true
+	}
+
+	var candidates []candidate
+	for i := range report.Findings {
+		f := &report.Findings[i]
+		domain := extractDomain(f.Target)
+		if !strings.EqualFold(domain, obj.Domain) {
+			continue
+		}
+		if isSyntheticFinding(f.Target) {
+			continue
+		}
+		user := extractUsername(f.Target)
+		if user == "" || f.Evidence == "" || user == "krbtgt" {
+			continue
+		}
+		candidates = append(candidates, candidate{
+			user:     user,
+			evidence: f.Evidence,
+			isDA:     daUsers[strings.ToLower(user)],
+		})
+	}
+	return candidates
 }
 
 // candidate is a potential DA credential for domain verification.

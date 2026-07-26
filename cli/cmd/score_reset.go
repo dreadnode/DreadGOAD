@@ -133,19 +133,20 @@ func resetKali(ctx context.Context, cmd *cobra.Command, cfg *config.Config, appl
 	// Save the agent report before cleaning.
 	if saveReport {
 		reportContent, err := runner.RunShell(ctx, "cat $HOME/report.jsonl 2>/dev/null || cat $HOME/agent_run/report.jsonl 2>/dev/null || true", 30*time.Second)
-		if err != nil {
+		switch {
+		case err != nil:
 			color.Yellow("  WARN: could not fetch report: %v", err)
-		} else if strings.TrimSpace(reportContent) != "" {
+		case strings.TrimSpace(reportContent) != "":
 			if reportOutput == "" {
 				reportOutput = fmt.Sprintf("report-%s.jsonl", time.Now().Format("20060102-150405"))
 			}
-			if err := os.WriteFile(reportOutput, []byte(reportContent), 0o644); err != nil {
-				color.Yellow("  WARN: could not save report: %v", err)
+			if werr := os.WriteFile(reportOutput, []byte(reportContent), 0o644); werr != nil {
+				color.Yellow("  WARN: could not save report: %v", werr)
 			} else {
 				lines := strings.Count(strings.TrimSpace(reportContent), "\n") + 1
 				color.Green("  Saved agent report (%d lines) -> %s", lines, reportOutput)
 			}
-		} else {
+		default:
 			fmt.Println("  No agent report found (already cleaned or not yet generated)")
 		}
 	}
@@ -260,12 +261,12 @@ func buildKaliCleanupScript(apply bool) string {
 	sb.WriteString("#!/bin/sh\ntotal_found=0\ntotal_removed=0\n")
 
 	for i, t := range targets {
-		sb.WriteString(fmt.Sprintf("\n# %s\ncount_%d=$(%s)\ntotal_found=$((total_found + count_%d))\n", t.label, i, t.find, i))
+		fmt.Fprintf(&sb, "\n# %s\ncount_%d=$(%s)\ntotal_found=$((total_found + count_%d))\n", t.label, i, t.find, i)
 		if apply {
 			// Count before, delete, count after — removed = before - after.
-			sb.WriteString(fmt.Sprintf("if [ \"$count_%d\" -gt 0 ] 2>/dev/null; then\n", i))
-			sb.WriteString(fmt.Sprintf("  %s\n", t.clean))
-			sb.WriteString(fmt.Sprintf("  after_%d=$(%s)\n", i, t.find))
+			fmt.Fprintf(&sb, "if [ \"$count_%d\" -gt 0 ] 2>/dev/null; then\n", i)
+			fmt.Fprintf(&sb, "  %s\n", t.clean)
+			fmt.Fprintf(&sb, "  after_%d=$(%s)\n", i, t.find)
 			sb.WriteString(fmt.Sprintf("  removed_%d=$((count_%d - after_%d))\n", i, i, i))
 			sb.WriteString(fmt.Sprintf("  total_removed=$((total_removed + removed_%d))\n", i))
 			sb.WriteString("fi\n")
@@ -749,9 +750,7 @@ func buildExpectedGroups(hc labmap.HostConfig) map[string][]string {
 		}
 		// Provisioning accounts always have local admin.
 		if strings.EqualFold(group, "Administrators") {
-			for _, u := range []string{"administrator", "ansible", "ssm-user", "goadmin"} {
-				normalized = append(normalized, u)
-			}
+			normalized = append(normalized, "administrator", "ansible", "ssm-user", "goadmin")
 		}
 		groups[group] = normalized
 	}
