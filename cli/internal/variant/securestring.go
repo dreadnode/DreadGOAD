@@ -92,7 +92,7 @@ func parseKeyBytes(s string) ([]byte, error) {
 }
 
 // decryptSecureString decrypts a PowerShell SecureString blob.
-// Format: magic_hex + base64(utf16le("iv_base64|ct_hex"))
+// Format: magic_hex + base64(utf16le("2|iv_base64|ct_hex"))
 func decryptSecureString(blob string, key []byte) (string, error) {
 	if !strings.HasPrefix(blob, secureStringMagic) {
 		return "", fmt.Errorf("missing SecureString magic prefix")
