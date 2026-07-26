@@ -17,4 +17,9 @@ locals {
   # the GOAD DCs run on, so capacity is proven. Cost trade is small for a
   # transient lab.
   controller_instance_size = "Standard_D2s_v3"
+
+  # Optional Kali attack box. Enable with --with-kali on infra commands.
+  kali_subnet_cidr               = "10.8.4.0/28"
+  kali_ssh_source_address_prefix = "10.8.2.0/26"
+  kali_instance_size             = "Standard_D2s_v3"
 }

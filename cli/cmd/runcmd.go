@@ -25,6 +25,9 @@ no inbound ports). Caveats vs. AWS SSM: each invocation is one-shot
 (~5-15s latency), output is capped at 4096 bytes per stream, and there
 are no persistent sessions to list or clean up.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		if err := config.Init(); err != nil {
+			return err
+		}
 		cfg, err := config.Get()
 		if err != nil {
 			return err
