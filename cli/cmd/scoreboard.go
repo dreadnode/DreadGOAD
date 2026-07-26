@@ -163,7 +163,7 @@ func runRestart(ctx context.Context, cmd *cobra.Command, t scoreboard.Transport)
 	switch {
 	case err != nil:
 		fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not delete report file: %v\n", err)
-		return err
+		return nil
 	case ok:
 		_, werr := fmt.Fprintln(cmd.OutOrStdout(), "Report file deleted.")
 		return werr
