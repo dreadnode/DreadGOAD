@@ -52,7 +52,7 @@ type Options struct {
 func RunChecks(opts Options) []CheckResult {
 	var results []CheckResult
 
-	results = append(results, checkAnsibleVersion())
+	results = append(results, checkAnsibleVersion(opts.Provider))
 	results = append(results, checkCommand("python3", "Python 3"))
 	results = append(results, checkCommand("jq", "jq"))
 	results = append(results, checkCommand("zip", "zip"))
@@ -84,6 +84,8 @@ func runAzureChecks() []CheckResult {
 	results = append(results, checkAzureSSHExtension())
 	results = append(results, checkTerragrunt())
 	results = append(results, checkTerraformOrTofu())
+	results = append(results, checkPyPSRP())
+	results = append(results, checkKaliMarketplaceTerms())
 	return results
 }
 
@@ -173,15 +175,15 @@ func PrintResults(results []CheckResult) int {
 // compatible version range (<2.19). Returns an error if the version is
 // incompatible or ansible-core is not found. This is used as a pre-flight
 // gate before running playbooks.
-func CheckAnsibleCoreVersion() error {
-	result := checkAnsibleVersion()
+func CheckAnsibleCoreVersion(provider string) error {
+	result := checkAnsibleVersion(provider)
 	if result.Status == "fail" {
 		return fmt.Errorf("%s", result.Message)
 	}
 	return nil
 }
 
-func checkAnsibleVersion() CheckResult {
+func checkAnsibleVersion(provider string) CheckResult {
 	out, err := exec.Command("ansible", "--version").CombinedOutput()
 	if err != nil {
 		return CheckResult{
@@ -202,6 +204,14 @@ func checkAnsibleVersion() CheckResult {
 	version := fmt.Sprintf("%s.%s.%s", m[1], m[2], m[3])
 
 	if major > 2 || (major == 2 && minor >= 19) {
+		if provider == "azure" {
+			return CheckResult{
+				Name:   "ansible-core",
+				Status: "warn",
+				Message: fmt.Sprintf("v%s detected. Versions >=2.19 break Windows SSM (AWS) "+
+					"but work fine with Azure WinRM/PSRP", version),
+			}
+		}
 		return CheckResult{
 			Name:   "ansible-core",
 			Status: "fail",
@@ -393,11 +403,41 @@ func checkPyPSRP() CheckResult {
 		return CheckResult{
 			Name:   "pypsrp + PySocks",
 			Status: "fail",
-			Message: "missing Python packages required for SSH-mode provisioning. " +
+			Message: "missing Python packages required for WinRM/PSRP provisioning. " +
 				"Install with: pip install pypsrp requests[socks]",
 		}
 	}
 	return CheckResult{Name: "pypsrp + PySocks", Status: "pass", Message: "installed"}
+}
+
+func checkKaliMarketplaceTerms() CheckResult {
+	out, err := exec.Command(
+		"az", "vm", "image", "terms", "show",
+		"--publisher", "kali-linux", "--offer", "kali", "--plan", "kali-2026-2",
+		"-o", "tsv", "--query", "accepted",
+	).CombinedOutput()
+	if err != nil {
+		return CheckResult{
+			Name:   "Kali marketplace terms",
+			Status: "warn",
+			Message: "could not check (run: az vm image terms accept " +
+				"--publisher kali-linux --offer kali --plan kali-2026-2). " +
+				"Required if using --with-kali",
+		}
+	}
+	if strings.EqualFold(strings.TrimSpace(string(out)), "true") {
+		return CheckResult{
+			Name:    "Kali marketplace terms",
+			Status:  "pass",
+			Message: "accepted",
+		}
+	}
+	return CheckResult{
+		Name:   "Kali marketplace terms",
+		Status: "warn",
+		Message: "not accepted. Required if using --with-kali. Run: " +
+			"az vm image terms accept --publisher kali-linux --offer kali --plan kali-2026-2",
+	}
 }
 
 func checkLudusSSH(opts LudusOptions) []CheckResult {

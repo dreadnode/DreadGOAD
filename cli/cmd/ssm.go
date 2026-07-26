@@ -19,6 +19,9 @@ var ssmCmd = &cobra.Command{
 	Long: `SSM commands are AWS-specific. For Azure use 'dreadgoad runcmd'
 (Azure Run Command). For other providers see their respective verbs.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		if err := config.Init(); err != nil {
+			return err
+		}
 		cfg, err := config.Get()
 		if err != nil {
 			return err

@@ -13,7 +13,7 @@ collections:
   - name: scicore.guacamole
   - name: ansible.posix
   - name: microsoft.ad
-    version: 1.11.0
+    version: 1.12.0
   - name: amazon.aws
     version: 11.4.0
 

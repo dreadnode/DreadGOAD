@@ -20,15 +20,15 @@ variable "vnet_cidr" {
 }
 
 variable "private_subnet_cidr" {
-  description = "CIDR for the private subnet where lab VMs run."
+  description = "CIDR for the private subnet where lab VMs run. Auto-derived from vnet_cidr when empty."
   type        = string
-  default     = "10.8.1.0/24"
+  default     = ""
 }
 
 variable "public_subnet_cidr" {
-  description = "CIDR for the public subnet (jumpbox/bastion)."
+  description = "CIDR for the public subnet (jumpbox/bastion). Auto-derived from vnet_cidr when empty."
   type        = string
-  default     = "10.8.0.0/24"
+  default     = ""
 }
 
 variable "create_public_subnet" {
