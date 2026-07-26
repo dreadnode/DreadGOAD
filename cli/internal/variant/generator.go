@@ -954,7 +954,8 @@ func (g *Generator) transformFile(srcPath, relPath string) (transformed bool) {
 		return false
 	}
 
-	if !(textExtensions[ext] || textFilenames[base] || (ext == "" && g.isTextFile(srcPath))) {
+	isText := textExtensions[ext] || textFilenames[base] || (ext == "" && g.isTextFile(srcPath))
+	if !isText {
 		if err := copyFile(srcPath, targetFile); err != nil {
 			fmt.Printf("Warning: Could not copy %s: %v\n", relPath, err)
 		}
