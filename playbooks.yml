@@ -13,6 +13,7 @@ NHA:
   - ad-acl.yml
   - servers.yml
   - security.yml
+  - security_logging.yml
   - vulnerabilities.yml
 
 SCCM:
@@ -30,6 +31,7 @@ SCCM:
   - ad-acl.yml
   - servers.yml
   - security.yml
+  - security_logging.yml
   - vulnerabilities.yml
   - sccm-install.yml
   # Waiting 10 minutes for the install to complete
@@ -54,6 +56,7 @@ GOAD-Mini:
   - adcs.yml
   - ad-acl.yml
   - security.yml
+  - security_logging.yml
   - vulnerabilities.yml
 
 DRACARYS:
@@ -68,6 +71,7 @@ DRACARYS:
   - klink.yml
   - keepass.yml
   - security.yml
+  - security_logging.yml
   - vulnerabilities.yml
   - reboot.yml
   - glpi.yml
@@ -91,4 +95,5 @@ default:
   - ad-acl.yml
   - servers.yml
   - security.yml
+  - security_logging.yml
   - vulnerabilities.yml
