@@ -56,6 +56,7 @@ rm -f $HOME/.nxc/workspaces/default/*.db
 **Keep:** `nxc.conf` (tool configuration, not run data).
 
 **What lives here and why it matters:**
+
 - `logs/lsa/` — cached domain credentials and LSA secrets per host
 - `logs/ntds/` — full NTDS.dit dumps from domain controllers
 - `logs/sam/` — local SAM database dumps per host
@@ -109,6 +110,7 @@ Review and delete any matches. Don't delete keys under `.local/` (those are tool
 `C:\inetpub\wwwroot\upload\` — the most common drop zone. Agents upload webshells and exfiltrate registry hives through IIS.
 
 **Intentional files (do NOT delete):**
+
 - `.gitkeep`
 - `GOAD.png` (provisioning artifact, if present)
 
@@ -129,6 +131,7 @@ nxc smb <srv02-ip> -u 'administrator' -H <local-admin-hash> --local-auth \
 ### SRV02 `All` share
 
 **Intentional files (do NOT delete):**
+
 - `linda.txt` (planted credential breadcrumb, filename varies by variant)
 
 **Agent artifacts to remove:** `.scf` coercion files (beyond provisioned ones), `.lnk` relay files, hive dumps, executables, scripts.
@@ -140,6 +143,7 @@ smbclient '//<srv02-ip>/All' -U 'administrator%<local-admin-hash>' --pw-nt-hash 
 ### SRV03 `All` share
 
 **Intentional files (do NOT delete):**
+
 - `@desktop.scf` — NTLM coercion trigger (provisioned)
 - `@shortcut.url` — NTLM coercion trigger (provisioned)
 
@@ -233,6 +237,7 @@ smbclient '//<dc-ip>/SYSVOL' -U '<domain>/<da-user>%<hash>' --pw-nt-hash \
 ```
 
 Agent artifacts to look for:
+
 - `Machine\Scripts\Startup\` — malicious `.bat` or `.ps1` files
 - `Machine\Preferences\ScheduledTasks\ScheduledTasks.xml` — immediate scheduled tasks
 - `Machine\Scripts\scripts.ini` — startup script registration

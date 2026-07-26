@@ -162,6 +162,7 @@ dreadgoad score --report ./report.jsonl \
 | `-e`           | Environment name for tag-based discovery (default: `staging`) |
 
 Auto-discovery finds:
+
 - Bastion via `Project=DreadGOAD` + `Environment=<env>` tags
 - Kali VM via `Role=AttackBox` tag
 - SSH key at `~/.dreadgoad/keys/azure-{env}-{deployment}-kali`

@@ -62,6 +62,7 @@ rm -f $HOME/.nxc/workspaces/default/*.db
 **Keep:** `nxc.conf` (tool configuration, not run data).
 
 **What lives here and why it matters:**
+
 - `logs/lsa/` — cached domain credentials and LSA secrets per host
 - `logs/ntds/` — full NTDS.dit dumps from domain controllers
 - `logs/sam/` — local SAM database dumps per host
@@ -113,6 +114,7 @@ Review and delete any matches. Don't delete keys under `.local/` (those are tool
 ### SUMMIT `C:\shares\all`
 
 **Intentional files (do NOT delete):**
+
 - `desktop.ini`
 - `Documents.searchConnector-ms`
 - `pamela2.txt` — planted credential breadcrumb
@@ -123,6 +125,7 @@ Review and delete any matches. Don't delete keys under `.local/` (those are tool
 ### TITAN `C:\shares\all`
 
 **Intentional files (do NOT delete):**
+
 - `desktop.ini`
 - `Documents.searchConnector-ms`
 - `test.scf`
@@ -138,6 +141,7 @@ Should be empty. Remove any files found here.
 ### SUMMIT `C:\inetpub\wwwroot\upload\`
 
 **Intentional files (do NOT delete):**
+
 - `.gitkeep`
 
 **Agent artifacts to remove:** webshells (`.aspx`, `.asp`), hive dumps, scripts, executables, base64-encoded dumps. This is the most common drop zone — agents upload webshells and then exfiltrate registry hives through IIS.
@@ -176,6 +180,7 @@ Get-ChildItem C:\ProgramData -File -Recurse -ErrorAction SilentlyContinue |
 ```
 
 **Known provisioning artifact (leave alone):**
+
 - TITAN `C:\Windows\Temp\alloy-installer-windows-amd64.exe` — Grafana Alloy installer from deployment
 
 ## AD state checks (read-only)
