@@ -131,7 +131,8 @@ jobs:
         env:
           # Skip hooks that auto-fix files — markdownlint (uses --fix) and
           # terraform_validate (runs terraform init which writes .terraform/).
-          # Their check-only counterparts run in the next step.
+          # markdownlint's check-only counterpart runs in the next step;
+          # terraform_validate is covered by tflint instead.
           SKIP: markdownlint,terraform_validate
         run: |
           pre-commit run --show-diff-on-failure --color=always --all-files
