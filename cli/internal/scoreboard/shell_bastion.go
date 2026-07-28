@@ -3,6 +3,7 @@ package scoreboard
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os/exec"
 	"time"
@@ -57,12 +58,15 @@ func (r *BastionShellRunner) RunShell(ctx context.Context, command string, timeo
 	// Everything after -- is forwarded to the underlying ssh process.
 	// -o IdentitiesOnly=yes prevents ssh-agent from burning through
 	// MaxAuthTries with unrelated keys.
-	// The command is passed as a single argument — SSH concatenates all
-	// args with spaces before sending to the remote shell, so passing
-	// "bash", "-c", command as 3 args would break (bash -c only takes the
-	// next word as the script). Passing the command directly works because
-	// SSH runs it via the remote user's login shell.
-	args = append(args, "--", "-o", "IdentitiesOnly=yes", command)
+	//
+	// For long or multi-line commands (e.g. the Kali cleanup script),
+	// passing the raw command as a single SSH argument can exceed
+	// argument-length limits or get mangled by intermediate shells.
+	// We base64-encode the command and decode+execute it on the remote
+	// side so that only short, safe ASCII hits the command line.
+	encoded := base64.StdEncoding.EncodeToString([]byte(command))
+	wrapper := fmt.Sprintf("echo %s | base64 -d | sh", encoded)
+	args = append(args, "--", "-o", "IdentitiesOnly=yes", wrapper)
 
 	cmd := exec.CommandContext(ctx, "az", args...)
 	cmd.Stdin = nil // prevent hangs if ssh prompts for passphrase

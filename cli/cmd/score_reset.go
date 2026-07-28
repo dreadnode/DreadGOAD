@@ -232,7 +232,7 @@ func buildKaliCleanupScript(apply bool) string {
 		},
 		{
 			label: "agent report",
-			find:  `( test -f $HOME/report.jsonl && echo 1 || echo 0 )`,
+			find:  `test -f $HOME/report.jsonl && echo 1 || echo 0`,
 			clean: `rm -f $HOME/report.jsonl $HOME/agent_run/report.jsonl 2>/dev/null`,
 		},
 		{

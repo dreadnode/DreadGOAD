@@ -949,7 +949,7 @@ try {
     $objDN = $target
     $objAcl = Get-Acl -Path $objDN -ErrorAction Stop
   } else {
-    $obj = Get-ADObject -Filter ('SamAccountName -eq ' + {{psq .Target}}) -ErrorAction Stop
+    $obj = Get-ADObject -Filter ('SamAccountName -eq "' + $target + '"') -ErrorAction Stop
     if (-not $obj) { Write-Output 'TARGET_NOT_FOUND'; exit }
     $objAcl = Get-Acl -Path $obj.DistinguishedName -ErrorAction Stop
   }
