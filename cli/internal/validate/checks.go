@@ -993,9 +993,30 @@ try {
 			continue
 		}
 
-		output, err := v.runPSErr(ctx, dcRole, script)
-		if err != nil {
-			v.addResult(w, "WARN", "ACL", fmt.Sprintf("Could not verify ACL %s -> %s (%s): %v", source, target, af.ACL.Right, err), "")
+		// ACL probes can return empty output under WinRM contention (the
+		// per-VM lock serializes calls, but queued checks may hit transient
+		// WinRM/SOCKS5 issues that persist across runPSErr's internal
+		// retries). Retry inconclusive results at the check level with
+		// backoff before falling through to WARN.
+		var output string
+		var runErr error
+		for attempt := 1; attempt <= transientRetries; attempt++ {
+			output, runErr = v.runPSErr(ctx, dcRole, script)
+			if runErr != nil {
+				break
+			}
+			if strings.Contains(output, "ACL_FOUND") || strings.Contains(output, "ACL_NOT_FOUND") || strings.Contains(output, "TARGET_NOT_FOUND") {
+				break
+			}
+			// Inconclusive (empty or CHECK_ERROR) — retry with backoff.
+			if attempt < transientRetries {
+				if backoffSleep(ctx, attempt) != nil {
+					break
+				}
+			}
+		}
+		if runErr != nil {
+			v.addResult(w, "WARN", "ACL", fmt.Sprintf("Could not verify ACL %s -> %s (%s): %v", source, target, af.ACL.Right, runErr), "")
 			continue
 		}
 
