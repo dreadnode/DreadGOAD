@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	"github.com/dreadnode/dreadgoad/internal/labmap"
 )
 
 func printHeader(w io.Writer, header string) {
@@ -923,21 +925,26 @@ func (v *Validator) checkACLPermissions(ctx context.Context, w io.Writer) {
 			continue
 		}
 
-		source := v.lab.User(af.ACL.For)
-		target := v.lab.User(af.ACL.To)
+		v.checkSingleACL(ctx, w, af, dcRole)
+	}
+}
 
-		// Use the full source name for sAMAccountName lookup.
-		// Strip trailing $ for gMSA accounts to match the identity reference.
-		sourceSam := strings.TrimSuffix(source, "$")
+func (v *Validator) checkSingleACL(ctx context.Context, w io.Writer, af labmap.ACLFact, dcRole string) {
+	source := v.lab.User(af.ACL.For)
+	target := v.lab.User(af.ACL.To)
 
-		// Build the PowerShell lookup for the target object.
-		// DN paths (containing = signs) are resolved directly via Get-Acl;
-		// SamAccountNames are looked up with Get-ADObject which finds
-		// users, groups, and service accounts alike.
-		//
-		// For well-known accounts (e.g. "NT AUTHORITY\ANONYMOUS LOGON"),
-		// we match the full identity reference string directly.
-		script, err := renderScript(`
+	// Use the full source name for sAMAccountName lookup.
+	// Strip trailing $ for gMSA accounts to match the identity reference.
+	sourceSam := strings.TrimSuffix(source, "$")
+
+	// Build the PowerShell lookup for the target object.
+	// DN paths (containing = signs) are resolved directly via Get-Acl;
+	// SamAccountNames are looked up with Get-ADObject which finds
+	// users, groups, and service accounts alike.
+	//
+	// For well-known accounts (e.g. "NT AUTHORITY\ANONYMOUS LOGON"),
+	// we match the full identity reference string directly.
+	script, err := renderScript(`
 $ErrorActionPreference = 'Stop'
 Import-Module ActiveDirectory
 Set-Location AD:
@@ -988,46 +995,45 @@ try {
 } catch {
   Write-Output "CHECK_ERROR: $_"
 }`, map[string]any{"Target": target, "SourceSam": sourceSam})
-		if err != nil {
-			v.addResult(w, "WARN", "ACL", fmt.Sprintf("Could not render ACL script %s -> %s: %v", source, target, err), "")
-			continue
-		}
+	if err != nil {
+		v.addResult(w, "WARN", "ACL", fmt.Sprintf("Could not render ACL script %s -> %s: %v", source, target, err), "")
+		return
+	}
 
-		// ACL probes can return empty output under WinRM contention (the
-		// per-VM lock serializes calls, but queued checks may hit transient
-		// WinRM/SOCKS5 issues that persist across runPSErr's internal
-		// retries). Retry inconclusive results at the check level with
-		// backoff before falling through to WARN.
-		var output string
-		var runErr error
-		for attempt := 1; attempt <= transientRetries; attempt++ {
-			output, runErr = v.runPSErr(ctx, dcRole, script)
-			if runErr != nil {
-				break
-			}
-			if strings.Contains(output, "ACL_FOUND") || strings.Contains(output, "ACL_NOT_FOUND") || strings.Contains(output, "TARGET_NOT_FOUND") {
-				break
-			}
-			// Inconclusive (empty or CHECK_ERROR) — retry with backoff.
-			if attempt < transientRetries {
-				if backoffSleep(ctx, attempt) != nil {
-					break
-				}
-			}
-		}
+	// ACL probes can return empty output under WinRM contention (the
+	// per-VM lock serializes calls, but queued checks may hit transient
+	// WinRM/SOCKS5 issues that persist across runPSErr's internal
+	// retries). Retry inconclusive results at the check level with
+	// backoff before falling through to WARN.
+	var output string
+	var runErr error
+	for attempt := 1; attempt <= transientRetries; attempt++ {
+		output, runErr = v.runPSErr(ctx, dcRole, script)
 		if runErr != nil {
-			v.addResult(w, "WARN", "ACL", fmt.Sprintf("Could not verify ACL %s -> %s (%s): %v", source, target, af.ACL.Right, runErr), "")
-			continue
+			break
 		}
+		if strings.Contains(output, "ACL_FOUND") || strings.Contains(output, "ACL_NOT_FOUND") || strings.Contains(output, "TARGET_NOT_FOUND") {
+			break
+		}
+		// Inconclusive (empty or CHECK_ERROR) — retry with backoff.
+		if attempt < transientRetries {
+			if backoffSleep(ctx, attempt) != nil {
+				break
+			}
+		}
+	}
+	if runErr != nil {
+		v.addResult(w, "WARN", "ACL", fmt.Sprintf("Could not verify ACL %s -> %s (%s): %v", source, target, af.ACL.Right, runErr), "")
+		return
+	}
 
-		switch {
-		case strings.Contains(output, "ACL_FOUND"):
-			v.addResult(w, "PASS", "ACL", fmt.Sprintf("%s has %s on %s", source, af.ACL.Right, target), "")
-		case strings.Contains(output, "ACL_NOT_FOUND"):
-			v.addResult(w, "FAIL", "ACL", fmt.Sprintf("%s does NOT have %s on %s", source, af.ACL.Right, target), "")
-		default:
-			v.addResult(w, "WARN", "ACL", fmt.Sprintf("Could not verify ACL: %s -> %s (%s)", source, target, af.ACL.Right), "")
-		}
+	switch {
+	case strings.Contains(output, "ACL_FOUND"):
+		v.addResult(w, "PASS", "ACL", fmt.Sprintf("%s has %s on %s", source, af.ACL.Right, target), "")
+	case strings.Contains(output, "ACL_NOT_FOUND"):
+		v.addResult(w, "FAIL", "ACL", fmt.Sprintf("%s does NOT have %s on %s", source, af.ACL.Right, target), "")
+	default:
+		v.addResult(w, "WARN", "ACL", fmt.Sprintf("Could not verify ACL: %s -> %s (%s)", source, target, af.ACL.Right), "")
 	}
 }
 
