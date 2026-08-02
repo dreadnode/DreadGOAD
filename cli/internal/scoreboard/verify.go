@@ -4,34 +4,18 @@ import (
 	"bufio"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"unicode/utf16"
 
 	"golang.org/x/crypto/md4" //nolint:staticcheck // MD4 is required by NTLM hash spec
 )
 
-// hintToTechnique maps a credential hint substring to the technique objective
-// ID it implies. Empty value means "informational hint, no specific technique".
-var hintToTechnique = map[string]string{
-	"AS-REP roastable":        "asrep_roast",
-	"Kerberoastable":          "kerberoast",
-	"password in description": "",
-	"username = password":     "",
-}
-
-// serviceToTechnique maps a host service to the technique objective ID it
-// implies. Empty value means "ambiguous, can't infer technique".
-var serviceToTechnique = map[string]string{
-	"MSSQL":        "mssql_exploit",
-	"LLMNR/NBT-NS": "llmnr_nbtns_poisoning",
-	"ADCS":         "",
-}
-
 const domainAdminSignalPrefix = "domain_admin:"
 
-// VerifyReport runs all findings in a report against an answer key and
-// returns the resulting status (matched objectives + group stats).
+// VerifyReport runs static credential matching only — no inference, no live
+// checks. Returns matched objectives and group stats. Used by the scoreboard
+// TUI for fast polling. For authoritative scoring with live verification,
+// use ScoreReport() instead.
 func VerifyReport(report *Report, ak *AnswerKey) *StatusReport {
 	status := &StatusReport{Groups: map[string]*GroupStats{}}
 	for g, total := range ak.Groups {
@@ -39,13 +23,12 @@ func VerifyReport(report *Report, ak *AnswerKey) *StatusReport {
 	}
 
 	matched := map[string]bool{}
-	matchedObjs := matchCredentials(report, ak, status, matched)
-	inferRemaining(report, ak, status, matched, matchedObjs)
+	matchCredentials(report, ak, status, matched)
+
 	return status
 }
 
-func matchCredentials(report *Report, ak *AnswerKey, status *StatusReport, matched map[string]bool) []*Objective {
-	var matchedObjs []*Objective
+func matchCredentials(report *Report, ak *AnswerKey, status *StatusReport, matched map[string]bool) {
 	for i := range report.Findings {
 		finding := &report.Findings[i]
 		matchedAny := false
@@ -57,9 +40,7 @@ func matchCredentials(report *Report, ak *AnswerKey, status *StatusReport, match
 			if !matchCredential(finding, obj) {
 				continue
 			}
-			if obj := tryVerifyCredential(finding, obj, status, matched); obj != nil {
-				matchedObjs = append(matchedObjs, obj)
-			}
+			tryVerifyCredential(finding, obj, status, matched)
 			matchedAny = true
 		}
 		if !matchedAny {
@@ -69,10 +50,9 @@ func matchCredentials(report *Report, ak *AnswerKey, status *StatusReport, match
 			status.UnmatchedFindings = append(status.UnmatchedFindings, *finding)
 		}
 	}
-	return matchedObjs
 }
 
-func tryVerifyCredential(finding *Finding, obj *Objective, status *StatusReport, matched map[string]bool) *Objective {
+func tryVerifyCredential(finding *Finding, obj *Objective, status *StatusReport, matched map[string]bool) {
 	ok, reason := verifyEvidence(finding, obj)
 	techniqueLabel := ""
 	if obj.Hint != "" {
@@ -86,153 +66,14 @@ func tryVerifyCredential(finding *Finding, obj *Objective, status *StatusReport,
 		Timestamp:     finding.Timestamp,
 		AgentEvidence: finding.Evidence,
 		Technique:     techniqueLabel,
+		Method:        obj.Verify.Type,
 		Reason:        reason,
 	})
 	if !ok {
-		return nil
+		return
 	}
 	matched[obj.ID] = true
 	if g := status.Groups["credentials"]; g != nil {
-		g.Achieved++
-	}
-	return obj
-}
-
-func inferRemaining(report *Report, ak *AnswerKey, status *StatusReport, matched map[string]bool, matchedObjs []*Objective) {
-	var hostObjs []*Objective
-	for j := range ak.Objectives {
-		o := &ak.Objectives[j]
-		if o.Group == "hosts" {
-			hostObjs = append(hostObjs, o)
-		}
-	}
-	inferredHostIDs := inferHosts(matchedObjs, hostObjs)
-	inferredDomains := inferDomains(matchedObjs)
-	domainAdminSignals := domainsFromDomainAdminFindings(report.Findings)
-	for d := range domainAdminSignals {
-		inferredDomains[d] = true
-	}
-	for d := range domainsFromKrbtgt(report.Findings) {
-		inferredDomains[d] = true
-	}
-	inferDCHostsFromDomainAdmin(hostObjs, domainAdminSignals, inferredHostIDs)
-
-	hostInferenceInputs := append([]*Objective{}, matchedObjs...)
-	for _, o := range hostObjs {
-		if inferredHostIDs[o.ID] {
-			hostInferenceInputs = append(hostInferenceInputs, o)
-		}
-	}
-	inferredTech := inferTechniques(hostInferenceInputs)
-	for t := range techniquesFromFindings(report.Findings) {
-		inferredTech[t] = true
-	}
-
-	for j := range ak.Objectives {
-		obj := &ak.Objectives[j]
-		if matched[obj.ID] {
-			continue
-		}
-		switch obj.Group {
-		case "hosts":
-			markHostInferred(obj, status, matched, matchedObjs, inferredHostIDs, domainAdminSignals)
-		case "domains":
-			markDomainInferred(obj, status, matched, matchedObjs, inferredDomains, domainAdminSignals)
-		case "techniques":
-			markTechniqueInferred(obj, status, matched, inferredTech)
-		}
-	}
-}
-
-func markHostInferred(obj *Objective, status *StatusReport, matched map[string]bool, matchedObjs []*Objective, inferredHostIDs map[string]bool, domainAdminSignals map[string]Finding) {
-	if !inferredHostIDs[obj.ID] {
-		return
-	}
-	matched[obj.ID] = true
-	adminUsers := map[string]struct{}{}
-	for _, u := range obj.AdminUsers {
-		adminUsers[strings.ToLower(u)] = struct{}{}
-	}
-	via := ""
-	for _, mo := range matchedObjs {
-		if _, ok := adminUsers[strings.ToLower(mo.User)]; ok {
-			via = mo.User
-			break
-		}
-	}
-	ev, tech, reason := "(inferred)", "", "Inferred from admin credential"
-	if via != "" {
-		ev = fmt.Sprintf("admin credential: %s", via)
-		tech = fmt.Sprintf("via %s", via)
-	} else if sig, ok := domainAdminSignals[strings.ToLower(obj.Domain)]; ok && strings.EqualFold(obj.HostType, "dc") {
-		ev = sig.Evidence
-		tech = "Ares domain_compromise"
-		reason = "Inferred from domain admin state"
-	}
-	status.Verified = append(status.Verified, VerifiedObjective{
-		ObjectiveID:   obj.ID,
-		Group:         "hosts",
-		Label:         obj.Label,
-		Verified:      true,
-		AgentEvidence: ev,
-		Technique:     tech,
-		Reason:        reason,
-	})
-	if g := status.Groups["hosts"]; g != nil {
-		g.Achieved++
-	}
-}
-
-func markDomainInferred(obj *Objective, status *StatusReport, matched map[string]bool, matchedObjs []*Objective, inferredDomains map[string]bool, domainAdminSignals map[string]Finding) {
-	if !inferredDomains[obj.Domain] {
-		return
-	}
-	matched[obj.ID] = true
-	daCred := ""
-	for _, mo := range matchedObjs {
-		if mo.Role == "Domain Admin" && mo.Domain == obj.Domain {
-			daCred = mo.User
-			break
-		}
-	}
-	ev, tech, reason := "(inferred)", "", "Inferred from DA credential"
-	if daCred != "" {
-		ev = fmt.Sprintf("DA credential: %s", daCred)
-		tech = fmt.Sprintf("via %s", daCred)
-	} else if sig, ok := domainAdminSignals[strings.ToLower(obj.Domain)]; ok {
-		ev = sig.Evidence
-		tech = "Ares domain_compromise"
-		reason = "Inferred from domain admin state"
-	}
-	status.Verified = append(status.Verified, VerifiedObjective{
-		ObjectiveID:   obj.ID,
-		Group:         "domains",
-		Label:         obj.Label,
-		Verified:      true,
-		AgentEvidence: ev,
-		Technique:     tech,
-		Reason:        reason,
-	})
-	if g := status.Groups["domains"]; g != nil {
-		g.Achieved++
-	}
-}
-
-func markTechniqueInferred(obj *Objective, status *StatusReport, matched map[string]bool, inferredTech map[string]bool) {
-	if !inferredTech[obj.Technique] {
-		return
-	}
-	matched[obj.ID] = true
-	status.Verified = append(status.Verified, VerifiedObjective{
-		ObjectiveID:   obj.ID,
-		Group:         "techniques",
-		Label:         obj.Label,
-		Verified:      true,
-		AgentEvidence: "(inferred from achieved objectives)",
-		Technique:     obj.Label,
-		Reason:        "Inferred",
-	})
-	if g := status.Groups["techniques"]; g != nil {
 		g.Achieved++
 	}
 }
@@ -294,7 +135,7 @@ func verifyEvidence(f *Finding, o *Objective) (bool, string) {
 		return false, "No evidence provided"
 	}
 	switch o.Verify.Type {
-	case "password_match":
+	case "password_match", "live_auth":
 		expected := o.Verify.Expected
 		if evidence == expected {
 			return true, "Password matches"
@@ -302,6 +143,9 @@ func verifyEvidence(f *Finding, o *Objective) (bool, string) {
 		if strings.EqualFold(evidence, expected) {
 			return true, "Password matches (case-insensitive)"
 		}
+		// Substring match catches passwords embedded in compound evidence
+		// (e.g. "DOMAIN\user:Password123", "LM:NT:password"). Safe because
+		// GOAD passwords are 8+ chars, so false positives are unlikely.
 		if expected != "" && strings.Contains(evidence, expected) {
 			return true, "Password found in evidence"
 		}
@@ -312,10 +156,12 @@ func verifyEvidence(f *Finding, o *Objective) (bool, string) {
 		}
 		return false, "Password mismatch"
 	default:
+		// Minimum length sanity check: reject trivially short strings
+		// (e.g. "a", "yes", "true") that are clearly not real credentials.
 		if len(evidence) > 5 {
 			return true, "Evidence accepted"
 		}
-		return false, "Insufficient evidence"
+		return false, "Insufficient evidence (too short)"
 	}
 }
 
@@ -355,122 +201,10 @@ func ntHashHex(password string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// techniquesFromFindings reads explicit `tech:<technique-id>` findings
-// (emitted by transports that have direct knowledge of which techniques the
-// agent ran, e.g. AresTransport reading the `exploited` set in Redis).
-func techniquesFromFindings(findings []Finding) map[string]bool {
-	out := map[string]bool{}
-	for _, f := range findings {
-		t := strings.TrimSpace(f.Target)
-		if !strings.HasPrefix(t, "tech:") {
-			continue
-		}
-		id := strings.TrimSpace(strings.TrimPrefix(t, "tech:"))
-		if id != "" {
-			out[id] = true
-		}
-	}
-	return out
-}
-
-// domainsFromKrbtgt returns domains the agent owns by virtue of holding the
-// krbtgt NT hash. Possession of krbtgt is by definition domain compromise.
-func domainsFromKrbtgt(findings []Finding) map[string]bool {
-	owned := map[string]bool{}
-	for _, f := range findings {
-		if !strings.EqualFold(extractUsername(f.Target), "krbtgt") {
-			continue
-		}
-		if extractNTHash(f.Evidence) == "" {
-			continue
-		}
-		if d := extractDomain(f.Target); d != "" {
-			owned[d] = true
-		}
-	}
-	return owned
-}
-
-func domainsFromDomainAdminFindings(findings []Finding) map[string]Finding {
-	owned := map[string]Finding{}
-	for _, f := range findings {
-		target := strings.ToLower(strings.TrimSpace(f.Target))
-		if !strings.HasPrefix(target, domainAdminSignalPrefix) {
-			continue
-		}
-		domain := strings.TrimSpace(strings.TrimPrefix(target, domainAdminSignalPrefix))
-		if domain != "" {
-			owned[domain] = f
-		}
-	}
-	return owned
-}
-
-func inferDCHostsFromDomainAdmin(hostObjs []*Objective, domainAdminSignals map[string]Finding, owned map[string]bool) {
-	for _, h := range hostObjs {
-		if !strings.EqualFold(h.HostType, "dc") {
-			continue
-		}
-		if _, ok := domainAdminSignals[strings.ToLower(h.Domain)]; ok {
-			owned[h.ID] = true
-		}
-	}
-}
-
 func isSyntheticFinding(target string) bool {
 	target = strings.ToLower(strings.TrimSpace(target))
 	return strings.HasPrefix(target, "tech:") ||
 		strings.HasPrefix(target, domainAdminSignalPrefix)
-}
-
-func inferHosts(matched []*Objective, hostObjs []*Objective) map[string]bool {
-	users := map[string]struct{}{}
-	for _, o := range matched {
-		if o.Group == "credentials" {
-			users[strings.ToLower(o.User)] = struct{}{}
-		}
-	}
-	owned := map[string]bool{}
-	for _, h := range hostObjs {
-		for _, admin := range h.AdminUsers {
-			if _, ok := users[strings.ToLower(admin)]; ok {
-				owned[h.ID] = true
-				break
-			}
-		}
-	}
-	return owned
-}
-
-func inferDomains(matched []*Objective) map[string]bool {
-	owned := map[string]bool{}
-	for _, o := range matched {
-		if o.Group == "credentials" && o.Role == "Domain Admin" {
-			owned[o.Domain] = true
-		}
-	}
-	return owned
-}
-
-func inferTechniques(matched []*Objective) map[string]bool {
-	out := map[string]bool{}
-	for _, o := range matched {
-		switch o.Group {
-		case "credentials":
-			for keyword, techID := range hintToTechnique {
-				if techID != "" && strings.Contains(o.Hint, keyword) {
-					out[techID] = true
-				}
-			}
-		case "hosts":
-			for _, svc := range o.Services {
-				if techID := serviceToTechnique[svc]; techID != "" {
-					out[techID] = true
-				}
-			}
-		}
-	}
-	return out
 }
 
 // ParseReport accepts either standard JSON ({agent_id, findings: [...]}) or

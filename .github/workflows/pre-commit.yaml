@@ -140,6 +140,10 @@ jobs:
       - name: Run check-only hooks
         id: precommit-check
         if: ${{ !cancelled() }}
+        env:
+          # terraform_validate has no stages restriction, so pre-commit
+          # runs it in the manual stage too. Keep it skipped here as well.
+          SKIP: terraform_validate
         run: |
           pre-commit run --show-diff-on-failure --color=always --all-files --hook-stage manual
 
