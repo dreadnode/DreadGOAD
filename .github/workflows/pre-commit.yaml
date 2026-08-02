@@ -128,12 +128,24 @@ jobs:
 
       - name: Run pre-commit
         id: precommit
+        env:
+          # Skip hooks that auto-fix files — markdownlint (uses --fix) and
+          # terraform_validate (runs terraform init which writes .terraform/).
+          # markdownlint's check-only counterpart runs in the next step;
+          # terraform_validate is covered by tflint instead.
+          SKIP: markdownlint,terraform_validate
         run: |
           pre-commit run --show-diff-on-failure --color=always --all-files
 
+      - name: Run check-only hooks
+        id: precommit-check
+        if: ${{ !cancelled() }}
+        run: |
+          pre-commit run --show-diff-on-failure --color=always --all-files --hook-stage manual
+
       - name: Capture autofix patch
         id: capture
-        if: ${{ failure() && steps.precommit.outcome == 'failure' }}
+        if: ${{ failure() && (steps.precommit.outcome == 'failure' || steps.precommit-check.outcome == 'failure') }}
         run: |
           if git diff --quiet HEAD; then
             echo "pre-commit failed without modifying tracked files; no autofix possible"
