@@ -23,6 +23,17 @@ and operational tasks like SSM session management.`,
 		if err := config.Init(); err != nil {
 			return err
 		}
+		// A --region given on the command line outranks the region the active
+		// environment declares; one merely present in dreadgoad.yaml does not.
+		// Viper collapses both into the same key, so pass the explicit case
+		// through separately.
+		if cmd.Flags().Changed("region") {
+			region, err := cmd.Flags().GetString("region")
+			if err != nil {
+				return err
+			}
+			config.SetRegionOverride(region)
+		}
 		cfg, err := config.Get()
 		if err != nil {
 			return err
