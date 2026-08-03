@@ -26,8 +26,13 @@ def repo_root() -> Path:
 
 
 def state_root() -> Path:
-    """``.dreadgoad/webapp/`` under the repo root, created if missing."""
-    root = repo_root() / ".dreadgoad" / "webapp"
+    """``.dreadgoad/webapp/`` under the repo root, created if missing.
+
+    Overridable via ``DREADGOAD_WEBAPP_STATE_ROOT`` (used by tests to isolate
+    the DB and session dirs from the repo).
+    """
+    override = os.environ.get("DREADGOAD_WEBAPP_STATE_ROOT")
+    root = Path(override) if override else repo_root() / ".dreadgoad" / "webapp"
     root.mkdir(parents=True, exist_ok=True)
     return root
 
