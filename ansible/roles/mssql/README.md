@@ -43,7 +43,9 @@ Install and configure Microsoft SQL Server Express
 ### install.yml
 
 - **Check if reboot is pending before install** (ansible.windows.win_shell)
-- **Reboot before install if pending (long timeout in case of update)** (ansible.windows.win_reboot) - Conditional
+- **Record pre-reboot boot time baseline (pre-MSSQL install)** (ansible.windows.win_powershell) - Conditional
+- **Reboot before install if pending** (block) - Conditional
+- **Trigger reboot via win_reboot** (ansible.windows.win_reboot)
 - **Create SQL Server installation directories** (ansible.windows.win_file)
 - **Create and load user profile** (ansible.windows.win_shell)
 - **Create SQL Server configuration file** (ansible.windows.win_template)
@@ -58,7 +60,9 @@ Install and configure Microsoft SQL Server Express
 - **Install SQL Server** (ansible.windows.win_command) - Conditional
 - **Add or update registry for ip port (2022)** (ansible.windows.win_regedit) - Conditional
 - **Add or update registry for ip port (2019)** (ansible.windows.win_regedit) - Conditional
-- **Reboot if registry was changed** (ansible.windows.win_reboot) - Conditional
+- **Record pre-reboot boot time baseline (post-registry change)** (ansible.windows.win_powershell) - Conditional
+- **Reboot if registry was changed** (block) - Conditional
+- **Trigger reboot via win_reboot** (ansible.windows.win_reboot)
 - **Firewall ¦ Allow MSSQL through Firewall** (ansible.windows.win_dsc)
 - **Firewall ¦ Allow MSSQL discover through Firewall** (ansible.windows.win_dsc)
 - **Be sure service is started** (ansible.windows.win_service)
