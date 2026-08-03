@@ -15,6 +15,7 @@
     ad_users: "{{ lab.domains[lab.hosts[dict_key].domain].users }}"
     ad_ou: "{{ lab.domains[lab.hosts[dict_key].domain].organisation_units  | default({}) }}"
     ad_groups: "{{ lab.domains[lab.hosts[dict_key].domain].groups }}"
+    ad_multi_domain_groups_member: "{{ lab.domains[lab.hosts[dict_key].domain].multi_domain_groups_member | default({}) }}"
 
 - name: Servers AD data configuration
   hosts: server
