@@ -85,11 +85,9 @@ type aresDomainCompromise struct {
 	KrbtgtHashTypes []string `json:"krbtgt_hash_types"`
 }
 
-// FetchReport runs `ares ops loot --latest --json` on the remote instance and,
-// if successful, also fetches the `ares:op:<id>:exploited` Redis set so
-// technique objectives can be credited directly. Both payloads are
-// gzip+base64-encoded to sidestep SSM's 24KB stdout cap. Returns ErrNoReport
-// when the operation hasn't produced any state yet.
+// FetchReport runs `ares ops loot --latest --json` on the remote instance.
+// The payload is gzip+base64-encoded to sidestep SSM's 24KB stdout cap.
+// Returns ErrNoReport when the operation hasn't produced any state yet.
 func (t *AresTransport) FetchReport(ctx context.Context) (string, error) {
 	const jqFilter = `{operation_id, started_at,` +
 		` credentials: [.credentials[] | {username, password, domain, is_admin}],` +
@@ -120,28 +118,7 @@ func (t *AresTransport) FetchReport(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("parse ares loot json: %w", err)
 	}
 
-	exploited := t.fetchExploited(ctx, loot.OperationID)
-	return synthesizeJSONL(&loot, exploited), nil
-}
-
-// fetchExploited reads the `ares:op:<op>:exploited` Redis set; failures are
-// non-fatal (just means no technique findings get emitted this poll).
-func (t *AresTransport) fetchExploited(ctx context.Context, opID string) []string {
-	if opID == "" {
-		return nil
-	}
-	cmd := fmt.Sprintf("redis-cli SMEMBERS %s", shellQuote(fmt.Sprintf("ares:op:%s:exploited", opID)))
-	out, status, _, err := runSSMShell(ctx, t.Client, t.InstanceID, cmd)
-	if err != nil || status != ssmtypes.CommandInvocationStatusSuccess {
-		return nil
-	}
-	var entries []string
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		if line = strings.TrimSpace(line); line != "" {
-			entries = append(entries, line)
-		}
-	}
-	return entries
+	return synthesizeJSONL(&loot), nil
 }
 
 func decodeGzipBase64(s string) ([]byte, error) {
@@ -171,67 +148,7 @@ func (t *AresTransport) DeleteReport(_ context.Context) (bool, error) {
 	return false, nil
 }
 
-// aresExploitedToTechniqueIDs maps an entry from `ares:op:<id>:exploited` to
-// the answer-key technique IDs it represents. Returns nil for entries that
-// don't correspond to any answer-key technique. The exploited set uses prefix
-// names like `mssql_linked_server_<ip>_<svc>` or bare names like
-// `constrained_delegation_<user>`; we match on the prefix.
-func aresExploitedToTechniqueIDs(entry string) []string {
-	prefixes := []struct {
-		prefix string
-		ids    []string
-	}{
-		{"mssql_linked_server_", []string{"mssql_linked_server"}},
-		{"mssql_impersonation_", []string{"mssql_exploit"}},
-		{"mssql_", []string{"mssql_exploit"}},
-		{"constrained_delegation_", []string{"constrained_delegation"}},
-		{"unconstrained_delegation_", []string{"unconstrained_delegation"}},
-		{"forest_trust_", []string{"cross_forest_trust"}},
-		{"child_to_parent_", []string{"child_to_parent"}},
-		{"acl_abuse_", []string{"acl_abuse"}},
-		{"asrep_roast_", []string{"asrep_roast"}},
-		{"kerberoast_", []string{"kerberoast"}},
-		{"llmnr_", []string{"llmnr_nbtns_poisoning"}},
-		{"ntlm_relay_", []string{"ntlm_relay"}},
-		{"ntlmv1_", []string{"ntlmv1_downgrade"}},
-		{"seimpersonate_", []string{"seimpersonate"}},
-		{"adcs_esc1_", []string{"adcs_esc1"}},
-		{"adcs_esc2_", []string{"adcs_esc2"}},
-		{"adcs_esc3_", []string{"adcs_esc3"}}, // collapses ESC3 + ESC3-CRA
-		{"adcs_esc4_", []string{"adcs_esc4"}},
-		{"adcs_esc6_", []string{"adcs_esc6"}},
-		{"adcs_esc7_", []string{"adcs_esc7"}},
-		{"adcs_esc9_", []string{"adcs_esc9"}},
-		{"adcs_esc10_case1_", []string{"adcs_esc10_case1"}},
-		{"adcs_esc10_case2_", []string{"adcs_esc10_case2"}},
-		{"adcs_esc11_", []string{"adcs_esc11"}},
-		{"adcs_esc13_", []string{"adcs_esc13"}},
-		{"adcs_esc15_", []string{"adcs_esc15"}},
-		{"gpo_abuse_", []string{"gpo_abuse"}},
-		{"gmsa_", []string{"gmsa_password_read"}},
-		{"laps_", []string{"laps_password_read"}},
-		{"sid_history_", []string{"sid_history_abuse"}},
-		{"rbcd_", []string{"rbcd"}},
-		{"shadow_credentials_", []string{"shadow_credentials"}},
-	}
-	// Per-domain golden ticket: `golden_ticket_<domain>` → `golden_ticket-<domain>`.
-	// One scoreboard objective per domain because forging requires that domain's
-	// krbtgt hash; a multi-domain forest can have a separate GT per domain.
-	if strings.HasPrefix(entry, "golden_ticket_") {
-		domain := strings.ToLower(strings.TrimPrefix(entry, "golden_ticket_"))
-		if domain != "" {
-			return []string{"golden_ticket-" + domain}
-		}
-	}
-	for _, p := range prefixes {
-		if strings.HasPrefix(entry, p.prefix) || entry == strings.TrimSuffix(p.prefix, "_") {
-			return p.ids
-		}
-	}
-	return nil
-}
-
-func synthesizeJSONL(l *aresLoot, exploited []string) string {
+func synthesizeJSONL(l *aresLoot) string {
 	var b strings.Builder
 	writeJSONLEntry(&b, map[string]string{
 		"agent_id":   "ares:" + l.OperationID,
@@ -243,9 +160,7 @@ func synthesizeJSONL(l *aresLoot, exploited []string) string {
 	for _, h := range l.Hashes {
 		writeHashEntry(&b, h)
 	}
-	emitted := map[string]bool{}
-	writeExploitedEntries(&b, exploited, emitted)
-	writeDomainCompromiseEntries(&b, l.DomainCompromise, emitted)
+	writeDomainCompromiseEntries(&b, l.DomainCompromise)
 	return b.String()
 }
 
@@ -293,30 +208,14 @@ func writeHashEntry(b *strings.Builder, h aresHashEntry) {
 	})
 }
 
-func writeExploitedEntries(b *strings.Builder, exploited []string, emitted map[string]bool) {
-	for _, ex := range exploited {
-		for _, techID := range aresExploitedToTechniqueIDs(ex) {
-			if emitted[techID] {
-				continue
-			}
-			emitted[techID] = true
-			writeJSONLEntry(b, map[string]string{
-				"target":      "tech:" + techID,
-				"evidence":    "ares: " + ex,
-				"description": "exploited",
-			})
-		}
-	}
-}
-
 // writeDomainCompromiseEntries synthesizes findings from domain_compromise[]
-// metadata. The explicit domain_admin signal credits real DA-level compromise
-// even when the DA account is built-in (for example ESSOS\administrator) and
-// therefore absent from the answer-key credential objectives. The krbtgt
-// compatibility signal remains for older inference paths that key off an
-// NT-hash-shaped krbtgt finding.
-func writeDomainCompromiseEntries(b *strings.Builder, entries []aresDomainCompromise, emitted map[string]bool) {
+// metadata. The domain_admin signal credits DA-level compromise even when the
+// DA account is built-in (e.g., ESSOS\administrator) and absent from the
+// answer-key credential objectives. The synthetic krbtgt finding is kept for
+// backward compatibility but is filtered out by scoreDomains.
+func writeDomainCompromiseEntries(b *strings.Builder, entries []aresDomainCompromise) {
 	const krbtgtSyntheticEvidence = "00000000000000000000000000000000"
+	emitted := map[string]bool{}
 	for _, dc := range entries {
 		domain := strings.ToLower(strings.TrimSpace(dc.Domain))
 		if domain == "" {
@@ -339,17 +238,6 @@ func writeDomainCompromiseEntries(b *strings.Builder, entries []aresDomainCompro
 				"evidence":    krbtgtSyntheticEvidence,
 				"description": "ares: synthetic krbtgt from domain_compromise (" + strings.Join(dc.KrbtgtHashTypes, ",") + ")",
 			})
-		}
-		if dc.HasGoldenTicket {
-			techID := "golden_ticket-" + domain
-			if !emitted[techID] {
-				emitted[techID] = true
-				writeJSONLEntry(b, map[string]string{
-					"target":      "tech:" + techID,
-					"evidence":    "ares: domain_compromise has_golden_ticket",
-					"description": "exploited",
-				})
-			}
 		}
 	}
 }

@@ -4,9 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
-	"sort"
 	"time"
 
 	"github.com/dreadnode/dreadgoad/internal/config"
@@ -20,13 +18,15 @@ var scoreboardCmd = &cobra.Command{
 	Long: `Tracks an agent's progress against a GOAD lab: parses the lab config
 into a checklist of objectives ("answer key"), polls a JSONL report file
 locally or from an EC2 instance via SSM, and verifies findings against the
-key. Run 'scoreboard generate-key' first to build the answer key.`,
+key. Run 'dreadgoad score generate-key' first to build the answer key.`,
 }
 
-var scoreboardGenerateKeyCmd = &cobra.Command{
-	Use:   "generate-key",
-	Short: "Generate the answer key from a GOAD config.json",
-	RunE:  runScoreboardGenerateKey,
+// Hidden alias for backward compatibility — actual implementation is in score.go.
+var scoreboardGenerateKeyAlias = &cobra.Command{
+	Use:    "generate-key",
+	Short:  "Generate the answer key (use 'dreadgoad score generate-key' instead)",
+	RunE:   runScoreGenerateKey,
+	Hidden: true,
 }
 
 var scoreboardRunCmd = &cobra.Command{
@@ -34,7 +34,7 @@ var scoreboardRunCmd = &cobra.Command{
 	Short: "Run the live scoreboard against an agent's report",
 	Long: `Polls the agent's JSONL report and renders a live verification
 TUI. Use --transport=local to read a local file, or --transport=ssm with
---instance-id to read /tmp/report.jsonl from a remote EC2 instance.`,
+--instance-id to read the report from a remote EC2 instance.`,
 	RunE: runScoreboardRun,
 }
 
@@ -46,17 +46,17 @@ var scoreboardDemoCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(scoreboardCmd)
-	scoreboardCmd.AddCommand(scoreboardGenerateKeyCmd)
+	scoreboardCmd.AddCommand(scoreboardGenerateKeyAlias)
 	scoreboardCmd.AddCommand(scoreboardRunCmd)
 	scoreboardCmd.AddCommand(scoreboardDemoCmd)
 
-	scoreboardGenerateKeyCmd.Flags().String("config", "", "Path to GOAD config.json (default: ad/GOAD/data/config.json)")
-	scoreboardGenerateKeyCmd.Flags().String("output", "", "Output path for answer_key.json (default: scoreboard/answer_key.json)")
+	scoreboardGenerateKeyAlias.Flags().String("config", "", "Path to GOAD config.json (default: ad/GOAD/data/config.json)")
+	scoreboardGenerateKeyAlias.Flags().String("output", "", "Output path for answer_key.json (default: scoreboard/answer_key.json)")
 
 	scoreboardDemoCmd.Flags().String("config", "", "Path to GOAD config.json (default: ad/GOAD/data/config.json)")
 
 	scoreboardRunCmd.Flags().String("transport", "local", "Transport: local, ssm, or ares")
-	scoreboardRunCmd.Flags().String("report", "/tmp/report.jsonl", "Path to the agent's report file (on the target, for local/ssm)")
+	scoreboardRunCmd.Flags().String("report", "./report.jsonl", "Path to the agent's report file (on the target, for local/ssm)")
 	scoreboardRunCmd.Flags().String("answer-key", "", "Path to answer_key.json (default: scoreboard/answer_key.json)")
 	scoreboardRunCmd.Flags().String("instance-id", "", "EC2 instance ID (required for --transport=ssm or --transport=ares)")
 	scoreboardRunCmd.Flags().String("ssm-region", "", "AWS region for SSM (defaults to --region or SDK default)")
@@ -65,48 +65,6 @@ func init() {
 	scoreboardRunCmd.Flags().Bool("restart", false, "Delete the existing report file on the target before starting (no-op for --transport=ares)")
 	scoreboardRunCmd.Flags().Bool("once", false, "Fetch + verify once, print the static board, exit (no TUI)")
 	scoreboardRunCmd.Flags().String("profile", "", "AWS named profile for SSM/ares transports")
-}
-
-func runScoreboardGenerateKey(cmd *cobra.Command, _ []string) error {
-	cfg, err := config.Get()
-	if err != nil {
-		return err
-	}
-	configPath, _ := cmd.Flags().GetString("config")
-	if configPath == "" {
-		configPath = filepath.Join(cfg.ProjectRoot, "ad", "GOAD", "data", "config.json")
-	}
-	outputPath, _ := cmd.Flags().GetString("output")
-	if outputPath == "" {
-		outputPath = filepath.Join(cfg.ProjectRoot, "scoreboard", "answer_key.json")
-	}
-	if err := os.MkdirAll(filepath.Dir(outputPath), 0o755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", filepath.Dir(outputPath), err)
-	}
-
-	ak, err := scoreboard.GenerateAnswerKey(configPath)
-	if err != nil {
-		return err
-	}
-	if err := scoreboard.WriteAnswerKey(ak, outputPath); err != nil {
-		return fmt.Errorf("write answer key: %w", err)
-	}
-
-	out := cmd.OutOrStdout()
-	if _, err := fmt.Fprintf(out, "Generated answer key: %d objectives → %s\n", ak.TotalObjectives, outputPath); err != nil {
-		return err
-	}
-	keys := make([]string, 0, len(ak.Groups))
-	for g := range ak.Groups {
-		keys = append(keys, g)
-	}
-	sort.Strings(keys)
-	for _, g := range keys {
-		if _, err := fmt.Fprintf(out, "  %s: %d\n", g, ak.Groups[g]); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func runScoreboardRun(cmd *cobra.Command, _ []string) error {
@@ -120,7 +78,7 @@ func runScoreboardRun(cmd *cobra.Command, _ []string) error {
 	}
 	ak, err := scoreboard.LoadAnswerKey(answerKeyPath)
 	if err != nil {
-		return fmt.Errorf("%w (run 'dreadgoad scoreboard generate-key' first)", err)
+		return fmt.Errorf("%w (run 'dreadgoad score generate-key' first)", err)
 	}
 
 	ctx := cmd.Context()
@@ -204,8 +162,8 @@ func runRestart(ctx context.Context, cmd *cobra.Command, t scoreboard.Transport)
 	ok, err := t.DeleteReport(ctx)
 	switch {
 	case err != nil:
-		_, werr := fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not delete report file: %v\n", err)
-		return werr
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "Warning: could not delete report file: %v\n", err)
+		return nil
 	case ok:
 		_, werr := fmt.Fprintln(cmd.OutOrStdout(), "Report file deleted.")
 		return werr
