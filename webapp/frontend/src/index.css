@@ -1,0 +1,47 @@
+:root {
+  /* DreadGOAD brand (ported from ALFRED, retinted) */
+  --dg-brand:       #ef562f;
+  --dg-interactive: #f5c842;
+
+  /* Dreadnode palette */
+  --dn-black:       #0a0a0a;
+  --dn-bg:          #111111;
+  --dn-surface:     #1a1a1a;
+  --dn-surface-alt: #151515;
+  --dn-border:      #1f1f1f;
+  --dn-border-lt:   #2a2a2a;
+  --dn-accent:      #ef562f;
+  --dn-accent-dim:  rgba(239, 86, 47, 0.15);
+  --dn-text:        #e0e0e0;
+  --dn-text-bright: #ffffff;
+  --dn-text-muted:  #666666;
+  --dn-text-dim:    #444444;
+  --dn-success:     #3ecf6a;
+  --dn-warning:     #f0a830;
+  --dn-error:       #ef4444;
+
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--dn-black);
+  color: var(--dn-text);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection { background: var(--dn-accent-dim); color: var(--dn-text-bright); }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--dn-black); }
+::-webkit-scrollbar-thumb { background: var(--dn-border-lt); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--dn-text-dim); }
+
+@keyframes blink { 50% { opacity: 0; } }

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -20,6 +21,10 @@ var labStatusCmd = &cobra.Command{
 	Short: "Show lab instance states",
 	RunE:  runLabStatus,
 }
+
+// labStatusJSON toggles machine-readable JSON output for `lab status`.
+// The web app's ingestion hook consumes this to refresh range state.
+var labStatusJSON bool
 
 var labStartCmd = &cobra.Command{
 	Use:   "start",
@@ -64,6 +69,7 @@ var labDestroyVMCmd = &cobra.Command{
 func init() {
 	rootCmd.AddCommand(labCmd)
 	labCmd.AddCommand(labStatusCmd)
+	labStatusCmd.Flags().BoolVar(&labStatusJSON, "json", false, "Output machine-readable JSON (per-instance array)")
 	labCmd.AddCommand(labStartCmd)
 	labCmd.AddCommand(labStopCmd)
 	labCmd.AddCommand(labStartVMCmd)
@@ -96,6 +102,15 @@ func runLabStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if labStatusJSON {
+		b, err := instancesToStatusJSON(instances)
+		if err != nil {
+			return fmt.Errorf("marshal status json: %w", err)
+		}
+		fmt.Println(string(b))
+		return nil
+	}
+
 	if len(instances) == 0 {
 		fmt.Printf("No GOAD instances found for env=%s\n", cfg.Env)
 		return nil
@@ -110,6 +125,31 @@ func runLabStatus(cmd *cobra.Command, args []string) error {
 			inst.Name, inst.ID, inst.State, inst.PrivateIP)
 	}
 	return nil
+}
+
+// statusJSONInstance is the machine-readable shape emitted by `lab status --json`.
+// The web app's ingestion hook correlates `name` to config hostnames and maps
+// state/private_ip/id onto range hosts (see webapp design §6.4).
+type statusJSONInstance struct {
+	Name      string `json:"name"`
+	ID        string `json:"id"`
+	State     string `json:"state"`
+	PrivateIP string `json:"private_ip"`
+}
+
+// instancesToStatusJSON renders discovered instances as a JSON array.
+// Always returns a JSON array (never null) so an empty range yields "[]".
+func instancesToStatusJSON(instances []provider.Instance) ([]byte, error) {
+	out := make([]statusJSONInstance, 0, len(instances))
+	for _, inst := range instances {
+		out = append(out, statusJSONInstance{
+			Name:      inst.Name,
+			ID:        inst.ID,
+			State:     inst.State,
+			PrivateIP: inst.PrivateIP,
+		})
+	}
+	return json.MarshalIndent(out, "", "  ")
 }
 
 func runLabAction(action string) func(*cobra.Command, []string) error {

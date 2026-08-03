@@ -16,6 +16,10 @@ __pycache__/
 dreadgoad
 .dreadgoad/
 coverage.out
+
+# Web app build artifacts
+webapp/frontend/node_modules/
+webapp/frontend/dist/
 ansible/roles/adcs_templates/files/ADCSTemplate.zip
 ansible/roles/vulns_adcs_templates/files/ADCSTemplate.zip
 
