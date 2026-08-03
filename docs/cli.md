@@ -1,5 +1,20 @@
 # DreadGOAD CLI Reference
 
+## Installation
+
+Install the `dreadgoad` binary to your `GOPATH/bin` using the project Taskfile:
+
+```bash
+task install
+```
+
+This runs `go install` from the `cli/` module and drops the binary in
+`$(go env GOPATH)/bin`. Ensure that directory is on your `PATH`, then run
+`dreadgoad --help` to confirm the install.
+
+Run `task --list` to see all available tasks. `task` (no arguments) builds,
+tests, and cleans the CLI.
+
 ## Commands
 
 Run `dreadgoad <command> --help` for full flag listings. Major commands:
