@@ -6,10 +6,9 @@ import (
 	"testing"
 )
 
-// TestVerifyReportSampleEngagement exercises the full verify flow against a
-// sample agent report. The expected counts and inferred objectives are the
-// same set the reference Python implementation produces for the in-tree
-// answer key.
+// TestVerifyReportSampleEngagement exercises the static-only verify flow
+// against a sample agent report. Only credentials are scored statically.
+// Hosts and domains require live verification and show 0 in static mode.
 func TestVerifyReportSampleEngagement(t *testing.T) {
 	ak, err := GenerateAnswerKey("../../../ad/GOAD/data/config.json")
 	if err != nil {
@@ -35,11 +34,11 @@ func TestVerifyReportSampleEngagement(t *testing.T) {
 
 	status := VerifyReport(report, ak)
 
+	// Static-only: only credentials are verified. Hosts and domains show 0.
 	wantCounts := map[string]int{
 		"credentials": 6,
-		"hosts":       3,
-		"domains":     2,
-		"techniques":  4,
+		"hosts":       0,
+		"domains":     0,
 	}
 	for g, want := range wantCounts {
 		got := status.Groups[g]
@@ -59,15 +58,6 @@ func TestVerifyReportSampleEngagement(t *testing.T) {
 		"cred-north.sevenkingdoms.local-hodor",
 		"cred-north.sevenkingdoms.local-jon.snow",
 		"cred-north.sevenkingdoms.local-samwell.tarly",
-		"domain-essos.local",
-		"domain-north.sevenkingdoms.local",
-		"host-castelblack",
-		"host-meereen",
-		"host-winterfell",
-		"tech-asrep_roast",
-		"tech-kerberoast",
-		"tech-llmnr_nbtns_poisoning",
-		"tech-mssql_exploit",
 	}
 	var gotVerified []string
 	for _, vo := range status.Verified {
@@ -101,39 +91,6 @@ func loadGOADAnswerKey(t *testing.T) *AnswerKey {
 		t.Fatal(err)
 	}
 	return ak
-}
-
-func TestAnswerKeyHasAllExpectedTechniques(t *testing.T) {
-	ak := loadGOADAnswerKey(t)
-	techIDs := map[string]bool{}
-	for _, o := range ak.Objectives {
-		if o.Group == "techniques" {
-			techIDs[o.Technique] = true
-		}
-	}
-	want := []string{
-		"asrep_roast", "kerberoast",
-		"adcs_esc1", "adcs_esc2", "adcs_esc3", "adcs_esc4", "adcs_esc6",
-		"adcs_esc7", "adcs_esc8", "adcs_esc9", "adcs_esc11", "adcs_esc13", "adcs_esc15",
-		"adcs_esc10_case1", "adcs_esc10_case2",
-		"golden_ticket-essos.local",
-		"golden_ticket-north.sevenkingdoms.local",
-		"golden_ticket-sevenkingdoms.local",
-		"gmsa_password_read", "gpo_abuse", "laps_password_read",
-		"sid_history_abuse", "rbcd", "shadow_credentials",
-		"mssql_exploit", "mssql_linked_server",
-		"llmnr_nbtns_poisoning", "ntlm_relay", "ntlmv1_downgrade",
-		"acl_abuse", "cross_forest_trust", "child_to_parent",
-		"constrained_delegation", "unconstrained_delegation",
-		"seimpersonate",
-		"nopac", "printnightmare", "zerologon", "cve_2019_1040",
-		"certifried", "krbrelayup", "machine_account_quota", "mitm6",
-	}
-	for _, w := range want {
-		if !techIDs[w] {
-			t.Errorf("missing technique objective: %s", w)
-		}
-	}
 }
 
 func TestAnswerKeyHostAdminsAreAccurate(t *testing.T) {
@@ -181,8 +138,8 @@ func TestAnswerKeyAsrepCredentialsHaveHint(t *testing.T) {
 }
 
 // TestSynthesizeJSONLDomainCompromise covers the report-boundary signals Ares
-// emits when a domain is compromised. has_domain_admin owns the domain even
-// without krbtgt, while has_golden_ticket is still credited separately.
+// emits when a domain is compromised. Verifies the synthesized JSONL contains
+// the expected domain_admin: findings.
 func TestSynthesizeJSONLDomainCompromise(t *testing.T) {
 	loot := &aresLoot{
 		OperationID: "op-test",
@@ -201,46 +158,39 @@ func TestSynthesizeJSONLDomainCompromise(t *testing.T) {
 				HasDomainAdmin: false,
 			},
 			{
-				// DA without krbtgt still owns the domain; this is the ESC1/admin
-				// path where the old krbtgt-only inference missed ESSOS.
+				// DA without krbtgt still owns the domain.
 				Domain:         "admin-only.local",
 				HasDomainAdmin: true,
 				AdminUsers:     []string{"administrator"},
 			},
 		},
 	}
-	jsonl := synthesizeJSONL(loot, nil)
+	jsonl := synthesizeJSONL(loot)
 	report := ParseReport(jsonl)
 
-	owned := domainsFromKrbtgt(report.Findings)
-	if !owned["essos.local"] {
-		t.Errorf("essos.local should still produce the krbtgt compatibility signal, got %v", owned)
+	// Verify domain_admin: synthetic findings are present.
+	daSignals := map[string]bool{}
+	for _, f := range report.Findings {
+		target := strings.ToLower(strings.TrimSpace(f.Target))
+		if strings.HasPrefix(target, domainAdminSignalPrefix) {
+			domain := strings.TrimPrefix(target, domainAdminSignalPrefix)
+			daSignals[domain] = true
+		}
 	}
-	if owned["uncompromised.local"] || owned["admin-only.local"] {
-		t.Errorf("only essos.local should be in krbtgt-inferred set, got %v", owned)
+	if !daSignals["essos.local"] {
+		t.Errorf("essos.local should have domain_admin signal")
 	}
-
-	ownedFromDA := domainsFromDomainAdminFindings(report.Findings)
-	if _, ok := ownedFromDA["essos.local"]; !ok {
-		t.Errorf("essos.local should be inferred from has_domain_admin, got %v", ownedFromDA)
+	if !daSignals["admin-only.local"] {
+		t.Errorf("admin-only.local should have domain_admin signal")
 	}
-	if _, ok := ownedFromDA["admin-only.local"]; !ok {
-		t.Errorf("admin-only.local should be inferred from has_domain_admin without krbtgt, got %v", ownedFromDA)
-	}
-	if _, ok := ownedFromDA["uncompromised.local"]; ok {
-		t.Errorf("uncompromised.local should not be inferred from has_domain_admin, got %v", ownedFromDA)
-	}
-
-	tech := techniquesFromFindings(report.Findings)
-	if !tech["golden_ticket-essos.local"] {
-		t.Errorf("golden_ticket-essos.local technique should be synthesized, got %v", tech)
-	}
-	if tech["golden_ticket-uncompromised.local"] || tech["golden_ticket-admin-only.local"] {
-		t.Errorf("only essos.local should produce a golden_ticket technique, got %v", tech)
+	if daSignals["uncompromised.local"] {
+		t.Errorf("uncompromised.local should not have domain_admin signal")
 	}
 }
 
-func TestVerifyDomainCompromiseWithoutGoldenTicket(t *testing.T) {
+// TestVerifyAresReportCredentials verifies that an Ares report with
+// credentials is scored correctly in static mode.
+func TestVerifyAresReportCredentials(t *testing.T) {
 	ak := loadGOADAnswerKey(t)
 	loot := &aresLoot{
 		OperationID: "op-20260515-145348",
@@ -248,35 +198,59 @@ func TestVerifyDomainCompromiseWithoutGoldenTicket(t *testing.T) {
 		Credentials: []aresCredEntry{
 			{Username: "missandei", Password: "fr3edom", Domain: "essos.local"},
 		},
-		Hashes: []aresHashEntry{
-			{
-				Username:  "administrator",
-				Domain:    "essos.local",
-				HashValue: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-				HashType:  "ntlm",
-				Source:    "certipy_esc1_full_chain",
-			},
-		},
-		DomainCompromise: []aresDomainCompromise{
-			{
-				Domain:          "essos.local",
-				HasDomainAdmin:  true,
-				HasGoldenTicket: false,
-				AdminUsers:      []string{"administrator"},
-			},
-		},
 	}
-	report := ParseReport(synthesizeJSONL(loot, []string{"adcs_esc1_10.1.2.254"}))
+	report := ParseReport(synthesizeJSONL(loot))
 	status := VerifyReport(report, ak)
 	verified := verifiedObjectiveIDs(status)
 
-	for _, id := range []string{"cred-essos.local-missandei", "domain-essos.local", "host-meereen", "tech-adcs_esc1"} {
-		if !verified[id] {
-			t.Errorf("%s should be verified from ESC1/domain_compromise path; verified=%v", id, verified)
+	if !verified["cred-essos.local-missandei"] {
+		t.Errorf("missandei should be verified")
+	}
+}
+
+func TestAnswerKeyACLTargetsAreLiveAuth(t *testing.T) {
+	ak := loadGOADAnswerKey(t)
+	wantLiveAuth := map[string]bool{
+		"cred-sevenkingdoms.local-jaime.lannister":   true,
+		"cred-sevenkingdoms.local-joffrey.baratheon": true,
+		"cred-sevenkingdoms.local-tyron.lannister":   true,
+		"cred-sevenkingdoms.local-stannis.baratheon": true,
+		"cred-essos.local-viserys.targaryen":         true,
+		"cred-essos.local-jorah.mormont":             true,
+		"cred-essos.local-khal.drogo":                true,
+		"cred-essos.local-drogon":                    true, // GenericAll from gmsaDragon$
+	}
+	for _, o := range ak.Objectives {
+		if o.Group != "credentials" {
+			continue
+		}
+		if wantLiveAuth[o.ID] {
+			if o.Verify.Type != "live_auth" {
+				t.Errorf("%s should be live_auth, got %s", o.ID, o.Verify.Type)
+			}
+		} else {
+			if o.Verify.Type != "password_match" {
+				t.Errorf("%s should be password_match, got %s", o.ID, o.Verify.Type)
+			}
 		}
 	}
-	if verified["tech-golden_ticket-essos.local"] {
-		t.Errorf("golden ticket must not be verified when has_golden_ticket is false; verified=%v", verified)
+}
+
+func TestAnswerKeyHostVerifyType(t *testing.T) {
+	ak := loadGOADAnswerKey(t)
+	for _, o := range ak.Objectives {
+		if o.Group == "hosts" && o.Verify.Type != "live_host_access" {
+			t.Errorf("host %s should have live_host_access verify type, got %s", o.ID, o.Verify.Type)
+		}
+	}
+}
+
+func TestAnswerKeyDomainVerifyType(t *testing.T) {
+	ak := loadGOADAnswerKey(t)
+	for _, o := range ak.Objectives {
+		if o.Group == "domains" && o.Verify.Type != "live_domain_admin" {
+			t.Errorf("domain %s should have live_domain_admin verify type, got %s", o.ID, o.Verify.Type)
+		}
 	}
 }
 
@@ -301,5 +275,133 @@ func TestExtractUsernameFormats(t *testing.T) {
 		if got := extractUsername(in); got != want {
 			t.Errorf("extractUsername(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+// TestExtractNTHash verifies NT hash extraction from various evidence formats:
+// bare 32-char hex, LM:NT pairs, and secretsdump user:rid:LM:NT::: output.
+func TestExtractNTHash(t *testing.T) {
+	tests := []struct {
+		name     string
+		evidence string
+		want     string
+	}{
+		{"bare 32-char hash", "aad3b435b51404eeaad3b435b51404ee", "aad3b435b51404eeaad3b435b51404ee"},
+		{"uppercase normalised", "AAD3B435B51404EEAAD3B435B51404EE", "aad3b435b51404eeaad3b435b51404ee"},
+		{"LM:NT format", "aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0", "31d6cfe0d16ae931b73c59d7e0c089c0"},
+		{"secretsdump format", "Administrator:500:aad3b435b51404eeaad3b435b51404ee:31d6cfe0d16ae931b73c59d7e0c089c0:::", "31d6cfe0d16ae931b73c59d7e0c089c0"},
+		{"plaintext password", "Heartsbane", ""},
+		{"empty string", "", ""},
+		{"wrong length", "aad3b435b51404eeaad3b435b51404e", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractNTHash(tt.evidence)
+			if got != tt.want {
+				t.Errorf("extractNTHash(%q) = %q, want %q", tt.evidence, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestNtHashHex checks the MD4-based NTLM hash computation against known
+// golden vectors (empty password, "password", "Password123").
+func TestNtHashHex(t *testing.T) {
+	tests := []struct {
+		password string
+		want     string
+	}{
+		{"", "31d6cfe0d16ae931b73c59d7e0c089c0"},            // empty password
+		{"password", "8846f7eaee8fb117ad06bdd830b7586c"},    // common test vector
+		{"Password123", "58a478135a93ac3bf058a5ea0e8fdb71"}, // mixed case + digits
+	}
+	for _, tt := range tests {
+		t.Run(tt.password, func(t *testing.T) {
+			got := ntHashHex(tt.password)
+			if got != tt.want {
+				t.Errorf("ntHashHex(%q) = %q, want %q", tt.password, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestVerifyEvidence covers all verification paths: exact match, case-insensitive,
+// substring in compound evidence, NT hash comparison, and the default type's
+// minimum-length check.
+func TestVerifyEvidence(t *testing.T) {
+	tests := []struct {
+		name     string
+		evidence string
+		objType  string
+		expected string
+		wantOK   bool
+		wantSub  string // substring in reason
+	}{
+		{"exact match", "Heartsbane", "password_match", "Heartsbane", true, "Password matches"},
+		{"case insensitive", "heartsbane", "password_match", "Heartsbane", true, "case-insensitive"},
+		{"embedded in compound", "NORTH\\samwell.tarly:Heartsbane", "password_match", "Heartsbane", true, "found in evidence"},
+		{"NT hash of expected", "b8d76e56e9dac90539aff05e3ccb1755", "password_match", "iknownothing", true, "NTLM hash matches"},
+		{"wrong password", "WrongPass", "password_match", "Heartsbane", false, "mismatch"},
+		{"empty evidence", "", "password_match", "Heartsbane", false, "No evidence"},
+		{"empty expected", "anything", "password_match", "", false, "mismatch"},
+		{"non-password long evidence", "some-long-evidence-string", "live_host_access", "", true, "Evidence accepted"},
+		{"non-password short evidence", "yes", "live_host_access", "", false, "too short"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := &Finding{Evidence: tt.evidence}
+			o := &Objective{Verify: Verify{Type: tt.objType, Expected: tt.expected}}
+			ok, reason := verifyEvidence(f, o)
+			if ok != tt.wantOK {
+				t.Errorf("ok = %v, want %v (reason: %s)", ok, tt.wantOK, reason)
+			}
+			if tt.wantSub != "" && !strings.Contains(reason, tt.wantSub) {
+				t.Errorf("reason = %q, want substring %q", reason, tt.wantSub)
+			}
+		})
+	}
+}
+
+func TestMatchCredentialDomainCollision(t *testing.T) {
+	// A bare username (no @domain) matches objectives in ANY domain.
+	// This is by design — documents the known false-positive tradeoff.
+	bareFinding := &Finding{Target: "alice", Evidence: "pass123"}
+	obj1 := &Objective{User: "alice", Domain: "north.sevenkingdoms.local", Group: "credentials"}
+	obj2 := &Objective{User: "alice", Domain: "essos.local", Group: "credentials"}
+
+	if !matchCredential(bareFinding, obj1) {
+		t.Error("bare username should match first domain")
+	}
+	if !matchCredential(bareFinding, obj2) {
+		t.Error("bare username should match second domain (known design tradeoff)")
+	}
+
+	// Qualified username only matches its own domain.
+	qualifiedFinding := &Finding{Target: "alice@north.sevenkingdoms.local", Evidence: "pass123"}
+	if !matchCredential(qualifiedFinding, obj1) {
+		t.Error("qualified username should match its domain")
+	}
+	if matchCredential(qualifiedFinding, obj2) {
+		t.Error("qualified username should NOT match different domain")
+	}
+}
+
+// TestParseReportMalformedLines verifies that invalid JSONL lines (plain text,
+// truncated JSON) are silently skipped while valid lines are parsed.
+func TestParseReportMalformedLines(t *testing.T) {
+	raw := strings.Join([]string{
+		`{"agent_id":"test"}`,
+		`not json at all`,
+		`{"target":"alice@example.com","evidence":"pass"}`,
+		``,
+		`{"truncated": `,
+		`{"target":"bob","evidence":"secret"}`,
+	}, "\n")
+	report := ParseReport(raw)
+	if report.AgentID != "test" {
+		t.Errorf("agent_id: want test, got %s", report.AgentID)
+	}
+	if len(report.Findings) != 2 {
+		t.Errorf("findings: want 2 (skipping malformed), got %d", len(report.Findings))
 	}
 }

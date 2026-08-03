@@ -13,7 +13,7 @@ locals {
 
   generate_ssh_key = var.admin_ssh_public_key == null
 
-  effective_public_key = (
+  effective_public_key = trimspace(
     local.generate_ssh_key
     ? tls_private_key.kali[0].public_key_openssh
     : var.admin_ssh_public_key
@@ -127,6 +127,16 @@ resource "azurerm_linux_virtual_machine" "this" {
     username   = var.admin_username
     public_key = local.effective_public_key
   }
+
+  # The Kali marketplace image ships a pre-existing "kali" user (uid 1000).
+  # Azure's guest agent may not reconcile the admin_ssh_key into that user's
+  # authorized_keys, so we inject the key via cloud-init write_files as a
+  # fallback. write_files runs before runcmd and works reliably on existing
+  # users regardless of cloud-init's user-creation logic.
+  custom_data = base64encode(templatefile("${path.module}/cloud-init-kali.yaml.tpl", {
+    admin_user = var.admin_username
+    public_key = local.effective_public_key
+  }))
 
   os_disk {
     caching              = "ReadWrite"
