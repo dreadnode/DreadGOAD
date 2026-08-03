@@ -16,8 +16,11 @@ Configure Active Directory domain administrator membership and settings
 ### groups.yml
 
 - **Create Universal Groups** (microsoft.ad.group) - Conditional
+- **Wait for Universal group creation to complete** (ansible.builtin.async_status) - Conditional
 - **Create Global Groups** (microsoft.ad.group) - Conditional
+- **Wait for Global group creation to complete** (ansible.builtin.async_status) - Conditional
 - **Create DomainLocal Groups** (microsoft.ad.group) - Conditional
+- **Wait for DomainLocal group creation to complete** (ansible.builtin.async_status) - Conditional
 
 ### main.yml
 

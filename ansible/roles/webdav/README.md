@@ -16,7 +16,9 @@ Install and configure WebDAV client on Windows hosts
 ### main.yml
 
 - **Ensure WebDAV client feature is installed** (ansible.windows.win_feature)
-- **Reboot after installing WebDAV client feature** (ansible.windows.win_reboot) - Conditional
+- **Record pre-reboot boot time baseline (WebDAV install)** (ansible.windows.win_powershell) - Conditional
+- **Reboot after installing WebDAV client feature** (block) - Conditional
+- **Trigger reboot via win_reboot** (ansible.windows.win_reboot)
 
 ## Example Playbook
 

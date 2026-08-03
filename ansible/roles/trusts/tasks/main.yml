@@ -50,7 +50,29 @@
       }
   register: trust_result
 
+- name: Record pre-reboot boot time baseline
+  ansible.windows.win_powershell:
+    script: |
+      (Get-CimInstance -ClassName Win32_OperatingSystem -Property LastBootUpTime).LastBootUpTime.ToFileTime()
+  register: reboot_baseline
+  when: trust_result.changed
+
 - name: Reboot and wait for the AD system to restart
-  ansible.windows.win_reboot:
-    test_command: "Get-ADUser -Identity {{ admin_user }} -Properties *"
+  block:
+    - name: Trigger reboot via win_reboot
+      ansible.windows.win_reboot:
+        test_command: "Get-ADUser -Identity {{ admin_user }} -Properties *"
+        reboot_timeout: 300
+        post_reboot_delay: 60
+  rescue:
+    - name: Verify reboot completed (aws_ssm reconnect timeout is expected)
+      ansible.windows.win_powershell:
+        script: |
+          $current = (Get-CimInstance -ClassName Win32_OperatingSystem -Property LastBootUpTime).LastBootUpTime.ToFileTime()
+          if ($current -le {{ reboot_baseline.output[0] }}) { throw "host has not rebooted yet" }
+          Get-ADUser -Identity {{ admin_user }} -Properties * | Out-Null
+      register: reboot_verify
+      until: reboot_verify is succeeded
+      retries: 30
+      delay: 10
   when: trust_result.changed
