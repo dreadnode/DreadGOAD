@@ -28,8 +28,16 @@
 
     - name: Reboot to clear pending registry operations
       ansible.windows.win_reboot:
-        reboot_timeout: 600
-        post_reboot_delay: 30
+        reboot_timeout: 1800
+        post_reboot_delay: 60
+      ignore_errors: true  # tolerate a wedged SSM poll; a genuinely dead box is caught below
+
+    - name: Ensure host recovered after reboot
+      # wait_for_connection re-attempts a downed connection; until/rescue do not
+      # retry on 'unreachable', so they cannot ride out a wedged SSM channel.
+      ansible.builtin.wait_for_connection:
+        timeout: 600
+        sleep: 20
 
     - name: Enable update service
       ansible.windows.win_service:
@@ -46,3 +54,19 @@
       retries: 5
       delay: 120
       until: update_result is not failed
+      ignore_errors: true  # let a wedged SSM poll fall through to recovery + assert below
+
+    - name: Ensure host recovered after updates
+      # win_updates performs its own internal reboots; a wedged SSM channel during
+      # one of them can exhaust the retries above. Re-attempt the connection before
+      # deciding the box is actually dead.
+      ansible.builtin.wait_for_connection:
+        timeout: 600
+        sleep: 20
+
+    - name: Fail if Windows updates did not complete
+      ansible.builtin.assert:
+        that: update_result is not failed
+        fail_msg: >-
+          Windows updates did not complete after {{ update_result.attempts | default('?') }}
+          attempt(s): {{ update_result.msg | default('unknown error') }}
