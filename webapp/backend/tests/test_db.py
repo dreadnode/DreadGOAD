@@ -88,7 +88,33 @@ async def test_event_seq_and_replay() -> None:
 
         # payload preserved
         assert chat[0]["payload"]["content"] == "hi", "payload not preserved"
+
+        # None → all; empty list → nothing (not "all")
+        assert len(await db.get_events("s-1", kinds=None)) == 3, (
+            "None should return all"
+        )
+        assert await db.get_events("s-1", kinds=[]) == [], (
+            "empty kinds must return nothing"
+        )
         print("PASS test_event_seq_and_replay")
+    finally:
+        await db.close()
+
+
+async def test_meta_round_trip() -> None:
+    db, _ = await _fresh_db()
+    try:
+        assert await db.get_meta("schema_version") is None, (
+            "missing meta should be None"
+        )
+        await db.set_meta("schema_version", 1)
+        assert await db.get_meta("schema_version") == 1, "meta round-trip failed"
+        await db.set_meta("schema_version", 2)  # upsert
+        assert await db.get_meta("schema_version") == 2, "meta upsert failed"
+        # JSON values (not just scalars) round-trip
+        await db.set_meta("obj", {"a": [1, 2]})
+        assert await db.get_meta("obj") == {"a": [1, 2]}, "meta JSON value failed"
+        print("PASS test_meta_round_trip")
     finally:
         await db.close()
 
@@ -123,6 +149,7 @@ async def test_concurrent_writes_no_loss() -> None:
 async def _main() -> None:
     await test_session_and_range_crud()
     await test_event_seq_and_replay()
+    await test_meta_round_trip()
     await test_concurrent_writes_no_loss()
     print("ALL PASS")
 

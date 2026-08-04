@@ -73,6 +73,20 @@ def test_derive_snapshot_aws_falls_back_to_source() -> None:
     print("PASS test_derive_snapshot_aws_falls_back_to_source")
 
 
+def test_derive_snapshot_unknown_env_raises() -> None:
+    tmp = tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False)
+    tmp.write(_FIXTURE_YAML)
+    tmp.close()
+    try:
+        derive_snapshot(tmp.name, "does-not-exist")
+        raise AssertionError("expected ValueError for unknown env")
+    except ValueError:
+        pass
+    finally:
+        os.unlink(tmp.name)
+    print("PASS test_derive_snapshot_unknown_env_raises")
+
+
 def test_seed_topology_from_goad_config() -> None:
     cfg = _REPO / "ad" / "GOAD" / "data" / "config.json"
     assert cfg.is_file(), f"missing fixture: {cfg}"
@@ -186,6 +200,7 @@ def test_merge_reseed_preserves_state_and_adds_nodes() -> None:
 if __name__ == "__main__":
     test_derive_snapshot_azure()
     test_derive_snapshot_aws_falls_back_to_source()
+    test_derive_snapshot_unknown_env_raises()
     test_seed_topology_from_goad_config()
     test_seed_topology_aws_has_no_bastion()
     test_backup_yaml_versions()

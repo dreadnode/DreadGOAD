@@ -18,10 +18,10 @@ def repo_root() -> Path:
     ``cwd = repo_root`` so it can read ``ad/``, ``infra/``, ``dreadgoad.yaml``.
     """
     here = Path(__file__).resolve()
-    for parent in [here, *here.parents]:
-        if (parent / "dreadgoad.yaml").is_file() or (parent / "ad").is_dir():
-            if (parent / "ad").is_dir():
-                return parent
+    # The repo root is the ancestor dir containing the lab definitions (``ad/``).
+    for parent in here.parents:
+        if (parent / "ad").is_dir():
+            return parent
     return Path.cwd()
 
 

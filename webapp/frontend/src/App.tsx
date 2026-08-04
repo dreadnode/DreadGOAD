@@ -8,6 +8,10 @@ import type { ChatEvent, Session } from './types'
 const MIN_W = 320
 const DEFAULT_RATIO = 0.45
 
+// Monotonic client-side id → stable React keys for chat events (F3).
+let _cid = 0
+const withCid = (ev: ChatEvent): ChatEvent => ({ ...ev, _cid: ++_cid })
+
 export default function App() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
@@ -15,6 +19,12 @@ export default function App() {
   const [cfg, setCfg] = useState<AppConfig | null>(null)
   const [ratio, setRatio] = useState(DEFAULT_RATIO)
   const [showNew, setShowNew] = useState(false)
+  // Per-session counter bumped when the range changes, so RangeView re-fetches (F1).
+  const [rangeRefresh, setRangeRefresh] = useState<Record<string, number>>({})
+  // Per-session "a turn is in flight" flag → drives the cancel affordance.
+  const [processing, setProcessing] = useState<Record<string, boolean>>({})
+  // In-flight command name per session → warn before cancelling a destructive one.
+  const [procCmd, setProcCmd] = useState<Record<string, string>>({})
 
   const sessionsRef = useRef<Session[]>([])
   const resumedRef = useRef<Set<string>>(new Set())
@@ -28,11 +38,22 @@ export default function App() {
     const sid = ev.session_id
     if (!sid) return
     if (ev.kind === 'history') {
-      const events = ev.events || []
+      const events = (ev.events || []).map(withCid)
       setMsgs(prev => ({ ...prev, [sid]: events }))
       return
     }
-    setMsgs(prev => ({ ...prev, [sid]: [...(prev[sid] || []), ev] }))
+    setMsgs(prev => ({ ...prev, [sid]: [...(prev[sid] || []), withCid(ev)] }))
+    // A check_run means the hook refreshed the range doc → make RangeView re-fetch.
+    if (ev.kind === 'check_run') {
+      setRangeRefresh(prev => ({ ...prev, [sid]: (prev[sid] || 0) + 1 }))
+    }
+    if (ev.kind === 'command_run' && ev.phase === 'start' && typeof ev.command === 'string') {
+      setProcCmd(prev => ({ ...prev, [sid]: ev.command as string }))
+    }
+    if (ev.kind === 'agent_end') {
+      setProcessing(prev => ({ ...prev, [sid]: false }))
+      setProcCmd(prev => ({ ...prev, [sid]: '' }))
+    }
   }, [])
 
   const resume = useCallback((send: (d: string) => void, id: string) => {
@@ -67,8 +88,20 @@ export default function App() {
 
   const sendMessage = useCallback((content: string) => {
     if (!activeId) return
+    setProcessing(prev => ({ ...prev, [activeId]: true }))
     send(JSON.stringify({ session_id: activeId, content }))
   }, [activeId, send])
+
+  const onCancel = useCallback(() => {
+    if (!activeId) return
+    const cmd = procCmd[activeId]
+    // Cancelling mid-terraform can leave infra half-applied/destroyed (§5.4).
+    if ((cmd === '/up' || cmd === '/destroy') &&
+      !window.confirm(`Cancelling ${cmd} mid-run can leave infrastructure in a half-applied state. Cancel anyway?`)) {
+      return
+    }
+    send(JSON.stringify({ type: 'cancel', session_id: activeId }))
+  }, [activeId, send, procCmd])
 
   const createSession = useCallback(async (body: Record<string, unknown>) => {
     const s = await api.createSession(body)
@@ -115,7 +148,15 @@ export default function App() {
             color: s.id === activeId ? 'var(--dn-text-bright)' : 'var(--dn-text-muted)',
           }}>
             <span>{s.label}</span>
-            <span onClick={(e) => { e.stopPropagation(); closeSession(s.id) }} style={{ color: 'var(--dn-text-dim)' }}>✕</span>
+            <span
+              onClick={(e) => {
+                e.stopPropagation()
+                if (window.confirm(`Delete session "${s.label}"? This cancels any running operation and removes its working dir.`)) {
+                  closeSession(s.id)
+                }
+              }}
+              style={{ color: 'var(--dn-text-dim)' }}
+            >✕</span>
           </div>
         ))}
         <button onClick={() => setShowNew(true)} style={{
@@ -127,11 +168,18 @@ export default function App() {
       {/* Two-pane */}
       <div ref={containerRef} style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         <div style={{ width: `${ratio * 100}%`, minWidth: MIN_W, height: '100%' }}>
-          <TerminalChat sessionId={activeId} messages={activeId ? (msgs[activeId] || []) : []} status={status} onSend={sendMessage} />
+          <TerminalChat
+            sessionId={activeId}
+            messages={activeId ? (msgs[activeId] || []) : []}
+            status={status}
+            onSend={sendMessage}
+            processing={activeId ? !!processing[activeId] : false}
+            onCancel={onCancel}
+          />
         </div>
         <div onMouseDown={onDrag} style={{ width: 4, cursor: 'col-resize', background: 'var(--dn-border)', flexShrink: 0 }} />
         <div style={{ flex: 1, minWidth: MIN_W, height: '100%' }}>
-          <RangeView sessionId={activeId} />
+          <RangeView sessionId={activeId} refreshKey={activeId ? rangeRefresh[activeId] || 0 : 0} />
         </div>
       </div>
     </div>

@@ -51,6 +51,34 @@ func TestInstancesToStatusJSON(t *testing.T) {
 	}
 }
 
+func TestInstancesToStatusJSONEmptyIsBareArray(t *testing.T) {
+	b, err := instancesToStatusJSON(nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(b) != "[]" {
+		t.Fatalf("empty range must render exactly as [], got %q", b)
+	}
+}
+
+func TestInstancesToStatusJSONStoppedNoIP(t *testing.T) {
+	// A stopped instance has no private IP; it must still round-trip cleanly.
+	in := []provider.Instance{
+		{ID: "i-0def", Name: "goad-dreadgoad-winterfell", State: "stopped", PrivateIP: ""},
+	}
+	b, err := instancesToStatusJSON(in)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var decoded []statusJSONInstance
+	if err := json.Unmarshal(b, &decoded); err != nil {
+		t.Fatalf("invalid JSON: %v", err)
+	}
+	if decoded[0].State != "stopped" || decoded[0].PrivateIP != "" {
+		t.Fatalf("stopped/empty-IP passthrough wrong: %+v", decoded[0])
+	}
+}
+
 func TestInstancesToStatusJSONFieldMapping(t *testing.T) {
 	in := []provider.Instance{
 		{ID: "i-0abc", Name: "goad-dreadgoad-kingslanding", State: "running", PrivateIP: "10.0.4.124"},

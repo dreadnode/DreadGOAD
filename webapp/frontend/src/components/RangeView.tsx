@@ -63,7 +63,9 @@ function buildNodes(range: RangeDoc): Node[] {
   })
 }
 
-export default function RangeView({ sessionId }: { sessionId: string | null }) {
+export default function RangeView(
+  { sessionId, refreshKey = 0 }: { sessionId: string | null; refreshKey?: number },
+) {
   const [range, setRange] = useState<RangeDoc | null>(null)
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [error, setError] = useState<string | null>(null)
@@ -73,7 +75,7 @@ export default function RangeView({ sessionId }: { sessionId: string | null }) {
     api.getRange(sessionId)
       .then(r => { setRange(r); setNodes(buildNodes(r)); setError(null) })
       .catch(() => setError('range not found'))
-  }, [sessionId, setNodes])
+  }, [sessionId, refreshKey, setNodes])
 
   useEffect(() => { load() }, [load])
 

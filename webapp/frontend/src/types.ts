@@ -49,6 +49,7 @@ export interface RangeDoc {
 
 // Chat event as sent over the WebSocket (kind + kind-specific fields).
 export interface ChatEvent {
+  _cid?: number // client-assigned stable key (App-side)
   session_id?: string
   kind: string
   content?: string

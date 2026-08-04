@@ -5,12 +5,18 @@ Standalone:  python webapp/backend/tests/test_hook.py
 
 from __future__ import annotations
 
+import asyncio
+import json
 import pathlib
 import sys
+import tempfile
+import types
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
-from webapp.backend.hook import map_range_status, summarize_changes  # noqa: E402
+from webapp.backend import hook  # noqa: E402
+from webapp.backend.db import Database  # noqa: E402
+from webapp.backend.hook import map_range_status, run_check, summarize_changes  # noqa: E402
 
 
 def _range() -> dict:
@@ -60,6 +66,12 @@ def test_matched_host_gets_state_ip_id() -> None:
 
 
 def test_unmatched_config_host_is_absent() -> None:
+    r = _range()
+    # Give winterfell a stale IP/cloud_id to prove they're cleared when absent.
+    for h in r["hosts"]:
+        if h["id"] == "winterfell":
+            h["ip_private"] = "10.9.9.9"
+            h["cloud_id"] = "i-old"
     instances = [
         {
             "name": "x-kingslanding-vm",
@@ -68,9 +80,13 @@ def test_unmatched_config_host_is_absent() -> None:
             "private_ip": "1.2.3.4",
         }
     ]
-    out = map_range_status(_range(), instances, now="T")
+    out = map_range_status(r, instances, now="T")
     hosts = {h["id"]: h for h in out["hosts"]}
     assert hosts["winterfell"]["status"] == "absent", "no instance → absent"
+    assert (
+        hosts["winterfell"]["ip_private"] is None
+        and hosts["winterfell"]["cloud_id"] is None
+    ), "absent must clear stale ip/cloud_id"
     print("PASS test_unmatched_config_host_is_absent")
 
 
@@ -146,6 +162,204 @@ def test_summarize_changes() -> None:
     print("PASS test_summarize_changes")
 
 
+async def _db_with_session() -> Database:
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()
+    db = await Database(tmp.name).connect()
+    await db.upsert_session(
+        {
+            "id": "s-1",
+            "status": "running",  # a just-succeeded command's lifecycle status
+            "anchor": {"config_path": "/x/dreadgoad.yaml", "env": "dev"},
+            "snapshot": {"provider": "aws", "lab": None},
+        }
+    )
+    await db.upsert_range(
+        "s-1",
+        {
+            "session_id": "s-1",
+            "hosts": [
+                {
+                    "id": "kingslanding",
+                    "hostname": "kingslanding",
+                    "role": "dc",
+                    "source": "config",
+                    "status": "unknown",
+                    "health": "unknown",
+                    "ip_private": None,
+                    "ip_public": None,
+                    "cloud_id": None,
+                    "last_checked_at": "OLD",
+                }
+            ],
+            "edges": [],
+            "layout": {},
+            "last_checked_at": "OLD",
+        },
+    )
+    return db
+
+
+class _App:
+    def __init__(self, db: Database) -> None:
+        self.state = types.SimpleNamespace(db=db, sessions=None)
+
+
+async def test_run_check_success_updates_range() -> None:
+    db = await _db_with_session()
+    orig = hook.capture
+
+    async def fake_capture(argv, cwd):  # noqa: ANN001
+        payload = [
+            {
+                "name": "goad-dreadgoad-kingslanding-vm",
+                "id": "i-1",
+                "state": "running",
+                "private_ip": "10.0.0.5",
+            }
+        ]
+        return (0, json.dumps(payload), "")
+
+    hook.capture = fake_capture
+    try:
+        result = await run_check(_App(db), "s-1")
+        assert "error" not in result, result
+        # Integration-specific: the overlay was persisted and the timestamp
+        # advanced. (Field-level mapping is covered by the pure map tests.)
+        rng = await db.get_range("s-1")
+        assert rng is not None
+        assert {h["id"]: h for h in rng["hosts"]}["kingslanding"]["status"] == "running"
+        assert rng["last_checked_at"] != "OLD", "success should advance last_checked_at"
+        print("PASS test_run_check_success_updates_range")
+    finally:
+        hook.capture = orig
+        await db.close()
+
+
+async def test_run_check_failure_preserves_state() -> None:
+    db = await _db_with_session()
+    orig = hook.capture
+
+    async def fake_capture(argv, cwd):  # noqa: ANN001
+        return (1, "", "boom: creds expired")
+
+    hook.capture = fake_capture
+    try:
+        result = await run_check(_App(db), "s-1")
+        assert "error" in result, "failed read should return an error payload"
+
+        rng = await db.get_range("s-1")
+        assert rng is not None
+        assert rng["last_checked_at"] == "OLD", "failure must NOT advance (stale)"
+        k = {h["id"]: h for h in rng["hosts"]}["kingslanding"]
+        assert k["status"] == "unknown", "host state must stay stale on failure"
+
+        # F1: a failed read must not clobber the session's lifecycle status.
+        s = await db.get_session("s-1")
+        assert s is not None and s["status"] == "running", (
+            f"read failure must not set session error, got {s['status'] if s else None}"
+        )
+        print("PASS test_run_check_failure_preserves_state")
+    finally:
+        hook.capture = orig
+        await db.close()
+
+
+async def test_apply_health_targets_config_hosts() -> None:
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()
+    db = await Database(tmp.name).connect()
+    try:
+        await db.upsert_range(
+            "s",
+            {
+                "session_id": "s",
+                "hosts": [
+                    {"id": "dc", "source": "config", "health": "unknown"},
+                    {"id": "attackbox", "source": "infra", "health": "unknown"},
+                ],
+                "edges": [],
+                "layout": {},
+            },
+        )
+        await hook.apply_health(_App(db), "s", healthy=True)
+        rng = await db.get_range("s")
+        assert rng is not None
+        hosts = {h["id"]: h for h in rng["hosts"]}
+        assert hosts["dc"]["health"] == "healthy", hosts
+        assert hosts["attackbox"]["health"] == "unknown", "infra host must be untouched"
+
+        await hook.apply_health(_App(db), "s", healthy=False)
+        rng = await db.get_range("s")
+        assert rng is not None
+        hosts = {h["id"]: h for h in rng["hosts"]}
+        assert hosts["dc"]["health"] == "unhealthy", hosts
+        print("PASS test_apply_health_targets_config_hosts")
+    finally:
+        await db.close()
+
+
+async def test_reseed_adds_enabled_extension_nodes() -> None:
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()
+    db = await Database(tmp.name).connect()
+    await db.upsert_session(
+        {
+            "id": "s",
+            "anchor": {"config_path": "/x/dreadgoad.yaml", "env": "dev"},
+            "snapshot": {"provider": "aws", "lab": "ad/DOES-NOT-EXIST"},
+        }
+    )
+    await db.upsert_range(
+        "s",
+        {
+            "session_id": "s",
+            "hosts": [
+                {
+                    "id": "attackbox",
+                    "hostname": "attackbox",
+                    "role": "attackbox",
+                    "source": "infra",
+                    "status": "running",
+                    "health": "unknown",
+                    "ip_private": "1.2.3.4",
+                    "ip_public": None,
+                    "cloud_id": "i-x",
+                    "last_checked_at": "T",
+                }
+            ],
+            "edges": [],
+            "layout": {"attackbox": {"x": 1, "y": 2}},
+        },
+    )
+    orig = hook.capture
+
+    async def fake_capture(argv, cwd):  # noqa: ANN001
+        payload = [
+            {"name": "elk", "enabled": True, "machines": ["elk"]},
+            {"name": "exchange", "enabled": False, "machines": ["srv01"]},
+        ]
+        return (0, json.dumps(payload), "")
+
+    hook.capture = fake_capture
+    try:
+        await hook.reseed(_App(db), "s")
+        rng = await db.get_range("s")
+        assert rng is not None
+        hosts = {h["id"]: h for h in rng["hosts"]}
+        # enabled extension → node added, tagged source=extension
+        assert "elk" in hosts and hosts["elk"]["source"] == "extension", hosts
+        # disabled extension → not added
+        assert "srv01" not in hosts, "disabled extension must not appear"
+        # surviving infra node keeps live state + layout
+        assert hosts["attackbox"]["status"] == "running", hosts["attackbox"]
+        assert "attackbox" in rng["layout"], "layout must be preserved"
+        print("PASS test_reseed_adds_enabled_extension_nodes")
+    finally:
+        hook.capture = orig
+        await db.close()
+
+
 def main() -> None:
     test_matched_host_gets_state_ip_id()
     test_unmatched_config_host_is_absent()
@@ -153,6 +367,10 @@ def main() -> None:
     test_infra_alias_matches_kali()
     test_state_normalization()
     test_summarize_changes()
+    asyncio.run(test_run_check_success_updates_range())
+    asyncio.run(test_run_check_failure_preserves_state())
+    asyncio.run(test_apply_health_targets_config_hosts())
+    asyncio.run(test_reseed_adds_enabled_extension_nodes())
     print("ALL PASS")
 
 

@@ -1,4 +1,7 @@
 # DreadGOAD web app backend dependencies.
+# Kept here (not a pyproject group) on purpose: the root pyproject is a Poetry
+# project pinned to python ^3.8, while this backend needs 3.10+ and public
+# packages (fastapi/dreadnode/rigging) outside Poetry's management.
 # Mirrors ALFRED's backend deps; the agent stack (dreadnode/rigging) is public.
 fastapi>=0.115.0
 uvicorn[standard]>=0.30.0

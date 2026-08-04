@@ -8,6 +8,7 @@ live tail. The returned handle exposes cancellation (SIGINT) for §6.
 from __future__ import annotations
 
 import asyncio
+import os
 import signal
 import typing as t
 from pathlib import Path
@@ -21,12 +22,16 @@ class RunningCommand:
     def __init__(self, proc: asyncio.subprocess.Process) -> None:
         self._proc = proc
         self.lines: list[str] = []
+        self.cancelled = False
 
     def cancel(self) -> None:
-        """Send SIGINT so the CLI can unwind gracefully (§5.4)."""
+        """SIGINT the whole process group so the CLI *and* its terraform/ansible
+        children unwind gracefully (§5.4). The child is a group leader via
+        ``start_new_session`` in ``start_command``."""
         if self._proc.returncode is None:
+            self.cancelled = True
             with _suppress():
-                self._proc.send_signal(signal.SIGINT)
+                os.killpg(os.getpgid(self._proc.pid), signal.SIGINT)
 
     @property
     def returncode(self) -> int:
@@ -72,6 +77,7 @@ async def start_command(argv: list[str], cwd: str | Path) -> RunningCommand:
         cwd=str(cwd),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
+        start_new_session=True,  # own process group → cancel() signals the whole tree
     )
     return RunningCommand(proc)
 

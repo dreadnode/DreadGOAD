@@ -19,7 +19,14 @@ if [ ! -d "$VENV" ]; then
   echo "[dreadgoad-web] creating venv…"
   python3 -m venv "$VENV"
 fi
-"$VENV/bin/pip" install -q -r "$BACKEND/requirements.txt"
+# Install deps. Prefer uv (fast, and a uv-managed venv has no pip); otherwise
+# ensure pip exists and use it. This avoids assuming `$VENV/bin/pip` is present.
+if command -v uv >/dev/null 2>&1; then
+  uv pip install -q --python "$VENV/bin/python" -r "$BACKEND/requirements.txt"
+else
+  "$VENV/bin/python" -m ensurepip --upgrade >/dev/null 2>&1 || true
+  "$VENV/bin/python" -m pip install -q -r "$BACKEND/requirements.txt"
+fi
 
 # --- dreadgoad CLI binary check (hard runtime dependency) ---
 if ! command -v dreadgoad >/dev/null 2>&1 && [ ! -x "$ROOT/cli/dreadgoad" ]; then

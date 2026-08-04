@@ -38,7 +38,12 @@ def derive_snapshot(config_path: str, env: str) -> dict[str, t.Any]:
     provider = data.get("provider")
     region = data.get("region")
     envs = data.get("environments") or {}
-    e = envs.get(env) or {}
+    if env not in envs:
+        available = ", ".join(sorted(envs)) or "none"
+        raise ValueError(
+            f"environment {env!r} not found in {config_path} (available: {available})"
+        )
+    e = envs[env] or {}
 
     variant_target = e.get("variant_target")
     variant_source = e.get("variant_source")
@@ -89,7 +94,9 @@ def seed_topology(
       - **config** hosts from ``config.json`` (``type`` → role)
       - **infra** nodes not in the lab config: attack box always; bastion for
         Azure (SSM has no bastion node on AWS)
-    Extensions are added later by a re-seed when ``/extensions`` runs.
+    Extension machines are NOT produced here — ``hook.reseed`` augments this
+    with enabled extensions' machines (from ``extension list --json``) when
+    ``/extensions`` runs.
     Edges are deferred (v1 nodes-only), so ``edges`` is empty.
 
     If ``lab_config_path`` is None or missing (greenfield range whose variant

@@ -70,7 +70,10 @@ def map_range_status(
         h = dict(host)
         inst = _match(host, instances)
         if inst is None:
+            # No live instance → clear stale cloud fields, mark absent.
             h["status"] = "absent"
+            h["ip_private"] = None
+            h["cloud_id"] = None
         else:
             h["status"] = _norm_state(inst.get("state"))
             h["ip_private"] = inst.get("private_ip") or h.get("ip_private")
@@ -100,8 +103,9 @@ async def run_check(app: t.Any, session_id: str) -> dict[str, t.Any]:
     """Discover live state and overlay it onto the range (§6.4 flow).
 
     On failure: leave the range untouched (stale), don't advance
-    ``last_checked_at``, mark the session ``error``, and return an error
-    check_run payload.
+    ``last_checked_at``, and return an error check_run payload. The session's
+    lifecycle status is owned by command execution and left unchanged — a
+    failed *read* is not a range error.
     """
     db = app.state.db
     session = await db.get_session(session_id)
@@ -117,7 +121,8 @@ async def run_check(app: t.Any, session_id: str) -> dict[str, t.Any]:
             raise RuntimeError(f"lab status --json exited {rc}: {err[-500:]}")
         instances = json.loads(out)
     except Exception as exc:  # noqa: BLE001
-        await app.state.sessions.set_status(session_id, "error")
+        # A failed read is not a range error — don't clobber the lifecycle
+        # status the command set. Stale last_checked_at + this payload signal it.
         return {"error": str(exc)}
 
     updated = map_range_status(rng, instances)
@@ -143,8 +148,68 @@ async def apply_health(app: t.Any, session_id: str, healthy: bool) -> None:
     await db.upsert_range(session_id, rng)
 
 
+# Most extension machines are Linux (elk/wazuh/guacamole/lx01); ws01/exchange
+# are the exceptions, but the node still appears — role/icon is secondary.
+_EXT_ROLE = "linux"
+
+
+async def _extension_nodes(session: dict[str, t.Any]) -> list[dict[str, t.Any]]:
+    """Nodes for the range's **enabled** extensions, via `extension list --json`.
+
+    This is how extension machines (ELK, Wazuh, …) reach the RangeView —
+    ``seed_topology`` only knows config + infra nodes (§6.3).
+    """
+    anchor = session.get("anchor", {})
+    cfg_path, env = anchor.get("config_path"), anchor.get("env")
+    if not cfg_path or not env:
+        return []
+    argv = [
+        commands.resolve_bin(str(paths.repo_root())),
+        "--config",
+        str(cfg_path),
+        "--env",
+        str(env),
+        "extension",
+        "list",
+        "--json",
+    ]
+    rc, out, _err = await capture(argv, cwd=str(paths.repo_root()))
+    if rc != 0:
+        return []
+    try:
+        exts = json.loads(out)
+    except Exception:  # noqa: BLE001
+        return []
+    nodes: list[dict[str, t.Any]] = []
+    for ext in exts:
+        if not ext.get("enabled"):
+            continue
+        for machine in ext.get("machines") or []:
+            nodes.append(
+                {
+                    "id": machine,
+                    "hostname": machine,
+                    "role": _EXT_ROLE,
+                    "source": "extension",
+                    "domain": None,
+                    "status": "unknown",
+                    "health": "unknown",
+                    "ip_private": None,
+                    "ip_public": None,
+                    "cloud_id": None,
+                    "last_checked_at": None,
+                }
+            )
+    return nodes
+
+
 async def reseed(app: t.Any, session_id: str) -> None:
-    """Re-seed topology after /extensions or /variant change the node set (§6.3)."""
+    """Re-seed topology after /extensions or /variant change the node set (§6.3).
+
+    Node set = config hosts + infra nodes (``seed_topology``) + enabled
+    extension machines (``_extension_nodes``); ``merge_reseed`` preserves live
+    state + layout for survivors.
+    """
     db = app.state.db
     session = await db.get_session(session_id)
     rng = await db.get_range(session_id)
@@ -153,4 +218,11 @@ async def reseed(app: t.Any, session_id: str) -> None:
     snap = session.get("snapshot", {})
     cfg = labconfig.lab_config_path(str(paths.repo_root()), snap.get("lab"))
     seeded = labconfig.seed_topology(cfg, snap.get("provider"))
+
+    existing_ids = {h["id"] for h in seeded["hosts"]}
+    for node in await _extension_nodes(session):
+        if node["id"] not in existing_ids:
+            seeded["hosts"].append(node)
+            existing_ids.add(node["id"])
+
     await db.upsert_range(session_id, labconfig.merge_reseed(rng, seeded))

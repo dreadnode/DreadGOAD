@@ -6,6 +6,7 @@ Requires fastapi + httpx (installed in the project venv).
 
 from __future__ import annotations
 
+import asyncio
 import pathlib
 import sys
 import tempfile
@@ -20,7 +21,8 @@ os.environ["DREADGOAD_WEBAPP_STATE_ROOT"] = _TMP
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from webapp.backend.server import app  # noqa: E402
+from webapp.backend.db import Database  # noqa: E402
+from webapp.backend.server import app, reconcile_interrupted  # noqa: E402
 
 _YAML = """\
 provider: aws
@@ -55,6 +57,25 @@ def main() -> None:
         )
         print("PASS create requires env")
 
+        # bad config path → 400 (not 500)
+        assert (
+            client.post(
+                "/api/sessions",
+                json={"config_path": "/tmp/nope-xyz-123.yaml", "env": "dev"},
+            ).status_code
+            == 400
+        )
+        print("PASS create bad config path → 400")
+
+        # unknown env in a valid file → 400 (not a silently-broken session)
+        assert (
+            client.post(
+                "/api/sessions", json={"config_path": str(cfg), "env": "ghost"}
+            ).status_code
+            == 400
+        )
+        print("PASS create unknown env → 400")
+
         # list
         lst = client.get("/api/sessions").json()["sessions"]
         assert any(x["id"] == sid for x in lst), lst
@@ -75,7 +96,28 @@ def main() -> None:
         assert client.get(f"/api/sessions/{sid}").status_code == 404
         print("PASS delete session")
 
+    asyncio.run(test_reconcile_interrupted())
     print("ALL PASS")
+
+
+async def test_reconcile_interrupted() -> None:
+    """A crash-killed 'provisioning' session is flipped to 'interrupted' (T6.2)."""
+    with tempfile.TemporaryDirectory() as d:
+        db = await Database(str(pathlib.Path(d) / "state.db")).connect()
+        try:
+            await db.upsert_session({"id": "s-prov", "status": "provisioning"})
+            await db.upsert_session({"id": "s-run", "status": "running"})
+            n = await reconcile_interrupted(db)
+            assert n == 1, f"expected 1 reconciled, got {n}"
+            prov = await db.get_session("s-prov")
+            run = await db.get_session("s-run")
+            assert prov is not None and prov["status"] == "interrupted", prov
+            assert run is not None and run["status"] == "running", (
+                "non-provisioning untouched"
+            )
+            print("PASS test_reconcile_interrupted")
+        finally:
+            await db.close()
 
 
 if __name__ == "__main__":

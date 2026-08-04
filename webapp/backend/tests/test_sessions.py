@@ -118,10 +118,41 @@ async def test_create_new_env_writes_yaml_and_backs_up() -> None:
             await svc.db.close()
 
 
+_YAML_GREENFIELD = """\
+provider: aws
+region: us-west-2
+environments:
+  dev:
+    variant_source: ad/DOES-NOT-EXIST
+    variant_target: ad/DOES-NOT-EXIST
+    vpc_cidr: "10.0.0.0/16"
+"""
+
+
+async def test_greenfield_seeds_infra_only() -> None:
+    """A range whose lab dir doesn't exist yet seeds infra nodes only (§6.3)."""
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        cfg = tmp / "dreadgoad.yaml"
+        cfg.write_text(_YAML_GREENFIELD)
+        svc = await _svc(tmp)
+        try:
+            s = await svc.create_session(str(cfg), "dev")
+            rng = await svc.db.get_range(s["id"])
+            assert rng is not None
+            ids = {h["id"] for h in rng["hosts"]}
+            # No config hosts (lab dir missing); aws → attackbox only, no bastion.
+            assert ids == {"attackbox"}, f"greenfield should seed infra-only, got {ids}"
+            print("PASS test_greenfield_seeds_infra_only")
+        finally:
+            await svc.db.close()
+
+
 async def _main() -> None:
     await test_create_attach_session()
     await test_delete_session_removes_dir_and_rows()
     await test_create_new_env_writes_yaml_and_backs_up()
+    await test_greenfield_seeds_infra_only()
     print("ALL PASS")
 
 

@@ -127,9 +127,10 @@ func runLabStatus(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// statusJSONInstance is the machine-readable shape emitted by `lab status --json`.
-// The web app's ingestion hook correlates `name` to config hostnames and maps
-// state/private_ip/id onto range hosts (see webapp design §6.4).
+// statusJSONInstance is the machine-readable shape emitted by `lab status --json`:
+// RAW cloud fields, intentionally NOT the normalized host schema. The web app's
+// ingestion hook correlates `name` → config hostname and normalizes
+// state→status / id→cloud_id / private_ip→ip_private onto range hosts (design §6.4).
 type statusJSONInstance struct {
 	Name      string `json:"name"`
 	ID        string `json:"id"`

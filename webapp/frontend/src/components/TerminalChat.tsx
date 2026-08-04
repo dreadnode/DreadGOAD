@@ -9,6 +9,8 @@ interface Props {
   messages: ChatEvent[]
   status: ConnectionStatus
   onSend: (content: string) => void
+  processing: boolean
+  onCancel: () => void
 }
 
 function Badge({ text, color }: { text: string; color: string }) {
@@ -63,11 +65,19 @@ function Message({ ev }: { ev: ChatEvent }) {
   }
 }
 
-export default function TerminalChat({ sessionId, messages, status, onSend }: Props) {
+export default function TerminalChat({ sessionId, messages, status, onSend, processing, onCancel }: Props) {
   const [input, setInput] = useState('')
   const endRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
+
+  // Esc cancels the in-flight command/turn (sends {type:cancel} → SIGINT, §5.4).
+  useEffect(() => {
+    if (!processing) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [processing, onCancel])
 
   const submit = () => {
     const t = input.trim()
@@ -84,7 +94,18 @@ export default function TerminalChat({ sessionId, messages, status, onSend }: Pr
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px' }}>
         {!sessionId && <div style={{ color: 'var(--dn-text-dim)', fontSize: 13 }}>Create or select a session to begin.</div>}
-        {messages.map((ev, i) => <Message key={i} ev={ev} />)}
+        {messages.map((ev, i) => <Message key={ev._cid ?? i} ev={ev} />)}
+        {processing && (
+          <div style={{ display: 'flex', gap: 12, alignItems: 'baseline', marginTop: 4 }}>
+            <span style={{ color: 'var(--dg-interactive)', fontSize: 13 }}>working…</span>
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={onCancel}
+              style={{ color: 'var(--dn-text-dim)', fontSize: 12, cursor: 'pointer' }}
+            >Press Esc to cancel</span>
+          </div>
+        )}
         <div ref={endRef} />
       </div>
       <div style={{ display: 'flex', alignItems: 'flex-start', padding: '12px 16px', borderTop: '1px solid var(--dn-border)', background: 'var(--dn-black)' }}>

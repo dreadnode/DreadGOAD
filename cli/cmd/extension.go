@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -47,6 +48,7 @@ func init() {
 	extensionCmd.AddCommand(extensionProvisionAllCmd)
 
 	extensionListCmd.Flags().String("lab", "", "Filter by lab compatibility (e.g. GOAD, GOAD-Light)")
+	extensionListCmd.Flags().Bool("json", false, "Output machine-readable JSON (per-extension array)")
 
 	extensionProvisionCmd.Flags().String("limit", "", "Limit execution to specific hosts")
 	extensionProvisionCmd.Flags().Int("max-retries", 0, "Max retry attempts (default: from config)")
@@ -70,6 +72,30 @@ func runExtensionList(cmd *cobra.Command, args []string) error {
 	enabledSet := make(map[string]bool, len(enabled))
 	for _, e := range enabled {
 		enabledSet[e] = true
+	}
+
+	if jsonOut, _ := cmd.Flags().GetBool("json"); jsonOut {
+		out := make([]extensionJSON, 0, len(names))
+		for _, name := range names {
+			if labFilter != "" && !cfg.IsExtensionCompatible(name, labFilter) {
+				continue
+			}
+			ext := cfg.Extensions[name]
+			out = append(out, extensionJSON{
+				Name:        name,
+				Enabled:     enabledSet[name],
+				Machines:    ext.Machines,
+				Compatible:  ext.Compatibility,
+				Impact:      ext.Impact,
+				Description: ext.Description,
+			})
+		}
+		b, err := extensionsToJSON(out)
+		if err != nil {
+			return fmt.Errorf("marshal extensions json: %w", err)
+		}
+		fmt.Println(string(b))
+		return nil
 	}
 
 	fmt.Printf("Available extensions (env: %s):\n\n", cfg.Env)
@@ -96,6 +122,26 @@ func runExtensionList(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("  [*] = enabled for current environment")
 	return nil
+}
+
+// extensionJSON is the machine-readable shape emitted by `extension list --json`.
+// The web app's reseed turns enabled extensions' machines into range nodes
+// (source="extension") so provisioned extensions appear in the RangeView (§6.3).
+type extensionJSON struct {
+	Name        string   `json:"name"`
+	Enabled     bool     `json:"enabled"`
+	Machines    []string `json:"machines"`
+	Compatible  []string `json:"compatible"`
+	Impact      string   `json:"impact"`
+	Description string   `json:"description"`
+}
+
+// extensionsToJSON renders extensions as a JSON array (never null → "[]").
+func extensionsToJSON(exts []extensionJSON) ([]byte, error) {
+	if exts == nil {
+		exts = []extensionJSON{}
+	}
+	return json.MarshalIndent(exts, "", "  ")
 }
 
 func runExtensionProvision(cmd *cobra.Command, args []string) error {

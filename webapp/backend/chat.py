@@ -12,6 +12,7 @@ import-verifiable without one.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import typing as t
 
@@ -23,7 +24,7 @@ from dreadnode.agent.events import (
     ToolStart,
 )
 
-from . import commands, hook, paths
+from . import commands, fetch, hook, paths
 from .agent import create_agent
 from .cli import start_command
 
@@ -43,6 +44,29 @@ _agents: dict[str, t.Any] = {}
 # In-flight CLI commands, keyed by session id, for cancellation (§5.4).
 _running: dict[str, t.Any] = {}
 
+# Per-session serialization locks (same session = one turn at a time, §6.4).
+_locks: dict[str, asyncio.Lock] = {}
+
+# Strong refs to in-flight turn tasks so they aren't GC'd and survive a client
+# disconnect (the op keeps running server-side, §5.4).
+_tasks: set[asyncio.Task[t.Any]] = set()
+
+# The current live WS for each session. Emits target this (not a socket captured
+# at dispatch time), so a reconnected client re-attaches to an in-flight op's
+# live stream + completion (§5.4). Updated on every message for the session.
+_conns: dict[str, t.Any] = {}
+
+
+def register_conn(session_id: str, ws: t.Any) -> None:
+    """Mark ``ws`` as the current socket for a session (called per message)."""
+    _conns[session_id] = ws
+
+
+def unregister_conn(ws: t.Any) -> None:
+    """Drop a closed socket from the registry (best-effort)."""
+    for sid in [s for s, w in _conns.items() if w is ws]:
+        del _conns[sid]
+
 
 def cancel_session(session_id: str) -> bool:
     """Cancel the session's in-flight command (SIGINT). Returns True if one ran."""
@@ -51,6 +75,44 @@ def cancel_session(session_id: str) -> bool:
         return False
     rc.cancel()
     return True
+
+
+def _session_lock(session_id: str) -> asyncio.Lock:
+    lock = _locks.get(session_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _locks[session_id] = lock
+    return lock
+
+
+def dispatch(app: t.Any, session_id: str, content: str) -> asyncio.Task[t.Any]:
+    """Run a turn in a background task, serialized per session (§6.4, §7).
+
+    The WS recv loop calls this and immediately keeps reading, so `cancel` and
+    other sessions' messages are handled while a long op streams (§5.4). The
+    per-session lock makes same-session turns run one at a time; different
+    sessions run concurrently. Tasks are kept in ``_tasks`` so they survive the
+    connection closing; emits target the session's *current* socket (`_conns`).
+    """
+
+    async def _runner() -> None:
+        async with _session_lock(session_id):
+            await handle_message(app, session_id, content)
+
+    task = asyncio.create_task(_runner())
+    _tasks.add(task)
+    task.add_done_callback(_tasks.discard)
+    return task
+
+
+def cleanup_session(session_id: str) -> None:
+    """Drop per-session runtime state on delete (agent, lock, conn, command)."""
+    _agents.pop(session_id, None)
+    _locks.pop(session_id, None)
+    _conns.pop(session_id, None)
+    rc = _running.pop(session_id, None)
+    if rc is not None:
+        rc.cancel()
 
 
 def format_event(event: t.Any) -> dict[str, t.Any] | None:
@@ -101,7 +163,7 @@ async def _get_agent(app: t.Any, session_id: str) -> t.Any | None:
     return agent
 
 
-async def handle_message(app: t.Any, ws: t.Any, session_id: str, content: str) -> None:
+async def handle_message(app: t.Any, session_id: str, content: str) -> None:
     """Process one user message for a session: persist, dispatch, stream, persist."""
     db = app.state.db
 
@@ -110,9 +172,17 @@ async def handle_message(app: t.Any, ws: t.Any, session_id: str, content: str) -
     ) -> None:
         if persist:
             await db.append_event(session_id, kind, payload)
-        await ws.send_text(
-            json.dumps({"session_id": session_id, "kind": kind, **payload})
-        )
+        # Target the session's *current* socket, so a reconnect re-attaches to
+        # this (possibly long-running) op's stream (§5.4).
+        ws = _conns.get(session_id)
+        if ws is None:
+            return  # no live client; events are persisted for replay on reconnect
+        try:
+            await ws.send_text(
+                json.dumps({"session_id": session_id, "kind": kind, **payload})
+            )
+        except Exception:  # noqa: BLE001
+            pass  # client dropped mid-send; op continues, events persisted
 
     async def run_hook_and_emit() -> None:
         """Fire the ingestion hook, surface check_run inline (§6.4)."""
@@ -129,6 +199,24 @@ async def handle_message(app: t.Any, ws: t.Any, session_id: str, content: str) -
             await emit("error", {"message": "session not found"})
             await emit("agent_end", {"failed": True})
             return
+
+        # /score: the report lives on the attack box, but `score --report` takes
+        # a local path — fetch it into the session dir first (§5.2).
+        if name == "/score" and extra:
+            try:
+                rc_fetch, local, msg = await fetch.fetch_report(
+                    session["snapshot"], session["session_dir"], extra[0]
+                )
+            except ValueError as exc:
+                await emit("error", {"message": str(exc)})
+                await emit("agent_end", {"failed": True})
+                return
+            if rc_fetch != 0:
+                await emit("error", {"message": f"report fetch failed: {msg[-300:]}"})
+                await emit("agent_end", {"failed": True})
+                return
+            extra = [local, *extra[1:]]
+
         argv = commands.build_argv(
             session, name, extra, repo_root=str(paths.repo_root())
         )
@@ -150,11 +238,14 @@ async def handle_message(app: t.Any, ws: t.Any, session_id: str, content: str) -
         output = rc.output
 
         if cmd.long_running:
-            final = (
-                "error"
-                if exit_code
-                else ("destroyed" if name == "/destroy" else "running")
-            )
+            if rc.cancelled:
+                final = "interrupted"  # user cancel ≠ failure (§5.4)
+            elif exit_code:
+                final = "error"
+            elif name == "/destroy":
+                final = "destroyed"
+            else:
+                final = "running"
             await app.state.sessions.set_status(session_id, final)
 
         await emit(
@@ -196,9 +287,12 @@ async def handle_message(app: t.Any, ws: t.Any, session_id: str, content: str) -
         await emit("agent_end", {"failed": True})
 
 
-async def replay(app: t.Any, ws: t.Any, session_id: str) -> None:
-    """Send chat-kind history for a session on (re)connect."""
+async def replay(app: t.Any, session_id: str) -> None:
+    """Send chat-kind history for a session to its current socket on (re)connect."""
     events = await app.state.db.get_events(session_id, kinds=CHAT_KINDS)
+    ws = _conns.get(session_id)
+    if ws is None:
+        return
     await ws.send_text(
         json.dumps({"session_id": session_id, "kind": "history", "events": events})
     )

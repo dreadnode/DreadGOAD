@@ -5,9 +5,10 @@ column; only queried fields (event `session_id`/`seq`/`kind`) are real columns.
 
 Concurrency & safety: all DB work runs on a **single-worker thread executor**,
 so operations serialize naturally (no lost updates) and the connection is only
-ever touched from its own thread. WAL mode gives crash-safe commits and
-concurrent readers. This is the "one serialized writer" from §6.1 without an
-extra dependency (stdlib ``sqlite3`` only).
+ever touched from its own thread. This is the "one serialized writer" from §6.1
+without an extra dependency (stdlib ``sqlite3`` only). Note: because every op
+(reads included) goes through the one worker, there is no read/write
+concurrency — WAL here buys durable commits, not concurrent readers.
 """
 
 from __future__ import annotations
@@ -59,13 +60,20 @@ class Database:
     # --- lifecycle ---------------------------------------------------------
 
     async def connect(self) -> "Database":
-        await self._run(self._connect)
+        try:
+            await self._run(self._connect)
+        except BaseException:
+            # Don't leak the worker thread if connection setup fails.
+            self._executor.shutdown(wait=False)
+            raise
         return self
 
     def _connect(self) -> None:
         conn = sqlite3.connect(self._path)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA journal_mode=WAL")
+        # NORMAL: durable across an app crash; a power/OS crash may lose only the
+        # last commit. Fine for this local tool; use FULL for strict durability.
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.execute("PRAGMA foreign_keys=ON")
         conn.executescript(_SCHEMA)
@@ -184,15 +192,18 @@ class Database:
     ) -> list[dict[str, t.Any]]:
         """Return events for a session ordered by ``seq``.
 
-        If ``kinds`` is given, filter to those event kinds (e.g. chat-kinds
-        for replay). Each returned dict is ``{seq, kind, ts, payload}``.
+        ``kinds=None`` returns all events; a non-empty sequence filters to those
+        kinds (e.g. chat-kinds for replay); an **empty** sequence returns no
+        events. Each returned dict is ``{seq, kind, ts, payload}``.
         """
         return await self._run(self._get_events, session_id, kinds)
 
     def _get_events(
         self, session_id: str, kinds: t.Sequence[str] | None
     ) -> list[dict[str, t.Any]]:
-        if kinds:
+        if kinds is not None:
+            if not kinds:
+                return []  # empty filter → no events (None means "all")
             placeholders = ",".join("?" for _ in kinds)
             sql = (
                 f"SELECT seq, kind, ts, payload FROM events "

@@ -12,6 +12,7 @@ import os
 import typing as t
 from contextlib import asynccontextmanager
 
+import yaml
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
@@ -26,6 +27,20 @@ _DEFAULT_MODEL = os.environ.get(
 )
 
 
+async def reconcile_interrupted(db: Database) -> int:
+    """Flip sessions left mid-deploy by a crash/restart to ``interrupted`` (§5.4).
+
+    Returns the number of sessions reconciled.
+    """
+    n = 0
+    for s in await db.list_sessions():
+        if s.get("status") == "provisioning":
+            s["status"] = "interrupted"
+            await db.upsert_session(s)
+            n += 1
+    return n
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> t.AsyncIterator[None]:
     """Open the DB and build the session service on startup."""
@@ -35,12 +50,8 @@ async def _lifespan(app: FastAPI) -> t.AsyncIterator[None]:
     app.state.sessions = SessionService(
         db, repo_root=str(paths.repo_root()), sessions_root=paths.sessions_root()
     )
-    # Survival: a session left mid-deploy by a crash/restart is reconciled to
-    # `interrupted` so the operator knows to re-run (§5.4).
-    for s in await db.list_sessions():
-        if s.get("status") == "provisioning":
-            s["status"] = "interrupted"
-            await db.upsert_session(s)
+    # Survival: reconcile sessions left mid-deploy by a crash/restart (§5.4).
+    await reconcile_interrupted(db)
     try:
         yield
     finally:
@@ -86,13 +97,22 @@ async def create_session(body: dict[str, t.Any]) -> dict[str, t.Any]:
     model = body.get("model") or _DEFAULT_MODEL
     label = body.get("label")
 
-    if mode == "new":
-        env_fields = body.get("env_fields") or {}
-        top_level = body.get("top_level")
-        return await svc.create_new_env_session(
-            config_path, env, env_fields, top_level=top_level, model=model, label=label
-        )
-    return await svc.create_session(config_path, env, model=model, label=label)
+    try:
+        if mode == "new":
+            env_fields = body.get("env_fields") or {}
+            top_level = body.get("top_level")
+            return await svc.create_new_env_session(
+                config_path,
+                env,
+                env_fields,
+                top_level=top_level,
+                model=model,
+                label=label,
+            )
+        return await svc.create_session(config_path, env, model=model, label=label)
+    except (FileNotFoundError, ValueError, yaml.YAMLError) as exc:
+        # Invalid config path / malformed yaml / unknown env → client error.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/sessions")
@@ -113,6 +133,7 @@ async def delete_session(session_id: str) -> dict[str, t.Any]:
     ok = await _svc(app).delete_session(session_id)
     if not ok:
         raise HTTPException(status_code=404, detail="session not found")
+    chat.cleanup_session(session_id)  # evict agent/lock, cancel in-flight (F4)
     return {"deleted": session_id}
 
 
@@ -155,16 +176,23 @@ async def ws_chat(websocket: WebSocket) -> None:
             session_id = msg.get("session_id")
             if not session_id:
                 continue
+            # This socket is now the session's live target (re-attach on reconnect).
+            chat.register_conn(session_id, websocket)
             if msg.get("type") == "resume":
-                await chat.replay(app, websocket, session_id)
+                await chat.replay(app, session_id)
                 continue
             if msg.get("type") == "cancel":
                 chat.cancel_session(session_id)
                 continue
             content = (msg.get("content") or "").strip()
             if content:
-                await chat.handle_message(app, websocket, session_id, content)
+                # Non-blocking: run the turn in a per-session task so the recv
+                # loop stays free for cancel/other sessions (§5.4, §7).
+                chat.dispatch(app, session_id, content)
     except WebSocketDisconnect:
+        # In-flight turns keep running server-side (tracked in chat._tasks) and
+        # emit to the session's current socket; a reconnect re-attaches.
+        chat.unregister_conn(websocket)
         return
 
 
