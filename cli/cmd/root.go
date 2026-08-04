@@ -63,6 +63,21 @@ func SetVersionInfo(version, commit, date string) {
 func Execute() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// NotifyContext only cancels ctx; it leaves the handler installed and drops
+	// every later signal on the floor, so a teardown that hangs would trap the
+	// user with no way out but SIGKILL. Watch the signals separately and hard
+	// exit on the second one.
+	forceQuit := make(chan os.Signal, 2)
+	signal.Notify(forceQuit, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(forceQuit)
+	go func() {
+		<-forceQuit // first: ctx cancellation above drives the graceful unwind
+		<-forceQuit // second: caller is done waiting for cleanup
+		fmt.Fprintln(os.Stderr, "\ninterrupted again — exiting now; Bastion tunnels may be left running")
+		os.Exit(130)
+	}()
+
 	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return err

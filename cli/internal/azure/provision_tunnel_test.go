@@ -3,6 +3,7 @@
 package azure
 
 import (
+	"os"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -71,4 +72,55 @@ func TestKillBastionTunnelReapsChildTree(t *testing.T) {
 func TestKillBastionTunnelNilSafe(t *testing.T) {
 	killBastionTunnel(nil)
 	killBastionTunnel(&exec.Cmd{}) // Process == nil
+}
+
+// pgidGuardEnv re-enters this test binary as a subprocess for the guard check
+// below. A regression there SIGKILLs the caller's whole process group, so the
+// dangerous half runs isolated in its own group rather than taking down
+// `go test` (and the developer's shell) with it.
+const pgidGuardEnv = "DREADGOAD_TEST_PGID_GUARD_CHILD"
+
+// pgidGuardOK is the exit code the child reports when it survived the kill.
+const pgidGuardOK = 7
+
+// TestKillBastionTunnelSpareOwnProcessGroup pins the `pgid == pid` guard in
+// killBastionTunnel. Given a command started WITHOUT SysProcAttr.Setpgid,
+// syscall.Getpgid returns the *caller's* group — so an unguarded
+// kill(-pgid, SIGKILL) would take down dreadgoad itself. The guard must detect
+// that and fall back to killing only the single process.
+func TestKillBastionTunnelSpareOwnProcessGroup(t *testing.T) {
+	if os.Getenv(pgidGuardEnv) == "1" {
+		// Detach into our own process group so a regression's group-kill is
+		// contained to this subprocess.
+		if err := syscall.Setpgid(0, 0); err != nil {
+			os.Exit(3)
+		}
+		// No Setpgid here: the child inherits OUR pgid, which is exactly the
+		// condition the guard exists to catch.
+		victim := exec.Command("sleep", "120")
+		if err := victim.Start(); err != nil {
+			os.Exit(4)
+		}
+		killBastionTunnel(victim)
+		// Still executing => the guard held and we did not signal our own group.
+		os.Exit(pgidGuardOK)
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatalf("locate test binary: %v", err)
+	}
+	cmd := exec.Command(exe, "-test.run=TestKillBastionTunnelSpareOwnProcessGroup")
+	cmd.Env = append(os.Environ(), pgidGuardEnv+"=1")
+
+	err = cmd.Run()
+	code := cmd.ProcessState.ExitCode()
+	if code == pgidGuardOK {
+		return // guard held
+	}
+	if code == -1 {
+		t.Fatalf("subprocess was killed by a signal (%v) — killBastionTunnel "+
+			"signalled its own process group; the pgid == pid guard is missing", cmd.ProcessState)
+	}
+	t.Fatalf("subprocess exited %d (err=%v), want %d", code, err, pgidGuardOK)
 }

@@ -54,7 +54,10 @@ func killBastionTunnel(cmd *exec.Cmd) {
 		return
 	}
 	pid := cmd.Process.Pid
-	if pgid, err := syscall.Getpgid(pid); err == nil {
+	// pgid == pid proves Setpgid took effect. Without that check, a cmd started
+	// without SysProcAttr.Setpgid reports *our* group, and the negative-pid kill
+	// below would take down dreadgoad itself along with its foreground group.
+	if pgid, err := syscall.Getpgid(pid); err == nil && pgid == pid {
 		// Negative pid targets the entire process group (wrapper + python).
 		_ = syscall.Kill(-pgid, syscall.SIGTERM)
 		time.Sleep(500 * time.Millisecond)
@@ -105,9 +108,12 @@ func StartProvisionTunnel(ctx context.Context, c *Client, env string) (*Provisio
 	// Own process group so Close() (and ctx-cancel) can reap the wrapper *and*
 	// its python child as one unit — see killBastionTunnel.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	// Kill the whole group on ctx-cancel, not just the wrapper process.
+	// Kill the whole group on ctx-cancel, not just the wrapper process. Same
+	// pgid == pid guard as killBastionTunnel: never negative-kill a group we
+	// haven't confirmed belongs to the child.
 	cmd.Cancel = func() error {
-		if pgid, err := syscall.Getpgid(cmd.Process.Pid); err == nil {
+		pid := cmd.Process.Pid
+		if pgid, err := syscall.Getpgid(pid); err == nil && pgid == pid {
 			return syscall.Kill(-pgid, syscall.SIGKILL)
 		}
 		return cmd.Process.Kill()
