@@ -1,8 +1,11 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/dreadnode/dreadgoad/internal/logging"
@@ -52,8 +55,15 @@ func SetVersionInfo(version, commit, date string) {
 
 // Execute runs the root cobra command and returns any error encountered.
 // It is the entry point called from main.
+//
+// The command runs under a signal-aware context: Ctrl+C (SIGINT) or SIGTERM
+// cancels ctx instead of hard-killing the process, so ctx-aware commands unwind
+// and run their deferred cleanup (e.g. tearing down Bastion tunnels) rather than
+// leaking child processes. A second signal force-quits.
 func Execute() error {
-	if err := rootCmd.Execute(); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return err
 	}

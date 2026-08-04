@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/dreadnode/dreadgoad/internal/ludus"
@@ -35,15 +36,33 @@ func (t *ProvisionTunnel) SOCKSAddr() string {
 }
 
 // Close terminates the SOCKS5 listener, the underlying SSH connection to the
-// controller, and the spawned `az network bastion tunnel` subprocess.
+// controller, and the spawned `az network bastion tunnel` subprocess tree.
 func (t *ProvisionTunnel) Close() {
 	if t.socks != nil {
 		t.socks.Close()
 	}
-	if t.bastionCmd != nil && t.bastionCmd.Process != nil {
-		_ = t.bastionCmd.Process.Kill()
-		_ = t.bastionCmd.Wait()
+	killBastionTunnel(t.bastionCmd)
+}
+
+// killBastionTunnel reaps the whole `az network bastion tunnel` process tree.
+// The `az` entry point is a shell wrapper that *spawns* a `python -m azure.cli`
+// child, so killing only cmd.Process (the wrapper) leaves that child running —
+// it reparents to init/launchd and the Bastion tunnel leaks. We start the
+// command in its own process group (Setpgid) and signal the whole group here.
+func killBastionTunnel(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
 	}
+	pid := cmd.Process.Pid
+	if pgid, err := syscall.Getpgid(pid); err == nil {
+		// Negative pid targets the entire process group (wrapper + python).
+		_ = syscall.Kill(-pgid, syscall.SIGTERM)
+		time.Sleep(500 * time.Millisecond)
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	} else {
+		_ = cmd.Process.Kill()
+	}
+	_ = cmd.Wait()
 }
 
 // StartProvisionTunnel discovers the in-VNet controller, opens a Bastion port
@@ -73,7 +92,9 @@ func StartProvisionTunnel(ctx context.Context, c *Client, env string) (*Provisio
 		return nil, fmt.Errorf("controller ephemeral key not found at expected path; was 'infra apply' run?")
 	}
 
-	cmd := exec.Command("az", "network", "bastion", "tunnel",
+	// exec.CommandContext so a cancelled ctx (Ctrl+C / SIGTERM propagated to a
+	// signal-aware root context) kills the tunnel even if Close() is skipped.
+	cmd := exec.CommandContext(ctx, "az", "network", "bastion", "tunnel",
 		"--name", bastion.Name,
 		"--resource-group", bastion.ResourceGroup,
 		"--target-resource-id", controller.ID,
@@ -81,13 +102,22 @@ func StartProvisionTunnel(ctx context.Context, c *Client, env string) (*Provisio
 		"--port", strconv.Itoa(localPort))
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
+	// Own process group so Close() (and ctx-cancel) can reap the wrapper *and*
+	// its python child as one unit — see killBastionTunnel.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Kill the whole group on ctx-cancel, not just the wrapper process.
+	cmd.Cancel = func() error {
+		if pgid, err := syscall.Getpgid(cmd.Process.Pid); err == nil {
+			return syscall.Kill(-pgid, syscall.SIGKILL)
+		}
+		return cmd.Process.Kill()
+	}
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start bastion tunnel: %w", err)
 	}
 
 	if err := waitForLocalPort(ctx, localPort, 60*time.Second); err != nil {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		killBastionTunnel(cmd)
 		return nil, fmt.Errorf("bastion tunnel never came up on :%d: %w", localPort, err)
 	}
 
@@ -101,8 +131,7 @@ func StartProvisionTunnel(ctx context.Context, c *Client, env string) (*Provisio
 	}
 	socks, err := ludus.StartSOCKSTunnel(sshCfg)
 	if err != nil {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		killBastionTunnel(cmd)
 		return nil, fmt.Errorf("start SOCKS5 over controller: %w", err)
 	}
 
