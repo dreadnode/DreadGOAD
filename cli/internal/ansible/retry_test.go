@@ -1,8 +1,40 @@
 package ansible
 
 import (
+	"bytes"
+	"context"
+	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 )
+
+// TestRunPlaybookWithRetryStopsOnCancelledContext pins the cancellation check
+// at the top of the retry loop. Wiring `provision` to the root's signal-aware
+// context means an interrupt now surfaces as an ordinary playbook failure, and
+// without the check the loop interprets that failure and announces retries it
+// cannot perform. The returned error is context.Canceled either way, so this
+// asserts on the log: no attempt may be started once ctx is done.
+func TestRunPlaybookWithRetryStopsOnCancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	var logBuf bytes.Buffer
+	err := RunPlaybookWithRetry(ctx, RetryOptions{
+		Playbook:   "noop.yml",
+		Env:        "test",
+		MaxRetries: 3,
+		Log:        slog.New(slog.NewTextHandler(&logBuf, nil)),
+	})
+
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("got err %v, want context.Canceled", err)
+	}
+	if got := logBuf.String(); strings.Contains(got, "starting playbook") ||
+		strings.Contains(got, "retrying with") {
+		t.Fatalf("cancelled context still drove a retry attempt; log was:\n%s", got)
+	}
+}
 
 // TestBuildRetryLimit covers all branches of buildRetryLimit.
 func TestBuildRetryLimit(t *testing.T) {

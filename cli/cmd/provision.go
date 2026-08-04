@@ -327,7 +327,10 @@ func runProvision(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
+	// Signal-aware context from the root: Ctrl+C/SIGTERM cancels ctx so
+	// provisionPlaybooks unwinds and its deferred socksTunnel.Close() runs,
+	// instead of the process dying with the Bastion tunnel orphaned.
+	ctx := cmd.Context()
 
 	playsFlag, _ := cmd.Flags().GetString("plays")
 	fromFlag, _ := cmd.Flags().GetString("from")
