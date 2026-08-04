@@ -49,23 +49,64 @@ func (t *ProvisionTunnel) Close() {
 // child, so killing only cmd.Process (the wrapper) leaves that child running —
 // it reparents to init/launchd and the Bastion tunnel leaks. We start the
 // command in its own process group (Setpgid) and signal the whole group here.
+// killGracePeriod is how long the tunnel gets to honor SIGTERM before the
+// group is SIGKILLed.
+const killGracePeriod = 500 * time.Millisecond
+
 func killBastionTunnel(cmd *exec.Cmd) {
 	if cmd == nil || cmd.Process == nil {
 		return
 	}
 	pid := cmd.Process.Pid
+
+	// Reap in the background so the wrapper leaves zombie state the moment it
+	// dies. This is what makes the polling below work at all: an unreaped
+	// zombie still answers kill(pid, 0), so waiting on the group without
+	// concurrently reaping would never observe the exit.
+	reaped := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(reaped)
+	}()
+
 	// pgid == pid proves Setpgid took effect. Without that check, a cmd started
 	// without SysProcAttr.Setpgid reports *our* group, and the negative-pid kill
 	// below would take down dreadgoad itself along with its foreground group.
-	if pgid, err := syscall.Getpgid(pid); err == nil && pgid == pid {
-		// Negative pid targets the entire process group (wrapper + python).
-		_ = syscall.Kill(-pgid, syscall.SIGTERM)
-		time.Sleep(500 * time.Millisecond)
-		_ = syscall.Kill(-pgid, syscall.SIGKILL)
-	} else {
+	pgid, err := syscall.Getpgid(pid)
+	if err != nil || pgid != pid {
 		_ = cmd.Process.Kill()
+		<-reaped
+		return
 	}
-	_ = cmd.Wait()
+
+	// Negative pid targets the entire process group (wrapper + python).
+	_ = syscall.Kill(-pgid, syscall.SIGTERM)
+	if !awaitGroupExit(pgid, reaped, killGracePeriod) {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	}
+	<-reaped
+}
+
+// awaitGroupExit polls until no member of pgid remains, or timeout elapses.
+// Returns true if the group went away on its own, letting the caller skip the
+// SIGKILL escalation — a tunnel that honors SIGTERM promptly costs a few
+// milliseconds here instead of the full grace period.
+func awaitGroupExit(pgid int, reaped <-chan struct{}, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		select {
+		case <-reaped:
+			// Wrapper is reaped, so a surviving group means real stragglers.
+			if syscall.Kill(-pgid, 0) == syscall.ESRCH {
+				return true
+			}
+		default:
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // StartProvisionTunnel discovers the in-VNet controller, opens a Bastion port

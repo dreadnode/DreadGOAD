@@ -3,6 +3,7 @@
 package azure
 
 import (
+	"bufio"
 	"os"
 	"os/exec"
 	"strconv"
@@ -39,15 +40,16 @@ func TestKillBastionTunnelReapsChildTree(t *testing.T) {
 		t.Fatalf("start: %v", err)
 	}
 
-	// Read the grandchild (sleep) PID the wrapper printed.
-	buf := make([]byte, 64)
-	n, err := stdout.Read(buf)
+	// Read the grandchild (sleep) PID the wrapper printed. Read through the
+	// newline rather than trusting one Read to return the whole line, so a
+	// split write can't turn into a flaky parse.
+	line, err := bufio.NewReader(stdout).ReadString('\n')
 	if err != nil {
-		t.Fatalf("read child pid: %v", err)
+		t.Fatalf("read child pid (got %q): %v", line, err)
 	}
-	childPID, err := strconv.Atoi(strings.TrimSpace(string(buf[:n])))
+	childPID, err := strconv.Atoi(strings.TrimSpace(line))
 	if err != nil {
-		t.Fatalf("parse child pid %q: %v", string(buf[:n]), err)
+		t.Fatalf("parse child pid %q: %v", line, err)
 	}
 
 	if !processAlive(childPID) {
