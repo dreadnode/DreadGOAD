@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Launch the DreadGOAD web app.
 #
-#   ./dreadgoad-web                 # build frontend, serve on :8420
+#   ./dreadgoad-web                 # build frontend, serve on :7331
 #   ./dreadgoad-web --dev           # run vite dev server + backend (hot reload)
 #
 # Requires: python3, node/npm, and the compiled `dreadgoad` Go binary on PATH
@@ -12,7 +12,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 BACKEND="$ROOT/webapp/backend"
 FRONTEND="$ROOT/webapp/frontend"
 VENV="$ROOT/.venv"
-PORT="${DREADGOAD_WEBAPP_PORT:-8420}"
+PORT="${DREADGOAD_WEBAPP_PORT:-7331}"
 
 # --- Python venv + backend deps ---
 if [ ! -d "$VENV" ]; then
