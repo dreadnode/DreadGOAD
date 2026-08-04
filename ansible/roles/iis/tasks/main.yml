@@ -76,6 +76,27 @@
     src: files/index.html
     dest: "C:\\inetpub\\wwwroot\\index.html"
 
+- name: Record pre-reboot boot time baseline (IIS install)
+  ansible.windows.win_powershell:
+    script: |
+      (Get-CimInstance -ClassName Win32_OperatingSystem -Property LastBootUpTime).LastBootUpTime.ToFileTime()
+  register: reboot_baseline
+  when: win_feature.reboot_required | default(false)
+
 - name: Reboot if required
-  ansible.windows.win_reboot:
+  block:
+    - name: Trigger reboot via win_reboot
+      ansible.windows.win_reboot:
+        reboot_timeout: 300
+        post_reboot_delay: 60
+  rescue:
+    - name: Verify reboot completed (aws_ssm reconnect timeout is expected)
+      ansible.windows.win_powershell:
+        script: |
+          $current = (Get-CimInstance -ClassName Win32_OperatingSystem -Property LastBootUpTime).LastBootUpTime.ToFileTime()
+          if ($current -le {{ reboot_baseline.output[0] }}) { throw "host has not rebooted yet" }
+      register: reboot_verify
+      until: reboot_verify is succeeded
+      retries: 30
+      delay: 10
   when: win_feature.reboot_required | default(false)

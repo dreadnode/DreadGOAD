@@ -49,7 +49,7 @@ func init() {
 	scoreCmd.Flags().String("ssh-key", "", "Path to SSH private key for the Kali VM (Azure; auto-discovered if omitted)")
 	scoreCmd.Flags().String("ssh-user", "kali", "SSH username for the Kali VM (Azure)")
 
-	scoreGenerateKeyCmd.Flags().String("config", "", "Path to GOAD config.json (default: ad/GOAD/data/config.json)")
+	scoreGenerateKeyCmd.Flags().String("config", "", "Path to GOAD config.json (default: the active environment's resolved lab config)")
 	scoreGenerateKeyCmd.Flags().String("output", "", "Output path for answer_key.json (default: scoreboard/answer_key.json)")
 }
 
@@ -238,7 +238,13 @@ func runScoreGenerateKey(cmd *cobra.Command, _ []string) error {
 	}
 	configPath, _ := cmd.Flags().GetString("config")
 	if configPath == "" {
-		configPath = filepath.Join(cfg.ProjectRoot, "ad", "GOAD", "data", "config.json")
+		// Resolve through the active environment so overlays and variant labs
+		// are honored. Hardcoding ad/GOAD/data/config.json scores the base lab
+		// no matter which --env is selected.
+		configPath, err = cfg.ResolvedLabConfigPath()
+		if err != nil {
+			return err
+		}
 	}
 	outputPath, _ := cmd.Flags().GetString("output")
 	if outputPath == "" {

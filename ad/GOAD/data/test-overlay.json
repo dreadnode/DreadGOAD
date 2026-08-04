@@ -1,14 +1,5 @@
 {
   "lab": {
-    "domains": {
-      "essos.local": {
-        "groups": {
-          "universal": {
-            "greatmaster": null
-          }
-        }
-      }
-    },
     "hosts": {
       "dc01": {
         "vulns": [
@@ -40,14 +31,10 @@
         ]
       },
       "dc03": {
-        "local_groups": {
-          "Administrators": [
-            "essos\\daenerys.targaryen"
-          ]
-        },
         "vulns": [
           "ntlmdowngrade",
           "disable_firewall",
+          "adcs_esc10_case1",
           "adcs_esc7",
           "adcs_esc13",
           "adcs_esc15"

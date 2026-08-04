@@ -1,5 +1,20 @@
 # DreadGOAD CLI Reference
 
+## Installation
+
+Install the `dreadgoad` binary to your `GOPATH/bin` using the project Taskfile:
+
+```bash
+task install
+```
+
+This runs `go install` from the `cli/` module and drops the binary in
+`$(go env GOPATH)/bin`. Ensure that directory is on your `PATH`, then run
+`dreadgoad --help` to confirm the install.
+
+Run `task --list` to see all available tasks. `task` (no arguments) builds,
+tests, and cleans the CLI.
+
 ## Commands
 
 Run `dreadgoad <command> --help` for full flag listings. Major commands:
@@ -73,7 +88,7 @@ dreadgoad config set environments.dev.variant true
 # Active environment (selects into the environments map below)
 env: staging
 
-# AWS region override (default: resolved from inventory)
+# Fallback AWS region for environments that don't declare their own
 # region: us-west-2
 
 debug: false
@@ -97,10 +112,13 @@ environments:
     vpc_cidr: "10.0.0.0/16"          # VPC CIDR block for this environment
   staging:
     variant: false
+    region: us-west-1                 # Where this environment's lab lives
     vpc_cidr: "10.1.0.0/16"
   prod:
+    region: us-east-1
     vpc_cidr: "10.2.0.0/16"
   test:
+    region: us-east-2
     vpc_cidr: "10.8.0.0/16"
 ```
 
@@ -108,6 +126,25 @@ environments:
 
 The `environments` map lets you configure behavior per environment. The
 active environment is selected by the top-level `env` key.
+
+### Region
+
+Each environment declares the AWS region its lab is deployed to. Region is a
+property of the lab rather than of the CLI -- staging and prod live in
+different regions -- and it must match the region directory in the
+`infra/{deployment}/{env}/{region}/` tree.
+
+Resolution order, highest first:
+
+1. An explicit `--region` flag or `DREADGOAD_REGION`
+2. `environments.<env>.region`
+3. The top-level `region`, for environments that don't declare one
+
+Commands that talk to an already-deployed lab (`dreadgoad ssm`, `lab reset`)
+prefer the inventory's own `ansible_aws_ssm_region` over all of the above.
+
+If an environment has no region and no fallback is set, AWS commands fail with
+an error naming the key to set rather than silently querying the wrong region.
 
 ### VPC CIDR
 

@@ -40,6 +40,12 @@ type HostConfig struct {
 	MSSQL              *MSSQLConfig        `json:"mssql,omitempty"`
 	// RemoteDesktopUsers appears at host top-level in some upstream GOAD configs.
 	RemoteDesktopUsers []string `json:"Remote Desktop Users,omitempty"`
+	// OS marks non-Windows hosts (DRACARYS uses "linux" for lx01).
+	OS string `json:"os,omitempty"`
+	// VulnsADCSTemplates lists the certificate templates published for this
+	// host; read by cli/internal/ansible/prepare.go to drive the
+	// vulns_adcs_templates role.
+	VulnsADCSTemplates []string `json:"vulns_adcs_templates,omitempty"`
 }
 
 // MSSQLConfig holds MSSQL server configuration for a host.
@@ -87,6 +93,14 @@ type DomainConfig struct {
 	GMSA                    map[string]GMSAConfig  `json:"gmsa,omitempty"`
 	ACLs                    map[string]ACLConfig   `json:"acls"`
 	Users                   map[string]*UserConfig `json:"users"`
+	// CAWebEnrollment is a pointer so an explicit false survives the round-trip.
+	// ansible/playbooks/adcs.yml treats absent as true, so dropping a false here
+	// silently turns CA web enrollment back on in the generated variant.
+	CAWebEnrollment *bool `json:"ca_web_enrollment,omitempty"`
+	// SCCM holds the MECM/SCCM site configuration (SCCM lab only). Kept as a raw
+	// map because the generator has no reason to reshape it; entity names inside
+	// are still randomized by the text-level replacement pass.
+	SCCM map[string]any `json:"sccm,omitempty"`
 }
 
 // OUConfig represents an organisational unit.

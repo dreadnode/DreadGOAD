@@ -4,22 +4,6 @@
       "essos.local": {
         "acls": {
           "GenericWrite_missandei_viserys": null
-        },
-        "groups": {
-          "global": {
-            "Domain Admins": {
-              "managed_by": "Administrator"
-            },
-            "Dragons": {
-              "managed_by": "Administrator"
-            },
-            "QueenProtector": {
-              "managed_by": "Administrator"
-            }
-          },
-          "universal": {
-            "greatmaster": null
-          }
         }
       }
     },
@@ -52,17 +36,24 @@
           "enable_nbt_ns",
           "shares",
           "anonymous_enum"
-        ]
+        ],
+        "vulns_vars": {
+          "shares": {
+            "thewall": {
+              "path": "C:\\thewall",
+              "list": "yes",
+              "full": "NORTH\\Stark",
+              "change": "NORTH\\jon.snow,NORTH\\samwell.tarly",
+              "read": "Users"
+            }
+          }
+        }
       },
       "dc03": {
-        "local_groups": {
-          "Administrators": [
-            "essos\\daenerys.targaryen"
-          ]
-        },
         "vulns": [
           "ntlmdowngrade",
           "disable_firewall",
+          "adcs_esc10_case1",
           "adcs_esc7",
           "adcs_esc13",
           "adcs_esc15"
