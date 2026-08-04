@@ -28,6 +28,23 @@ class RunningCommand:
             with _suppress():
                 self._proc.send_signal(signal.SIGINT)
 
+    @property
+    def returncode(self) -> int:
+        return self._proc.returncode or 0
+
+    @property
+    def output(self) -> str:
+        return "\n".join(self.lines)
+
+    async def stream_lines(self) -> t.AsyncIterator[str]:
+        """Yield stdout lines as they arrive (live tail, §5.4), then reap."""
+        assert self._proc.stdout is not None
+        async for raw in self._proc.stdout:
+            line = raw.decode("utf-8", errors="replace").rstrip("\n")
+            self.lines.append(line)
+            yield line
+        await self._proc.wait()
+
     async def wait(self, on_line: OnLine | None = None) -> tuple[int, str]:
         """Stream stdout (merged stderr) until exit; return (rc, full_output)."""
         assert self._proc.stdout is not None

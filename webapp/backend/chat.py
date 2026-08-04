@@ -33,6 +33,18 @@ CHAT_KINDS = ["user_message", "generation", "tool_start", "tool_end", "error", "
 # Per-session agent runtime (isolated; §4.2). Keyed by session id.
 _agents: dict[str, t.Any] = {}
 
+# In-flight CLI commands, keyed by session id, for cancellation (§5.4).
+_running: dict[str, t.Any] = {}
+
+
+def cancel_session(session_id: str) -> bool:
+    """Cancel the session's in-flight command (SIGINT). Returns True if one ran."""
+    rc = _running.get(session_id)
+    if rc is None:
+        return False
+    rc.cancel()
+    return True
+
 
 def format_event(event: t.Any) -> dict[str, t.Any] | None:
     """Convert a dreadnode AgentEvent to a JSON-able chat event (ALFRED shape)."""
@@ -95,14 +107,24 @@ async def handle_message(app: t.Any, ws: t.Any, session_id: str, content: str) -
         argv = commands.build_argv(session, name, extra, repo_root=str(paths.repo_root()))
         await emit("command_run", {"phase": "start", "command": name, "argv": argv})
 
-        rc = await start_command(argv, cwd=str(paths.repo_root()))
-        progress: list[str] = []
-        exit_code, output = await rc.wait(on_line=progress.append)
+        cmd = commands.REGISTRY[name]
+        if cmd.long_running:
+            await app.state.sessions.set_status(session_id, "provisioning")
 
-        # command_progress is live-only (not persisted, §5.4). Phase 6 streams
-        # these as they arrive; v1 flushes the tail after completion.
-        for ln in progress[-100:]:
-            await emit("command_progress", {"line": ln}, persist=False)
+        rc = await start_command(argv, cwd=str(paths.repo_root()))
+        _running[session_id] = rc
+        try:
+            # Live tail: stream stdout lines as they arrive (§5.4). Not persisted.
+            async for line in rc.stream_lines():
+                await emit("command_progress", {"line": line}, persist=False)
+        finally:
+            _running.pop(session_id, None)
+        exit_code = rc.returncode
+        output = rc.output
+
+        if cmd.long_running:
+            final = "error" if exit_code else ("destroyed" if name == "/destroy" else "running")
+            await app.state.sessions.set_status(session_id, final)
 
         await emit("command_run", {"phase": "end", "command": name,
                                    "exit_code": exit_code, "tail": output[-2000:]})

@@ -35,6 +35,12 @@ async def _lifespan(app: FastAPI) -> t.AsyncIterator[None]:
     app.state.sessions = SessionService(
         db, repo_root=str(paths.repo_root()), sessions_root=paths.sessions_root()
     )
+    # Survival: a session left mid-deploy by a crash/restart is reconciled to
+    # `interrupted` so the operator knows to re-run (§5.4).
+    for s in await db.list_sessions():
+        if s.get("status") == "provisioning":
+            s["status"] = "interrupted"
+            await db.upsert_session(s)
     try:
         yield
     finally:
@@ -151,6 +157,9 @@ async def ws_chat(websocket: WebSocket) -> None:
                 continue
             if msg.get("type") == "resume":
                 await chat.replay(app, websocket, session_id)
+                continue
+            if msg.get("type") == "cancel":
+                chat.cancel_session(session_id)
                 continue
             content = (msg.get("content") or "").strip()
             if content:
