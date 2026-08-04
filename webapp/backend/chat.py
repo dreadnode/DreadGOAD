@@ -129,6 +129,13 @@ async def handle_message(app: t.Any, ws: t.Any, session_id: str, content: str) -
         await emit("command_run", {"phase": "end", "command": name,
                                    "exit_code": exit_code, "tail": output[-2000:]})
         await run_hook_and_emit()
+
+        # Command-specific overlays (§6.4 / §6.3).
+        if name == "/health":
+            await hook.apply_health(app, session_id, exit_code == 0)
+        elif name in ("/variant", "/extensions"):
+            await hook.reseed(app, session_id)
+
         await emit("agent_end", {"failed": exit_code != 0})
         return
 

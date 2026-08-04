@@ -127,6 +127,38 @@ def seed_topology(lab_config_path: str | None, provider: str | None) -> dict[str
     return {"hosts": hosts, "edges": [], "layout": {}, "last_checked_at": None}
 
 
+_DYNAMIC_FIELDS = ("status", "health", "ip_private", "ip_public", "cloud_id", "last_checked_at")
+
+
+def merge_reseed(existing: dict[str, t.Any], seeded: dict[str, t.Any]) -> dict[str, t.Any]:
+    """Re-seed a range's node set while preserving live state + layout (§6.3).
+
+    Used after ``/extensions`` / ``/variant`` change the topology: the node set
+    becomes ``seeded`` (adds new machines like ELK, drops removed ones), but
+    surviving hosts keep their dynamic fields (status/health/ip/…) and saved
+    positions.
+    """
+    old = {h["id"]: h for h in existing.get("hosts", [])}
+    hosts: list[dict[str, t.Any]] = []
+    for h in seeded.get("hosts", []):
+        if h["id"] in old:
+            merged = dict(h)
+            prev = old[h["id"]]
+            for k in _DYNAMIC_FIELDS:
+                if k in prev:
+                    merged[k] = prev[k]
+            hosts.append(merged)
+        else:
+            hosts.append(h)
+    keep = {h["id"] for h in hosts}
+    layout = {k: v for k, v in existing.get("layout", {}).items() if k in keep}
+    out = dict(existing)
+    out["hosts"] = hosts
+    out["edges"] = seeded.get("edges", [])
+    out["layout"] = layout
+    return out
+
+
 def lab_config_path(repo_root: str, lab: str | None) -> str | None:
     """Resolve ``ad/<lab>/data/config.json`` under the repo root.
 

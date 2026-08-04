@@ -15,6 +15,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 from webapp.backend.labconfig import (  # noqa: E402
     backup_yaml,
     derive_snapshot,
+    merge_reseed,
     seed_topology,
 )
 
@@ -120,10 +121,47 @@ def test_backup_yaml_versions() -> None:
     print("PASS test_backup_yaml_versions")
 
 
+def test_merge_reseed_preserves_state_and_adds_nodes() -> None:
+    existing = {
+        "hosts": [
+            {"id": "kingslanding", "role": "dc", "source": "config",
+             "status": "running", "health": "healthy", "ip_private": "10.0.0.5",
+             "cloud_id": "i-1", "last_checked_at": "T"},
+            {"id": "winterfell", "role": "dc", "source": "config", "status": "running"},
+        ],
+        "edges": [],
+        "layout": {"kingslanding": {"x": 100, "y": 50}, "winterfell": {"x": 300, "y": 50}},
+    }
+    # Re-seed: kingslanding stays, winterfell gone, elk added.
+    seeded = {
+        "hosts": [
+            {"id": "kingslanding", "role": "dc", "source": "config",
+             "status": "unknown", "health": "unknown", "ip_private": None,
+             "cloud_id": None, "last_checked_at": None},
+            {"id": "elk", "role": "linux", "source": "extension",
+             "status": "unknown", "health": "unknown", "ip_private": None,
+             "cloud_id": None, "last_checked_at": None},
+        ],
+        "edges": [],
+    }
+    out = merge_reseed(existing, seeded)
+    hosts = {h["id"]: h for h in out["hosts"]}
+    assert set(hosts) == {"kingslanding", "elk"}, "node set should follow re-seed"
+    # surviving host keeps live state
+    assert hosts["kingslanding"]["status"] == "running", hosts["kingslanding"]
+    assert hosts["kingslanding"]["ip_private"] == "10.0.0.5", hosts["kingslanding"]
+    # new node has blank dynamic
+    assert hosts["elk"]["status"] == "unknown", hosts["elk"]
+    # layout kept only for survivors
+    assert "kingslanding" in out["layout"] and "winterfell" not in out["layout"], out["layout"]
+    print("PASS test_merge_reseed_preserves_state_and_adds_nodes")
+
+
 if __name__ == "__main__":
     test_derive_snapshot_azure()
     test_derive_snapshot_aws_falls_back_to_source()
     test_seed_topology_from_goad_config()
     test_seed_topology_aws_has_no_bastion()
     test_backup_yaml_versions()
+    test_merge_reseed_preserves_state_and_adds_nodes()
     print("ALL PASS")

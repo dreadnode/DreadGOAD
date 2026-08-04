@@ -13,7 +13,7 @@ import json
 import typing as t
 from datetime import datetime, timezone
 
-from . import commands, paths
+from . import commands, labconfig, paths
 from .cli import run_command
 
 # Cloud power state → our host.status enum (§6.3).
@@ -121,3 +121,33 @@ async def run_check(app: t.Any, session_id: str) -> dict[str, t.Any]:
     payload = summarize_changes(rng, updated)
     await db.upsert_range(session_id, updated)
     return payload
+
+
+async def apply_health(app: t.Any, session_id: str, healthy: bool) -> None:
+    """Set the health overlay on config hosts after /health (§6.4 two write paths).
+
+    v1 applies a range-level verdict from the command's exit code (per-host
+    health needs a --json health-check; noted as a follow-up).
+    """
+    db = app.state.db
+    rng = await db.get_range(session_id)
+    if rng is None:
+        return
+    verdict = "healthy" if healthy else "unhealthy"
+    for h in rng.get("hosts", []):
+        if h.get("source") == "config":
+            h["health"] = verdict
+    await db.upsert_range(session_id, rng)
+
+
+async def reseed(app: t.Any, session_id: str) -> None:
+    """Re-seed topology after /extensions or /variant change the node set (§6.3)."""
+    db = app.state.db
+    session = await db.get_session(session_id)
+    rng = await db.get_range(session_id)
+    if session is None or rng is None:
+        return
+    snap = session.get("snapshot", {})
+    cfg = labconfig.lab_config_path(str(paths.repo_root()), snap.get("lab"))
+    seeded = labconfig.seed_topology(cfg, snap.get("provider"))
+    await db.upsert_range(session_id, labconfig.merge_reseed(rng, seeded))
