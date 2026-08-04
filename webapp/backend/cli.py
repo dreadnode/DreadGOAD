@@ -79,6 +79,27 @@ async def start_command(argv: list[str], cwd: str | Path) -> RunningCommand:
 async def run_command(
     argv: list[str], cwd: str | Path, on_line: OnLine | None = None
 ) -> tuple[int, str]:
-    """Convenience: start + wait. Returns (returncode, full_output)."""
+    """Convenience: start + wait. Returns (returncode, merged_output)."""
     rc = await start_command(argv, cwd)
     return await rc.wait(on_line)
+
+
+async def capture(argv: list[str], cwd: str | Path) -> tuple[int, str, str]:
+    """Run a command capturing stdout and stderr **separately**.
+
+    Used for machine-readable output (e.g. ``lab status --json``): merging
+    stderr into stdout would let a stray log/warning line corrupt JSON
+    parsing. Returns (returncode, stdout, stderr).
+    """
+    proc = await asyncio.create_subprocess_exec(
+        *argv,
+        cwd=str(cwd),
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    out, err = await proc.communicate()
+    return (
+        proc.returncode or 0,
+        out.decode("utf-8", errors="replace"),
+        err.decode("utf-8", errors="replace"),
+    )

@@ -13,7 +13,9 @@ import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
-from webapp.backend.cli import start_command  # noqa: E402
+import json  # noqa: E402
+
+from webapp.backend.cli import capture, start_command  # noqa: E402
 
 
 def _script(body: str) -> str:
@@ -51,9 +53,21 @@ async def test_cancel_sigint_stops_before_completion() -> None:
     print("PASS test_cancel_sigint_stops_before_completion")
 
 
+async def test_capture_separates_stdout_stderr() -> None:
+    """JSON on stdout must survive stderr noise (the hook parses stdout)."""
+    stub = _script('echo "[1, 2]"\necho "WARN: some log noise" 1>&2\nexit 0\n')
+    rc, out, err = await capture([stub], cwd=".")
+    assert rc == 0, rc
+    assert out.strip() == "[1, 2]", f"stdout polluted: {out!r}"
+    assert "WARN" in err, f"stderr not captured: {err!r}"
+    assert json.loads(out) == [1, 2], "stdout must parse as clean JSON"
+    print("PASS test_capture_separates_stdout_stderr")
+
+
 async def _main() -> None:
     await test_stream_lines_live()
     await test_cancel_sigint_stops_before_completion()
+    await test_capture_separates_stdout_stderr()
     print("ALL PASS")
 
 

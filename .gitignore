@@ -20,6 +20,7 @@ coverage.out
 # Web app build artifacts
 webapp/frontend/node_modules/
 webapp/frontend/dist/
+webapp/frontend/*.tsbuildinfo
 ansible/roles/adcs_templates/files/ADCSTemplate.zip
 ansible/roles/vulns_adcs_templates/files/ADCSTemplate.zip
 

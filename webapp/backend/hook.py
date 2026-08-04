@@ -14,7 +14,7 @@ import typing as t
 from datetime import datetime, timezone
 
 from . import commands, labconfig, paths
-from .cli import run_command
+from .cli import capture
 
 # Cloud power state → our host.status enum (§6.3).
 _STATE = {
@@ -109,10 +109,11 @@ async def run_check(app: t.Any, session_id: str) -> dict[str, t.Any]:
 
     argv = commands.build_argv(session, "/instances", repo_root=str(paths.repo_root()))
     try:
-        rc, output = await run_command(argv, cwd=str(paths.repo_root()))
+        # Separate streams: stderr noise must not corrupt the JSON on stdout.
+        rc, out, err = await capture(argv, cwd=str(paths.repo_root()))
         if rc != 0:
-            raise RuntimeError(f"lab status --json exited {rc}: {output[-500:]}")
-        instances = json.loads(output)
+            raise RuntimeError(f"lab status --json exited {rc}: {err[-500:]}")
+        instances = json.loads(out)
     except Exception as exc:  # noqa: BLE001
         await app.state.sessions.set_status(session_id, "error")
         return {"error": str(exc)}
