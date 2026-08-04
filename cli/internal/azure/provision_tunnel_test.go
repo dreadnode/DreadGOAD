@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -74,6 +75,35 @@ func TestKillBastionTunnelReapsChildTree(t *testing.T) {
 func TestKillBastionTunnelNilSafe(t *testing.T) {
 	killBastionTunnel(nil)
 	killBastionTunnel(&exec.Cmd{}) // Process == nil
+}
+
+// TestProvisionTunnelCloseIsRaceFree pins the closeOnce guard. killBastionTunnel
+// reaps with cmd.Wait, and two Wait calls on one exec.Cmd is a data race — so
+// concurrent Close must collapse to a single teardown. Run under -race; without
+// closeOnce the detector reports a write/write race inside os/exec.(*Cmd).Wait.
+func TestProvisionTunnelCloseIsRaceFree(t *testing.T) {
+	cmd := exec.Command("sleep", "120")
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	// socks stays nil: this exercises the subprocess half, which is where the
+	// race lives.
+	tunnel := &ProvisionTunnel{bastionCmd: cmd}
+
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tunnel.Close()
+		}()
+	}
+	wg.Wait()
+
+	if processAlive(cmd.Process.Pid) {
+		t.Fatalf("process %d survived Close", cmd.Process.Pid)
+	}
 }
 
 // pgidGuardEnv re-enters this test binary as a subprocess for the guard check

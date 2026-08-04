@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -23,6 +24,7 @@ type ProvisionTunnel struct {
 	socks      *ludus.SOCKSTunnel
 	bastionCmd *exec.Cmd
 	localPort  int
+	closeOnce  sync.Once
 }
 
 // ProxyURL returns the SOCKS5 proxy URL Ansible's psrp connection plugin
@@ -37,11 +39,20 @@ func (t *ProvisionTunnel) SOCKSAddr() string {
 
 // Close terminates the SOCKS5 listener, the underlying SSH connection to the
 // controller, and the spawned `az network bastion tunnel` subprocess tree.
+//
+// Teardown runs exactly once even if Close is called concurrently. That is not
+// cosmetic: killBastionTunnel reaps via cmd.Wait, and two Wait calls racing on
+// one exec.Cmd is a data race the detector flags. Callers reach Close through
+// several paths (winrmRunner.close, the deferred Drain in `validate`, the
+// deferred socksTunnel.Close in `provision`), so the guarantee lives here
+// rather than depending on every caller staying serialized.
 func (t *ProvisionTunnel) Close() {
-	if t.socks != nil {
-		t.socks.Close()
-	}
-	killBastionTunnel(t.bastionCmd)
+	t.closeOnce.Do(func() {
+		if t.socks != nil {
+			t.socks.Close()
+		}
+		killBastionTunnel(t.bastionCmd)
+	})
 }
 
 // killBastionTunnel reaps the whole `az network bastion tunnel` process tree.
