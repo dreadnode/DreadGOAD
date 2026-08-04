@@ -43,7 +43,9 @@ def _norm_state(state: str | None) -> str:
     return _STATE.get((state or "").lower(), "unknown")
 
 
-def _match(host: dict[str, t.Any], instances: list[dict[str, t.Any]]) -> dict[str, t.Any] | None:
+def _match(
+    host: dict[str, t.Any], instances: list[dict[str, t.Any]]
+) -> dict[str, t.Any] | None:
     """Find the instance whose name contains the host id (or an alias)."""
     hid = str(host["id"]).lower()
     aliases = _ALIASES.get(hid, [hid])

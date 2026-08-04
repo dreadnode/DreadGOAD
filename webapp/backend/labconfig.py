@@ -80,7 +80,9 @@ def _blank_dynamic() -> dict[str, t.Any]:
     }
 
 
-def seed_topology(lab_config_path: str | None, provider: str | None) -> dict[str, t.Any]:
+def seed_topology(
+    lab_config_path: str | None, provider: str | None
+) -> dict[str, t.Any]:
     """Seed a range's node set from ``config.json`` + infra nodes (§6.3).
 
     3-way merge, v1 subset:
@@ -114,23 +116,44 @@ def seed_topology(lab_config_path: str | None, provider: str | None) -> dict[str
         hosts.append(host)
 
     # Infra nodes (not in the lab config).
-    hosts.append({
-        "id": "attackbox", "hostname": "attackbox", "role": "attackbox",
-        "source": "infra", "domain": None, **_blank_dynamic(),
-    })
+    hosts.append(
+        {
+            "id": "attackbox",
+            "hostname": "attackbox",
+            "role": "attackbox",
+            "source": "infra",
+            "domain": None,
+            **_blank_dynamic(),
+        }
+    )
     if provider == "azure":
-        hosts.append({
-            "id": "bastion", "hostname": "bastion", "role": "bastion",
-            "source": "infra", "domain": None, **_blank_dynamic(),
-        })
+        hosts.append(
+            {
+                "id": "bastion",
+                "hostname": "bastion",
+                "role": "bastion",
+                "source": "infra",
+                "domain": None,
+                **_blank_dynamic(),
+            }
+        )
 
     return {"hosts": hosts, "edges": [], "layout": {}, "last_checked_at": None}
 
 
-_DYNAMIC_FIELDS = ("status", "health", "ip_private", "ip_public", "cloud_id", "last_checked_at")
+_DYNAMIC_FIELDS = (
+    "status",
+    "health",
+    "ip_private",
+    "ip_public",
+    "cloud_id",
+    "last_checked_at",
+)
 
 
-def merge_reseed(existing: dict[str, t.Any], seeded: dict[str, t.Any]) -> dict[str, t.Any]:
+def merge_reseed(
+    existing: dict[str, t.Any], seeded: dict[str, t.Any]
+) -> dict[str, t.Any]:
     """Re-seed a range's node set while preserving live state + layout (§6.3).
 
     Used after ``/extensions`` / ``/variant`` change the topology: the node set

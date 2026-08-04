@@ -44,10 +44,18 @@ def test_argv_arg_shaped_commands() -> None:
     assert _argv("/extensions", ["elk"])[5:] == ["extension", "provision", "elk"]
     # /score: report path + passthrough flag
     assert _argv("/score", ["/tmp/r.jsonl", "--live-verify"])[5:] == [
-        "score", "--report", "/tmp/r.jsonl", "--live-verify",
+        "score",
+        "--report",
+        "/tmp/r.jsonl",
+        "--live-verify",
     ]
     # /variant: passthrough
-    assert _argv("/variant", ["--name", "v2"])[5:] == ["variant", "generate", "--name", "v2"]
+    assert _argv("/variant", ["--name", "v2"])[5:] == [
+        "variant",
+        "generate",
+        "--name",
+        "v2",
+    ]
     print("PASS test_argv_arg_shaped_commands")
 
 
@@ -57,7 +65,8 @@ def test_registry_flags_and_parsing() -> None:
     assert commands.REGISTRY["/destroy"].verb == ("infra", "destroy")
     assert commands.is_command("/health") and not commands.is_command("hello there")
     assert commands.parse_command("/score /tmp/r.jsonl --live-verify") == (
-        "/score", ["/tmp/r.jsonl", "--live-verify"],
+        "/score",
+        ["/tmp/r.jsonl", "--live-verify"],
     )
     try:
         _argv("/nope")

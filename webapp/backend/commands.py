@@ -17,9 +17,9 @@ from pathlib import Path
 @dataclass(frozen=True)
 class Command:
     name: str
-    verb: tuple[str, ...]           # base CLI verb after `dreadgoad`
-    dispatch: str = "direct"        # "direct" (deterministic) | "agent"
-    long_running: bool = False      # streamed + guarded cancel (§5.4)
+    verb: tuple[str, ...]  # base CLI verb after `dreadgoad`
+    dispatch: str = "direct"  # "direct" (deterministic) | "agent"
+    long_running: bool = False  # streamed + guarded cancel (§5.4)
     takes_args: bool = False
     description: str = ""
 
@@ -27,20 +27,63 @@ class Command:
 # The 14 slash commands (§5.2). Dispatch defaults to "direct"; free-text
 # prompts (not commands) are what route through the agent in v1.
 REGISTRY: dict[str, Command] = {
-    "/up":         Command("/up", ("up",), long_running=True, description="Full bring-up"),
-    "/provision":  Command("/provision", ("provision",), long_running=True, description="Re-run config playbooks"),
-    "/reset":      Command("/reset", ("lab", "reset"), long_running=True, description="Restore AD baseline"),
-    "/start":      Command("/start", ("lab", "start"), description="Power on"),
-    "/stop":       Command("/stop", ("lab", "stop"), description="Power off"),
-    "/destroy":    Command("/destroy", ("infra", "destroy"), long_running=True, description="Tear down infra"),
-    "/instances":  Command("/instances", ("lab", "status", "--json"), description="Cloud power state"),
-    "/health":     Command("/health", ("health-check",), long_running=True, description="AD functional health"),
-    "/validate":   Command("/validate", ("validate",), long_running=True, description="Vuln-config correctness"),
-    "/diagnose":   Command("/diagnose", ("diagnose",), long_running=True, description="DC connectivity drill-down"),
-    "/score":      Command("/score", ("score",), takes_args=True, description="Score an agent report"),
-    "/scrub":      Command("/scrub", ("score", "reset"), description="Clean agent artifacts"),
-    "/variant":    Command("/variant", ("variant", "generate"), takes_args=True, description="Generate a variant"),
-    "/extensions": Command("/extensions", ("extension",), takes_args=True, description="List/provision extensions"),
+    "/up": Command("/up", ("up",), long_running=True, description="Full bring-up"),
+    "/provision": Command(
+        "/provision",
+        ("provision",),
+        long_running=True,
+        description="Re-run config playbooks",
+    ),
+    "/reset": Command(
+        "/reset", ("lab", "reset"), long_running=True, description="Restore AD baseline"
+    ),
+    "/start": Command("/start", ("lab", "start"), description="Power on"),
+    "/stop": Command("/stop", ("lab", "stop"), description="Power off"),
+    "/destroy": Command(
+        "/destroy",
+        ("infra", "destroy"),
+        long_running=True,
+        description="Tear down infra",
+    ),
+    "/instances": Command(
+        "/instances", ("lab", "status", "--json"), description="Cloud power state"
+    ),
+    "/health": Command(
+        "/health",
+        ("health-check",),
+        long_running=True,
+        description="AD functional health",
+    ),
+    "/validate": Command(
+        "/validate",
+        ("validate",),
+        long_running=True,
+        description="Vuln-config correctness",
+    ),
+    "/diagnose": Command(
+        "/diagnose",
+        ("diagnose",),
+        long_running=True,
+        description="DC connectivity drill-down",
+    ),
+    "/score": Command(
+        "/score", ("score",), takes_args=True, description="Score an agent report"
+    ),
+    "/scrub": Command(
+        "/scrub", ("score", "reset"), description="Clean agent artifacts"
+    ),
+    "/variant": Command(
+        "/variant",
+        ("variant", "generate"),
+        takes_args=True,
+        description="Generate a variant",
+    ),
+    "/extensions": Command(
+        "/extensions",
+        ("extension",),
+        takes_args=True,
+        description="List/provision extensions",
+    ),
 }
 
 
@@ -88,8 +131,10 @@ def build_argv(
     verb, trailing = _verb_for(cmd, list(extra_args or []))
     return [
         resolve_bin(repo_root),
-        "--config", str(anchor["config_path"]),
-        "--env", str(anchor["env"]),
+        "--config",
+        str(anchor["config_path"]),
+        "--env",
+        str(anchor["env"]),
         *verb,
         *trailing,
     ]

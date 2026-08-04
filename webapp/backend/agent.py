@@ -29,8 +29,12 @@ class LocalTaskAgent(TaskAgent):
 
     def model_post_init(self, context: t.Any) -> None:
         super().model_post_init(context)
-        self.tools = [tool for tool in self.tools if tool.name not in self._REMOVE_TOOLS]
-        self.stop_conditions = [c for c in self.stop_conditions if c.name != "stop_never"]
+        self.tools = [
+            tool for tool in self.tools if tool.name not in self._REMOVE_TOOLS
+        ]
+        self.stop_conditions = [
+            c for c in self.stop_conditions if c.name != "stop_never"
+        ]
 
     @asynccontextmanager
     async def stream(
@@ -44,9 +48,15 @@ class LocalTaskAgent(TaskAgent):
         messages = [*deepcopy(thread.messages), rg.Message("user", str(user_input))]
         async with AsyncExitStack() as stack:
             for tool_container in self.tools:
-                if hasattr(tool_container, "__aenter__") and hasattr(tool_container, "__aexit__"):
-                    await stack.enter_async_context(tool_container)
-            async with aclosing(self._stream(thread, messages, commit=commit)) as events:
+                if hasattr(tool_container, "__aenter__") and hasattr(
+                    tool_container, "__aexit__"
+                ):
+                    # Toolset satisfies the async-CM protocol at runtime (guarded
+                    # above); its wrapped dunders confuse pyright's protocol check.
+                    await stack.enter_async_context(tool_container)  # type: ignore[arg-type]
+            async with aclosing(
+                self._stream(thread, messages, commit=commit)
+            ) as events:
                 yield events
 
 
@@ -58,13 +68,13 @@ You are the DreadGOAD range agent. You help build, manage, reset, and validate
 one Active Directory lab range via the `dreadgoad` CLI.
 
 ## This session's range
-- Config file: {anchor['config_path']}
-- Environment: {anchor['env']}
-- Provider: {snap.get('provider')}   Lab/variant: {snap.get('lab')}
+- Config file: {anchor["config_path"]}
+- Environment: {anchor["env"]}
+- Provider: {snap.get("provider")}   Lab/variant: {snap.get("lab")}
 
 ## Running the CLI
 Always target THIS range by passing the anchor flags:
-    dreadgoad --config {anchor['config_path']} --env {anchor['env']} <command>
+    dreadgoad --config {anchor["config_path"]} --env {anchor["env"]} <command>
 Run CLI commands from the repo root ({repo_root}); the CLI reads ad/, infra/,
 and dreadgoad.yaml from there. Provider is set in the config file — never pass
 --provider.

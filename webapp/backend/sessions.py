@@ -27,7 +27,9 @@ def _now() -> str:
 
 
 class SessionService:
-    def __init__(self, db: Database, repo_root: str | Path, sessions_root: str | Path) -> None:
+    def __init__(
+        self, db: Database, repo_root: str | Path, sessions_root: str | Path
+    ) -> None:
         self.db = db
         self.repo_root = str(repo_root)
         self.sessions_root = Path(sessions_root)
@@ -43,7 +45,9 @@ class SessionService:
         snap = labconfig.derive_snapshot(config_path, env)
 
         sid = "s-" + uuid.uuid4().hex[:8]
-        lbl = label or f"{env} · {snap.get('provider')}/{snap.get('variant_name') or env}"
+        lbl = (
+            label or f"{env} · {snap.get('provider')}/{snap.get('variant_name') or env}"
+        )
         dirname = f"{_slug(label or env)}-{sid[2:]}"
         sdir = self.sessions_root / dirname
         sdir.mkdir(parents=True, exist_ok=True)
@@ -79,7 +83,9 @@ class SessionService:
     ) -> dict[str, t.Any]:
         """Create-new-env flow: write the env into the yaml, then attach."""
         labconfig.write_new_env(config_path, env_name, env_fields, top_level)
-        return await self.create_session(config_path, env_name, model=model, label=label)
+        return await self.create_session(
+            config_path, env_name, model=model, label=label
+        )
 
     def _seed_topology(self, snapshot: dict[str, t.Any]) -> dict[str, t.Any]:
         cfg = labconfig.lab_config_path(self.repo_root, snapshot.get("lab"))

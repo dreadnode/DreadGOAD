@@ -49,7 +49,10 @@ def main() -> None:
         print("PASS create session")
 
         # missing env → 400
-        assert client.post("/api/sessions", json={"config_path": str(cfg)}).status_code == 400
+        assert (
+            client.post("/api/sessions", json={"config_path": str(cfg)}).status_code
+            == 400
+        )
         print("PASS create requires env")
 
         # list

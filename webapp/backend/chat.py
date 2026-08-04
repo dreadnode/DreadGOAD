@@ -28,7 +28,14 @@ from .agent import create_agent
 from .cli import start_command
 
 # Chat-kind events replayed on resume (§6.3).
-CHAT_KINDS = ["user_message", "generation", "tool_start", "tool_end", "error", "agent_end"]
+CHAT_KINDS = [
+    "user_message",
+    "generation",
+    "tool_start",
+    "tool_end",
+    "error",
+    "agent_end",
+]
 
 # Per-session agent runtime (isolated; §4.2). Keyed by session id.
 _agents: dict[str, t.Any] = {}
@@ -55,13 +62,23 @@ def format_event(event: t.Any) -> dict[str, t.Any] | None:
                 "input_tokens": event.usage.input_tokens,
                 "output_tokens": event.usage.output_tokens,
             }
-        return {"kind": "generation", "content": event.message.content or "", "usage": usage}
+        return {
+            "kind": "generation",
+            "content": event.message.content or "",
+            "usage": usage,
+        }
     if isinstance(event, ToolStart):
-        return {"kind": "tool_start", "tool": event.tool_call.name,
-                "args": event.tool_call.function.arguments}
+        return {
+            "kind": "tool_start",
+            "tool": event.tool_call.name,
+            "args": event.tool_call.function.arguments,
+        }
     if isinstance(event, ToolEnd):
-        return {"kind": "tool_end", "tool": event.tool_call.name,
-                "result": (event.message.content or "")[:2000]}
+        return {
+            "kind": "tool_end",
+            "tool": event.tool_call.name,
+            "result": (event.message.content or "")[:2000],
+        }
     if isinstance(event, AgentError):
         return {"kind": "error", "message": str(event.error)}
     if isinstance(event, AgentEnd):
@@ -88,10 +105,14 @@ async def handle_message(app: t.Any, ws: t.Any, session_id: str, content: str) -
     """Process one user message for a session: persist, dispatch, stream, persist."""
     db = app.state.db
 
-    async def emit(kind: str, payload: dict[str, t.Any], *, persist: bool = True) -> None:
+    async def emit(
+        kind: str, payload: dict[str, t.Any], *, persist: bool = True
+    ) -> None:
         if persist:
             await db.append_event(session_id, kind, payload)
-        await ws.send_text(json.dumps({"session_id": session_id, "kind": kind, **payload}))
+        await ws.send_text(
+            json.dumps({"session_id": session_id, "kind": kind, **payload})
+        )
 
     async def run_hook_and_emit() -> None:
         """Fire the ingestion hook, surface check_run inline (§6.4)."""
@@ -104,7 +125,13 @@ async def handle_message(app: t.Any, ws: t.Any, session_id: str, content: str) -
     if commands.is_command(content):
         name, extra = commands.parse_command(content)
         session = await db.get_session(session_id)
-        argv = commands.build_argv(session, name, extra, repo_root=str(paths.repo_root()))
+        if session is None:
+            await emit("error", {"message": "session not found"})
+            await emit("agent_end", {"failed": True})
+            return
+        argv = commands.build_argv(
+            session, name, extra, repo_root=str(paths.repo_root())
+        )
         await emit("command_run", {"phase": "start", "command": name, "argv": argv})
 
         cmd = commands.REGISTRY[name]
@@ -123,11 +150,22 @@ async def handle_message(app: t.Any, ws: t.Any, session_id: str, content: str) -
         output = rc.output
 
         if cmd.long_running:
-            final = "error" if exit_code else ("destroyed" if name == "/destroy" else "running")
+            final = (
+                "error"
+                if exit_code
+                else ("destroyed" if name == "/destroy" else "running")
+            )
             await app.state.sessions.set_status(session_id, final)
 
-        await emit("command_run", {"phase": "end", "command": name,
-                                   "exit_code": exit_code, "tail": output[-2000:]})
+        await emit(
+            "command_run",
+            {
+                "phase": "end",
+                "command": name,
+                "exit_code": exit_code,
+                "tail": output[-2000:],
+            },
+        )
         await run_hook_and_emit()
 
         # Command-specific overlays (§6.4 / §6.3).
@@ -161,4 +199,6 @@ async def handle_message(app: t.Any, ws: t.Any, session_id: str, content: str) -
 async def replay(app: t.Any, ws: t.Any, session_id: str) -> None:
     """Send chat-kind history for a session on (re)connect."""
     events = await app.state.db.get_events(session_id, kinds=CHAT_KINDS)
-    await ws.send_text(json.dumps({"session_id": session_id, "kind": "history", "events": events}))
+    await ws.send_text(
+        json.dumps({"session_id": session_id, "kind": "history", "events": events})
+    )

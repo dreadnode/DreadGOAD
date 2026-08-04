@@ -35,13 +35,22 @@ async def test_session_and_range_crud() -> None:
         # update
         s["status"] = "running"
         await db.upsert_session(s)
-        assert (await db.get_session("s-1"))["status"] == "running", "update failed"
+        updated = await db.get_session("s-1")
+        assert updated is not None and updated["status"] == "running", "update failed"
 
         assert len(await db.list_sessions()) == 1, "list count wrong"
 
-        rng = {"session_id": "s-1", "hosts": [{"id": "dc01"}], "edges": [], "layout": {}}
+        rng = {
+            "session_id": "s-1",
+            "hosts": [{"id": "dc01"}],
+            "edges": [],
+            "layout": {},
+        }
         await db.upsert_range("s-1", rng)
-        assert (await db.get_range("s-1"))["hosts"][0]["id"] == "dc01", "range round-trip failed"
+        got_range = await db.get_range("s-1")
+        assert got_range is not None and got_range["hosts"][0]["id"] == "dc01", (
+            "range round-trip failed"
+        )
 
         # cascade delete
         await db.delete_session("s-1")
@@ -66,11 +75,15 @@ async def test_event_seq_and_replay() -> None:
         assert seqs == [1, 2, 3], f"seq not monotonic 1..3: {seqs}"
 
         # per-session isolation
-        assert [e["seq"] for e in await db.get_events("s-2")] == [1], "cross-session seq leak"
+        assert [e["seq"] for e in await db.get_events("s-2")] == [1], (
+            "cross-session seq leak"
+        )
 
         # kind filter (chat-replay style) excludes system kinds, preserves order
         chat = await db.get_events("s-1", kinds=["user_message", "generation"])
-        assert [e["kind"] for e in chat] == ["user_message", "generation"], "kind filter wrong"
+        assert [e["kind"] for e in chat] == ["user_message", "generation"], (
+            "kind filter wrong"
+        )
         assert [e["seq"] for e in chat] == [1, 2], "kind filter broke ordering"
 
         # payload preserved
@@ -91,13 +104,17 @@ async def test_concurrent_writes_no_loss() -> None:
         evts = await db.get_events("s-1")
         seqs = sorted(e["seq"] for e in evts)
         assert len(evts) == n, f"lost writes: got {len(evts)} of {n}"
-        assert seqs == list(range(1, n + 1)), "seqs not unique/gapless under concurrency"
+        assert seqs == list(range(1, n + 1)), (
+            "seqs not unique/gapless under concurrency"
+        )
 
         # concurrent session upserts with distinct ids
         await asyncio.gather(
             *[db.upsert_session({"id": f"s-{i}", "status": "new"}) for i in range(n)]
         )
-        assert len(await db.list_sessions()) == n, "concurrent session upserts lost rows"
+        assert len(await db.list_sessions()) == n, (
+            "concurrent session upserts lost rows"
+        )
         print("PASS test_concurrent_writes_no_loss")
     finally:
         await db.close()

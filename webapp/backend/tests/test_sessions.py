@@ -56,6 +56,7 @@ async def test_create_attach_session() -> None:
 
             # range seeded from ad/GOAD/data/config.json (variant_target=ad/GOAD)
             rng = await svc.db.get_range(sid)
+            assert rng is not None, "range row missing"
             ids = {h["id"] for h in rng["hosts"]}
             assert "kingslanding" in ids, ids
             assert "attackbox" in ids and "bastion" in ids, "infra nodes missing"
@@ -107,6 +108,7 @@ async def test_create_new_env_writes_yaml_and_backs_up() -> None:
             assert (tmp / "dreadgoad.yaml.bak.1").is_file(), "no backup created"
             # new env present in the yaml
             import yaml
+
             data = yaml.safe_load(cfg.read_text())
             assert "prod" in data["environments"], data["environments"].keys()
             # session anchored to the new env

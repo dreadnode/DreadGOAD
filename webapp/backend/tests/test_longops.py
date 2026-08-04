@@ -48,7 +48,9 @@ async def test_cancel_sigint_stops_before_completion() -> None:
     rest = []
     async for line in it:
         rest.append(line)
-    assert "done" not in rest, f"command should have been cancelled before 'done': {rest}"
+    assert "done" not in rest, (
+        f"command should have been cancelled before 'done': {rest}"
+    )
     assert rc.returncode != 0, "cancelled command should have non-zero exit"
     print("PASS test_cancel_sigint_stops_before_completion")
 
