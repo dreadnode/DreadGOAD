@@ -121,6 +121,17 @@ async def get_range(session_id: str) -> dict[str, t.Any]:
     return rng
 
 
+@app.put("/api/ranges/{session_id}/layout")
+async def save_layout(session_id: str, body: dict[str, t.Any]) -> dict[str, t.Any]:
+    """Persist per-range node positions (RangeView drag; §4.4)."""
+    rng = await app.state.db.get_range(session_id)
+    if rng is None:
+        raise HTTPException(status_code=404, detail="range not found")
+    rng["layout"] = body.get("layout", {})
+    await app.state.db.upsert_range(session_id, rng)
+    return {"ok": True}
+
+
 # --- multiplexed chat WebSocket (§7) ---------------------------------------
 
 
