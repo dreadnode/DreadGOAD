@@ -1,10 +1,13 @@
 """Multiplexed chat WebSocket (design §5.1, §7).
 
-One socket carries a ``session_id`` on every message; the backend routes to
-that session's agent (built lazily, kept per-session). Slash commands are
-dispatched directly to the dreadgoad CLI (deterministic, streamed); free-text
-is routed to the LLM agent. All events are persisted to the event log and
-replayed on resume.
+One socket carries a ``session_id`` on every message. Dispatch (§5.1):
+  - ``dispatch="direct"`` commands (deterministic reads, /destroy) run the CLI
+    programmatically via ``run_cli``;
+  - ``dispatch="agent"`` commands expand to a structured prompt and run through
+    the agent's ``run_dreadgoad`` tool — which calls the *same* ``run_cli``, so
+    both paths stream/status/hook/cancel identically;
+  - free-text goes to the agent.
+All events are persisted to the event log and replayed on resume.
 
 Live behavior needs an LLM key (OPENROUTER_API_KEY); the structural wiring is
 import-verifiable without one.
@@ -157,134 +160,182 @@ async def _get_agent(app: t.Any, session_id: str) -> t.Any | None:
     agent = create_agent(
         session.get("model") or "openrouter/anthropic/claude-sonnet-5",
         session,
-        str(paths.repo_root()),
+        app,
+        session_id,
+        run_cli,
     )
     _agents[session_id] = agent
     return agent
 
 
-async def handle_message(app: t.Any, session_id: str, content: str) -> None:
-    """Process one user message for a session: persist, dispatch, stream, persist."""
+async def emit_event(
+    app: t.Any,
+    session_id: str,
+    kind: str,
+    payload: dict[str, t.Any],
+    *,
+    persist: bool = True,
+) -> None:
+    """Persist (optionally) + push an event to the session's current socket (§5.4)."""
+    if persist:
+        await app.state.db.append_event(session_id, kind, payload)
+    ws = _conns.get(session_id)
+    if ws is None:
+        return  # no live client; persisted events replay on reconnect
+    try:
+        await ws.send_text(
+            json.dumps({"session_id": session_id, "kind": kind, **payload})
+        )
+    except Exception:  # noqa: BLE001
+        pass  # client dropped mid-send; op continues, events persisted
+
+
+async def run_cli(
+    app: t.Any, session_id: str, name: str, extra: list[str] | None = None
+) -> tuple[int, str]:
+    """Run a dreadgoad command through the full pipeline; return (exit_code, output).
+
+    Emits command_run/command_progress/check_run + overlays, sets lifecycle
+    status, registers ``_running`` for cancel. Shared by direct dispatch and the
+    agent's ``run_dreadgoad`` tool, so both paths behave identically (§5.1).
+    """
     db = app.state.db
+    session = await db.get_session(session_id)
+    if session is None:
+        await emit_event(app, session_id, "error", {"message": "session not found"})
+        return 1, "session not found"
+    extra = list(extra or [])
 
-    async def emit(
-        kind: str, payload: dict[str, t.Any], *, persist: bool = True
-    ) -> None:
-        if persist:
-            await db.append_event(session_id, kind, payload)
-        # Target the session's *current* socket, so a reconnect re-attaches to
-        # this (possibly long-running) op's stream (§5.4).
-        ws = _conns.get(session_id)
-        if ws is None:
-            return  # no live client; events are persisted for replay on reconnect
+    # /score: fetch the (remote) report into the session dir first (§5.2).
+    if name == "/score" and extra:
         try:
-            await ws.send_text(
-                json.dumps({"session_id": session_id, "kind": kind, **payload})
+            rc_fetch, local, msg = await fetch.fetch_report(
+                session["snapshot"], session["session_dir"], extra[0]
             )
-        except Exception:  # noqa: BLE001
-            pass  # client dropped mid-send; op continues, events persisted
+        except ValueError as exc:
+            await emit_event(app, session_id, "error", {"message": str(exc)})
+            return 1, str(exc)
+        if rc_fetch != 0:
+            await emit_event(
+                app,
+                session_id,
+                "error",
+                {"message": f"report fetch failed: {msg[-300:]}"},
+            )
+            return rc_fetch, msg
+        extra = [local, *extra[1:]]
 
-    async def run_hook_and_emit() -> None:
-        """Fire the ingestion hook, surface check_run inline (§6.4)."""
-        payload = await hook.run_check(app, session_id)
-        await emit("check_run", payload)
+    argv = commands.build_argv(session, name, extra, repo_root=str(paths.repo_root()))
+    await emit_event(
+        app,
+        session_id,
+        "command_run",
+        {"phase": "start", "command": name, "argv": argv},
+    )
 
-    await emit("user_message", {"content": content})
+    cmd = commands.REGISTRY[name]
+    if cmd.long_running:
+        await app.state.sessions.set_status(session_id, "provisioning")
 
-    # --- direct-dispatch slash commands ---
+    rc = await start_command(argv, cwd=str(paths.repo_root()))
+    _running[session_id] = rc
+    try:
+        async for line in rc.stream_lines():
+            await emit_event(
+                app, session_id, "command_progress", {"line": line}, persist=False
+            )
+    finally:
+        _running.pop(session_id, None)
+    exit_code = rc.returncode
+    output = rc.output
+
+    if cmd.long_running:
+        if rc.cancelled:
+            final = "interrupted"  # user cancel ≠ failure (§5.4)
+        elif exit_code:
+            final = "error"
+        elif name == "/destroy":
+            final = "destroyed"
+        else:
+            final = "running"
+        await app.state.sessions.set_status(session_id, final)
+
+    await emit_event(
+        app,
+        session_id,
+        "command_run",
+        {
+            "phase": "end",
+            "command": name,
+            "exit_code": exit_code,
+            "tail": output[-2000:],
+        },
+    )
+
+    payload = await hook.run_check(app, session_id)
+    await emit_event(app, session_id, "check_run", payload)
+
+    # Command-specific overlays (§6.4 / §6.3).
+    if name == "/health":
+        await hook.apply_health(app, session_id, exit_code == 0)
+    elif name in ("/variant", "/extensions"):
+        await hook.reseed(app, session_id)
+
+    return exit_code, output
+
+
+async def handle_message(app: t.Any, session_id: str, content: str) -> None:
+    """Route a message: direct command → run_cli; agent command / free-text → agent."""
+    await emit_event(app, session_id, "user_message", {"content": content})
+
     if commands.is_command(content):
         name, extra = commands.parse_command(content)
-        session = await db.get_session(session_id)
+        session = await app.state.db.get_session(session_id)
         if session is None:
-            await emit("error", {"message": "session not found"})
-            await emit("agent_end", {"failed": True})
+            await emit_event(app, session_id, "error", {"message": "session not found"})
+            await emit_event(app, session_id, "agent_end", {"failed": True})
             return
-
-        # /score: the report lives on the attack box, but `score --report` takes
-        # a local path — fetch it into the session dir first (§5.2).
-        if name == "/score" and extra:
-            try:
-                rc_fetch, local, msg = await fetch.fetch_report(
-                    session["snapshot"], session["session_dir"], extra[0]
+        if commands.REGISTRY[name].dispatch == "direct":
+            # Direct commands are deterministic reads (+ /destroy) with a fixed
+            # verb; extra operator tokens would land as bogus CLI args. Reject
+            # cleanly instead of shelling out to a guaranteed CLI error (C4).
+            if extra:
+                await emit_event(
+                    app,
+                    session_id,
+                    "error",
+                    {"message": f"{name} takes no arguments (got: {' '.join(extra)})"},
                 )
-            except ValueError as exc:
-                await emit("error", {"message": str(exc)})
-                await emit("agent_end", {"failed": True})
+                await emit_event(app, session_id, "agent_end", {"failed": True})
                 return
-            if rc_fetch != 0:
-                await emit("error", {"message": f"report fetch failed: {msg[-300:]}"})
-                await emit("agent_end", {"failed": True})
-                return
-            extra = [local, *extra[1:]]
-
-        argv = commands.build_argv(
-            session, name, extra, repo_root=str(paths.repo_root())
-        )
-        await emit("command_run", {"phase": "start", "command": name, "argv": argv})
-
-        cmd = commands.REGISTRY[name]
-        if cmd.long_running:
-            await app.state.sessions.set_status(session_id, "provisioning")
-
-        rc = await start_command(argv, cwd=str(paths.repo_root()))
-        _running[session_id] = rc
-        try:
-            # Live tail: stream stdout lines as they arrive (§5.4). Not persisted.
-            async for line in rc.stream_lines():
-                await emit("command_progress", {"line": line}, persist=False)
-        finally:
-            _running.pop(session_id, None)
-        exit_code = rc.returncode
-        output = rc.output
-
-        if cmd.long_running:
-            if rc.cancelled:
-                final = "interrupted"  # user cancel ≠ failure (§5.4)
-            elif exit_code:
-                final = "error"
-            elif name == "/destroy":
-                final = "destroyed"
-            else:
-                final = "running"
-            await app.state.sessions.set_status(session_id, final)
-
-        await emit(
-            "command_run",
-            {
-                "phase": "end",
-                "command": name,
-                "exit_code": exit_code,
-                "tail": output[-2000:],
-            },
-        )
-        await run_hook_and_emit()
-
-        # Command-specific overlays (§6.4 / §6.3).
-        if name == "/health":
-            await hook.apply_health(app, session_id, exit_code == 0)
-        elif name in ("/variant", "/extensions"):
-            await hook.reseed(app, session_id)
-
-        await emit("agent_end", {"failed": exit_code != 0})
+            exit_code, _ = await run_cli(app, session_id, name, extra)
+            await emit_event(app, session_id, "agent_end", {"failed": exit_code != 0})
+            return
+        # dispatch="agent": expand to a structured prompt; the agent runs it via
+        # its run_dreadgoad tool (robust arg interpretation, constrained).
+        await _run_agent(app, session_id, commands.expand_command_prompt(name, extra))
         return
 
-    # --- free-text → LLM agent ---
+    await _run_agent(app, session_id, content)
+
+
+async def _run_agent(app: t.Any, session_id: str, prompt: str) -> None:
+    """Stream one agent turn (free-text or an expanded command) to the client."""
     agent = await _get_agent(app, session_id)
     if agent is None:
-        await emit("error", {"message": "session not found"})
-        await emit("agent_end", {"failed": True})
+        await emit_event(app, session_id, "error", {"message": "session not found"})
+        await emit_event(app, session_id, "agent_end", {"failed": True})
         return
     try:
-        async with agent.stream(content) as events:
+        async with agent.stream(prompt) as events:
             async for event in events:
                 formatted = format_event(event)
                 if formatted:
                     kind = formatted.pop("kind")
-                    await emit(kind, formatted)
-        await run_hook_and_emit()
+                    await emit_event(app, session_id, kind, formatted)
     except Exception as exc:  # noqa: BLE001 - surface any agent error to the client
-        await emit("error", {"message": f"agent error: {exc}"})
-        await emit("agent_end", {"failed": True})
+        await emit_event(app, session_id, "error", {"message": f"agent error: {exc}"})
+        await emit_event(app, session_id, "agent_end", {"failed": True})
 
 
 async def replay(app: t.Any, session_id: str) -> None:

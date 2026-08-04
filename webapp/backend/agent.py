@@ -9,6 +9,7 @@ slash commands are dispatched directly (see server WS handler).
 
 from __future__ import annotations
 
+import string
 import typing as t
 from contextlib import AsyncExitStack, aclosing, asynccontextmanager
 from copy import deepcopy
@@ -18,8 +19,14 @@ from dreadnode.agent import TaskAgent
 from dreadnode.agent.agent import CommitBehavior
 from dreadnode.agent.events import AgentEvent
 from dreadnode.agent.thread import Thread
-from dreadnode.agent.tools.execute import command
+from dreadnode.agent.tools import tool
 from dreadnode.agent.tools.fs import Filesystem
+
+from . import commands
+
+# Signature of the shared command pipeline (chat.run_cli), injected to avoid a
+# chat <-> agent import cycle: (app, session_id, command, args) -> (exit, output).
+RunCli = t.Callable[[t.Any, str, str, list[str]], t.Awaitable[tuple[int, str]]]
 
 
 class LocalTaskAgent(TaskAgent):
@@ -60,38 +67,79 @@ class LocalTaskAgent(TaskAgent):
                 yield events
 
 
-def _instructions(session: dict[str, t.Any], repo_root: str) -> str:
+# Minimal fallback if prompts/system.md is somehow missing (packaging bug) — the
+# agent should never run with empty instructions.
+_SYSTEM_FALLBACK = (
+    "You are the DreadGOAD range agent. Operate on THIS range only via the "
+    "`run_dreadgoad` tool (config/env are injected). Never run raw cloud CLI "
+    "(aws/az/terraform) or arbitrary shell. Confirm ambiguous destructive ops."
+)
+
+
+def _instructions(session: dict[str, t.Any]) -> str:
+    """Render the shared system prompt from ``prompts/system.md``.
+
+    The template uses ``$placeholder`` fields filled from the session's anchor
+    and snapshot. Falls back to a terse inline prompt if the file is missing.
+    """
     anchor = session["anchor"]
     snap = session.get("snapshot", {})
-    return f"""\
-You are the DreadGOAD range agent. You help build, manage, reset, and validate
-one Active Directory lab range via the `dreadgoad` CLI.
-
-## This session's range
-- Config file: {anchor["config_path"]}
-- Environment: {anchor["env"]}
-- Provider: {snap.get("provider")}   Lab/variant: {snap.get("lab")}
-
-## Running the CLI
-Always target THIS range by passing the anchor flags:
-    dreadgoad --config {anchor["config_path"]} --env {anchor["env"]} <command>
-Run CLI commands from the repo root ({repo_root}); the CLI reads ad/, infra/,
-and dreadgoad.yaml from there. Provider is set in the config file — never pass
---provider.
-
-## Rules
-- Your file workspace is the session directory; keep notes/artifacts there.
-- Prefer the dedicated slash commands the operator has for common operations.
-- Destructive actions (destroy, reset) change real cloud state — confirm intent.
-- Report what you ran and the result concisely.
-"""
+    template = commands.load_prompt("system")
+    if template is None:
+        return _SYSTEM_FALLBACK
+    return string.Template(template).safe_substitute(
+        config_path=anchor["config_path"],
+        env=anchor["env"],
+        provider=snap.get("provider"),
+        lab=snap.get("lab"),
+    )
 
 
-def create_agent(model: str, session: dict[str, t.Any], repo_root: str) -> TaskAgent:
+def _make_run_dreadgoad(app: t.Any, session_id: str, run_cli: RunCli):  # noqa: ANN202
+    """Build the session-bound run_dreadgoad tool.
+
+    Constrains the agent to the agent-runnable commands (validated against
+    ``commands.AGENT_COMMANDS``) and routes through the shared pipeline so
+    agent-initiated ops get streaming/status/hook/cancel like direct commands.
+    """
+
+    @tool(catch=True)
+    async def run_dreadgoad(command: str, args: list[str] | None = None) -> str:
+        """Run a dreadgoad range command for THIS session and stream its output.
+
+        Args:
+            command: one of /up, /provision, /reset, /variant, /extensions, /score.
+            args: CLI flags/values interpreted from the operator's request, e.g.
+                ["--from", "ad-data.yml"] or ["/remote/report.jsonl", "--live-verify"].
+                Do NOT pass --config/--env — the range is fixed.
+
+        Returns a short summary (exit status + output tail).
+        """
+        if command not in commands.AGENT_COMMANDS:
+            return (
+                f"Refused: {command!r} is not an agent-runnable command. Allowed: "
+                f"{sorted(commands.AGENT_COMMANDS)}. Reads and /destroy are operator-only."
+            )
+        exit_code, output = await run_cli(app, session_id, command, list(args or []))
+        status = "succeeded" if exit_code == 0 else f"failed (exit {exit_code})"
+        return f"`dreadgoad {command}` {status}.\n{output[-1500:]}"
+
+    return run_dreadgoad
+
+
+def create_agent(
+    model: str,
+    session: dict[str, t.Any],
+    app: t.Any,
+    session_id: str,
+    run_cli: RunCli,
+) -> TaskAgent:
     """Build a configured agent for a session.
 
     The LLM key must be in the environment (e.g. OPENROUTER_API_KEY). The
-    default model is Sonnet 5 via OpenRouter (see server config).
+    default model is Sonnet 5 via OpenRouter (see server config). The agent's
+    only range-mutating tool is ``run_dreadgoad`` (constrained to this session);
+    file writes are sandboxed to the session dir. No general shell tool.
     """
     session_dir = session.get("session_dir", ".")
     fs = Filesystem(path=session_dir, variant="write")
@@ -99,7 +147,7 @@ def create_agent(model: str, session: dict[str, t.Any], repo_root: str) -> TaskA
         name="dreadgoad-agent",
         description="Builds, manages, and validates a DreadGOAD range",
         model=model,
-        instructions=_instructions(session, repo_root),
+        instructions=_instructions(session),
         max_steps=50,
-        tools=[command, fs],
+        tools=[fs, _make_run_dreadgoad(app, session_id, run_cli)],
     )

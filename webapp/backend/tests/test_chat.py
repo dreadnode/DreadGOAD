@@ -15,11 +15,12 @@ import pathlib
 import sys
 import tempfile
 import types
+from contextlib import asynccontextmanager
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 os.environ["DREADGOAD_WEBAPP_STATE_ROOT"] = tempfile.mkdtemp(prefix="dg-chat-")
 
-from webapp.backend import chat, hook  # noqa: E402
+from webapp.backend import agent, chat, hook  # noqa: E402
 from webapp.backend.db import Database  # noqa: E402
 from webapp.backend.sessions import SessionService  # noqa: E402
 
@@ -169,6 +170,135 @@ async def test_dispatch_serialization_and_concurrency() -> None:
         chat.handle_message = orig
 
 
+class FakeAgent:
+    """Records the prompt it was streamed; yields no events."""
+
+    def __init__(self) -> None:
+        self.prompt: str | None = None
+
+    def stream(self, prompt: str):  # noqa: ANN201
+        self.prompt = prompt
+        return self._cm()
+
+    @asynccontextmanager
+    async def _cm(self):  # noqa: ANN202
+        async def _events():
+            return
+            yield  # pragma: no cover — makes this an async generator
+
+        yield _events()
+
+
+async def test_agent_command_routes_to_agent() -> None:
+    """A dispatch='agent' command becomes an expanded prompt to the agent (not direct)."""
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        cfg = tmp / "dreadgoad.yaml"
+        cfg.write_text(_YAML)
+        db = await Database(str(tmp / "state.db")).connect()
+        svc = SessionService(db, repo_root=str(_REPO), sessions_root=tmp / "sessions")
+        app = types.SimpleNamespace(state=types.SimpleNamespace(db=db, sessions=svc))
+        s = await svc.create_session(str(cfg), "dev")
+        ws = FakeWS()
+        chat.register_conn(s["id"], ws)
+
+        fake = FakeAgent()
+        orig = chat._get_agent
+
+        async def fake_get_agent(a, sid):  # noqa: ANN001, ANN202
+            return fake
+
+        chat._get_agent = fake_get_agent
+        try:
+            await chat.handle_message(app, s["id"], "/up using the variant at /p")
+            assert fake.prompt is not None, "agent was not invoked"
+            assert "run_dreadgoad" in fake.prompt and "/up" in fake.prompt, fake.prompt
+            assert "using the variant at /p" in fake.prompt, fake.prompt
+            # It must NOT direct-dispatch (no command_run emitted here).
+            kinds = [m["kind"] for m in ws.sent]
+            assert "command_run" not in kinds, (
+                f"agent command must not direct-dispatch: {kinds}"
+            )
+            print("PASS test_agent_command_routes_to_agent")
+        finally:
+            chat._get_agent = orig
+            await db.close()
+
+
+async def test_run_dreadgoad_tool_validates_and_runs() -> None:
+    calls: list[tuple[str, list[str]]] = []
+
+    async def fake_run_cli(app, sid, cmd, args):  # noqa: ANN001, ANN202
+        calls.append((cmd, args))
+        return (0, "output tail")
+
+    tool = agent._make_run_dreadgoad(object(), "s-1", fake_run_cli)
+
+    # allowed command → routed through run_cli
+    out = await tool.fn(command="/up", args=["--from", "x"])
+    assert calls == [("/up", ["--from", "x"])], calls
+    assert "succeeded" in out, out
+
+    # disallowed (operator-only) command → refused, run_cli NOT called
+    calls.clear()
+    refused = await tool.fn(command="/destroy", args=[])
+    assert "Refused" in refused, refused
+    assert calls == [], "run_cli must not run for a disallowed command"
+    print("PASS test_run_dreadgoad_tool_validates_and_runs")
+
+
+async def test_direct_command_rejects_extra_args() -> None:
+    """A direct command with trailing tokens errors cleanly, never runs the CLI (C4)."""
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        cfg = tmp / "dreadgoad.yaml"
+        cfg.write_text(_YAML)
+        db = await Database(str(tmp / "state.db")).connect()
+        svc = SessionService(db, repo_root=str(_REPO), sessions_root=tmp / "sessions")
+        app = types.SimpleNamespace(state=types.SimpleNamespace(db=db, sessions=svc))
+        s = await svc.create_session(str(cfg), "dev")
+        ws = FakeWS()
+        chat.register_conn(s["id"], ws)
+
+        called = False
+
+        async def fake_run_cli(a, sid, name, extra):  # noqa: ANN001, ANN202
+            nonlocal called
+            called = True
+            return (0, "")
+
+        orig = chat.run_cli
+        chat.run_cli = fake_run_cli
+        try:
+            await chat.handle_message(app, s["id"], "/instances winterfell")
+            assert not called, "run_cli must NOT run for a direct command with args"
+            kinds = [m["kind"] for m in ws.sent]
+            assert "error" in kinds and kinds[-1] == "agent_end", kinds
+            assert "command_run" not in kinds, kinds
+            err = next(m for m in ws.sent if m["kind"] == "error")
+            assert "takes no arguments" in err["message"], err
+            print("PASS test_direct_command_rejects_extra_args")
+        finally:
+            chat.run_cli = orig
+            await db.close()
+
+
+def test_instructions_renders_system_prompt() -> None:
+    """_instructions loads prompts/system.md and fills $placeholders (no leftovers)."""
+    session = {
+        "anchor": {"config_path": "/x/dreadgoad.yaml", "env": "prod"},
+        "snapshot": {"provider": "aws", "lab": "GOAD"},
+    }
+    text = agent._instructions(session)
+    assert "/x/dreadgoad.yaml" in text and "prod" in text, text
+    assert "aws" in text and "GOAD" in text, text
+    assert "run_dreadgoad" in text, "system prompt must describe the tool"
+    # every $placeholder must be substituted
+    assert "$config_path" not in text and "$env" not in text, text
+    assert "$provider" not in text and "$lab" not in text, text
+    print("PASS test_instructions_renders_system_prompt")
+
+
 async def test_cleanup_session_evicts() -> None:
     chat._agents["z"] = object()
     chat._locks["z"] = asyncio.Lock()
@@ -183,6 +313,10 @@ async def test_cleanup_session_evicts() -> None:
 async def _main() -> None:
     await test_direct_dispatch_emits_and_persists()
     await test_reattach_targets_current_conn()
+    await test_agent_command_routes_to_agent()
+    await test_run_dreadgoad_tool_validates_and_runs()
+    await test_direct_command_rejects_extra_args()
+    test_instructions_renders_system_prompt()
     await test_dispatch_serialization_and_concurrency()
     await test_cleanup_session_evicts()
     print("ALL PASS")
