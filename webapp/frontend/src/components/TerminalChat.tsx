@@ -1,9 +1,42 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { ChatEvent } from '../types'
+import type { ChatEvent, HealthCheck } from '../types'
 import type { ConnectionStatus } from '../hooks/useWebSocket'
 import { api, type CommandDef } from '../api'
+
+const HEALTH_COLOR: Record<string, string> = {
+  OK: 'var(--dn-success)',
+  FAIL: 'var(--dn-error)',
+  SKIP: 'var(--dn-text-muted)',
+}
+
+function HealthReport({ ev }: { ev: ChatEvent }) {
+  const checks = ev.checks ?? []
+  const failed = ev.failed ?? 0
+  const summaryColor = failed > 0 ? 'var(--dn-error)' : 'var(--dn-success)'
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ marginBottom: 4 }}>
+        <Badge text="HEALTH" color="var(--dg-interactive)" />
+        <span style={{ color: summaryColor, fontSize: 12 }}>
+          {ev.passed ?? 0} passed · {failed} failed · {ev.skipped ?? 0} skipped
+        </span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'auto auto 1fr', gap: '2px 10px', fontSize: 11, marginLeft: 12 }}>
+        {checks.map((c: HealthCheck, i: number) => (
+          <div key={i} style={{ display: 'contents' }}>
+            <span style={{ color: HEALTH_COLOR[c.status] ?? 'var(--dn-text-muted)', fontWeight: 700 }}>{c.status}</span>
+            <span style={{ color: 'var(--dn-text-muted)' }}>{c.host}</span>
+            <span style={{ color: 'var(--dn-text-dim)', whiteSpace: 'pre-wrap' }}>
+              {c.name}{c.detail ? ` — ${c.detail}` : ''}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 interface Props {
   sessionId: string | null
@@ -59,6 +92,8 @@ function Message({ ev }: { ev: ChatEvent }) {
       return <div style={{ fontSize: 11, color: 'var(--dn-text-dim)', whiteSpace: 'pre-wrap' }}>{ev.line}</div>
     case 'check_run':
       return <div style={{ marginBottom: 6 }}><Badge text="CHECK" color="var(--dg-interactive)" /><span style={{ color: 'var(--dn-text-muted)', fontSize: 12 }}>{ev.error ? `check failed: ${String(ev.error)}` : `range verified — ${ev.hosts_updated ?? 0} host(s) updated`}</span></div>
+    case 'health_report':
+      return <HealthReport ev={ev} />
     case 'error':
       return <div style={{ marginBottom: 6 }}><Badge text="ERROR" color="var(--dn-error)" /><span style={{ color: 'var(--dn-error)', fontSize: 12 }}>{ev.message}</span></div>
     default:

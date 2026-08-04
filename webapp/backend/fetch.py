@@ -1,15 +1,17 @@
 """Fetch an agent's report from the attack box for /score (design §5.2).
 
 The report is written on the Kali attack box; ``dreadgoad score --report`` takes
-a **local** path, so ``/score`` pulls the file first:
+a **local** path, so ``/score`` pulls the file first. Rather than hand-rolling
+scp/SSM/Bastion in Python, this drives ``dreadgoad score fetch``, which reuses
+the CLI's own connection machinery:
 
-  - **AWS**: scp over an SSM SSH proxy (no inbound ports; matches the
-    no-open-ports design).
-  - **Azure**: scp using the discovered SSH key (over the bastion).
+  - **AWS**: SSM (no inbound ports). Pass the Kali instance id (learned by the
+    ingestion hook post-deploy, see ``hook.find_attack_box``).
+  - **Azure**: over Azure Bastion. The CLI auto-discovers the Kali VM and its
+    SSH key, so nothing extra is needed.
 
-Requires ``snapshot.attack_box`` (and, for Azure, ``ssh_key``) — both discovered
-post-deploy. ``build_fetch_argv`` (the transfer command) is unit-tested; the
-live transfer needs cloud + those credentials and is verified manually.
+``build_fetch_argv`` (the command) is unit-tested; the live transfer needs cloud
+and is verified manually.
 """
 
 from __future__ import annotations
@@ -17,58 +19,62 @@ from __future__ import annotations
 import os
 import typing as t
 
+from . import commands, paths
 from .cli import capture
 
 
 def build_fetch_argv(
-    snapshot: dict[str, t.Any], remote_path: str, local_path: str
+    session: dict[str, t.Any],
+    remote_path: str,
+    local_path: str,
+    repo_root: str = ".",
 ) -> list[str]:
-    """Construct an scp command to pull ``remote_path`` → ``local_path``.
+    """Construct a ``dreadgoad score fetch`` argv for the session's range.
 
-    Raises ValueError if the attack box (or Azure SSH key) isn't known yet.
+    Shape: ``[bin, --config, --env, score, fetch, --remote, --local, <provider…>]``.
+    Raises ValueError if the provider is unsupported, or (AWS) the attack box
+    isn't known yet.
     """
-    provider = snapshot.get("provider")
-    box = snapshot.get("attack_box")
-    if not box:
-        raise ValueError(
-            "attack box not known yet (discovered post-deploy); cannot fetch report"
-        )
+    anchor = session["anchor"]
+    snap = session.get("snapshot") or {}
+    provider = snap.get("provider")
+
+    argv = [
+        commands.resolve_bin(repo_root),
+        "--config",
+        str(anchor["config_path"]),
+        "--env",
+        str(anchor["env"]),
+        "score",
+        "fetch",
+        "--remote",
+        remote_path,
+        "--local",
+        local_path,
+    ]
 
     if provider == "aws":
-        region = snapshot.get("region") or ""
-        proxy = (
-            "aws ssm start-session --target %h "
-            "--document-name AWS-StartSSHSession --parameters portNumber=%p"
-        )
+        box = snap.get("attack_box")
+        if not box:
+            raise ValueError(
+                "attack box not known yet (discovered post-deploy); "
+                "run a command like /instances first"
+            )
+        argv += ["--attack-box", str(box)]
+        region = snap.get("region")
         if region:
-            proxy += f" --region {region}"
-        return [
-            "scp",
-            "-o",
-            "StrictHostKeyChecking=no",
-            "-o",
-            f"ProxyCommand={proxy}",
-            f"kali@{box}:{remote_path}",
-            local_path,
-        ]
+            argv += ["--region", str(region)]
+    elif provider == "azure":
+        # The CLI auto-discovers the Kali VM + SSH key over Bastion. Don't pass
+        # --attack-box (an explicit Azure resource id requires --ssh-key and
+        # skips key auto-discovery); only forward a key if the snapshot has one.
+        ssh_key = (snap.get("azure") or {}).get("ssh_key")
+        if ssh_key:
+            argv += ["--ssh-key", str(ssh_key)]
+    else:
+        raise ValueError(f"unsupported provider for report fetch: {provider!r}")
 
-    if provider == "azure":
-        az = snapshot.get("azure") or {}
-        ssh_key = az.get("ssh_key")
-        ssh_user = az.get("ssh_user") or "kali"
-        if not ssh_key:
-            raise ValueError("azure ssh_key not known yet; cannot fetch report")
-        return [
-            "scp",
-            "-i",
-            str(ssh_key),
-            "-o",
-            "StrictHostKeyChecking=no",
-            f"{ssh_user}@{box}:{remote_path}",
-            local_path,
-        ]
-
-    raise ValueError(f"unsupported provider for report fetch: {provider!r}")
+    return argv
 
 
 def local_report_path(session_dir: str, remote_path: str) -> str:
@@ -78,10 +84,10 @@ def local_report_path(session_dir: str, remote_path: str) -> str:
 
 
 async def fetch_report(
-    snapshot: dict[str, t.Any], session_dir: str, remote_path: str
+    session: dict[str, t.Any], remote_path: str
 ) -> tuple[int, str, str]:
     """Fetch the report into the session dir. Returns (rc, local_path, message)."""
-    local = local_report_path(session_dir, remote_path)
-    argv = build_fetch_argv(snapshot, remote_path, local)
-    rc, out, err = await capture(argv, cwd=".")
+    local = local_report_path(session["session_dir"], remote_path)
+    argv = build_fetch_argv(session, remote_path, local, str(paths.repo_root()))
+    rc, out, err = await capture(argv, cwd=str(paths.repo_root()))
     return rc, local, (err or out)

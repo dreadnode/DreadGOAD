@@ -338,6 +338,28 @@ async def test_apply_health_targets_config_hosts() -> None:
         await db.close()
 
 
+def test_parse_health_report_noisy() -> None:
+    """The report parses even with requireInfra's stdout prefix + ANSI + trailing noise."""
+    report = {
+        "passed": 1,
+        "failed": 0,
+        "skipped": 0,
+        "checks": [{"host": "DC01", "status": "OK"}],
+    }
+    body = json.dumps(report, indent=2)
+    # requireInfra prints "credentials OK" (with ANSI) to stdout before the JSON,
+    # and start_command merges stderr — so the report is surrounded by log lines.
+    noisy = f"  \x1b[32maws credentials OK (arn:aws:iam::123:user/x)\x1b[0m\n{body}\nsome trailing log\n"
+    parsed = hook.parse_health_report(noisy)
+    assert parsed is not None, "must extract JSON from noisy output"
+    assert parsed["checks"][0]["host"] == "DC01", parsed
+    # genuinely non-JSON → None
+    assert hook.parse_health_report("no json here") is None
+    # JSON that isn't a report (no 'checks') → None
+    assert hook.parse_health_report('{"foo": 1}') is None
+    print("PASS test_parse_health_report_noisy")
+
+
 def test_host_health_from_report() -> None:
     """Per-check → per-host aggregation (any FAIL→unhealthy; else OK→healthy)."""
     checks = [
@@ -481,6 +503,7 @@ def main() -> None:
     asyncio.run(test_run_check_success_updates_range())
     asyncio.run(test_run_check_syncs_attack_box())
     asyncio.run(test_run_check_failure_preserves_state())
+    test_parse_health_report_noisy()
     test_host_health_from_report()
     asyncio.run(test_apply_health_targets_config_hosts())
     asyncio.run(test_apply_health_per_host_from_json())

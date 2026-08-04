@@ -47,6 +47,14 @@ export interface RangeDoc {
   last_checked_at?: string | null
 }
 
+// One row of a /health report (health-check --json).
+export interface HealthCheck {
+  name: string
+  host: string
+  status: 'OK' | 'FAIL' | 'SKIP'
+  detail: string
+}
+
 // Chat event as sent over the WebSocket (kind + kind-specific fields).
 export interface ChatEvent {
   _cid?: number // client-assigned stable key (App-side)
@@ -61,6 +69,10 @@ export interface ChatEvent {
   exit_code?: number
   line?: string
   hosts_updated?: number
+  passed?: number
+  failed?: number
+  skipped?: number
+  checks?: HealthCheck[]
   usage?: { input_tokens?: number; output_tokens?: number }
   events?: ChatEvent[]
   [key: string]: unknown

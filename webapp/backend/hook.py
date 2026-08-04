@@ -154,6 +154,28 @@ async def run_check(app: t.Any, session_id: str) -> dict[str, t.Any]:
     return payload
 
 
+def parse_health_report(output: str) -> dict[str, t.Any] | None:
+    """Extract the ``health-check --json`` report from possibly-noisy output.
+
+    ``/health`` streams via ``start_command`` (stdout+stderr merged), and
+    ``requireInfra`` prints a "credentials OK" line to stdout *before* the JSON,
+    so the report is usually surrounded by log lines. Try the whole string, then
+    the first ``{`` … last ``}`` span. Returns the report dict, or None.
+    """
+    candidates = [output]
+    start, end = output.find("{"), output.rfind("}")
+    if 0 <= start < end:
+        candidates.append(output[start : end + 1])
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(parsed, dict) and "checks" in parsed:
+            return parsed
+    return None
+
+
 def host_health_from_report(checks: list[dict[str, t.Any]]) -> dict[str, str]:
     """Aggregate per-check results into a per-host verdict, keyed by UPPER host.
 
@@ -180,25 +202,20 @@ def host_health_from_report(checks: list[dict[str, t.Any]]) -> dict[str, str]:
 
 async def apply_health(
     app: t.Any, session_id: str, output: str, exit_code: int
-) -> None:
+) -> dict[str, t.Any] | None:
     """Overlay /health results onto the range (§6.4 two write paths).
 
     Prefers per-host verdicts parsed from ``health-check --json``; falls back to
     a range-level verdict from the exit code when the output isn't a JSON report
-    (e.g. an older CLI, or a run that failed before emitting one).
+    (e.g. an older CLI, or a run that failed before emitting one). Returns the
+    parsed report (so the caller can surface it in chat), or None on fallback.
     """
     db = app.state.db
     rng = await db.get_range(session_id)
     if rng is None:
-        return
+        return None
 
-    report: dict[str, t.Any] | None = None
-    try:
-        parsed = json.loads(output)
-        if isinstance(parsed, dict) and "checks" in parsed:
-            report = parsed
-    except (ValueError, TypeError):
-        report = None
+    report = parse_health_report(output)
 
     if report is not None:
         per_host = host_health_from_report(report.get("checks") or [])
@@ -214,6 +231,7 @@ async def apply_health(
             if h.get("source") == "config":
                 h["health"] = verdict
     await db.upsert_range(session_id, rng)
+    return report
 
 
 # Most extension machines are Linux (elk/wazuh/guacamole/lx01); ws01/exchange

@@ -299,6 +299,75 @@ def test_instructions_renders_system_prompt() -> None:
     print("PASS test_instructions_renders_system_prompt")
 
 
+async def test_health_emits_report_and_suppresses_json() -> None:
+    """/health emits a structured health_report, not raw JSON, and stays running."""
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        cfg = tmp / "dreadgoad.yaml"
+        cfg.write_text(_YAML)
+        db = await Database(str(tmp / "state.db")).connect()
+        svc = SessionService(db, repo_root=str(_REPO), sessions_root=tmp / "sessions")
+        app = types.SimpleNamespace(state=types.SimpleNamespace(db=db, sessions=svc))
+
+        report = json.dumps(
+            {
+                "passed": 1,
+                "failed": 1,
+                "skipped": 0,
+                "checks": [
+                    {
+                        "name": "DC01 DC",
+                        "host": "DC01",
+                        "status": "OK",
+                        "detail": "DC01",
+                    },
+                    {
+                        "name": "DC02 Trust",
+                        "host": "DC02",
+                        "status": "FAIL",
+                        "detail": "no trust",
+                    },
+                ],
+            }
+        )
+
+        # requireInfra prints a "credentials OK" line to stdout before the JSON;
+        # the report must still be extracted from the noisy, merged output.
+        noisy = "  aws credentials OK (arn:aws:iam::1:user/x)\n" + report
+
+        async def fake_start(argv, cwd):  # noqa: ANN001
+            return FakeRC(noisy.splitlines(), rc=1)  # exit 1: a check failed
+
+        async def fake_check(a, sid_):  # noqa: ANN001
+            return {"hosts_updated": 0}
+
+        orig_start, orig_check = chat.start_command, hook.run_check
+        chat.start_command, hook.run_check = fake_start, fake_check
+        try:
+            s = await svc.create_session(str(cfg), "dev")
+            ws = FakeWS()
+            chat.register_conn(s["id"], ws)
+            await chat.handle_message(app, s["id"], "/health")
+
+            kinds = [m["kind"] for m in ws.sent]
+            assert "health_report" in kinds, kinds
+            assert "command_progress" not in kinds, (
+                "raw JSON must be suppressed for /health"
+            )
+            hr = next(m for m in ws.sent if m["kind"] == "health_report")
+            assert hr["passed"] == 1 and hr["failed"] == 1, hr
+            assert len(hr["checks"]) == 2, hr
+
+            # A failing /health must NOT mark the session errored (§ status fix).
+            sess = await db.get_session(s["id"])
+            assert sess is not None
+            assert sess["status"] == "running", sess["status"]
+            print("PASS test_health_emits_report_and_suppresses_json")
+        finally:
+            chat.start_command, hook.run_check = orig_start, orig_check
+            await db.close()
+
+
 async def test_cleanup_session_evicts() -> None:
     chat._agents["z"] = object()
     chat._locks["z"] = asyncio.Lock()
@@ -317,6 +386,7 @@ async def _main() -> None:
     await test_run_dreadgoad_tool_validates_and_runs()
     await test_direct_command_rejects_extra_args()
     test_instructions_renders_system_prompt()
+    await test_health_emits_report_and_suppresses_json()
     await test_dispatch_serialization_and_concurrency()
     await test_cleanup_session_evicts()
     print("ALL PASS")

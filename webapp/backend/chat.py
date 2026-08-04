@@ -209,9 +209,7 @@ async def run_cli(
     # /score: fetch the (remote) report into the session dir first (§5.2).
     if name == "/score" and extra:
         try:
-            rc_fetch, local, msg = await fetch.fetch_report(
-                session["snapshot"], session["session_dir"], extra[0]
-            )
+            rc_fetch, local, msg = await fetch.fetch_report(session, extra[0])
         except ValueError as exc:
             await emit_event(app, session_id, "error", {"message": str(exc)})
             return 1, str(exc)
@@ -241,9 +239,13 @@ async def run_cli(
     _running[session_id] = rc
     try:
         async for line in rc.stream_lines():
-            await emit_event(
-                app, session_id, "command_progress", {"line": line}, persist=False
-            )
+            # /health runs `health-check --json`: silent until it emits one JSON
+            # blob, which we render as a structured health_report instead. Still
+            # consume the stream (drives the process + accumulates output).
+            if name != "/health":
+                await emit_event(
+                    app, session_id, "command_progress", {"line": line}, persist=False
+                )
     finally:
         _running.pop(session_id, None)
     exit_code = rc.returncode
@@ -281,7 +283,19 @@ async def run_cli(
 
     # Command-specific overlays (§6.4 / §6.3).
     if name == "/health":
-        await hook.apply_health(app, session_id, output, exit_code)
+        report = await hook.apply_health(app, session_id, output, exit_code)
+        if report is not None:
+            await emit_event(
+                app,
+                session_id,
+                "health_report",
+                {
+                    "passed": report.get("passed", 0),
+                    "failed": report.get("failed", 0),
+                    "skipped": report.get("skipped", 0),
+                    "checks": report.get("checks", []),
+                },
+            )
     elif name in ("/variant", "/extensions"):
         await hook.reseed(app, session_id)
 
