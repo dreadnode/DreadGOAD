@@ -23,7 +23,7 @@ from dreadnode.agent.events import (
     ToolStart,
 )
 
-from . import commands, paths
+from . import commands, hook, paths
 from .agent import create_agent
 from .cli import start_command
 
@@ -81,6 +81,11 @@ async def handle_message(app: t.Any, ws: t.Any, session_id: str, content: str) -
             await db.append_event(session_id, kind, payload)
         await ws.send_text(json.dumps({"session_id": session_id, "kind": kind, **payload}))
 
+    async def run_hook_and_emit() -> None:
+        """Fire the ingestion hook, surface check_run inline (§6.4)."""
+        payload = await hook.run_check(app, session_id)
+        await emit("check_run", payload)
+
     await emit("user_message", {"content": content})
 
     # --- direct-dispatch slash commands ---
@@ -101,6 +106,7 @@ async def handle_message(app: t.Any, ws: t.Any, session_id: str, content: str) -
 
         await emit("command_run", {"phase": "end", "command": name,
                                    "exit_code": exit_code, "tail": output[-2000:]})
+        await run_hook_and_emit()
         await emit("agent_end", {"failed": exit_code != 0})
         return
 
@@ -117,6 +123,7 @@ async def handle_message(app: t.Any, ws: t.Any, session_id: str, content: str) -
                 if formatted:
                     kind = formatted.pop("kind")
                     await emit(kind, formatted)
+        await run_hook_and_emit()
     except Exception as exc:  # noqa: BLE001 - surface any agent error to the client
         await emit("error", {"message": f"agent error: {exc}"})
         await emit("agent_end", {"failed": True})
