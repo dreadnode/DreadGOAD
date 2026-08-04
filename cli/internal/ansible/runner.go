@@ -228,7 +228,7 @@ func buildArgs(opts RunOptions, cfg *config.Config) []string {
 }
 
 func buildEnv(opts RunOptions, cfg *config.Config) ([]string, error) {
-	env := os.Environ()
+	env := sanitizeAWSEnv(os.Environ())
 
 	// On macOS, the ObjC runtime aborts forked child processes when class
 	// initialisation is in progress at fork time.  Ansible forks workers
@@ -254,6 +254,44 @@ func buildEnv(opts RunOptions, cfg *config.Config) ([]string, error) {
 	}
 
 	return env, nil
+}
+
+// sanitizeAWSEnv resolves the boto3 "Passing both a profile and access tokens
+// is not supported" error by dropping AWS_PROFILE when explicit access-key or
+// session-token env vars are also present. This shows up when the shell has
+// AWS_PROFILE set as a default while an SSO/1Password/assume-role helper has
+// injected short-lived credentials — both are valid credential sources on
+// their own, but the amazon.aws.aws_ssm connection plugin passes both to
+// boto3 which then hard-errors on every host.
+func sanitizeAWSEnv(env []string) []string {
+	var hasProfile, hasKeys bool
+	for _, kv := range env {
+		switch {
+		case strings.HasPrefix(kv, "AWS_PROFILE="):
+			hasProfile = kv != "AWS_PROFILE="
+		case strings.HasPrefix(kv, "AWS_ACCESS_KEY_ID="),
+			strings.HasPrefix(kv, "AWS_SESSION_TOKEN="):
+			if !strings.HasSuffix(kv, "=") {
+				hasKeys = true
+			}
+		}
+	}
+	if !hasProfile || !hasKeys {
+		return env
+	}
+
+	out := env[:0:len(env)]
+	var dropped string
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "AWS_PROFILE=") {
+			dropped = strings.TrimPrefix(kv, "AWS_PROFILE=")
+			continue
+		}
+		out = append(out, kv)
+	}
+	slog.Warn("dropped AWS_PROFILE to avoid boto3 profile+access-key conflict; using explicit AWS_ACCESS_KEY_ID/SESSION_TOKEN instead",
+		"dropped_profile", dropped)
+	return out
 }
 
 func fileExists(path string) bool {

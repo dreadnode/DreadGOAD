@@ -16,6 +16,7 @@ ADCS ESC10 Case 1 - Disable strong certificate binding enforcement
 ### main.yml
 
 - **Set StrongCertificateBindingEnforcement to 0** (ansible.windows.win_regedit)
+- **Restart the KDC so the new binding mode takes effect** (ansible.windows.win_service) - Conditional
 
 ## Example Playbook
 

@@ -31,6 +31,10 @@ type EnvironmentConfig struct {
 	VariantName       string   `mapstructure:"variant_name"`
 	EnabledExtensions []string `mapstructure:"enabled_extensions"`
 	VpcCidr           string   `mapstructure:"vpc_cidr"`
+	// Region is where this environment's lab actually lives. Each environment
+	// gets its own because the labs are deployed to different regions, and the
+	// infra/ tree is laid out as {deployment}/{env}/{region}/.
+	Region string `mapstructure:"region"`
 }
 
 // InfraConfig holds infrastructure/terragrunt settings.
@@ -102,13 +106,25 @@ type Config struct {
 	Infra           InfraConfig                  `mapstructure:"infra"`
 	Proxmox         ProxmoxConfig                `mapstructure:"proxmox"`
 	Ludus           LudusConfig                  `mapstructure:"ludus"`
+
+	// regionOverride is a region named explicitly on the command line or in
+	// the environment. It outranks the per-environment region, which viper
+	// cannot express on its own: a bound pflag and a config-file key both
+	// land in Region, but only the former should win.
+	regionOverride string
 }
 
 var (
-	cfg           *Config
-	once          sync.Once
-	configMissing bool
+	cfg            *Config
+	once           sync.Once
+	configMissing  bool
+	regionOverride string
 )
+
+// SetRegionOverride records a region supplied explicitly via --region, so it
+// takes precedence over the active environment's configured region. Call it
+// before Get(); the root command does this from PersistentPreRunE.
+func SetRegionOverride(region string) { regionOverride = region }
 
 // ConfigMissing returns true if no dreadgoad.yaml was found during Init.
 // Commands that depend on provider configuration should check this and warn
@@ -177,6 +193,18 @@ func Get() (*Config, error) {
 			}
 			cfg.LogDir = filepath.Join(home, ".ansible", "logs", "goad")
 		}
+
+		// A --region on the command line beats DREADGOAD_REGION, so only
+		// consult the environment when no flag was given. Both have to be
+		// handled here rather than left to viper's AutomaticEnv, which would
+		// land the variable in Region, where the per-environment region now
+		// outranks it.
+		cfg.regionOverride = regionOverride
+		if cfg.regionOverride == "" {
+			if env := os.Getenv("DREADGOAD_REGION"); env != "" {
+				cfg.regionOverride = env
+			}
+		}
 	})
 	return cfg, initErr
 }
@@ -185,6 +213,7 @@ func Get() (*Config, error) {
 func Reset() {
 	once = sync.Once{}
 	cfg = nil
+	regionOverride = ""
 }
 
 // InventoryPath returns the path to the inventory file for the current env.
@@ -421,13 +450,25 @@ func (c *Config) IsAWS() bool {
 	return c.ResolvedProvider() == "aws"
 }
 
-// ResolveRegion returns the configured AWS region or an actionable error if
-// none is set. This is the single source of truth for region resolution: every
-// command that needs to talk to AWS should call it (or ResolveRegionWithInventory)
-// rather than hardcoding a default.
+// ResolveRegion returns the AWS region for the active environment, or an
+// actionable error if none is set. This is the single source of truth for
+// region resolution: every command that needs to talk to AWS should call it
+// (or ResolveRegionWithInventory) rather than hardcoding a default.
+//
+// Region is a property of the lab, not of the CLI — staging and prod live in
+// different regions — so each environment declares its own. Highest precedence
+// first: an explicit --region or DREADGOAD_REGION, then the active
+// environment's region, then the top-level region as a fallback for
+// environments that don't declare one.
 func (c *Config) ResolveRegion() (string, error) {
+	if c.regionOverride != "" {
+		return c.regionOverride, nil
+	}
+	if r := c.ActiveEnvironment().Region; r != "" {
+		return r, nil
+	}
 	if c.Region == "" {
-		return "", fmt.Errorf("AWS region not configured: set 'region' in dreadgoad.yaml, export DREADGOAD_REGION, or pass --region")
+		return "", fmt.Errorf("AWS region not configured for env %q: set 'environments.%s.region' or 'region' in dreadgoad.yaml, export DREADGOAD_REGION, or pass --region", c.Env, c.Env)
 	}
 	return c.Region, nil
 }

@@ -46,6 +46,17 @@ NO MORE HOSTS LEFT *************************************************************
 			want: false,
 		},
 		{
+			name: "fatal rescued by block/rescue with clean recap",
+			output: `TASK [Reboot]
+fatal: [DC01]: FAILED! => {"msg": "Timed out waiting for last boot time check (timeout=600)"}
+
+TASK [Verify reboot completed]
+ok: [DC01]
+PLAY RECAP *********************************************************************
+DC01                       : ok=12   changed=1    unreachable=0    failed=0    skipped=0    rescued=1    ignored=0`,
+			want: true,
+		},
+		{
 			name: "retry indicator present",
 			output: `PLAY RECAP *********************************************************************
 DC01                       : ok=5    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0

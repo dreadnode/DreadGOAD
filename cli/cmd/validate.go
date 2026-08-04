@@ -117,7 +117,10 @@ func makeRunChecks(v *validate.Validator, p provider.Provider, quick bool) func(
 }
 
 func runValidate(cmd *cobra.Command, args []string) error {
-	ctx := context.Background()
+	// Signal-aware context from the root: Ctrl+C/SIGTERM cancels ctx so this
+	// function unwinds and the deferred Drain below runs (tearing down the
+	// Bastion tunnel) instead of the process dying with the tunnel orphaned.
+	ctx := cmd.Context()
 
 	opts, err := validateOptsFromFlags(cmd)
 	if err != nil {
@@ -131,6 +134,13 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	infra, err := requireInfra(ctx)
 	if err != nil {
 		return err
+	}
+
+	// Guarantee provider teardown (Bastion tunnel + cached clients) on every
+	// exit path — normal return, error, or interrupt. Drain is idempotent, so
+	// the terminal Drain inside makeRunChecks on the happy path is harmless.
+	if d, ok := infra.Provider.(provider.Drainer); ok {
+		defer d.Drain()
 	}
 
 	useTUI := !opts.plain && term.IsTerminal(int(os.Stdout.Fd()))

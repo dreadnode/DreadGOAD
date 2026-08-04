@@ -19,8 +19,11 @@ Install Windows updates on managed hosts
 - **Prevent forced user registry unload (fixes WUA 0x800703FA)** (ansible.windows.win_regedit)
 - **Reset Windows Update components** (ansible.windows.win_shell)
 - **Reboot to clear pending registry operations** (ansible.windows.win_reboot)
+- **Ensure host recovered after reboot** (ansible.builtin.wait_for_connection)
 - **Enable update service** (ansible.windows.win_service)
 - **Install all updates and reboot as many times as needed** (ansible.windows.win_updates)
+- **Ensure host recovered after updates** (ansible.builtin.wait_for_connection)
+- **Fail if Windows updates did not complete** (ansible.builtin.assert)
 
 ## Example Playbook
 

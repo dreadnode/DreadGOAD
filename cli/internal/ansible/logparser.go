@@ -13,21 +13,22 @@ var (
 )
 
 // CheckAnsibleSuccess analyzes Ansible output to determine if the run succeeded.
-// It reports whether no failures or unreachable hosts were detected in the
-// PLAY RECAP and no unignored fatal errors appear in the output.
+// When a PLAY RECAP is present it is treated as authoritative: ansible's own
+// failed/unreachable counters already discount fatals that were rescued or
+// explicitly ignored. If no recap exists (the play aborted before printing one)
+// the output is scanned for unignored fatal errors as a fallback.
 func CheckAnsibleSuccess(output string) bool {
 	if idx := strings.Index(output, "PLAY RECAP"); idx >= 0 {
 		recap := output[idx:]
 		if failedRe.MatchString(recap) || unreachableRe.MatchString(recap) {
 			return false
 		}
+		return !strings.Contains(output, "to retry, use:")
 	}
 
-	// Secondary: check for fatal errors not followed by "...ignoring"
 	lines := strings.Split(output, "\n")
 	for i, line := range lines {
 		if strings.HasPrefix(line, "fatal:") {
-			// Check next 20 lines for "...ignoring" (multi-line YAML output can be long)
 			end := i + 21
 			if end > len(lines) {
 				end = len(lines)

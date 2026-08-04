@@ -213,10 +213,9 @@ func (c *stdoutCapture) restore() string {
 // ---- Additional tests for validator.go and checks.go ----
 
 func TestNewValidator_Defaults(t *testing.T) {
+	// NewValidator always returns a non-nil *Validator, so there is nothing to
+	// guard against here; assert the defaults it fills in instead.
 	v := NewValidator(nil, "testenv", false, nil, nil)
-	if v == nil {
-		t.Fatal("NewValidator returned nil")
-	}
 	if v.env != "testenv" {
 		t.Errorf("env = %q, want %q", v.env, "testenv")
 	}
