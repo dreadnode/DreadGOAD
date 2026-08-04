@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/dreadnode/dreadgoad/internal/ludus"
@@ -22,6 +24,7 @@ type ProvisionTunnel struct {
 	socks      *ludus.SOCKSTunnel
 	bastionCmd *exec.Cmd
 	localPort  int
+	closeOnce  sync.Once
 }
 
 // ProxyURL returns the SOCKS5 proxy URL Ansible's psrp connection plugin
@@ -35,14 +38,85 @@ func (t *ProvisionTunnel) SOCKSAddr() string {
 }
 
 // Close terminates the SOCKS5 listener, the underlying SSH connection to the
-// controller, and the spawned `az network bastion tunnel` subprocess.
+// controller, and the spawned `az network bastion tunnel` subprocess tree.
+//
+// Teardown runs exactly once even if Close is called concurrently. That is not
+// cosmetic: killBastionTunnel reaps via cmd.Wait, and two Wait calls racing on
+// one exec.Cmd is a data race the detector flags. Callers reach Close through
+// several paths (winrmRunner.close, the deferred Drain in `validate`, the
+// deferred socksTunnel.Close in `provision`), so the guarantee lives here
+// rather than depending on every caller staying serialized.
 func (t *ProvisionTunnel) Close() {
-	if t.socks != nil {
-		t.socks.Close()
+	t.closeOnce.Do(func() {
+		if t.socks != nil {
+			t.socks.Close()
+		}
+		killBastionTunnel(t.bastionCmd)
+	})
+}
+
+// killBastionTunnel reaps the whole `az network bastion tunnel` process tree.
+// The `az` entry point is a shell wrapper that *spawns* a `python -m azure.cli`
+// child, so killing only cmd.Process (the wrapper) leaves that child running —
+// it reparents to init/launchd and the Bastion tunnel leaks. We start the
+// command in its own process group (Setpgid) and signal the whole group here.
+// killGracePeriod is how long the tunnel gets to honor SIGTERM before the
+// group is SIGKILLed.
+const killGracePeriod = 500 * time.Millisecond
+
+func killBastionTunnel(cmd *exec.Cmd) {
+	if cmd == nil || cmd.Process == nil {
+		return
 	}
-	if t.bastionCmd != nil && t.bastionCmd.Process != nil {
-		_ = t.bastionCmd.Process.Kill()
-		_ = t.bastionCmd.Wait()
+	pid := cmd.Process.Pid
+
+	// Reap in the background so the wrapper leaves zombie state the moment it
+	// dies. This is what makes the polling below work at all: an unreaped
+	// zombie still answers kill(pid, 0), so waiting on the group without
+	// concurrently reaping would never observe the exit.
+	reaped := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(reaped)
+	}()
+
+	// pgid == pid proves Setpgid took effect. Without that check, a cmd started
+	// without SysProcAttr.Setpgid reports *our* group, and the negative-pid kill
+	// below would take down dreadgoad itself along with its foreground group.
+	pgid, err := syscall.Getpgid(pid)
+	if err != nil || pgid != pid {
+		_ = cmd.Process.Kill()
+		<-reaped
+		return
+	}
+
+	// Negative pid targets the entire process group (wrapper + python).
+	_ = syscall.Kill(-pgid, syscall.SIGTERM)
+	if !awaitGroupExit(pgid, reaped, killGracePeriod) {
+		_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	}
+	<-reaped
+}
+
+// awaitGroupExit polls until no member of pgid remains, or timeout elapses.
+// Returns true if the group went away on its own, letting the caller skip the
+// SIGKILL escalation — a tunnel that honors SIGTERM promptly costs a few
+// milliseconds here instead of the full grace period.
+func awaitGroupExit(pgid int, reaped <-chan struct{}, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		select {
+		case <-reaped:
+			// Wrapper is reaped, so a surviving group means real stragglers.
+			if syscall.Kill(-pgid, 0) == syscall.ESRCH {
+				return true
+			}
+		default:
+		}
+		if !time.Now().Before(deadline) {
+			return false
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -73,7 +147,9 @@ func StartProvisionTunnel(ctx context.Context, c *Client, env string) (*Provisio
 		return nil, fmt.Errorf("controller ephemeral key not found at expected path; was 'infra apply' run?")
 	}
 
-	cmd := exec.Command("az", "network", "bastion", "tunnel",
+	// exec.CommandContext so a cancelled ctx (Ctrl+C / SIGTERM propagated to a
+	// signal-aware root context) kills the tunnel even if Close() is skipped.
+	cmd := exec.CommandContext(ctx, "az", "network", "bastion", "tunnel",
 		"--name", bastion.Name,
 		"--resource-group", bastion.ResourceGroup,
 		"--target-resource-id", controller.ID,
@@ -81,13 +157,25 @@ func StartProvisionTunnel(ctx context.Context, c *Client, env string) (*Provisio
 		"--port", strconv.Itoa(localPort))
 	cmd.Stdout = os.Stderr
 	cmd.Stderr = os.Stderr
+	// Own process group so Close() (and ctx-cancel) can reap the wrapper *and*
+	// its python child as one unit — see killBastionTunnel.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Kill the whole group on ctx-cancel, not just the wrapper process. Same
+	// pgid == pid guard as killBastionTunnel: never negative-kill a group we
+	// haven't confirmed belongs to the child.
+	cmd.Cancel = func() error {
+		pid := cmd.Process.Pid
+		if pgid, err := syscall.Getpgid(pid); err == nil && pgid == pid {
+			return syscall.Kill(-pgid, syscall.SIGKILL)
+		}
+		return cmd.Process.Kill()
+	}
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start bastion tunnel: %w", err)
 	}
 
 	if err := waitForLocalPort(ctx, localPort, 60*time.Second); err != nil {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		killBastionTunnel(cmd)
 		return nil, fmt.Errorf("bastion tunnel never came up on :%d: %w", localPort, err)
 	}
 
@@ -101,8 +189,7 @@ func StartProvisionTunnel(ctx context.Context, c *Client, env string) (*Provisio
 	}
 	socks, err := ludus.StartSOCKSTunnel(sshCfg)
 	if err != nil {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+		killBastionTunnel(cmd)
 		return nil, fmt.Errorf("start SOCKS5 over controller: %w", err)
 	}
 

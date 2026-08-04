@@ -58,6 +58,13 @@ func RunPlaybookWithRetry(ctx context.Context, opts RetryOptions) error {
 
 	retryForks := 2 // limit SSM concurrency to avoid session saturation
 	for attempt := range opts.MaxRetries {
+		// An interrupt reaches ansible-playbook directly (shared foreground
+		// process group), so the attempt comes back as an ordinary failure and
+		// the error-strategy path below would log a retry it cannot perform.
+		// Bail on cancellation before interpreting any result.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if attempt > 0 {
 			log.Info("retry attempt", "attempt", attempt, "playbook", opts.Playbook)
 			log.Info("waiting before retry", "delay", opts.RetryDelay)

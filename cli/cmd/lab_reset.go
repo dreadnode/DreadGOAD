@@ -487,7 +487,10 @@ func runLabReset(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
+	// Signal-aware context from the root: `lab reset` shares provisionPlaybooks
+	// with `provision`, so it opens the same Bastion tunnel and needs the same
+	// cancellation path to tear it down on interrupt.
+	ctx := cmd.Context()
 
 	skipPurge, _ := cmd.Flags().GetBool("skip-purge")
 	skipProvision, _ := cmd.Flags().GetBool("skip-provision")
