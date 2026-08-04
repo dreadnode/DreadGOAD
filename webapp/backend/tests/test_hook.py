@@ -236,6 +236,43 @@ async def test_run_check_success_updates_range() -> None:
         await db.close()
 
 
+async def test_run_check_syncs_attack_box() -> None:
+    """run_check learns the attack box id from the instances and persists it (§5.2)."""
+    db = await _db_with_session()
+    orig = hook.capture
+
+    async def fake_capture(argv, cwd):  # noqa: ANN001
+        payload = [
+            {
+                "name": "goad-dreadgoad-kingslanding-vm",
+                "id": "i-dc",
+                "state": "running",
+            },
+            {
+                "name": "goad-dreadgoad-kali-attackbox",
+                "id": "i-kali",
+                "state": "running",
+            },
+        ]
+        return (0, json.dumps(payload), "")
+
+    hook.capture = fake_capture
+    try:
+        # precondition: attack_box unknown
+        s0 = await db.get_session("s-1")
+        assert s0 is not None and s0["snapshot"].get("attack_box") is None
+
+        await run_check(_App(db), "s-1")
+
+        s1 = await db.get_session("s-1")
+        assert s1 is not None
+        assert s1["snapshot"]["attack_box"] == "i-kali", s1["snapshot"]
+        print("PASS test_run_check_syncs_attack_box")
+    finally:
+        hook.capture = orig
+        await db.close()
+
+
 async def test_run_check_failure_preserves_state() -> None:
     db = await _db_with_session()
     orig = hook.capture
@@ -282,19 +319,93 @@ async def test_apply_health_targets_config_hosts() -> None:
                 "layout": {},
             },
         )
-        await hook.apply_health(_App(db), "s", healthy=True)
+        # Fallback path: output isn't a JSON report → range-level verdict from
+        # exit code, applied to config hosts only.
+        await hook.apply_health(_App(db), "s", "human-readable table", 0)
         rng = await db.get_range("s")
         assert rng is not None
         hosts = {h["id"]: h for h in rng["hosts"]}
         assert hosts["dc"]["health"] == "healthy", hosts
         assert hosts["attackbox"]["health"] == "unknown", "infra host must be untouched"
 
-        await hook.apply_health(_App(db), "s", healthy=False)
+        await hook.apply_health(_App(db), "s", "", 1)
         rng = await db.get_range("s")
         assert rng is not None
         hosts = {h["id"]: h for h in rng["hosts"]}
         assert hosts["dc"]["health"] == "unhealthy", hosts
         print("PASS test_apply_health_targets_config_hosts")
+    finally:
+        await db.close()
+
+
+def test_host_health_from_report() -> None:
+    """Per-check → per-host aggregation (any FAIL→unhealthy; else OK→healthy)."""
+    checks = [
+        {"name": "DC01 DC", "host": "DC01", "status": "OK"},
+        {"name": "DC01 Repl", "host": "DC01", "status": "OK"},
+        {"name": "DC02 DC", "host": "DC02", "status": "OK"},
+        {"name": "DC02 Trust", "host": "DC02", "status": "FAIL"},
+        {"name": "SRV01 MSSQL", "host": "SRV01", "status": "SKIP"},
+    ]
+    v = hook.host_health_from_report(checks)
+    assert v == {"DC01": "healthy", "DC02": "unhealthy", "SRV01": "unknown"}, v
+    assert hook.host_health_from_report([]) == {}, "no checks → empty map"
+    print("PASS test_host_health_from_report")
+
+
+async def test_apply_health_per_host_from_json() -> None:
+    """A JSON report sets per-host health (matched case-insensitively)."""
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()
+    db = await Database(tmp.name).connect()
+    try:
+        await db.upsert_range(
+            "s",
+            {
+                "session_id": "s",
+                "hosts": [
+                    {
+                        "id": "dc01",
+                        "hostname": "dc01",
+                        "source": "config",
+                        "health": "unknown",
+                    },
+                    {
+                        "id": "srv02",
+                        "hostname": "srv02",
+                        "source": "config",
+                        "health": "unknown",
+                    },
+                    {"id": "attackbox", "source": "infra", "health": "unknown"},
+                ],
+                "edges": [],
+                "layout": {},
+            },
+        )
+        report = json.dumps(
+            {
+                "passed": 1,
+                "failed": 1,
+                "skipped": 0,
+                "checks": [
+                    {"name": "DC01 DC", "host": "DC01", "status": "OK"},
+                    {"name": "SRV02 Membership", "host": "SRV02", "status": "FAIL"},
+                ],
+            }
+        )
+        # exit_code=1 (a check failed) but the JSON drives per-host, not exit code
+        await hook.apply_health(_App(db), "s", report, 1)
+        rng = await db.get_range("s")
+        assert rng is not None
+        hosts = {h["id"]: h for h in rng["hosts"]}
+        assert hosts["dc01"]["health"] == "healthy", (
+            hosts
+        )  # matched DC01 case-insensitively
+        assert hosts["srv02"]["health"] == "unhealthy", hosts
+        assert hosts["attackbox"]["health"] == "unknown", (
+            "host with no checks untouched"
+        )
+        print("PASS test_apply_health_per_host_from_json")
     finally:
         await db.close()
 
@@ -368,8 +479,11 @@ def main() -> None:
     test_state_normalization()
     test_summarize_changes()
     asyncio.run(test_run_check_success_updates_range())
+    asyncio.run(test_run_check_syncs_attack_box())
     asyncio.run(test_run_check_failure_preserves_state())
+    test_host_health_from_report()
     asyncio.run(test_apply_health_targets_config_hosts())
+    asyncio.run(test_apply_health_per_host_from_json())
     asyncio.run(test_reseed_adds_enabled_extension_nodes())
     print("ALL PASS")
 

@@ -78,7 +78,7 @@ REGISTRY: dict[str, Command] = {
     ),
     "/health": Command(
         "/health",
-        ("health-check",),
+        ("health-check", "--json"),
         long_running=True,
         description="AD functional health",
     ),

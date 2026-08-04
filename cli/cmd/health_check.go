@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -28,8 +29,12 @@ var healthCheckCmd = &cobra.Command{
 	RunE: runHealthCheck,
 }
 
+var healthCheckJSON bool
+
 func init() {
 	rootCmd.AddCommand(healthCheckCmd)
+	healthCheckCmd.Flags().BoolVar(&healthCheckJSON, "json", false,
+		"Output machine-readable JSON (per-check results + counts)")
 }
 
 // healthCheck defines a single check: a name, the host to run on, a PS command, and a function to evaluate the output.
@@ -40,14 +45,36 @@ type healthCheck struct {
 	eval    func(stdout string) (ok bool, detail string)
 }
 
+// healthCheckResult is one check's outcome in the JSON report. Status is one of
+// "OK", "FAIL", or "SKIP" (instance not found). Host is the DC/server role.
+type healthCheckResult struct {
+	Name   string `json:"name"`
+	Host   string `json:"host"`
+	Status string `json:"status"`
+	Detail string `json:"detail"`
+}
+
+// healthReport is the --json payload: per-check results plus roll-up counts.
+type healthReport struct {
+	Passed  int                 `json:"passed"`
+	Failed  int                 `json:"failed"`
+	Skipped int                 `json:"skipped"`
+	Checks  []healthCheckResult `json:"checks"`
+}
+
 func runHealthCheck(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
+	jsonOut := healthCheckJSON
 
-	title := " Lab Health Check "
-	pad := 90 - len(title)
-	left := pad / 2
-	right := pad - left
-	fmt.Printf("%s%s%s\n", strings.Repeat("=", left), title, strings.Repeat("=", right))
+	// In JSON mode the human table is suppressed so stdout carries only the
+	// report (the web app parses it for per-host health).
+	if !jsonOut {
+		title := " Lab Health Check "
+		pad := 90 - len(title)
+		left := pad / 2
+		right := pad - left
+		fmt.Printf("%s%s%s\n", strings.Repeat("=", left), title, strings.Repeat("=", right))
+	}
 
 	cfg, err := config.Get()
 	if err != nil {
@@ -59,14 +86,18 @@ func runHealthCheck(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Printf("%-40s %-10s %s\n", "CHECK", "STATUS", "DETAIL")
-	fmt.Println(strings.Repeat("-", 90))
+	if !jsonOut {
+		fmt.Printf("%-40s %-10s %s\n", "CHECK", "STATUS", "DETAIL")
+		fmt.Println(strings.Repeat("-", 90))
+	}
 
 	checks := buildChecks(infra.Lab)
 
 	passed := 0
 	failed := 0
+	skipped := 0
 	retried := 0
+	results := make([]healthCheckResult, 0, len(checks))
 
 	retryOpts := provider.RetryCommandOptions{
 		MaxRetries: cfg.MaxRetries,
@@ -76,50 +107,79 @@ func runHealthCheck(cmd *cobra.Command, args []string) error {
 	for _, check := range checks {
 		instanceID, ok := infra.HostMap[check.host]
 		if !ok {
-			color.Yellow("%-40s %-10s %s", check.name, "SKIP", "instance not found")
+			if !jsonOut {
+				color.Yellow("%-40s %-10s %s", check.name, "SKIP", "instance not found")
+			}
+			results = append(results, healthCheckResult{check.name, check.host, "SKIP", "instance not found"})
+			skipped++
 			continue
 		}
 
 		result, attempts, err := provider.RunCommandWithRetry(
 			ctx, infra.Provider, instanceID, check.command, 90*time.Second, retryOpts,
 			func(attempt int) {
-				color.Yellow("%-40s %-10s %s", check.name, "RETRY",
-					fmt.Sprintf("transient failure, retry %d/%d...", attempt, cfg.MaxRetries))
+				if !jsonOut {
+					color.Yellow("%-40s %-10s %s", check.name, "RETRY",
+						fmt.Sprintf("transient failure, retry %d/%d...", attempt, cfg.MaxRetries))
+				}
 			},
 		)
 
 		if err != nil {
-			color.Red("%-40s %-10s %s", check.name, "FAIL", err.Error())
+			if !jsonOut {
+				color.Red("%-40s %-10s %s", check.name, "FAIL", err.Error())
+			}
+			results = append(results, healthCheckResult{check.name, check.host, "FAIL", err.Error()})
 			failed++
 			continue
 		}
 		if result.Status != "Success" {
-			color.Red("%-40s %-10s %s", check.name, "FAIL", "command status: "+result.Status)
+			if !jsonOut {
+				color.Red("%-40s %-10s %s", check.name, "FAIL", "command status: "+result.Status)
+			}
+			results = append(results, healthCheckResult{check.name, check.host, "FAIL", "command status: " + result.Status})
 			failed++
 			continue
 		}
 
 		ok, detail := check.eval(result.Stdout)
 		if ok {
-			if attempts > 1 {
-				color.Green("%-40s %-10s %s (passed on attempt %d)", check.name, "OK", detail, attempts)
-				retried++
-			} else {
-				color.Green("%-40s %-10s %s", check.name, "OK", detail)
+			if !jsonOut {
+				if attempts > 1 {
+					color.Green("%-40s %-10s %s (passed on attempt %d)", check.name, "OK", detail, attempts)
+				} else {
+					color.Green("%-40s %-10s %s", check.name, "OK", detail)
+				}
 			}
+			if attempts > 1 {
+				retried++
+			}
+			results = append(results, healthCheckResult{check.name, check.host, "OK", detail})
 			passed++
 		} else {
-			color.Red("%-40s %-10s %s", check.name, "FAIL", detail)
+			if !jsonOut {
+				color.Red("%-40s %-10s %s", check.name, "FAIL", detail)
+			}
+			results = append(results, healthCheckResult{check.name, check.host, "FAIL", detail})
 			failed++
 		}
 	}
 
-	fmt.Println(strings.Repeat("-", 90))
-	summary := fmt.Sprintf("Results: %d passed, %d failed", passed, failed)
-	if retried > 0 {
-		summary += fmt.Sprintf(" (%d recovered after transient retry)", retried)
+	if jsonOut {
+		report := healthReport{Passed: passed, Failed: failed, Skipped: skipped, Checks: results}
+		b, err := json.MarshalIndent(report, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Println(string(b))
+	} else {
+		fmt.Println(strings.Repeat("-", 90))
+		summary := fmt.Sprintf("Results: %d passed, %d failed", passed, failed)
+		if retried > 0 {
+			summary += fmt.Sprintf(" (%d recovered after transient retry)", retried)
+		}
+		fmt.Println(summary)
 	}
-	fmt.Println(summary)
 
 	if failed > 0 {
 		return fmt.Errorf("%d health check(s) failed", failed)

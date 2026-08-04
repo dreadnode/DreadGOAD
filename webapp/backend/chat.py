@@ -252,6 +252,10 @@ async def run_cli(
     if cmd.long_running:
         if rc.cancelled:
             final = "interrupted"  # user cancel ≠ failure (§5.4)
+        elif name == "/health":
+            # A non-zero /health exit means checks failed, not that the range
+            # broke — that verdict lives per-host, so keep the lifecycle running.
+            final = "running"
         elif exit_code:
             final = "error"
         elif name == "/destroy":
@@ -277,7 +281,7 @@ async def run_cli(
 
     # Command-specific overlays (§6.4 / §6.3).
     if name == "/health":
-        await hook.apply_health(app, session_id, exit_code == 0)
+        await hook.apply_health(app, session_id, output, exit_code)
     elif name in ("/variant", "/extensions"):
         await hook.reseed(app, session_id)
 

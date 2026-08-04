@@ -43,6 +43,20 @@ def _norm_state(state: str | None) -> str:
     return _STATE.get((state or "").lower(), "unknown")
 
 
+def find_attack_box(instances: list[dict[str, t.Any]]) -> str | None:
+    """The attack box's cloud id among live instances, or None (§5.2).
+
+    ``/score`` needs the attack box to fetch the report, but it's only known
+    post-deploy. ``lab status --json`` returns it like any other instance (name
+    matches the ``attackbox`` aliases), so we learn it from the same read.
+    """
+    for inst in instances:
+        name = str(inst.get("name") or "").lower()
+        if any(a in name for a in _ALIASES["attackbox"]):
+            return inst.get("id")
+    return None
+
+
 def _match(
     host: dict[str, t.Any], instances: list[dict[str, t.Any]]
 ) -> dict[str, t.Any] | None:
@@ -125,26 +139,80 @@ async def run_check(app: t.Any, session_id: str) -> dict[str, t.Any]:
         # status the command set. Stale last_checked_at + this payload signal it.
         return {"error": str(exc)}
 
+    # Inventory sync: learn the attack box id post-deploy so /score can fetch
+    # the report (§5.2). Persist only on change to avoid needless writes.
+    box = find_attack_box(instances)
+    snap = session.get("snapshot") or {}
+    if box and snap.get("attack_box") != box:
+        snap["attack_box"] = box
+        session["snapshot"] = snap
+        await db.upsert_session(session)
+
     updated = map_range_status(rng, instances)
     payload = summarize_changes(rng, updated)
     await db.upsert_range(session_id, updated)
     return payload
 
 
-async def apply_health(app: t.Any, session_id: str, healthy: bool) -> None:
-    """Set the health overlay on config hosts after /health (§6.4 two write paths).
+def host_health_from_report(checks: list[dict[str, t.Any]]) -> dict[str, str]:
+    """Aggregate per-check results into a per-host verdict, keyed by UPPER host.
 
-    v1 applies a range-level verdict from the command's exit code (per-host
-    health needs a --json health-check; noted as a follow-up).
+    A host is ``unhealthy`` if any of its checks FAILed, ``healthy`` if at least
+    one passed and none failed, else ``unknown`` (only SKIPs). Checks carry the
+    DC/server role in ``host`` (e.g. ``DC01``); hosts with no checks are absent
+    from the map and left untouched by the overlay.
+    """
+    statuses: dict[str, set[str]] = {}
+    for c in checks:
+        host = str(c.get("host") or "").upper()
+        if host:
+            statuses.setdefault(host, set()).add(str(c.get("status") or ""))
+    verdicts: dict[str, str] = {}
+    for host, seen in statuses.items():
+        if "FAIL" in seen:
+            verdicts[host] = "unhealthy"
+        elif "OK" in seen:
+            verdicts[host] = "healthy"
+        else:
+            verdicts[host] = "unknown"
+    return verdicts
+
+
+async def apply_health(
+    app: t.Any, session_id: str, output: str, exit_code: int
+) -> None:
+    """Overlay /health results onto the range (§6.4 two write paths).
+
+    Prefers per-host verdicts parsed from ``health-check --json``; falls back to
+    a range-level verdict from the exit code when the output isn't a JSON report
+    (e.g. an older CLI, or a run that failed before emitting one).
     """
     db = app.state.db
     rng = await db.get_range(session_id)
     if rng is None:
         return
-    verdict = "healthy" if healthy else "unhealthy"
-    for h in rng.get("hosts", []):
-        if h.get("source") == "config":
-            h["health"] = verdict
+
+    report: dict[str, t.Any] | None = None
+    try:
+        parsed = json.loads(output)
+        if isinstance(parsed, dict) and "checks" in parsed:
+            report = parsed
+    except (ValueError, TypeError):
+        report = None
+
+    if report is not None:
+        per_host = host_health_from_report(report.get("checks") or [])
+        for h in rng.get("hosts", []):
+            key = str(h.get("id") or "").upper()
+            hostname = str(h.get("hostname") or "").upper()
+            verdict = per_host.get(key) or per_host.get(hostname)
+            if verdict is not None:
+                h["health"] = verdict
+    else:
+        verdict = "healthy" if exit_code == 0 else "unhealthy"
+        for h in rng.get("hosts", []):
+            if h.get("source") == "config":
+                h["health"] = verdict
     await db.upsert_range(session_id, rng)
 
 
