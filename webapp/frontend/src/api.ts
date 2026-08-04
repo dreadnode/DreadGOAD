@@ -13,8 +13,19 @@ export interface AppConfig {
   default_config_path: string
 }
 
+export interface CommandDef {
+  name: string
+  description: string
+  dispatch: 'direct' | 'agent'
+  long_running: boolean
+  takes_args: boolean
+}
+
 export const api = {
   config: (): Promise<AppConfig> => fetch('/api/config').then(r => json<AppConfig>(r)),
+
+  commands: (): Promise<{ commands: CommandDef[] }> =>
+    fetch('/api/commands').then(r => json(r)),
 
   listSessions: (): Promise<{ sessions: Session[] }> =>
     fetch('/api/sessions').then(r => json(r)),

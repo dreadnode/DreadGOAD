@@ -42,6 +42,16 @@ def main() -> None:
         # health
         assert client.get("/api/health").json()["status"] == "ok"
 
+        # command catalog (drives the frontend autocomplete)
+        cat = client.get("/api/commands").json()["commands"]
+        assert len(cat) == 14, cat
+        names = {c["name"] for c in cat}
+        assert "/up" in names and "/destroy" in names, names
+        up = next(c for c in cat if c["name"] == "/up")
+        assert up["dispatch"] == "agent" and up["description"], up
+        assert next(c for c in cat if c["name"] == "/instances")["dispatch"] == "direct"
+        print("PASS command catalog")
+
         # create (attach)
         r = client.post("/api/sessions", json={"config_path": str(cfg), "env": "dev"})
         assert r.status_code == 200, r.text

@@ -128,6 +128,24 @@ AGENT_COMMANDS: frozenset[str] = frozenset(
 )
 
 
+def command_catalog() -> list[dict[str, t.Any]]:
+    """Registry as a JSON-able list for the frontend autocomplete menu (§5.1).
+
+    Preserves REGISTRY insertion order. ``dispatch`` lets the UI tag each row
+    (direct vs agent); ``takes_args`` hints whether free-form args are expected.
+    """
+    return [
+        {
+            "name": name,
+            "description": c.description,
+            "dispatch": c.dispatch,
+            "long_running": c.long_running,
+            "takes_args": c.takes_args,
+        }
+        for name, c in REGISTRY.items()
+    ]
+
+
 def expand_command_prompt(name: str, extra: list[str]) -> str:
     """Turn a ``dispatch="agent"`` command into a structured prompt (ALFRED-style).
 

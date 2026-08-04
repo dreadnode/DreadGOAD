@@ -17,7 +17,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__ as VERSION
-from . import chat, paths
+from . import chat, commands, paths
 from .db import Database
 from .sessions import SessionService
 
@@ -76,6 +76,12 @@ async def get_config() -> dict[str, t.Any]:
         "default_model": _DEFAULT_MODEL,
         "default_config_path": str(paths.repo_root() / "dreadgoad.yaml"),
     }
+
+
+@app.get("/api/commands")
+async def get_commands() -> dict[str, t.Any]:
+    """The slash-command registry, for the frontend autocomplete menu."""
+    return {"commands": commands.command_catalog()}
 
 
 # --- session lifecycle (§7) ------------------------------------------------

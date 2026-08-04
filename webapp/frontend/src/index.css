@@ -1,7 +1,7 @@
 :root {
   /* DreadGOAD brand (ported from ALFRED, retinted) */
   --dg-brand:       #ef562f;
-  --dg-interactive: #f5c842;
+  --dg-interactive: #ff7a52;  /* coral tint of the brand (was ALFRED gold #f5c842) */
 
   /* Dreadnode palette */
   --dn-black:       #0a0a0a;

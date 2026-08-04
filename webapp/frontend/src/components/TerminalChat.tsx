@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { ChatEvent } from '../types'
 import type { ConnectionStatus } from '../hooks/useWebSocket'
+import { api, type CommandDef } from '../api'
 
 interface Props {
   sessionId: string | null
@@ -67,9 +68,15 @@ function Message({ ev }: { ev: ChatEvent }) {
 
 export default function TerminalChat({ sessionId, messages, status, onSend, processing, onCancel }: Props) {
   const [input, setInput] = useState('')
+  const [commands, setCommands] = useState<CommandDef[]>([])
+  const [cmdHighlight, setCmdHighlight] = useState(0)
   const endRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
+
+  // Load the slash-command registry once for the autocomplete menu (§5.1).
+  useEffect(() => { api.commands().then(r => setCommands(r.commands)).catch(() => {}) }, [])
 
   // Esc cancels the in-flight command/turn (sends {type:cancel} → SIGINT, §5.4).
   useEffect(() => {
@@ -79,11 +86,49 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
     return () => document.removeEventListener('keydown', onKey)
   }, [processing, onCancel])
 
+  // Autocomplete: filter to the typed `/`-token; hide once a space is typed (args).
+  const firstToken = input.split(' ')[0]
+  const filteredCommands = useMemo(
+    () => (input.startsWith('/') ? commands.filter(c => c.name.startsWith(firstToken)) : []),
+    [commands, input, firstToken],
+  )
+  const showCmdMenu = filteredCommands.length > 0 && !input.includes(' ')
+
   const submit = () => {
     const t = input.trim()
     if (!t || !sessionId || status !== 'connected') return
     onSend(t)
     setInput('')
+    setCmdHighlight(0)
+  }
+
+  const selectCommand = (cmd: CommandDef) => {
+    // Fill the command; agent commands take args, so leave a trailing space.
+    setInput(cmd.name + ' ')
+    setCmdHighlight(0)
+    inputRef.current?.focus()
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (showCmdMenu) {
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setCmdHighlight(i => (i > 0 ? i - 1 : filteredCommands.length - 1))
+        return
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setCmdHighlight(i => (i < filteredCommands.length - 1 ? i + 1 : 0))
+        return
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+        e.preventDefault()
+        selectCommand(filteredCommands[cmdHighlight])
+        return
+      }
+      if (e.key === 'Escape') { e.preventDefault(); setInput(''); return }
+    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() }
   }
 
   return (
@@ -108,20 +153,51 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
         )}
         <div ref={endRef} />
       </div>
-      <div style={{ display: 'flex', alignItems: 'flex-start', padding: '12px 16px', borderTop: '1px solid var(--dn-border)', background: 'var(--dn-black)' }}>
-        <span style={{ color: 'var(--dg-interactive)', marginRight: 8 }}>&gt;</span>
-        <textarea
-          value={input}
-          rows={1}
-          disabled={!sessionId || status !== 'connected'}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() } }}
-          placeholder={status === 'connected' ? 'message or /command' : 'connecting…'}
-          style={{
-            flex: 1, background: 'transparent', border: 'none', outline: 'none', resize: 'none',
-            color: 'var(--dn-text-bright)', fontFamily: 'var(--font-mono)', fontSize: 13,
-          }}
-        />
+      <div style={{ position: 'relative', borderTop: '1px solid var(--dn-border)', background: 'var(--dn-black)' }}>
+        {showCmdMenu && (
+          <div style={{
+            position: 'absolute', bottom: '100%', left: 0, right: 0, zIndex: 50,
+            background: 'var(--dn-surface)', border: '1px solid var(--dn-border)',
+            borderBottom: 'none', borderRadius: '4px 4px 0 0',
+            maxHeight: 220, overflowY: 'auto', fontFamily: 'var(--font-mono)', fontSize: 12,
+          }}>
+            {filteredCommands.map((cmd, i) => (
+              <div
+                key={cmd.name}
+                // onMouseDown (not onClick) so the item is chosen before the
+                // textarea blurs, and preventDefault keeps focus in the input.
+                onMouseDown={e => { e.preventDefault(); selectCommand(cmd) }}
+                onMouseEnter={() => setCmdHighlight(i)}
+                style={{
+                  padding: '6px 12px', cursor: 'pointer', display: 'flex', gap: 8, alignItems: 'center',
+                  background: i === cmdHighlight ? 'var(--dn-border)' : 'transparent',
+                }}
+              >
+                <span title={cmd.dispatch === 'agent' ? 'agent — takes free-form args' : 'direct'}>
+                  {cmd.dispatch === 'agent' ? '🤖' : '⚡'}
+                </span>
+                <span style={{ color: 'var(--dg-interactive)', minWidth: 96 }}>{cmd.name}</span>
+                <span style={{ color: 'var(--dn-text-muted)', fontSize: 11 }}>{cmd.description}</span>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ display: 'flex', alignItems: 'flex-start', padding: '12px 16px' }}>
+          <span style={{ color: 'var(--dg-interactive)', marginRight: 8 }}>&gt;</span>
+          <textarea
+            ref={inputRef}
+            value={input}
+            rows={1}
+            disabled={!sessionId || status !== 'connected'}
+            onChange={e => { setInput(e.target.value); setCmdHighlight(0) }}
+            onKeyDown={handleKeyDown}
+            placeholder={status === 'connected' ? 'message or /command  (type / for commands)' : 'connecting…'}
+            style={{
+              flex: 1, background: 'transparent', border: 'none', outline: 'none', resize: 'none',
+              color: 'var(--dn-text-bright)', fontFamily: 'var(--font-mono)', fontSize: 13,
+            }}
+          />
+        </div>
       </div>
     </div>
   )
