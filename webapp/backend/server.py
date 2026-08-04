@@ -7,15 +7,16 @@ Later: multiplexed chat + range-state WebSockets, the agent, ingestion hook.
 
 from __future__ import annotations
 
+import json
 import os
 import typing as t
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__ as VERSION
-from . import paths
+from . import chat, paths
 from .db import Database
 from .sessions import SessionService
 
@@ -118,6 +119,33 @@ async def get_range(session_id: str) -> dict[str, t.Any]:
     if rng is None:
         raise HTTPException(status_code=404, detail="range not found")
     return rng
+
+
+# --- multiplexed chat WebSocket (§7) ---------------------------------------
+
+
+@app.websocket("/ws/chat")
+async def ws_chat(websocket: WebSocket) -> None:
+    """One socket for all tabs; each message carries its ``session_id``."""
+    await websocket.accept()
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            session_id = msg.get("session_id")
+            if not session_id:
+                continue
+            if msg.get("type") == "resume":
+                await chat.replay(app, websocket, session_id)
+                continue
+            content = (msg.get("content") or "").strip()
+            if content:
+                await chat.handle_message(app, websocket, session_id, content)
+    except WebSocketDisconnect:
+        return
 
 
 # --- static frontend -------------------------------------------------------
