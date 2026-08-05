@@ -187,12 +187,12 @@ export default function App() {
         }}>+ NEW</button>
         <div style={{ flex: 1 }} />
         {cfg && !cfg.api_key_set && (
-          <span title="No LLM API key set — agent turns will fail" style={{ color: 'var(--dn-warning)', fontSize: 11 }}>⚠ no key</span>
+          <span
+            onClick={() => setShowSettings(true)}
+            title="No LLM API key set — click to add one"
+            style={{ color: 'var(--dn-warning)', fontSize: 11, cursor: 'pointer' }}
+          >⚠ no key</span>
         )}
-        <button onClick={() => setShowSettings(true)} title="Settings (API key)" style={{
-          background: 'transparent', border: 'none', color: 'var(--dn-text-muted)',
-          cursor: 'pointer', fontSize: 14, padding: '2px 8px',
-        }}>⚙</button>
       </div>
 
       {/* Two-pane, or an empty state until a session exists */}

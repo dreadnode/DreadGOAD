@@ -11,6 +11,7 @@
   --dn-border:      #1f1f1f;
   --dn-border-lt:   #2a2a2a;
   --dn-accent:      #ef562f;
+  --dn-electric:    #4da6ff;  /* electric blue — range identity fields */
   --dn-accent-dim:  rgba(239, 86, 47, 0.15);
   --dn-text:        #e0e0e0;
   --dn-text-bright: #ffffff;

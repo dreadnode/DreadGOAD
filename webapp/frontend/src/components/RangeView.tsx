@@ -118,8 +118,8 @@ export default function RangeView(
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, minWidth: 0, overflow: 'hidden' }}>
           <span style={{ color: 'var(--dg-brand)', fontSize: 13, fontWeight: 700 }}>RANGE</span>
           {fields.map(([label, value]) => (
-            <span key={label} style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
-              <span style={{ color: 'var(--dn-text-dim)' }}>{label} </span>
+            <span key={label} style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+              <span style={{ color: 'var(--dn-electric)' }}>{label} </span>
               <span style={{ color: 'var(--dn-text-bright)' }}>{value}</span>
             </span>
           ))}

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { ChatEvent, HealthCheck } from '../types'
+import type { ChatEvent, HealthCheck, Instance } from '../types'
 import type { ConnectionStatus } from '../hooks/useWebSocket'
 import { api, type CommandDef } from '../api'
 
@@ -34,6 +34,47 @@ function HealthReport({ ev }: { ev: ChatEvent }) {
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+// Raw cloud power-state → dot color (mirrors the hook's _STATE normalization).
+const INSTANCE_STATE_COLOR: Record<string, string> = {
+  running: 'var(--dn-success)',
+  stopped: 'var(--dn-text-muted)',
+  deallocated: 'var(--dn-text-muted)',
+  pending: 'var(--dn-warning)',
+  starting: 'var(--dn-warning)',
+  creating: 'var(--dn-warning)',
+  terminated: 'var(--dn-error)',
+}
+
+function InstancesReport({ ev }: { ev: ChatEvent }) {
+  const instances = ev.instances ?? []
+  const total = ev.total ?? instances.length
+  const running = ev.running ?? 0
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ marginBottom: 4 }}>
+        <Badge text="INSTANCES" color="var(--dg-interactive)" />
+        <span style={{ color: 'var(--dn-text-muted)', fontSize: 12 }}>
+          {total === 0 ? 'no instances found' : `${total} total · ${running} running`}
+        </span>
+      </div>
+      {total > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: '3px 14px', fontSize: 11, marginLeft: 12 }}>
+          {instances.map((inst: Instance, i: number) => {
+            const color = INSTANCE_STATE_COLOR[(inst.state || '').toLowerCase()] ?? 'var(--dn-text-muted)'
+            return (
+              <div key={i} style={{ display: 'contents' }}>
+                <span style={{ color, whiteSpace: 'nowrap' }}>● {inst.state}</span>
+                <span style={{ color: 'var(--dn-text-bright)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{inst.name}</span>
+                <span style={{ color: 'var(--dn-text-dim)', whiteSpace: 'nowrap' }}>{inst.private_ip || '—'}</span>
+              </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
@@ -72,8 +113,13 @@ function Message({ ev }: { ev: ChatEvent }) {
     case 'user_message':
       return (
         <div style={{ marginBottom: 8 }}>
-          <span style={{ color: 'var(--dg-interactive)', marginRight: 8 }}>&gt;</span>
-          <span style={{ color: 'var(--dn-text-bright)' }}>{ev.content}</span>
+          <div style={{
+            background: 'var(--dn-surface)', border: '1px solid var(--dn-border-lt)',
+            borderRadius: 6, padding: '8px 12px', display: 'inline-block', maxWidth: '90%',
+          }}>
+            <span style={{ color: 'var(--dg-interactive)', marginRight: 8 }}>&gt;</span>
+            <span style={{ color: 'var(--dn-text-bright)', whiteSpace: 'pre-wrap' }}>{ev.content}</span>
+          </div>
         </div>
       )
     case 'generation':
@@ -96,6 +142,8 @@ function Message({ ev }: { ev: ChatEvent }) {
       return <div style={{ marginBottom: 6 }}><Badge text="CHECK" color="var(--dg-interactive)" /><span style={{ color: 'var(--dn-text-muted)', fontSize: 12 }}>{ev.error ? `check failed: ${String(ev.error)}` : `range verified — ${ev.hosts_updated ?? 0} host(s) updated`}</span></div>
     case 'health_report':
       return <HealthReport ev={ev} />
+    case 'instances_report':
+      return <InstancesReport ev={ev} />
     case 'status':
       return <div style={{ margin: '6px 0', fontSize: 11, color: 'var(--dn-text-dim)', fontStyle: 'italic' }}>{ev.content}</div>
     case 'error':
@@ -111,8 +159,22 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
   const [cmdHighlight, setCmdHighlight] = useState(0)
   const endRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const activeCmdRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
+
+  // Auto-grow the input upward as it wraps to multiple lines (like ALFRED).
+  // Reset to 'auto' first so it also shrinks back when text is deleted.
+  useEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`
+  }, [input])
+
+  // Keep the keyboard-highlighted command scrolled into the popup's viewport
+  // (the menu is a fixed-height scroll box; arrow-nav can move past the fold).
+  useEffect(() => { activeCmdRef.current?.scrollIntoView({ block: 'nearest' }) }, [cmdHighlight])
 
   // Load the slash-command registry once for the autocomplete menu (§5.1).
   useEffect(() => { api.commands().then(r => setCommands(r.commands)).catch(() => {}) }, [])
@@ -229,6 +291,7 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
             {filteredCommands.map((cmd, i) => (
               <div
                 key={cmd.name}
+                ref={i === cmdHighlight ? activeCmdRef : undefined}
                 // onMouseDown (not onClick) so the item is chosen before the
                 // textarea blurs, and preventDefault keeps focus in the input.
                 onMouseDown={e => { e.preventDefault(); selectCommand(cmd) }}
@@ -242,7 +305,7 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
                   {cmd.dispatch === 'agent' ? '🤖' : '⚡'}
                 </span>
                 <span style={{ color: 'var(--dg-interactive)', minWidth: 96 }}>{cmd.name}</span>
-                <span style={{ color: 'var(--dn-text-muted)', fontSize: 11 }}>{cmd.description}</span>
+                <span style={{ color: 'var(--dn-text-bright)', fontSize: 11 }}>{cmd.description}</span>
               </div>
             ))}
           </div>
@@ -267,6 +330,7 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
               flex: 1, background: 'transparent', border: 'none', outline: 'none', resize: 'none',
               color: 'var(--dn-text-bright)', fontFamily: 'var(--font-mono)', fontSize: 13,
               lineHeight: '20px', padding: 0, margin: 0,
+              maxHeight: 200, overflowY: 'auto', display: 'block',
             }}
           />
         </div>

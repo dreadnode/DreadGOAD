@@ -47,6 +47,14 @@ export interface RangeDoc {
   last_checked_at?: string | null
 }
 
+// One instance from `lab status --json` (/instances) — raw cloud fields.
+export interface Instance {
+  name: string
+  id: string
+  state: string
+  private_ip: string
+}
+
 // One row of a /health report (health-check --json).
 export interface HealthCheck {
   name: string
@@ -73,6 +81,9 @@ export interface ChatEvent {
   failed?: number
   skipped?: number
   checks?: HealthCheck[]
+  instances?: Instance[]
+  total?: number
+  running?: number
   usage?: { input_tokens?: number; output_tokens?: number }
   events?: ChatEvent[]
   [key: string]: unknown

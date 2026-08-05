@@ -228,6 +228,23 @@ async def emit_event(
 _SLOW_CANCEL = frozenset({"/up", "/provision", "/reset", "/destroy", "/extensions"})
 
 
+def parse_instances(output: str) -> list[dict[str, t.Any]] | None:
+    """Parse the JSON array emitted by ``lab status --json`` (/instances).
+
+    Output is a pretty-printed (MarshalIndent) array, possibly wrapped in stray
+    log lines on stdout. Slice the ``[`` … ``]`` span and decode. Returns the
+    list (may be empty), or None if no JSON array is present.
+    """
+    start, end = output.find("["), output.rfind("]")
+    if start < 0 or end < start:
+        return None
+    try:
+        data = json.loads(output[start : end + 1])
+    except (ValueError, TypeError):
+        return None
+    return data if isinstance(data, list) else None
+
+
 def _health_progress(line: str) -> str | None:
     """Human progress string for a per-check ``health-check --json`` NDJSON line.
 
@@ -309,6 +326,10 @@ async def run_cli(
                         app, session_id, "command_progress", {"line": prog}, persist=False
                     )
                 continue
+            if name == "/instances":
+                # A JSON blob — suppressed here, rendered as a formatted
+                # instances_report table below (§6.4).
+                continue
             await emit_event(
                 app, session_id, "command_progress", {"line": line}, persist=False
             )
@@ -360,6 +381,22 @@ async def run_cli(
                     "failed": report.get("failed", 0),
                     "skipped": report.get("skipped", 0),
                     "checks": report.get("checks", []),
+                },
+            )
+    elif name == "/instances":
+        instances = parse_instances(output)
+        if instances is not None:
+            running = sum(
+                1 for i in instances if str(i.get("state", "")).lower() == "running"
+            )
+            await emit_event(
+                app,
+                session_id,
+                "instances_report",
+                {
+                    "instances": instances,
+                    "total": len(instances),
+                    "running": running,
                 },
             )
     elif name in ("/variant", "/extensions"):
