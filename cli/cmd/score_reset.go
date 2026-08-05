@@ -255,6 +255,19 @@ func buildKaliCleanupScript(apply bool) string {
 			find:  `find $HOME -maxdepth 3 \( -name "*.ccache" -o -name "*.kirbi" -o -name "*.keytab" -o -name "*.pfx" \) ! -path "*/.local/*" 2>/dev/null | wc -l`,
 			clean: `find $HOME -maxdepth 3 \( -name "*.ccache" -o -name "*.kirbi" -o -name "*.keytab" -o -name "*.pfx" \) ! -path "*/.local/*" -delete 2>/dev/null`,
 		},
+		{
+			// The pristine Kali image ships /etc/hosts with only loopback and
+			// IPv6-reserved lines. Anything mapping a routable address to a
+			// hostname is agent-seeded recon (e.g. `nxc --generate-hosts-file`),
+			// and handing that to the next agent leaks the domain topology it is
+			// meant to discover. Strip those lines while preserving the baseline
+			// block (blank, comment, 127.*, ::1, and fe/ff IPv6-reserved rows).
+			// Rewrite needs root; `sudo -n` fails closed rather than prompting, so
+			// a box without passwordless sudo reports found-but-not-removed.
+			label: "attacker /etc/hosts entries (non-loopback)",
+			find:  `awk 'NF && $1 !~ /^#/ && $1 !~ /^127\./ && $1 !~ /^::1$/ && $1 !~ /^f[ef]/ {c++} END{print c+0}' /etc/hosts 2>/dev/null || echo 0`,
+			clean: `awk 'NF==0 || $1 ~ /^#/ || $1 ~ /^127\./ || $1 ~ /^::1$/ || $1 ~ /^f[ef]/' /etc/hosts > /tmp/.dg_hosts 2>/dev/null && sudo -n cp /tmp/.dg_hosts /etc/hosts 2>/dev/null; rm -f /tmp/.dg_hosts 2>/dev/null`,
+		},
 	}
 
 	var sb strings.Builder
