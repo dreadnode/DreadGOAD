@@ -78,16 +78,27 @@ def test_registry_flags_and_parsing() -> None:
 
 
 def test_dispatch_and_agent_commands() -> None:
-    # arg-flexible/mutating → agent; deterministic reads + /destroy → direct
+    # dispatch drives OPERATOR-typed routing: mutating → agent (expand),
+    # reads + /destroy → direct (fast, deterministic).
     assert commands.REGISTRY["/up"].dispatch == "agent"
     assert commands.REGISTRY["/variant"].dispatch == "agent"
     assert commands.REGISTRY["/instances"].dispatch == "direct"
-    assert commands.REGISTRY["/destroy"].dispatch == "direct", (
-        "destroy is operator-only"
+    assert commands.REGISTRY["/destroy"].dispatch == "direct"
+    # The agent-dispatch (expand-to-prompt) set = the mutating/arg-flexible ones.
+    agent_dispatch = {n for n, c in commands.REGISTRY.items() if c.dispatch == "agent"}
+    assert agent_dispatch == {
+        "/up",
+        "/provision",
+        "/reset",
+        "/variant",
+        "/extensions",
+        "/score",
+    }, agent_dispatch
+    # The agent's run_dreadgoad may run ANY registered command (reads + actions).
+    assert commands.AGENT_RUNNABLE == frozenset(commands.REGISTRY), (
+        commands.AGENT_RUNNABLE
     )
-    assert commands.AGENT_COMMANDS == frozenset(
-        {"/up", "/provision", "/reset", "/variant", "/extensions", "/score"}
-    ), commands.AGENT_COMMANDS
+    assert len(commands.AGENT_RUNNABLE) == 14
     print("PASS test_dispatch_and_agent_commands")
 
 
@@ -110,8 +121,11 @@ def test_load_prompt_and_guidance_injection() -> None:
     # loader: existing stem vs missing stem
     assert commands.load_prompt("system") is not None, "system.md must exist"
     assert commands.load_prompt("does-not-exist") is None
-    # Every agent command ships a guidance file, injected before the request line.
-    for name in sorted(commands.AGENT_COMMANDS):
+    # Every agent-dispatch command ships a guidance file, injected before the request.
+    agent_dispatch = sorted(
+        n for n, c in commands.REGISTRY.items() if c.dispatch == "agent"
+    )
+    for name in agent_dispatch:
         p = commands.expand_command_prompt(name, [])
         assert "## Command-specific guidance" in p, f"{name} missing guidance"
         gi, oi = p.index("## Command-specific guidance"), p.index("Operator's request:")

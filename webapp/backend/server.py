@@ -18,7 +18,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__ as VERSION
-from . import chat, commands, paths
+from . import chat, commands, labconfig, paths
 from .db import Database
 from .sessions import SessionService
 
@@ -120,6 +120,15 @@ async def update_settings(body: dict[str, t.Any]) -> dict[str, t.Any]:
 async def get_commands() -> dict[str, t.Any]:
     """The slash-command registry, for the frontend autocomplete menu."""
     return {"commands": commands.command_catalog()}
+
+
+@app.get("/api/environments")
+async def get_environments(config_path: str) -> dict[str, t.Any]:
+    """Environment names defined in a config file — drives the new-session dropdown."""
+    try:
+        return labconfig.list_environments(config_path)
+    except (FileNotFoundError, ValueError, OSError, yaml.YAMLError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 # --- session lifecycle (§7) ------------------------------------------------

@@ -234,16 +234,26 @@ async def test_run_dreadgoad_tool_validates_and_runs() -> None:
 
     tool = agent._make_run_dreadgoad(object(), "s-1", fake_run_cli)
 
-    # allowed command → routed through run_cli
+    # an action command → routed through run_cli
     out = await tool.fn(command="/up", args=["--from", "x"])
     assert calls == [("/up", ["--from", "x"])], calls
     assert "succeeded" in out, out
 
-    # disallowed (operator-only) command → refused, run_cli NOT called
+    # a read command → also runnable by the agent now
     calls.clear()
-    refused = await tool.fn(command="/destroy", args=[])
+    await tool.fn(command="/instances", args=[])
+    assert calls == [("/instances", [])], calls
+
+    # /destroy is now agent-runnable too (safety is by prompt)
+    calls.clear()
+    await tool.fn(command="/destroy", args=[])
+    assert calls == [("/destroy", [])], calls
+
+    # an unknown command → refused, run_cli NOT called
+    calls.clear()
+    refused = await tool.fn(command="/bogus", args=[])
     assert "Refused" in refused, refused
-    assert calls == [], "run_cli must not run for a disallowed command"
+    assert calls == [], "run_cli must not run for an unknown command"
     print("PASS test_run_dreadgoad_tool_validates_and_runs")
 
 

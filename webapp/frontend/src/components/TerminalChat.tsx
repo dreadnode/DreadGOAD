@@ -270,7 +270,7 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
           </div>
         )}
         <div style={{ display: 'flex', alignItems: 'flex-start', padding: '12px 16px' }}>
-          <span style={{ color: 'var(--dg-interactive)', marginRight: 8 }}>&gt;</span>
+          <span style={{ color: 'var(--dg-interactive)', marginRight: 8, fontSize: 13, lineHeight: '20px' }}>&gt;</span>
           <textarea
             ref={inputRef}
             value={input}
@@ -278,10 +278,17 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
             disabled={!sessionId || status !== 'connected'}
             onChange={e => { setInput(e.target.value); setCmdHighlight(0) }}
             onKeyDown={handleKeyDown}
-            placeholder={status === 'connected' ? 'message or /command  (type / for commands)' : 'connecting…'}
+            placeholder={
+              status !== 'connected'
+                ? `${status}…`
+                : !sessionId
+                  ? 'create or select a session (+ NEW) to begin'
+                  : 'message or /command  (type / for commands)'
+            }
             style={{
               flex: 1, background: 'transparent', border: 'none', outline: 'none', resize: 'none',
               color: 'var(--dn-text-bright)', fontFamily: 'var(--font-mono)', fontSize: 13,
+              lineHeight: '20px', padding: 0, margin: 0,
             }}
           />
         </div>

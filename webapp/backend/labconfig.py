@@ -26,6 +26,25 @@ _ROLE_BY_TYPE = {
 }
 
 
+def list_environments(config_path: str) -> dict[str, t.Any]:
+    """List the environment names defined in a ``dreadgoad.yaml`` (+ provider/region).
+
+    Drives the new-session env dropdown. Raises FileNotFoundError / YAMLError /
+    OSError on a bad path or malformed file (surfaced as 400 by the endpoint).
+    """
+    with open(config_path) as f:
+        data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"{config_path} is not a valid config (expected a YAML mapping)"
+        )
+    return {
+        "environments": list((data.get("environments") or {}).keys()),
+        "provider": data.get("provider"),
+        "region": data.get("region"),
+    }
+
+
 def derive_snapshot(config_path: str, env: str) -> dict[str, t.Any]:
     """Build a session ``snapshot`` from ``(config_path, env)``.
 

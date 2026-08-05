@@ -98,27 +98,34 @@ def _instructions(session: dict[str, t.Any]) -> str:
 def _make_run_dreadgoad(app: t.Any, session_id: str, run_cli: RunCli):  # noqa: ANN202
     """Build the session-bound run_dreadgoad tool.
 
-    Constrains the agent to the agent-runnable commands (validated against
-    ``commands.AGENT_COMMANDS``) and routes through the shared pipeline so
-    agent-initiated ops get streaming/status/hook/cancel like direct commands.
+    The agent may run ANY registered dreadgoad command (validated against
+    ``commands.AGENT_RUNNABLE``) — reads to answer questions, actions to perform
+    them. Everything routes through the shared pipeline so agent-initiated ops get
+    streaming/status/hook/cancel like operator-typed ones. Guardrails for
+    destructive commands are by prompt (the agent confirms intent).
     """
 
     @tool(catch=True)
     async def run_dreadgoad(command: str, args: list[str] | None = None) -> str:
-        """Run a dreadgoad range command for THIS session and stream its output.
+        """Run a dreadgoad command for THIS session and return its result.
+
+        Use reads (/instances, /health, /validate, /diagnose) to answer questions,
+        and the action commands to perform what the operator asked.
 
         Args:
-            command: one of /up, /provision, /reset, /variant, /extensions, /score.
+            command: a dreadgoad slash command — reads (/instances, /health,
+                /validate, /diagnose, /start, /stop, /scrub) or actions (/up,
+                /provision, /reset, /variant, /extensions, /score, /destroy).
             args: CLI flags/values interpreted from the operator's request, e.g.
                 ["--from", "ad-data.yml"] or ["/remote/report.jsonl", "--live-verify"].
                 Do NOT pass --config/--env — the range is fixed.
 
         Returns a short summary (exit status + output tail).
         """
-        if command not in commands.AGENT_COMMANDS:
+        if command not in commands.AGENT_RUNNABLE:
             return (
-                f"Refused: {command!r} is not an agent-runnable command. Allowed: "
-                f"{sorted(commands.AGENT_COMMANDS)}. Reads and /destroy are operator-only."
+                f"Refused: {command!r} is not a known dreadgoad command. "
+                f"Valid commands: {sorted(commands.AGENT_RUNNABLE)}."
             )
         exit_code, output = await run_cli(app, session_id, command, list(args or []))
         status = "succeeded" if exit_code == 0 else f"failed (exit {exit_code})"

@@ -28,6 +28,9 @@ export const api = {
   commands: (): Promise<{ commands: CommandDef[] }> =>
     fetch('/api/commands').then(r => json(r)),
 
+  environments: (configPath: string): Promise<{ environments: string[]; provider?: string; region?: string }> =>
+    fetch(`/api/environments?config_path=${encodeURIComponent(configPath)}`).then(r => json(r)),
+
   setSettings: (body: { api_key?: string; api_key_env?: string }): Promise<{ ok: boolean; api_key_env: string }> =>
     fetch('/api/settings', {
       method: 'POST',

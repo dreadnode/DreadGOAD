@@ -74,6 +74,23 @@ def main() -> None:
         os.environ.pop("DG_TEST_API_KEY", None)
         print("PASS settings")
 
+        # environments dropdown source
+        envs = client.get(f"/api/environments?config_path={cfg}").json()
+        assert envs["environments"] == ["dev"], envs
+        assert envs["provider"] == "aws", envs
+        # bad path → 400
+        assert (
+            client.get(
+                "/api/environments?config_path=/tmp/nope-abc-123.yaml"
+            ).status_code
+            == 400
+        )
+        # non-dict YAML (points at a non-config file) → 400, not 500
+        notcfg = pathlib.Path(_TMP) / "notcfg.yaml"
+        notcfg.write_text("just a plain string, not a mapping\n")
+        assert client.get(f"/api/environments?config_path={notcfg}").status_code == 400
+        print("PASS environments")
+
         # command catalog (drives the frontend autocomplete)
         cat = client.get("/api/commands").json()["commands"]
         assert len(cat) == 14, cat
@@ -117,6 +134,29 @@ def main() -> None:
             == 400
         )
         print("PASS create unknown env → 400")
+
+        # create a NEW environment in the config, then attach (mode="new")
+        r = client.post(
+            "/api/sessions",
+            json={
+                "mode": "new",
+                "config_path": str(cfg),
+                "env": "redteam",
+                "env_fields": {
+                    "variant": True,
+                    "variant_source": "ad/GOAD",
+                    "variant_target": "ad/GOAD-redteam",
+                    "variant_name": "redteam",
+                    "vpc_cidr": "10.100.0.0/16",
+                },
+            },
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["snapshot"]["lab"] == "ad/GOAD-redteam", r.json()
+        # the env was written into the config → now selectable via the dropdown
+        envs2 = client.get(f"/api/environments?config_path={cfg}").json()["environments"]
+        assert "redteam" in envs2 and "dev" in envs2, envs2
+        print("PASS create new environment")
 
         # list
         lst = client.get("/api/sessions").json()["sessions"]

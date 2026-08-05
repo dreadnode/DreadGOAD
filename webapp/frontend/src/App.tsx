@@ -193,25 +193,35 @@ export default function App() {
         }}>⚙</button>
       </div>
 
-      {/* Two-pane */}
-      <div ref={containerRef} style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        <div style={{ width: `${ratio * 100}%`, minWidth: MIN_W, height: '100%' }}>
-          <TerminalChat
-            sessionId={activeId}
-            messages={activeId ? (msgs[activeId] || []) : []}
-            status={status}
-            onSend={sendMessage}
-            processing={activeId ? !!processing[activeId] : false}
-            onCancel={onCancel}
-            model={sessions.find(s => s.id === activeId)?.model}
-            onModelChange={changeModel}
-          />
+      {/* Two-pane, or an empty state until a session exists */}
+      {activeId ? (
+        <div ref={containerRef} style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
+          <div style={{ width: `${ratio * 100}%`, minWidth: MIN_W, height: '100%' }}>
+            <TerminalChat
+              sessionId={activeId}
+              messages={msgs[activeId] || []}
+              status={status}
+              onSend={sendMessage}
+              processing={!!processing[activeId]}
+              onCancel={onCancel}
+              model={sessions.find(s => s.id === activeId)?.model}
+              onModelChange={changeModel}
+            />
+          </div>
+          <div onMouseDown={onDrag} style={{ width: 4, cursor: 'col-resize', background: 'var(--dn-border)', flexShrink: 0 }} />
+          <div style={{ flex: 1, minWidth: MIN_W, height: '100%' }}>
+            <RangeView sessionId={activeId} refreshKey={rangeRefresh[activeId] || 0} />
+          </div>
         </div>
-        <div onMouseDown={onDrag} style={{ width: 4, cursor: 'col-resize', background: 'var(--dn-border)', flexShrink: 0 }} />
-        <div style={{ flex: 1, minWidth: MIN_W, height: '100%' }}>
-          <RangeView sessionId={activeId} refreshKey={activeId ? rangeRefresh[activeId] || 0 : 0} />
+      ) : (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, color: 'var(--dn-text-dim)' }}>
+          <div style={{ fontSize: 13 }}>No sessions yet.</div>
+          <button onClick={() => setShowNew(true)} style={{
+            background: 'var(--dg-brand)', border: 'none', color: 'var(--dn-black)',
+            borderRadius: 4, cursor: 'pointer', fontSize: 12, fontWeight: 700, padding: '6px 16px',
+          }}>+ NEW SESSION</button>
         </div>
-      </div>
+      )}
     </div>
   )
 }
@@ -221,22 +231,135 @@ function NewSessionModal({ cfg, onClose, onCreate }: {
   onClose: () => void
   onCreate: (body: Record<string, unknown>) => void
 }) {
+  const [mode, setMode] = useState<'attach' | 'new'>('attach')
   const [configPath, setConfigPath] = useState(cfg.default_config_path)
-  const [env, setEnv] = useState('')
   const [label, setLabel] = useState('')
+  // shared config → env list
+  const [envs, setEnvs] = useState<string[]>([])
+  const [envErr, setEnvErr] = useState('')
+  const [configOk, setConfigOk] = useState(false)
+  const [loading, setLoading] = useState(false)
+  // attach mode
+  const [env, setEnv] = useState('')
+  // new-environment mode
+  const [newEnv, setNewEnv] = useState('')
+  const [source, setSource] = useState('ad/GOAD')
+  const [target, setTarget] = useState('')
+  const [variantName, setVariantName] = useState('')
+  const [cidr, setCidr] = useState('10.100.0.0/16')
+
+  // Load the environments in the chosen config → attach dropdown + new-env
+  // collision check. Runs on mount (default config) and on config-path change.
+  const loadEnvs = useCallback(async (path: string) => {
+    if (!path.trim()) { setEnvs([]); setEnv(''); setConfigOk(false); setEnvErr('config path is required'); return }
+    setLoading(true)
+    setEnvErr('')
+    try {
+      const r = await api.environments(path.trim())
+      setEnvs(r.environments)
+      setConfigOk(true)
+      setEnv(prev => (r.environments.includes(prev) ? prev : (r.environments[0] || '')))
+    } catch (e) {
+      setEnvs([]); setEnv(''); setConfigOk(false)
+      setEnvErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { loadEnvs(cfg.default_config_path) }, [cfg.default_config_path, loadEnvs])
+
+  const nm = newEnv.trim()
+  const collides = envs.includes(nm)
+  const attachValid = configOk && !!env
+  const newValid = configOk && !!nm && !collides
+  const valid = mode === 'attach' ? attachValid : newValid
+
+  const submit = () => {
+    if (mode === 'attach') {
+      if (attachValid) onCreate({ config_path: configPath, env, label: label.trim() || undefined })
+      return
+    }
+    if (!newValid) return
+    onCreate({
+      mode: 'new',
+      config_path: configPath,
+      env: nm,
+      env_fields: {
+        variant: true,
+        variant_source: source.trim() || 'ad/GOAD',
+        variant_target: target.trim() || `ad/GOAD-${nm}`,
+        variant_name: variantName.trim() || nm,
+        vpc_cidr: cidr.trim() || '10.100.0.0/16',
+      },
+      label: label.trim() || undefined,
+    })
+  }
 
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: 'var(--dn-surface)', border: '1px solid var(--dn-border-lt)', borderRadius: 6, padding: 20, width: 380, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--dn-text)' }}>
-        <div style={{ color: 'var(--dg-brand)', fontWeight: 700, fontSize: 13, marginBottom: 16 }}>New Session</div>
-        <Field label="Config path" value={configPath} onChange={setConfigPath} />
-        <Field label="Environment" value={env} onChange={setEnv} placeholder="e.g. staging" />
+      <div onClick={e => e.stopPropagation()} style={{ background: 'var(--dn-surface)', border: '1px solid var(--dn-border-lt)', borderRadius: 6, padding: 20, width: 420, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--dn-text)' }}>
+        <div style={{ color: 'var(--dg-brand)', fontWeight: 700, fontSize: 13, marginBottom: 12 }}>New Session</div>
+
+        {/* Mode toggle */}
+        <div style={{ display: 'flex', gap: 4, marginBottom: 16 }}>
+          {(['attach', 'new'] as const).map(m => (
+            <button key={m} onClick={() => setMode(m)} style={{
+              flex: 1, padding: '5px 0', borderRadius: 3, cursor: 'pointer', fontSize: 11,
+              border: '1px solid var(--dn-border-lt)',
+              background: mode === m ? 'var(--dn-border)' : 'transparent',
+              color: mode === m ? 'var(--dn-text-bright)' : 'var(--dn-text-muted)',
+            }}>{m === 'attach' ? 'Attach existing' : 'New environment'}</button>
+          ))}
+        </div>
+
+        <Field label="Config path" value={configPath} onChange={setConfigPath} onBlur={() => loadEnvs(configPath)} />
+
+        {mode === 'attach' ? (
+          <div style={{ marginBottom: 12 }}>
+            <label style={{ display: 'block', marginBottom: 4, color: 'var(--dn-text-dim)' }}>
+              Environment{loading ? ' (loading…)' : ''}
+            </label>
+            <select
+              value={env}
+              onChange={e => setEnv(e.target.value)}
+              disabled={loading || envs.length === 0}
+              style={{
+                width: '100%', boxSizing: 'border-box', padding: '6px 8px', background: 'var(--dn-bg)',
+                border: '1px solid var(--dn-border)', borderRadius: 3, color: 'var(--dn-text)',
+                fontFamily: 'var(--font-mono)', fontSize: 12,
+              }}
+            >
+              {envs.length === 0 && <option value="">{loading ? 'loading…' : '—'}</option>}
+              {envs.map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+            {configOk && envs.length === 0 && (
+              <div style={{ color: 'var(--dn-warning)', fontSize: 11, marginTop: 4 }}>no environments in this config — use “New environment”</div>
+            )}
+            {envErr && <div style={{ color: 'var(--dn-error)', fontSize: 11, marginTop: 4 }}>{envErr}</div>}
+          </div>
+        ) : (
+          <>
+            <Field label="New environment name" value={newEnv} onChange={setNewEnv} placeholder="e.g. redteam" />
+            {envErr && <div style={{ color: 'var(--dn-error)', fontSize: 11, marginTop: -8, marginBottom: 12 }}>{envErr}</div>}
+            {nm && collides && <div style={{ color: 'var(--dn-error)', fontSize: 11, marginTop: -8, marginBottom: 12 }}>“{nm}” already exists in this config</div>}
+            <Field label="Variant source (base lab)" value={source} onChange={setSource} placeholder="ad/GOAD" />
+            <Field label="Variant target" value={target} onChange={setTarget} placeholder={nm ? `ad/GOAD-${nm}` : 'ad/GOAD-<name>'} />
+            <Field label="Variant name" value={variantName} onChange={setVariantName} placeholder={nm || '<name>'} />
+            <Field label="VPC CIDR" value={cidr} onChange={setCidr} placeholder="10.100.0.0/16" />
+            <div style={{ color: 'var(--dn-text-dim)', fontSize: 10, marginBottom: 12 }}>
+              Writes a new env into the config (a .bak is saved; comments are not preserved).
+            </div>
+          </>
+        )}
+
         <Field label="Label (optional)" value={label} onChange={setLabel} />
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
           <button onClick={onClose} style={btnStyle(false)}>CANCEL</button>
           <button
-            onClick={() => env.trim() && onCreate({ config_path: configPath, env: env.trim(), label: label.trim() || undefined })}
-            style={btnStyle(true)}
+            onClick={submit}
+            disabled={!valid}
+            style={{ ...btnStyle(true), opacity: valid ? 1 : 0.5, cursor: valid ? 'pointer' : 'not-allowed' }}
           >CREATE</button>
         </div>
       </div>
@@ -289,11 +412,11 @@ function SettingsModal({ cfg, onClose, onSaved }: {
   )
 }
 
-function Field({ label, value, onChange, placeholder, type }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string }) {
+function Field({ label, value, onChange, placeholder, type, onBlur }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string; onBlur?: () => void }) {
   return (
     <div style={{ marginBottom: 12 }}>
       <label style={{ display: 'block', marginBottom: 4, color: 'var(--dn-text-dim)' }}>{label}</label>
-      <input type={type} value={value} placeholder={placeholder} onChange={e => onChange(e.target.value)} style={{
+      <input type={type} value={value} placeholder={placeholder} onChange={e => onChange(e.target.value)} onBlur={onBlur} style={{
         width: '100%', boxSizing: 'border-box', padding: '6px 8px', background: 'var(--dn-bg)',
         border: '1px solid var(--dn-border)', borderRadius: 3, color: 'var(--dn-text)',
         fontFamily: 'var(--font-mono)', fontSize: 12,

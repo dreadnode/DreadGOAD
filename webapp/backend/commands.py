@@ -120,12 +120,11 @@ REGISTRY: dict[str, Command] = {
     ),
 }
 
-# Commands the agent may run via its run_dreadgoad tool (the mutating/arg-flexible
-# ones). Deterministic reads + /destroy are operator-only (direct dispatch), so
-# the agent can never invoke them — a safety property.
-AGENT_COMMANDS: frozenset[str] = frozenset(
-    name for name, c in REGISTRY.items() if c.dispatch == "agent"
-)
+# Commands the agent may run via its run_dreadgoad tool: ALL of them, so it can
+# answer questions by running reads (/instances, /health, …) and perform actions
+# from natural language. Safety for destructive commands (/destroy, /up, /reset,
+# /variant) is by prompt — the agent must confirm intent (operator's choice).
+AGENT_RUNNABLE: frozenset[str] = frozenset(REGISTRY)
 
 
 def command_catalog() -> list[dict[str, t.Any]]:
