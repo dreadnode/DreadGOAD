@@ -1,12 +1,12 @@
 # DreadGOAD CLI Configuration
-env: dreadindex
-provider: azure  # Provider: aws, azure, proxmox, ludus
-region: centralus
+env: staging
+provider: aws  # Provider: aws, azure, proxmox, ludus
+# region: us-west-2  # Override provider region (default: from inventory)
 instance_profile: WarpgateImageBuilderInstanceProfile  # IAM instance profile for EC2 Image Builder
 debug: false
 max_retries: 3
 retry_delay: 30
-idle_timeout: 3600
+idle_timeout: 1200
 # log_dir: ~/.ansible/logs/goad
 # project_root: /path/to/DreadGOAD  # Auto-detected if omitted
 
@@ -51,22 +51,9 @@ environments:
     variant_name: variant-1
     vpc_cidr: "10.0.0.0/16"
   staging:
-    variant: true
-    variant_source: ad/GOAD
-    variant_target: ad/GOAD-dreadindex
-    variant_name: dreadindex
+    variant: false
     vpc_cidr: "10.1.0.0/16"
   prod:
     vpc_cidr: "10.2.0.0/16"
   test:
-    variant: true
-    variant_source: ad/GOAD
-    variant_target: ad/GOAD-dreadindex
-    variant_name: dreadindex
     vpc_cidr: "10.8.0.0/16"
-  dreadindex:
-    variant: true
-    variant_source: ad/GOAD
-    variant_target: ad/GOAD-dreadindex
-    variant_name: dreadindex
-    vpc_cidr: "10.1.0.0/16"
