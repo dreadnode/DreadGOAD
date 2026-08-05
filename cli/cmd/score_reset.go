@@ -175,6 +175,38 @@ func resetKali(ctx context.Context, cmd *cobra.Command, cfg *config.Config, appl
 	return nil
 }
 
+// hostsBaselineFilter is an awk condition matching the /etc/hosts lines a
+// pristine Kali image ships: blank, comment, IPv4 loopback, ::1, and the
+// fe/ff IPv6-reserved rows. Everything else maps a routable address to a
+// hostname and is therefore agent-seeded recon. The v6 prefix test is
+// case-insensitive because tools emit FE80::/FF02:: as readily as lowercase.
+//
+// Both the find and clean commands are derived from this single condition
+// (clean keeps it, find counts its negation) so the two can never drift.
+const hostsBaselineFilter = `NF==0 || $1 ~ /^#/ || $1 ~ /^127\./ || $1 ~ /^::1$/ || tolower($1) ~ /^f[ef]/`
+
+// hostsCleanScript rewrites /etc/hosts down to the baseline block.
+//
+// The filtered copy goes to a mktemp path rather than a fixed one: /tmp is
+// world-writable, and root copies this file, so a predictable name lets any
+// local user swap the contents between the write and the copy. The rewrite is
+// refused unless a loopback line survived — an agent that clobbered
+// /etc/hosts outright (`nxc --generate-hosts-file > /etc/hosts`) leaves
+// nothing to keep, and an empty /etc/hosts breaks hostname resolution for the
+// next run. Every skip path says why; `sudo -n` fails closed instead of
+// prompting, so a box without passwordless sudo reports found-but-not-removed.
+const hostsCleanScript = `dg_t=$(mktemp 2>/dev/null)
+  if [ -z "$dg_t" ]; then
+    echo "  WARN: /etc/hosts rewrite skipped (mktemp unavailable)"
+  elif ! awk '` + hostsBaselineFilter + `' /etc/hosts > "$dg_t" 2>/dev/null; then
+    echo "  WARN: /etc/hosts rewrite skipped (could not read /etc/hosts)"
+  elif ! grep -q '^127\.' "$dg_t"; then
+    echo "  WARN: /etc/hosts rewrite skipped (no loopback line survived the filter)"
+  elif ! sudo -n cp "$dg_t" /etc/hosts 2>/dev/null; then
+    echo "  WARN: /etc/hosts rewrite skipped (needs passwordless sudo)"
+  fi
+  rm -f "$dg_t" 2>/dev/null`
+
 // buildKaliCleanupScript generates the shell script for Kali artifact cleanup.
 // Uses $HOME so it works for both ssm-user (AWS) and kali (Azure).
 func buildKaliCleanupScript(apply bool) string {
@@ -256,17 +288,13 @@ func buildKaliCleanupScript(apply bool) string {
 			clean: `find $HOME -maxdepth 3 \( -name "*.ccache" -o -name "*.kirbi" -o -name "*.keytab" -o -name "*.pfx" \) ! -path "*/.local/*" -delete 2>/dev/null`,
 		},
 		{
-			// The pristine Kali image ships /etc/hosts with only loopback and
-			// IPv6-reserved lines. Anything mapping a routable address to a
-			// hostname is agent-seeded recon (e.g. `nxc --generate-hosts-file`),
-			// and handing that to the next agent leaks the domain topology it is
-			// meant to discover. Strip those lines while preserving the baseline
-			// block (blank, comment, 127.*, ::1, and fe/ff IPv6-reserved rows).
-			// Rewrite needs root; `sudo -n` fails closed rather than prompting, so
-			// a box without passwordless sudo reports found-but-not-removed.
+			// Anything mapping a routable address to a hostname is agent-seeded
+			// recon (e.g. `nxc --generate-hosts-file`), and handing that to the
+			// next agent leaks the domain topology it is meant to discover.
+			// See hostsBaselineFilter for what counts as baseline.
 			label: "attacker /etc/hosts entries (non-loopback)",
-			find:  `awk 'NF && $1 !~ /^#/ && $1 !~ /^127\./ && $1 !~ /^::1$/ && $1 !~ /^f[ef]/ {c++} END{print c+0}' /etc/hosts 2>/dev/null || echo 0`,
-			clean: `awk 'NF==0 || $1 ~ /^#/ || $1 ~ /^127\./ || $1 ~ /^::1$/ || $1 ~ /^f[ef]/' /etc/hosts > /tmp/.dg_hosts 2>/dev/null && sudo -n cp /tmp/.dg_hosts /etc/hosts 2>/dev/null; rm -f /tmp/.dg_hosts 2>/dev/null`,
+			find:  `awk '!(` + hostsBaselineFilter + `) {c++} END{print c+0}' /etc/hosts 2>/dev/null || echo 0`,
+			clean: hostsCleanScript,
 		},
 	}
 
