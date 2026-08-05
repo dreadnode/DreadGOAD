@@ -356,7 +356,11 @@ func buildKaliCleanupScript(apply bool) string {
 			fmt.Fprintf(&sb, "  total_removed=$((total_removed + removed_%d))\n", i)
 			sb.WriteString("fi\n")
 		}
-		fmt.Fprintf(&sb, "echo \"  %s: $count_%d files\"\n", t.label, i)
+		// "items", not "files": most targets count files, but the /etc/hosts
+		// target counts lines and others count a single present-or-absent
+		// artifact. The JSON result the caller parses lives past the marker,
+		// so this line is display only.
+		fmt.Fprintf(&sb, "echo \"  %s: $count_%d items\"\n", t.label, i)
 	}
 
 	fmt.Fprintf(&sb, "\necho '%s'\n", resetResultMarker)
