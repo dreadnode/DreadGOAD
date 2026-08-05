@@ -11,6 +11,7 @@ export interface AppConfig {
   version: string
   default_model: string
   default_config_path: string
+  api_key_set: boolean
 }
 
 export interface CommandDef {
@@ -26,6 +27,13 @@ export const api = {
 
   commands: (): Promise<{ commands: CommandDef[] }> =>
     fetch('/api/commands').then(r => json(r)),
+
+  setSettings: (body: { api_key?: string; api_key_env?: string }): Promise<{ ok: boolean; api_key_env: string }> =>
+    fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }).then(r => json(r)),
 
   listSessions: (): Promise<{ sessions: Session[] }> =>
     fetch('/api/sessions').then(r => json(r)),

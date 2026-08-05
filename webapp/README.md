@@ -17,11 +17,16 @@ Prereqs: `python3` (3.10+), `node`/`npm`, and the `dreadgoad` Go binary (on
 cd cli && go build -o dreadgoad .
 ```
 
-Set the LLM key (needed for the agent — free-text and agent-dispatch commands):
+Set the LLM key (needed for the agent — free-text and agent-dispatch commands).
+Either export it before launch:
 
 ```bash
 export OPENROUTER_API_KEY=sk-or-...
 ```
+
+…or leave it unset and set it in-app: click the **⚙** in the tab bar and paste
+your key (stored in the server's memory for the session, never written to disk).
+A **⚠ no key** indicator shows in the tab bar until one is set.
 
 Launch from the repo root:
 

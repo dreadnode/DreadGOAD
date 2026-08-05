@@ -42,6 +42,38 @@ def main() -> None:
         # health
         assert client.get("/api/health").json()["status"] == "ok"
 
+        # config exposes the key-set indicator
+        assert "api_key_set" in client.get("/api/config").json()
+        print("PASS config")
+
+        # settings: store a key into a throwaway env var (in-memory, not persisted)
+        r = client.post(
+            "/api/settings",
+            json={"api_key": "sk-test-xyz", "api_key_env": "DG_TEST_API_KEY"},
+        )
+        assert r.status_code == 200 and r.json()["api_key_env"] == "DG_TEST_API_KEY", (
+            r.text
+        )
+        assert os.environ.get("DG_TEST_API_KEY") == "sk-test-xyz"
+        # key-shaped env-var name but unset, no key provided → 400
+        assert (
+            client.post(
+                "/api/settings", json={"api_key_env": "DG_UNSET_API_KEY"}
+            ).status_code
+            == 400
+        )
+        # non-key env names are rejected (can't clobber PATH/LD_PRELOAD)
+        for bad in ("PATH", "LD_PRELOAD", "HOME", "DG_TEST"):
+            assert (
+                client.post(
+                    "/api/settings", json={"api_key": "x", "api_key_env": bad}
+                ).status_code
+                == 400
+            ), bad
+        assert os.environ.get("PATH") != "x", "PATH must never be overwritten"
+        os.environ.pop("DG_TEST_API_KEY", None)
+        print("PASS settings")
+
         # command catalog (drives the frontend autocomplete)
         cat = client.get("/api/commands").json()["commands"]
         assert len(cat) == 14, cat

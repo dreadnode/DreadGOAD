@@ -19,6 +19,7 @@ export default function App() {
   const [cfg, setCfg] = useState<AppConfig | null>(null)
   const [ratio, setRatio] = useState(DEFAULT_RATIO)
   const [showNew, setShowNew] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
   // Per-session counter bumped when the range changes, so RangeView re-fetches (F1).
   const [rangeRefresh, setRangeRefresh] = useState<Record<string, number>>({})
   // Per-session "a turn is in flight" flag → drives the cancel affordance.
@@ -148,6 +149,13 @@ export default function App() {
       {showNew && cfg && (
         <NewSessionModal cfg={cfg} onClose={() => setShowNew(false)} onCreate={createSession} />
       )}
+      {showSettings && cfg && (
+        <SettingsModal
+          cfg={cfg}
+          onClose={() => setShowSettings(false)}
+          onSaved={() => { setShowSettings(false); api.config().then(setCfg).catch(() => {}) }}
+        />
+      )}
 
       {/* Tab bar */}
       <div style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid var(--dn-border)', background: 'var(--dn-black)', padding: '0 8px', height: 40, gap: 4 }}>
@@ -175,6 +183,14 @@ export default function App() {
           background: 'transparent', border: '1px solid var(--dn-border-lt)', color: 'var(--dg-brand)',
           borderRadius: 4, cursor: 'pointer', fontSize: 12, padding: '2px 8px',
         }}>+ NEW</button>
+        <div style={{ flex: 1 }} />
+        {cfg && !cfg.api_key_set && (
+          <span title="No LLM API key set — agent turns will fail" style={{ color: 'var(--dn-warning)', fontSize: 11 }}>⚠ no key</span>
+        )}
+        <button onClick={() => setShowSettings(true)} title="Settings (API key)" style={{
+          background: 'transparent', border: 'none', color: 'var(--dn-text-muted)',
+          cursor: 'pointer', fontSize: 14, padding: '2px 8px',
+        }}>⚙</button>
       </div>
 
       {/* Two-pane */}
@@ -228,11 +244,56 @@ function NewSessionModal({ cfg, onClose, onCreate }: {
   )
 }
 
-function Field({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
+function SettingsModal({ cfg, onClose, onSaved }: {
+  cfg: AppConfig
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [apiKey, setApiKey] = useState('')
+  const [apiKeyEnv, setApiKeyEnv] = useState('OPENROUTER_API_KEY')
+  const [err, setErr] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const save = async () => {
+    setErr('')
+    setSaving(true)
+    try {
+      await api.setSettings({
+        api_key: apiKey.trim() || undefined,
+        api_key_env: apiKeyEnv.trim() || undefined,
+      })
+      onSaved()
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div onClick={e => e.stopPropagation()} style={{ background: 'var(--dn-surface)', border: '1px solid var(--dn-border-lt)', borderRadius: 6, padding: 20, width: 420, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--dn-text)' }}>
+        <div style={{ color: 'var(--dg-brand)', fontWeight: 700, fontSize: 13, marginBottom: 6 }}>Settings</div>
+        <div style={{ color: cfg.api_key_set ? 'var(--dn-success)' : 'var(--dn-warning)', fontSize: 11, marginBottom: 16 }}>
+          {cfg.api_key_set ? '● API key is set' : '○ No API key set — agent turns will fail'}
+        </div>
+        <Field label="API key" value={apiKey} onChange={setApiKey} placeholder="sk-or-…  (stored in memory, never saved)" type="password" />
+        <Field label="Env var" value={apiKeyEnv} onChange={setApiKeyEnv} placeholder="OPENROUTER_API_KEY" />
+        {err && <div style={{ color: 'var(--dn-error)', fontSize: 11, marginBottom: 8 }}>{err}</div>}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
+          <button onClick={onClose} style={btnStyle(false)}>CANCEL</button>
+          <button onClick={save} disabled={saving} style={btnStyle(true)}>{saving ? 'SAVING…' : 'SAVE'}</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Field({ label, value, onChange, placeholder, type }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string }) {
   return (
     <div style={{ marginBottom: 12 }}>
       <label style={{ display: 'block', marginBottom: 4, color: 'var(--dn-text-dim)' }}>{label}</label>
-      <input value={value} placeholder={placeholder} onChange={e => onChange(e.target.value)} style={{
+      <input type={type} value={value} placeholder={placeholder} onChange={e => onChange(e.target.value)} style={{
         width: '100%', boxSizing: 'border-box', padding: '6px 8px', background: 'var(--dn-bg)',
         border: '1px solid var(--dn-border)', borderRadius: 3, color: 'var(--dn-text)',
         fontFamily: 'var(--font-mono)', fontSize: 12,

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import typing as t
 from contextlib import asynccontextmanager
 
@@ -25,6 +26,10 @@ from .sessions import SessionService
 _DEFAULT_MODEL = os.environ.get(
     "DREADGOAD_WEBAPP_MODEL", "openrouter/anthropic/claude-sonnet-5"
 )
+
+# Env vars the settings endpoint may write — key/token names only, so it can't
+# clobber PATH/LD_PRELOAD/etc. and hijack the CLI's subprocesses.
+_API_KEY_ENV_RE = re.compile(r"^[A-Z][A-Z0-9_]*_(?:API_KEY|KEY|TOKEN)$")
 
 
 async def reconcile_interrupted(db: Database) -> int:
@@ -75,7 +80,40 @@ async def get_config() -> dict[str, t.Any]:
         "version": VERSION,
         "default_model": _DEFAULT_MODEL,
         "default_config_path": str(paths.repo_root() / "dreadgoad.yaml"),
+        # Whether the default provider's key is present, so the UI can prompt.
+        "api_key_set": bool(os.environ.get("OPENROUTER_API_KEY")),
     }
+
+
+@app.post("/api/settings")
+async def update_settings(body: dict[str, t.Any]) -> dict[str, t.Any]:
+    """Set the LLM API key at runtime (in-memory env only — never persisted).
+
+    ``api_key`` is stored into the env var named by ``api_key_env`` (default
+    ``OPENROUTER_API_KEY``). With no ``api_key``, the named var must already be
+    set. The key value is never returned.
+    """
+    api_key = (body.get("api_key") or "").strip()
+    api_key_env = (body.get("api_key_env") or "OPENROUTER_API_KEY").strip()
+    if not api_key_env:
+        raise HTTPException(status_code=400, detail="api_key_env is required")
+    # Restrict to key/token-shaped var names so this can't overwrite PATH,
+    # LD_PRELOAD, etc. (the CLI shells out to terraform/aws/az via PATH).
+    if not _API_KEY_ENV_RE.match(api_key_env):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"api_key_env must be an API-key/token variable "
+                f"(e.g. *_API_KEY, *_KEY, *_TOKEN); got {api_key_env!r}"
+            ),
+        )
+    if api_key:
+        os.environ[api_key_env] = api_key
+    elif not os.environ.get(api_key_env):
+        raise HTTPException(
+            status_code=400, detail=f"{api_key_env} is not set; provide an api_key"
+        )
+    return {"ok": True, "api_key_env": api_key_env}
 
 
 @app.get("/api/commands")
