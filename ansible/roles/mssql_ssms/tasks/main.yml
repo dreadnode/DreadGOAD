@@ -52,7 +52,7 @@
 - name: Install SSMS
   ansible.windows.win_command: c:\setup\mssql\SSMS_installer.exe --quiet --norestart --wait
   become: true
-  become_method: runas
+  become_method: ansible.builtin.runas
   become_user: SYSTEM
   register: install_ssms
   failed_when: install_ssms.rc not in [0, 3010]
