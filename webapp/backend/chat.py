@@ -18,6 +18,7 @@ from __future__ import annotations
 import asyncio
 import json
 import typing as t
+from copy import deepcopy
 
 from dreadnode.agent.events import (
     AgentEnd,
@@ -39,6 +40,7 @@ CHAT_KINDS = [
     "tool_end",
     "error",
     "agent_end",
+    "status",
 ]
 
 # Per-session agent runtime (isolated; §4.2). Keyed by session id.
@@ -166,6 +168,37 @@ async def _get_agent(app: t.Any, session_id: str) -> t.Any | None:
     )
     _agents[session_id] = agent
     return agent
+
+
+async def swap_model(
+    app: t.Any, session_id: str, new_model: str
+) -> dict[str, t.Any] | None:
+    """Switch a session's agent model, preserving conversation context (ALFRED-style).
+
+    Runs under the session lock so it can't race an in-flight turn. Persists the
+    new model on the session; if an agent is already live, rebuilds it with the
+    new model and grafts the old thread's messages onto it so the conversation
+    continues seamlessly. Returns the updated session, or None if not found.
+    """
+    async with _session_lock(session_id):
+        session = await app.state.db.get_session(session_id)
+        if session is None:
+            return None
+        session["model"] = new_model
+        await app.state.db.upsert_session(session)
+
+        old = _agents.get(session_id)
+        if old is not None:
+            history = deepcopy(old.thread.messages)
+            fresh = create_agent(new_model, session, app, session_id, run_cli)
+            fresh.thread.messages = history
+            _agents[session_id] = fresh
+        # else: no live agent — _get_agent will build with the new model next turn.
+
+    await emit_event(
+        app, session_id, "status", {"content": f"Model changed to {new_model}."}
+    )
+    return session
 
 
 async def emit_event(

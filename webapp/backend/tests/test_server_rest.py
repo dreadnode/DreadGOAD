@@ -96,6 +96,26 @@ def main() -> None:
         assert client.get("/api/sessions/nope").status_code == 404
         print("PASS get session + 404")
 
+        # set model (no live agent → persists on the session)
+        r = client.put(
+            f"/api/sessions/{sid}/model", json={"model": "openrouter/foo/bar"}
+        )
+        assert r.status_code == 200 and r.json()["model"] == "openrouter/foo/bar", (
+            r.text
+        )
+        assert (
+            client.get(f"/api/sessions/{sid}").json()["model"] == "openrouter/foo/bar"
+        )
+        assert (
+            client.put(f"/api/sessions/{sid}/model", json={"model": " "}).status_code
+            == 400
+        )
+        assert (
+            client.put("/api/sessions/nope/model", json={"model": "x"}).status_code
+            == 404
+        )
+        print("PASS set model + 400 + 404")
+
         # range read (seeded topology, infra-only since ad/GOAD is the base lab)
         rng = client.get(f"/api/ranges/{sid}").json()
         assert any(h["id"] == "attackbox" for h in rng["hosts"]), rng

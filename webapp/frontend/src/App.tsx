@@ -110,6 +110,18 @@ export default function App() {
     activate(s.id)
   }, [activate])
 
+  const changeModel = useCallback(async (model: string) => {
+    if (!activeId) return
+    try {
+      // Only reflect locally on success, using the server-confirmed model; the
+      // backend also emits a status event to chat. On failure, leave as-is.
+      const r = await api.setModel(activeId, model)
+      setSessions(prev => prev.map(s => (s.id === activeId ? { ...s, model: r.model } : s)))
+    } catch {
+      /* PUT rejected (404/network) — keep the current model */
+    }
+  }, [activeId])
+
   const closeSession = useCallback(async (id: string) => {
     await api.deleteSession(id).catch(() => {})
     setSessions(prev => prev.filter(s => s.id !== id))
@@ -175,6 +187,8 @@ export default function App() {
             onSend={sendMessage}
             processing={activeId ? !!processing[activeId] : false}
             onCancel={onCancel}
+            model={sessions.find(s => s.id === activeId)?.model}
+            onModelChange={changeModel}
           />
         </div>
         <div onMouseDown={onDrag} style={{ width: 4, cursor: 'col-resize', background: 'var(--dn-border)', flexShrink: 0 }} />

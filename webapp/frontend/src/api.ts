@@ -40,6 +40,13 @@ export const api = {
   deleteSession: (id: string): Promise<unknown> =>
     fetch(`/api/sessions/${id}`, { method: 'DELETE' }).then(r => json(r)),
 
+  setModel: (id: string, model: string): Promise<{ ok: boolean; model: string }> =>
+    fetch(`/api/sessions/${id}/model`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model }),
+    }).then(r => json(r)),
+
   getRange: (id: string): Promise<RangeDoc> =>
     fetch(`/api/ranges/${id}`).then(r => json<RangeDoc>(r)),
 

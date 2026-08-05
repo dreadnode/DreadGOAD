@@ -368,6 +368,95 @@ async def test_health_emits_report_and_suppresses_json() -> None:
             await db.close()
 
 
+class FakeThreadAgent:
+    """Agent stand-in exposing a mutable ``thread.messages`` (for swap tests)."""
+
+    def __init__(self, messages: list | None = None) -> None:
+        self.thread = types.SimpleNamespace(messages=messages or [])
+
+
+async def test_swap_model_preserves_thread_and_persists() -> None:
+    """Switching model rebuilds the agent with history grafted + persists model."""
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        cfg = tmp / "dreadgoad.yaml"
+        cfg.write_text(_YAML)
+        db = await Database(str(tmp / "state.db")).connect()
+        svc = SessionService(db, repo_root=str(_REPO), sessions_root=tmp / "sessions")
+        app = types.SimpleNamespace(state=types.SimpleNamespace(db=db, sessions=svc))
+        s = await svc.create_session(str(cfg), "dev")
+        ws = FakeWS()
+        chat.register_conn(s["id"], ws)
+
+        old = FakeThreadAgent(["msg-1", "msg-2"])
+        chat._agents[s["id"]] = old
+        seen = {}
+
+        def fake_create(model, session, app_, sid_, run_cli):  # noqa: ANN001, ANN202
+            seen["model"] = model
+            return FakeThreadAgent([])  # fresh agent, empty thread
+
+        orig = chat.create_agent
+        chat.create_agent = fake_create
+        try:
+            out = await chat.swap_model(app, s["id"], "openrouter/x/y")
+            assert out is not None
+            # model persisted on the session
+            sess = await db.get_session(s["id"])
+            assert sess is not None and sess["model"] == "openrouter/x/y", sess
+            # rebuilt with the new model, old conversation grafted on
+            assert seen["model"] == "openrouter/x/y"
+            new = chat._agents[s["id"]]
+            assert new is not old, "agent must be rebuilt"
+            assert new.thread.messages == ["msg-1", "msg-2"], "history must carry over"
+            # a status event announces the change
+            assert any(
+                m["kind"] == "status" and "Model changed" in (m.get("content") or "")
+                for m in ws.sent
+            ), ws.sent
+            print("PASS test_swap_model_preserves_thread_and_persists")
+        finally:
+            chat.create_agent = orig
+            chat._agents.pop(s["id"], None)
+            await db.close()
+
+
+async def test_swap_model_no_live_agent() -> None:
+    """With no cached agent, swap just persists the model (built fresh next turn)."""
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        cfg = tmp / "dreadgoad.yaml"
+        cfg.write_text(_YAML)
+        db = await Database(str(tmp / "state.db")).connect()
+        svc = SessionService(db, repo_root=str(_REPO), sessions_root=tmp / "sessions")
+        app = types.SimpleNamespace(state=types.SimpleNamespace(db=db, sessions=svc))
+        s = await svc.create_session(str(cfg), "dev")
+        chat._agents.pop(s["id"], None)  # ensure not cached
+
+        called = False
+
+        def fake_create(*a, **k):  # noqa: ANN002, ANN003, ANN202
+            nonlocal called
+            called = True
+            return FakeThreadAgent()
+
+        orig = chat.create_agent
+        chat.create_agent = fake_create
+        try:
+            out = await chat.swap_model(app, s["id"], "m2")
+            assert out is not None
+            assert not called, "no cached agent → must not build one eagerly"
+            assert s["id"] not in chat._agents
+            sess = await db.get_session(s["id"])
+            assert sess is not None and sess["model"] == "m2", sess
+            # unknown session → None
+            assert await chat.swap_model(app, "ghost", "m3") is None
+            print("PASS test_swap_model_no_live_agent")
+        finally:
+            chat.create_agent = orig
+            await db.close()
+
+
 async def test_cleanup_session_evicts() -> None:
     chat._agents["z"] = object()
     chat._locks["z"] = asyncio.Lock()
@@ -387,6 +476,8 @@ async def _main() -> None:
     await test_direct_command_rejects_extra_args()
     test_instructions_renders_system_prompt()
     await test_health_emits_report_and_suppresses_json()
+    await test_swap_model_preserves_thread_and_persists()
+    await test_swap_model_no_live_agent()
     await test_dispatch_serialization_and_concurrency()
     await test_cleanup_session_evicts()
     print("ALL PASS")

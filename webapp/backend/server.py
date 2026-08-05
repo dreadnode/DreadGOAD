@@ -134,6 +134,18 @@ async def get_session(session_id: str) -> dict[str, t.Any]:
     return s
 
 
+@app.put("/api/sessions/{session_id}/model")
+async def set_model(session_id: str, body: dict[str, t.Any]) -> dict[str, t.Any]:
+    """Switch a session's agent model in place (conversation continues)."""
+    model = (body.get("model") or "").strip()
+    if not model:
+        raise HTTPException(status_code=400, detail="model is required")
+    session = await chat.swap_model(app, session_id, model)
+    if session is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    return {"ok": True, "model": model}
+
+
 @app.delete("/api/sessions/{session_id}")
 async def delete_session(session_id: str) -> dict[str, t.Any]:
     ok = await _svc(app).delete_session(session_id)
