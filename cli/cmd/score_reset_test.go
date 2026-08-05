@@ -8,11 +8,10 @@ import (
 	"testing"
 )
 
-// runHostsFilter executes the generated awk filters against a fixture
-// /etc/hosts and returns (lines counted as attacker-seeded, lines kept by the
-// rewrite). Exercising the real awk is the point: the regexes are where this
-// feature can actually break, and a string match on the script would not
-// notice a wrong one.
+// runHostsFilter runs the real awk programs against a fixture /etc/hosts and
+// returns (count of attacker-seeded lines, lines kept by the rewrite). Running
+// awk is the point — the regexes are where this breaks, and a string match on
+// the script would not notice a wrong one.
 func runHostsFilter(t *testing.T, content string) (found string, kept string) {
 	t.Helper()
 
@@ -89,8 +88,8 @@ func TestHostsBaselineFilter(t *testing.T) {
 			wantGone:  []string{"evil.corp.local", "srv02.corp.local"},
 		},
 		{
-			// Commenting an entry out hides it from resolution but not from
-			// the next agent reading the file.
+			// Commenting out hides an entry from resolution, not from the next
+			// agent reading the file.
 			name: "commented-out entries are artifacts",
 			hosts: "127.0.0.1 localhost\n" +
 				"# 10.10.10.12   dc02.sevenkingdoms.local dc02\n" +
@@ -101,8 +100,7 @@ func TestHostsBaselineFilter(t *testing.T) {
 			wantGone:  []string{"dc02", "srv03", "srv04"},
 		},
 		{
-			// Prose comments are baseline: cloud-init writes this block on
-			// Azure images and stripping it would not restore pristine.
+			// Verbatim cloud-init block from the Azure images.
 			name: "prose comments survive",
 			hosts: "# Your system has configured 'manage_etc_hosts' as True.\n" +
 				"# As a result, if you wish for changes to this file to persist\n" +
@@ -114,9 +112,8 @@ func TestHostsBaselineFilter(t *testing.T) {
 			wantKept:  []string{"manage_etc_hosts", "IPv6 capable hosts", "a.) make changes"},
 		},
 		{
-			// Splitting an indented line without stripping the leading
-			// whitespace yields an empty first field, which would read as
-			// prose and let the entry through.
+			// Guards the `#*` in host_addr; with `#+` this splits to an empty
+			// first field and reads as prose.
 			name:      "indented entries are still artifacts",
 			hosts:     "127.0.0.1 localhost\n  \t10.10.10.15 srv05.sevenkingdoms.local\n",
 			wantFound: "1",
@@ -131,10 +128,8 @@ func TestHostsBaselineFilter(t *testing.T) {
 			wantKept:  []string{"oldkali", "# ::1 localhost"},
 		},
 		{
-			// An agent that clobbered /etc/hosts outright
-			// (`nxc --generate-hosts-file > /etc/hosts`) leaves nothing for the
-			// filter to keep. Installing that empty result would break hostname
-			// resolution, so the clean script's loopback guard must refuse it.
+			// `nxc --generate-hosts-file > /etc/hosts` leaves nothing to keep.
+			// Installing that would break resolution, hence the loopback guard.
 			name:          "clobbered hosts file leaves nothing to keep",
 			hosts:         "10.10.10.10 dc01.local dc01\n10.10.10.11 srv02.local\n",
 			wantFound:     "2",
@@ -166,10 +161,10 @@ func TestHostsBaselineFilter(t *testing.T) {
 	}
 }
 
-// TestHostsLoopbackGuard runs the real guard against real filter output. The
-// rewrite is refused unless baseline survived, and either loopback family
-// counts as baseline — a file whose only loopback is `::1` still resolves
-// localhost, so skipping the scrub there would leave artifacts behind.
+// TestHostsLoopbackGuard runs the real guard against real filter output.
+// Either loopback family counts as surviving baseline — a file whose only
+// loopback is `::1` still resolves localhost, so refusing there would leave
+// the artifacts in place for nothing.
 func TestHostsLoopbackGuard(t *testing.T) {
 	grepBin, err := exec.LookPath("grep")
 	if err != nil {

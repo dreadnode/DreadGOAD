@@ -175,22 +175,15 @@ func resetKali(ctx context.Context, cmd *cobra.Command, cfg *config.Config, appl
 	return nil
 }
 
-// hostsBaselineAwk defines is_baseline(), the single predicate behind both the
-// find and clean commands (clean keeps its matches, find counts its negation)
-// so the two can never drift apart.
+// hostsBaselineAwk defines is_baseline(), shared by the find and clean
+// commands so the two cannot drift apart.
 //
-// A line is baseline if it is blank, or if its first token — after any leading
-// `#` — is not a routable address. That keeps everything a pristine image
-// ships: loopback, ::1, the fe/ff IPv6-reserved rows, and prose comments such
-// as the cloud-init manage_etc_hosts block or Ubuntu's IPv6 header. Reading
-// past the `#` is what catches an entry an agent commented out rather than
-// deleted — `# 10.0.0.5 dc01.corp.local` leaks the same topology as the live
-// line. The v6 prefix test is case-insensitive because tools emit
-// FE80::/FF02:: as readily as lowercase.
-//
-// host_addr makes the `#` optional so it also strips leading whitespace from
-// indented entries; splitting those without stripping yields an empty first
-// field, which would read as prose and let the entry through.
+// Reading past a leading `#` is deliberate: an entry an agent commented out
+// leaks the same topology as the live line, while prose comments (cloud-init's
+// manage_etc_hosts block, Ubuntu's IPv6 header) are baseline and must survive.
+// tolower because tools emit FE80::/FF02:: as readily as lowercase. The `#` is
+// optional in host_addr so it strips indentation too — without that, an
+// indented entry splits to an empty first field and reads as prose.
 const hostsBaselineAwk = `
 function host_addr(  s, f) {
   s = $0
@@ -206,34 +199,26 @@ function is_baseline(  a) {
 }
 `
 
-// The two awk programs the cleanup script runs. Emitted once into shell
-// variables so the generated script stays readable when an operator reads it
-// back off a failing box.
 const (
 	hostsFindProgram = hostsBaselineAwk + `!is_baseline() {c++} END{print c+0}`
 	hostsKeepProgram = hostsBaselineAwk + `is_baseline()`
 )
 
-// hostsLoopbackGuard matches a surviving loopback line in the filtered output.
-// The `::1` arm is anchored to a delimiter so it cannot match a routable
-// address that merely starts with those characters.
+// hostsLoopbackGuard matches a surviving loopback line. The `::1` arm is
+// delimiter-anchored so it cannot match a routable address starting with
+// those characters.
 const hostsLoopbackGuard = `^127\.|^::1([[:space:]]|$)`
 
 // hostsCleanScript rewrites /etc/hosts down to the baseline block.
 //
-// The filtered copy goes to a mktemp path rather than a fixed one: /tmp is
-// world-writable, and root copies this file, so a predictable name lets any
-// local user swap the contents between the write and the copy. The rewrite is
-// refused unless a loopback line survived — an agent that clobbered
-// /etc/hosts outright (`nxc --generate-hosts-file > /etc/hosts`) leaves
-// nothing to keep, and an empty /etc/hosts breaks hostname resolution for the
-// next run. Either loopback family counts: the guard asks whether baseline
-// survived, and a file whose baseline is `::1` alone still resolves localhost.
-// Every skip path says why; `sudo -n` fails closed instead of prompting, so a
-// box without passwordless sudo reports found-but-not-removed.
-//
-// cp is deliberate: writing into the existing /etc/hosts keeps that inode's
-// mode and owner, so the 0600 mktemp file does not make /etc/hosts root-only.
+// mktemp, not a fixed path: /tmp is world-writable and root copies this file,
+// so a predictable name lets a local user swap the contents between the write
+// and the copy. cp, not mv or install: writing into the existing /etc/hosts
+// keeps that inode's mode and owner, so the 0600 temp file does not make
+// /etc/hosts root-only. The loopback guard refuses to install a filtered
+// result with no baseline left — an agent that clobbered /etc/hosts with `>`
+// leaves nothing to keep, and an empty one breaks resolution for the next run.
+// `sudo -n` fails closed rather than prompting.
 const hostsCleanScript = `dg_t=$(mktemp 2>/dev/null)
   if [ -z "$dg_t" ]; then
     echo "  WARN: /etc/hosts rewrite skipped (mktemp unavailable)"
@@ -327,10 +312,9 @@ func buildKaliCleanupScript(apply bool) string {
 			clean: `find $HOME -maxdepth 3 \( -name "*.ccache" -o -name "*.kirbi" -o -name "*.keytab" -o -name "*.pfx" \) ! -path "*/.local/*" -delete 2>/dev/null`,
 		},
 		{
-			// Anything mapping a routable address to a hostname is agent-seeded
-			// recon (e.g. `nxc --generate-hosts-file`), and handing that to the
-			// next agent leaks the domain topology it is meant to discover.
-			// See hostsBaselineAwk for what counts as baseline.
+			// A routable address mapped to a hostname is agent-seeded recon
+			// (e.g. `nxc --generate-hosts-file`), and leaks the domain topology
+			// the next agent is meant to discover.
 			label: "attacker /etc/hosts entries (non-loopback)",
 			find:  `awk "$dg_hosts_find" /etc/hosts 2>/dev/null || echo 0`,
 			clean: hostsCleanScript,
@@ -340,9 +324,9 @@ func buildKaliCleanupScript(apply bool) string {
 	var sb strings.Builder
 	sb.WriteString("#!/bin/sh\ntotal_found=0\ntotal_removed=0\n")
 
-	// The hosts programs are multi-line; hoisting them out of the per-target
-	// commands keeps the emitted script readable. Neither program touches
-	// anything on its own, so both are safe to define in dry-run mode.
+	// Hoisted out of the per-target commands because they are multi-line; an
+	// operator reads this script back off a failing box. Defining them is
+	// inert, so dry-run gets them too.
 	fmt.Fprintf(&sb, "\ndg_hosts_find='%s'\ndg_hosts_keep='%s'\n", hostsFindProgram, hostsKeepProgram)
 
 	for i, t := range targets {
@@ -356,10 +340,8 @@ func buildKaliCleanupScript(apply bool) string {
 			fmt.Fprintf(&sb, "  total_removed=$((total_removed + removed_%d))\n", i)
 			sb.WriteString("fi\n")
 		}
-		// "items", not "files": most targets count files, but the /etc/hosts
-		// target counts lines and others count a single present-or-absent
-		// artifact. The JSON result the caller parses lives past the marker,
-		// so this line is display only.
+		// "items" because not every target counts files. Display only; the
+		// caller parses the JSON past the marker.
 		fmt.Fprintf(&sb, "echo \"  %s: $count_%d items\"\n", t.label, i)
 	}
 
