@@ -1,0 +1,29 @@
+---
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+version: "3"
+
+vars:
+  BINARY_NAME: dreadgoad
+  CMD_PATH: .
+
+includes:
+  go:
+    taskfile: "https://raw.githubusercontent.com/CowDogMoo/taskfile-templates/main/go/Taskfile.yaml"
+    dir: ./cli
+    vars:
+      BINARY_NAME: '{{.BINARY_NAME}}'
+      CMD_PATH: '{{.CMD_PATH}}'
+  ansible:
+    taskfile: "https://raw.githubusercontent.com/CowDogMoo/taskfile-templates/main/ansible/Taskfile.yaml"
+    dir: ./ansible
+
+tasks:
+  default:
+    desc: Build, test, and clean
+    cmds:
+      - task: go:default
+
+  install:
+    desc: Install the dreadgoad binary to GOPATH/bin
+    cmds:
+      - task: go:install

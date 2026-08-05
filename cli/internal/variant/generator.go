@@ -40,6 +40,12 @@ type HostConfig struct {
 	MSSQL              *MSSQLConfig        `json:"mssql,omitempty"`
 	// RemoteDesktopUsers appears at host top-level in some upstream GOAD configs.
 	RemoteDesktopUsers []string `json:"Remote Desktop Users,omitempty"`
+	// OS marks non-Windows hosts (DRACARYS uses "linux" for lx01).
+	OS string `json:"os,omitempty"`
+	// VulnsADCSTemplates lists the certificate templates published for this
+	// host; read by cli/internal/ansible/prepare.go to drive the
+	// vulns_adcs_templates role.
+	VulnsADCSTemplates []string `json:"vulns_adcs_templates,omitempty"`
 }
 
 // MSSQLConfig holds MSSQL server configuration for a host.
@@ -87,6 +93,14 @@ type DomainConfig struct {
 	GMSA                    map[string]GMSAConfig  `json:"gmsa,omitempty"`
 	ACLs                    map[string]ACLConfig   `json:"acls"`
 	Users                   map[string]*UserConfig `json:"users"`
+	// CAWebEnrollment is a pointer so an explicit false survives the round-trip.
+	// ansible/playbooks/adcs.yml treats absent as true, so dropping a false here
+	// silently turns CA web enrollment back on in the generated variant.
+	CAWebEnrollment *bool `json:"ca_web_enrollment,omitempty"`
+	// SCCM holds the MECM/SCCM site configuration (SCCM lab only). Kept as a raw
+	// map because the generator has no reason to reshape it; entity names inside
+	// are still randomized by the text-level replacement pass.
+	SCCM map[string]any `json:"sccm,omitempty"`
 }
 
 // OUConfig represents an organisational unit.
@@ -163,7 +177,8 @@ type HostMapping struct {
 type replacement struct {
 	Old          string
 	New          string
-	WordBoundary bool // use word-boundary regex instead of plain replacement
+	WordBoundary bool           // use word-boundary regex instead of plain replacement
+	re           *regexp.Regexp // precompiled word-boundary pattern (nil for plain replacements)
 }
 
 // Generator creates GOAD variants with randomized entity names.
@@ -291,6 +306,9 @@ func (g *Generator) generateMappings(config *LabConfig) {
 
 	fmt.Println("\nMapping cities...")
 	g.mapCities(config)
+
+	fmt.Println("\nMapping shares...")
+	g.mapShares(config)
 
 	// Reconcile name-component Misc entries that conflict with Groups.
 	// Group names are explicit AD entities and take precedence over
@@ -620,6 +638,56 @@ func (g *Generator) mapCities(config *LabConfig) {
 	}
 }
 
+// mapShares extracts share names from VulnsVars and generates new names.
+// Share names like "thewall" are GOAD-themed and must be randomized to
+// prevent agents from recognizing the original lab structure.
+func (g *Generator) mapShares(config *LabConfig) {
+	seen := make(map[string]bool)
+	for _, host := range config.Lab.Hosts {
+		shares, ok := host.VulnsVars["shares"]
+		if !ok {
+			continue
+		}
+		sharesMap, ok := shares.(map[string]any)
+		if !ok {
+			continue
+		}
+		for shareName := range sharesMap {
+			if seen[shareName] {
+				continue
+			}
+			seen[shareName] = true
+			newName := g.nameGen.GenerateShareName()
+			g.mappings.Misc[shareName] = newName
+			fmt.Printf("  share %s -> %s\n", shareName, newName)
+		}
+	}
+}
+
+// rebuildShareKeys renames share map keys in VulnsVars after text
+// replacement has updated the share values but not the JSON map keys.
+func (g *Generator) rebuildShareKeys(config *LabConfig) {
+	for _, host := range config.Lab.Hosts {
+		shares, ok := host.VulnsVars["shares"]
+		if !ok {
+			continue
+		}
+		sharesMap, ok := shares.(map[string]any)
+		if !ok {
+			continue
+		}
+		newShares := make(map[string]any)
+		for oldKey, val := range sharesMap {
+			newKey := oldKey
+			if mapped, ok := g.mappings.Misc[oldKey]; ok {
+				newKey = mapped
+			}
+			newShares[newKey] = val
+		}
+		host.VulnsVars["shares"] = newShares
+	}
+}
+
 // buildOrderedReplacements builds the ordered replacement list (longest first).
 func (g *Generator) buildOrderedReplacements() {
 	fmt.Println("\n=== Building Ordered Replacements ===")
@@ -661,6 +729,15 @@ func (g *Generator) buildOrderedReplacements() {
 		if !seen[key] {
 			seen[key] = true
 			unique = append(unique, r)
+		}
+	}
+
+	// Precompile word-boundary regexes so applyReplacements doesn't
+	// recompile on every file.
+	for i := range unique {
+		if unique[i].WordBoundary {
+			pattern := `\b` + regexp.QuoteMeta(unique[i].Old) + `\b`
+			unique[i].re, _ = regexp.Compile(pattern)
 		}
 	}
 
@@ -762,20 +839,15 @@ func (g *Generator) applyReplacements(content string) string {
 			continue
 		}
 
-		if r.WordBoundary {
+		if r.WordBoundary && r.re != nil {
 			// Match name at boundaries, treating underscore as a word
 			// separator. Go's \b considers _ a word character, but GOAD
 			// uses underscore-delimited keys (e.g., "GenericWrite_missandei_viserys").
 			// We pre-process underscores to temporary placeholders so \b works,
 			// then restore them.
-			escaped := regexp.QuoteMeta(r.Old)
 			const placeholder = "\x00USCORE\x00"
 			temp := strings.ReplaceAll(content, "_", placeholder)
-			pattern := `\b` + escaped + `\b`
-			re, err := regexp.Compile(pattern)
-			if err == nil {
-				temp = re.ReplaceAllString(temp, r.New)
-			}
+			temp = r.re.ReplaceAllString(temp, r.New)
 			content = strings.ReplaceAll(temp, placeholder, "_")
 		} else {
 			content = strings.ReplaceAll(content, r.Old, r.New)
@@ -896,42 +968,60 @@ func (g *Generator) transformFile(srcPath, relPath string) (transformed bool) {
 		return false
 	}
 
-	if textExtensions[ext] || textFilenames[base] || (ext == "" && g.isTextFile(srcPath)) {
-		content, err := os.ReadFile(srcPath)
-		if err != nil {
-			fmt.Printf("Warning: Could not read %s: %v\n", relPath, err)
-			copyFile(srcPath, targetFile)
-			return false
+	isText := textExtensions[ext] || textFilenames[base] || (ext == "" && g.isTextFile(srcPath))
+	if !isText {
+		if err := copyFile(srcPath, targetFile); err != nil {
+			fmt.Printf("Warning: Could not copy %s: %v\n", relPath, err)
 		}
-
-		newContent := g.applyReplacements(string(content))
-
-		isFullConfig := (base == "config.json" || strings.HasSuffix(base, "-config.json")) &&
-			!strings.HasSuffix(base, "-overlay.json")
-		if isFullConfig {
-			var configData LabConfig
-			if err := json.Unmarshal([]byte(newContent), &configData); err == nil {
-				g.fixUserFirstnameSurname(&configData)
-				g.fixPasswords(&configData)
-				g.rebuildACLKeys(&configData)
-				if pretty, err := json.MarshalIndent(configData, "", "  "); err == nil {
-					newContent = string(pretty)
-				}
-			}
-		}
-
-		if err := os.WriteFile(targetFile, []byte(newContent), 0o644); err != nil {
-			fmt.Printf("Warning: Could not write %s: %v\n", relPath, err)
-			return false
-		}
-		return true
+		return false
 	}
 
-	copyFile(srcPath, targetFile)
-	return false
+	content, err := os.ReadFile(srcPath)
+	if err != nil {
+		fmt.Printf("Warning: Could not read %s: %v\n", relPath, err)
+		if cpErr := copyFile(srcPath, targetFile); cpErr != nil {
+			fmt.Printf("Warning: fallback copy also failed: %v\n", cpErr)
+		}
+		return false
+	}
+
+	newContent := g.applyReplacements(string(content))
+	if ext == ".ps1" {
+		newContent = g.fixSecureStrings(newContent)
+	}
+	newContent = g.transformConfigJSON(base, newContent)
+
+	if err := os.WriteFile(targetFile, []byte(newContent), 0o644); err != nil {
+		fmt.Printf("Warning: Could not write %s: %v\n", relPath, err)
+		return false
+	}
+	return true
 }
 
 // copyAndTransform copies the source directory, transforming text files.
+// transformConfigJSON applies structural transformations to GOAD config JSON
+// files (firstname/surname fixup, password remapping, ACL/share key rebuilds).
+// Returns content unchanged if the file is not a full config JSON.
+func (g *Generator) transformConfigJSON(base, content string) string {
+	isFullConfig := (base == "config.json" || strings.HasSuffix(base, "-config.json")) &&
+		!strings.HasSuffix(base, "-overlay.json")
+	if !isFullConfig {
+		return content
+	}
+	var configData LabConfig
+	if err := json.Unmarshal([]byte(content), &configData); err != nil {
+		return content
+	}
+	g.fixUserFirstnameSurname(&configData)
+	g.fixPasswords(&configData)
+	g.rebuildACLKeys(&configData)
+	g.rebuildShareKeys(&configData)
+	if pretty, err := json.MarshalIndent(configData, "", "  "); err == nil {
+		return string(pretty)
+	}
+	return content
+}
+
 func (g *Generator) copyAndTransform() error {
 	fmt.Println("\n=== Copying and Transforming Files ===")
 
@@ -1157,15 +1247,15 @@ Generated by GOAD Variant Generator
 	fmt.Printf("Documentation created at %s\n", readmePath)
 }
 
-func copyFile(src, dst string) {
+func copyFile(src, dst string) error {
 	data, err := os.ReadFile(src)
 	if err != nil {
-		fmt.Printf("Warning: Could not read %s: %v\n", src, err)
-		return
+		return fmt.Errorf("read %s: %w", src, err)
 	}
 	if err := os.WriteFile(dst, data, 0o644); err != nil {
-		fmt.Printf("Warning: Could not write %s: %v\n", dst, err)
+		return fmt.Errorf("write %s: %w", dst, err)
 	}
+	return nil
 }
 
 // isTextFile returns true if the file appears to contain text (valid UTF-8 with

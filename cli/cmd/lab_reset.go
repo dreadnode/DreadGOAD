@@ -219,10 +219,20 @@ var labResetCmd = &cobra.Command{
   2. Re-run AD-state playbooks to restore users, ACLs, group membership,
      trusts, and vulnerability seeding.
 
+Stage 2 reconciles rather than only re-applies. Passwords an attack run
+changed are reset back to the lab config, and group memberships an attack
+run added are removed. Cross-domain members, machine accounts, and built-in
+principals (RID < 1000) are never touched.
+
+Stage 2 writes. To see what it would change without changing it, rehearse with
+-E ad_reconcile_check_only=true, which reports drift and corrects nothing. That
+is also how to measure how far an attack run moved the lab before resetting it.
+
 Idempotent: safe to re-run.`,
 	Example: `  dreadgoad lab reset
   dreadgoad lab reset --skip-purge
-  dreadgoad lab reset --plays ad-data.yml,ad-acl.yml`,
+  dreadgoad lab reset --plays ad-data.yml,ad-acl.yml
+  dreadgoad lab reset -E ad_reconcile_check_only=true   # report drift, change nothing`,
 	RunE: runLabReset,
 }
 
@@ -242,6 +252,7 @@ func init() {
 	labResetCmd.Flags().Int("max-retries", 0, "Max retry attempts (default: from config)")
 	labResetCmd.Flags().Int("retry-delay", 0, "Delay between retries in seconds (default: from config)")
 	labResetCmd.Flags().Bool("skip-creator-check", false, "Skip the admin creator-SID safety belt during purge")
+	labResetCmd.Flags().StringArrayP("extra-vars", "E", nil, extraVarsUsage)
 }
 
 type purgeOptions struct {
@@ -476,7 +487,10 @@ func runLabReset(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
+	// Signal-aware context from the root: `lab reset` shares provisionPlaybooks
+	// with `provision`, so it opens the same Bastion tunnel and needs the same
+	// cancellation path to tear it down on interrupt.
+	ctx := cmd.Context()
 
 	skipPurge, _ := cmd.Flags().GetBool("skip-purge")
 	skipProvision, _ := cmd.Flags().GetBool("skip-provision")
@@ -485,6 +499,10 @@ func runLabReset(cmd *cobra.Command, args []string) error {
 	maxRetries, _ := cmd.Flags().GetInt("max-retries")
 	retryDelay, _ := cmd.Flags().GetInt("retry-delay")
 	skipCreator, _ := cmd.Flags().GetBool("skip-creator-check")
+	extraVars, err := parseExtraVars(cmd)
+	if err != nil {
+		return err
+	}
 
 	playbooks := adStatePlaybooks
 	if playsFlag != "" {
@@ -506,7 +524,7 @@ func runLabReset(cmd *cobra.Command, args []string) error {
 
 	if !skipProvision {
 		fmt.Println("--- Stage 2: restore AD baseline state ---")
-		if err := provisionPlaybooks(ctx, cfg, playbooks, limit, maxRetries, retryDelay); err != nil {
+		if err := provisionPlaybooks(ctx, cfg, playbooks, limit, maxRetries, retryDelay, extraVars); err != nil {
 			return err
 		}
 	}

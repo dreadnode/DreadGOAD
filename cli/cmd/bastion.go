@@ -29,6 +29,9 @@ before 'infra apply', or use 'infra apply --with-bastion'). Tunneling-enabled
 Standard/Premium SKUs are required for ssh/rdp/tunnel; the Developer SKU only
 supports the browser console.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		if err := config.Init(); err != nil {
+			return err
+		}
 		cfg, err := config.Get()
 		if err != nil {
 			return err
@@ -105,37 +108,54 @@ func azureClientFromProvider(prov provider.Provider) (*azure.Client, error) {
 	return ap.Client(), nil
 }
 
-func bastionContext(ctx context.Context) (*azure.Client, *azure.BastionHost, *config.Config, error) {
+func bastionContext(ctx context.Context) (*azure.Client, *azure.BastionHost, *config.Config, provider.Provider, error) {
 	cfg, err := config.Get()
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	prov, err := cfg.NewProvider(ctx)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	client, err := azureClientFromProvider(prov)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	if _, err := client.VerifyCredentials(ctx); err != nil {
-		return nil, nil, nil, err
+		return nil, nil, nil, nil, err
 	}
 	host, err := client.DiscoverBastion(ctx, cfg.Env)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("discover bastion: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("discover bastion: %w", err)
 	}
 	if host == nil {
-		return nil, nil, nil, fmt.Errorf(
+		return nil, nil, nil, nil, fmt.Errorf(
 			"no Azure Bastion host found for env=%s. Deploy with: "+
 				"DREADGOAD_ENABLE_AZURE_BASTION=true dreadgoad infra apply --module bastion "+
 				"(or use --with-bastion on infra apply)", cfg.Env)
 	}
-	return client, host, cfg, nil
+	return client, host, cfg, prov, nil
+}
+
+// bastionWithVM resolves the bastion, verifies tunneling, and looks up the
+// target VM. Common setup shared by ssh, rdp, and tunnel subcommands.
+func bastionWithVM(ctx context.Context, host string) (*azure.Client, *azure.BastionHost, *config.Config, string, error) {
+	client, bh, cfg, prov, err := bastionContext(ctx)
+	if err != nil {
+		return nil, nil, nil, "", err
+	}
+	if !bh.TunnelingEnabled {
+		return nil, nil, nil, "", fmt.Errorf("bastion %s does not have tunneling enabled; requires bastion_tunneling_enabled=true on a Standard/Premium SKU", bh.Name)
+	}
+	vmID, err := resolveAzureHost(ctx, prov, cfg, host)
+	if err != nil {
+		return nil, nil, nil, "", err
+	}
+	return client, bh, cfg, vmID, nil
 }
 
 func runBastionStatus(cmd *cobra.Command, args []string) error {
-	ctx := context.Background()
+	ctx := cmd.Context()
 	cfg, err := config.Get()
 	if err != nil {
 		return err
@@ -176,20 +196,8 @@ func runBastionStatus(cmd *cobra.Command, args []string) error {
 }
 
 func runBastionSSH(cmd *cobra.Command, args []string) error {
-	ctx := context.Background()
-	client, host, cfg, err := bastionContext(ctx)
-	if err != nil {
-		return err
-	}
-	if !host.TunnelingEnabled {
-		return fmt.Errorf("bastion %s does not have tunneling enabled; ssh requires bastion_tunneling_enabled=true on a Standard/Premium SKU", host.Name)
-	}
-
-	prov, err := cfg.NewProvider(ctx)
-	if err != nil {
-		return err
-	}
-	vmID, err := resolveAzureHost(ctx, prov, cfg, args[0])
+	ctx := cmd.Context()
+	client, host, cfg, vmID, err := bastionWithVM(ctx, args[0])
 	if err != nil {
 		return err
 	}
@@ -198,28 +206,54 @@ func runBastionSSH(cmd *cobra.Command, args []string) error {
 	authType, _ := cmd.Flags().GetString("auth-type")
 	sshKey, _ := cmd.Flags().GetString("ssh-key")
 
-	// Auto-pick the ephemeral key for the in-VNet Ansible controller. The
-	// terraform-azure-controller module writes its private key to a
-	// well-known path and stamps Role=AnsibleController on the VM, so we
-	// can reach it without making the operator type --auth-type ssh-key
-	// --ssh-key <path> -u dreadadmin every time. A failed live lookup is
-	// non-fatal — we just fall back to the user-supplied flag values.
-	if inst, err := client.FindInstanceByHostname(ctx, cfg.Env, args[0]); err == nil && inst.Tags["Role"] == "AnsibleController" {
+	// Auto-pick the ephemeral key for known VM roles. A failed live lookup
+	// is non-fatal — we just fall back to the user-supplied flag values.
+	if defaults := resolveRoleDefaults(ctx, client, cfg.Env, args[0]); defaults != nil && defaults.sshKey != "" {
 		if !cmd.Flags().Changed("auth-type") {
-			authType = "ssh-key"
+			authType = defaults.authType
 		}
 		if !cmd.Flags().Changed("ssh-key") && authType == "ssh-key" {
-			if path := controllerKeyPath(cfg.Env, inst.Name); path != "" {
-				sshKey = path
-			}
+			sshKey = defaults.sshKey
 		}
 		if !cmd.Flags().Changed("user") {
-			user = "dreadadmin"
+			user = defaults.user
 		}
 	}
 
 	fmt.Printf("Bastion SSH to %s via %s...\n", args[0], host.Name)
 	return client.OpenBastionSSH(ctx, host, vmID, user, authType, sshKey)
+}
+
+// roleDefaults holds auto-detected SSH defaults for a known VM role.
+type roleDefaults struct {
+	authType string
+	user     string
+	sshKey   string
+}
+
+// resolveRoleDefaults looks up a VM by hostname and returns SSH defaults based
+// on its Role tag. Returns nil if the VM is not found or has no known role.
+func resolveRoleDefaults(ctx context.Context, client *azure.Client, env, hostname string) *roleDefaults {
+	inst, err := client.FindInstanceByHostname(ctx, env, hostname)
+	if err != nil {
+		return nil
+	}
+	switch inst.Tags["Role"] {
+	case "AnsibleController":
+		return &roleDefaults{
+			authType: "ssh-key",
+			user:     "dreadadmin",
+			sshKey:   controllerKeyPath(env, inst.Name),
+		}
+	case "AttackBox":
+		return &roleDefaults{
+			authType: "ssh-key",
+			user:     "kali",
+			sshKey:   azure.KaliKeyPath(env, inst.Name),
+		}
+	default:
+		return nil
+	}
 }
 
 // controllerKeyPath derives the conventional ephemeral private-key path the
@@ -244,19 +278,8 @@ func controllerKeyPath(env, vmName string) string {
 }
 
 func runBastionRDP(cmd *cobra.Command, args []string) error {
-	ctx := context.Background()
-	client, host, cfg, err := bastionContext(ctx)
-	if err != nil {
-		return err
-	}
-	if !host.TunnelingEnabled {
-		return fmt.Errorf("bastion %s does not have tunneling enabled; rdp requires bastion_tunneling_enabled=true on a Standard/Premium SKU", host.Name)
-	}
-	prov, err := cfg.NewProvider(ctx)
-	if err != nil {
-		return err
-	}
-	vmID, err := resolveAzureHost(ctx, prov, cfg, args[0])
+	ctx := cmd.Context()
+	client, host, _, vmID, err := bastionWithVM(ctx, args[0])
 	if err != nil {
 		return err
 	}
@@ -266,19 +289,8 @@ func runBastionRDP(cmd *cobra.Command, args []string) error {
 }
 
 func runBastionTunnel(cmd *cobra.Command, args []string) error {
-	ctx := context.Background()
-	client, host, cfg, err := bastionContext(ctx)
-	if err != nil {
-		return err
-	}
-	if !host.TunnelingEnabled {
-		return fmt.Errorf("bastion %s does not have tunneling enabled; tunnel requires bastion_tunneling_enabled=true on a Standard/Premium SKU", host.Name)
-	}
-	prov, err := cfg.NewProvider(ctx)
-	if err != nil {
-		return err
-	}
-	vmID, err := resolveAzureHost(ctx, prov, cfg, args[0])
+	ctx := cmd.Context()
+	client, host, _, vmID, err := bastionWithVM(ctx, args[0])
 	if err != nil {
 		return err
 	}

@@ -6,9 +6,13 @@ package validate
 import (
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
+
+	"github.com/dreadnode/dreadgoad/internal/labmap"
 )
 
 func printHeader(w io.Writer, header string) {
@@ -125,8 +129,13 @@ func (v *Validator) checkASREPRoasting(ctx context.Context, w io.Writer) {
 
 	for _, role := range asrepHosts {
 		dcRole := strings.ToUpper(role)
-		output := v.runPS(ctx, dcRole,
+		output, err := v.runPSErr(ctx, dcRole,
 			`Get-ADUser -Filter {DoesNotRequirePreAuth -eq $true} -Properties DoesNotRequirePreAuth | Select-Object -ExpandProperty SamAccountName`)
+		if err != nil {
+			v.addResult(w, "WARN", "Kerberos",
+				fmt.Sprintf("Could not query AS-REP roastable users on %s: %v", dcRole, err), "")
+			continue
+		}
 		users := parseOutputLines(output)
 		if len(users) > 0 {
 			v.addResult(w, "PASS", "Kerberos",
@@ -180,8 +189,12 @@ func (v *Validator) checkNetworkMisconfigs(ctx context.Context, w io.Writer) {
 			continue
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-		output := v.runPS(ctx, host,
+		output, err := v.runPSErr(ctx, host,
 			`Get-SmbServerConfiguration | Select-Object RequireSecuritySignature,EnableSecuritySignature | Format-Table -AutoSize | Out-String`)
+		if err != nil {
+			v.addResult(w, "WARN", "Network", fmt.Sprintf("Could not query SMB signing on %s: %v", hostLabel, err), "")
+			continue
+		}
 		lower := strings.ToLower(output)
 
 		switch {
@@ -224,8 +237,12 @@ func (v *Validator) checkAnonymousSMB(ctx context.Context, w io.Writer) {
 			continue
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-		output := v.runPS(ctx, host,
+		output, err := v.runPSErr(ctx, host,
 			`Get-LocalUser -Name Guest | Select-Object Name,Enabled | Format-Table -AutoSize | Out-String`)
+		if err != nil {
+			v.addResult(w, "WARN", "SMB", fmt.Sprintf("Could not query Guest account on %s: %v", hostLabel, err), "")
+			continue
+		}
 		if strings.Contains(strings.ToLower(output), "true") {
 			v.addResult(w, "PASS", "SMB", fmt.Sprintf("Guest account enabled on %s", hostLabel), "")
 		} else {
@@ -344,8 +361,12 @@ func (v *Validator) checkMachineAccountQuota(ctx context.Context, w io.Writer) {
 			continue
 		}
 		checked[domain] = true
-		output := v.runPS(ctx, host,
+		output, err := v.runPSErr(ctx, host,
 			`Get-ADObject -Identity ((Get-ADDomain).distinguishedname) -Properties ms-DS-MachineAccountQuota | Select-Object -ExpandProperty ms-DS-MachineAccountQuota`)
+		if err != nil {
+			v.addResult(w, "WARN", "MachineQuota", fmt.Sprintf("Could not query Machine Account Quota in %s: %v", domain, err), "")
+			continue
+		}
 		val := strings.TrimSpace(output)
 		if val == "10" {
 			v.addResult(w, "PASS", "MachineQuota", fmt.Sprintf("Machine Account Quota is 10 in %s (allows RBCD)", domain), "")
@@ -379,8 +400,12 @@ func (v *Validator) checkMSSQL(ctx context.Context, w io.Writer) {
 		// so the running service name (e.g. MSSQL$SQLEXPRESS) gets thrown
 		// away and the check spuriously fails. Probe each service name in
 		// isolation, swallow the missing-service error, and force exit 0.
-		output := v.runPS(ctx, host,
+		output, err := v.runPSErr(ctx, host,
 			`$ErrorActionPreference='SilentlyContinue'; foreach ($n in 'MSSQL$SQLEXPRESS','MSSQLSERVER') { $s = Get-Service -Name $n -ErrorAction SilentlyContinue; if ($s -and $s.Status -eq 'Running') { $s.Name } }; exit 0`)
+		if err != nil {
+			v.addResult(w, "WARN", "MSSQL", fmt.Sprintf("Could not query MSSQL on %s: %v", hostLabel, err), "")
+			continue
+		}
 		if strings.TrimSpace(output) == "" {
 			v.addResult(w, "FAIL", "MSSQL", fmt.Sprintf("MSSQL NOT running on %s", hostLabel), "")
 			continue
@@ -724,12 +749,102 @@ func (v *Validator) checkADCSESC6(ctx context.Context, w io.Writer) {
 			v.addResult(w, "WARN", "ADCS-ESC6",
 				fmt.Sprintf("EditFlags query error on %s: %s", hostLabel, r.Error), "")
 		case r.Present:
-			v.addResult(w, "PASS", "ADCS-ESC6",
-				fmt.Sprintf("EDITF_ATTRIBUTESUBJECTALTNAME2 set on %s (ESC6 exploitable)", hostLabel), "")
+			v.checkESC6KDCBinding(ctx, w, role, hostLabel)
 		default:
 			v.addResult(w, "FAIL", "ADCS-ESC6",
 				fmt.Sprintf("EDITF_ATTRIBUTESUBJECTALTNAME2 NOT set on %s", hostLabel), "")
 		}
+	}
+}
+
+// kdcBinding is one KDC's StrongCertificateBindingEnforcement state, read from
+// the DC that will validate certificates issued in a given domain.
+type kdcBinding struct {
+	// DCLabel is the hostname of the DC the value was read from.
+	DCLabel string
+	Value   int
+	// Present is false when the value is absent, which means the KDC falls
+	// back to its shipped default rather than to anything the lab chose.
+	Present bool
+}
+
+// unpinnedKDCNote explains what an absent StrongCertificateBindingEnforcement
+// value means now that Microsoft has moved the default under us.
+//
+// The Feb 2025 hardening rollout (KB5014754) made Full Enforcement the built-in
+// default, so an unset value is not "unknown, possibly permissive": it is the
+// strict mode. That was confirmed behaviourally on this lab's essos KDC, which
+// has no value set and refused an ESC9 certificate with event 39 logged at
+// *Error* level. Event 39's level is the discriminator, not its presence:
+// Compatibility permits the logon and logs 39 as a Warning.
+const unpinnedKDCNote = "has no StrongCertificateBindingEnforcement value, so its KDC takes the shipped default of Full Enforcement (KB5014754, Feb 2025)"
+
+// readKDCBinding resolves the DC whose KDC validates certificates for adcsRole's
+// domain and reads its StrongCertificateBindingEnforcement value.
+//
+// The KDC that matters is the DC of the certificate's own domain, not the CA
+// host and not whichever DC in the lab happens to be permissive. GOAD pins
+// StrongCertificateBindingEnforcement=0 on kingslanding while the CA and every
+// vulnerable template live in essos, so a check that reads any DC but this one
+// credits an exploit that cannot land.
+func (v *Validator) readKDCBinding(ctx context.Context, adcsRole string) (kdcBinding, error) {
+	dcRole := v.lab.ADCSDCRole(adcsRole)
+	if dcRole == "" {
+		if domain := v.lab.DomainForHost(adcsRole); domain != "" {
+			dcRole = v.lab.DCForDomain(domain)
+		}
+	}
+	if dcRole == "" {
+		return kdcBinding{}, errors.New("no DC resolved for its domain")
+	}
+	dcHost := strings.ToUpper(dcRole)
+	if !v.hasHost(dcHost) {
+		return kdcBinding{DCLabel: dcHost}, fmt.Errorf("validating DC %s is unreachable", dcHost)
+	}
+
+	b := kdcBinding{DCLabel: strings.ToUpper(v.lab.Hostname(dcRole))}
+	r, err := runScriptJSON[registryDWORDResult](ctx, v, dcHost, scriptRegistryDWORD,
+		map[string]any{
+			"Path": `HKLM:\SYSTEM\CurrentControlSet\Services\Kdc`,
+			"Name": "StrongCertificateBindingEnforcement",
+		})
+	switch {
+	case err != nil:
+		return b, fmt.Errorf("could not query StrongCertificateBindingEnforcement on %s: %w", b.DCLabel, err)
+	case r.Error != "":
+		return b, fmt.Errorf("StrongCertificateBindingEnforcement query error on %s: %s", b.DCLabel, r.Error)
+	}
+	b.Value, b.Present = r.Value, r.Present
+	return b, nil
+}
+
+// checkESC6KDCBinding decides whether a CA with EDITF_ATTRIBUTESUBJECTALTNAME2
+// set can actually win, which the CA-side flag alone does not establish.
+//
+// ESC6 issues off the stock User template, and EDITF_ATTRIBUTESUBJECTALTNAME2
+// only injects a SAN; it cannot touch the szOID_NTDS_CA_SECURITY_EXT security
+// extension, so the issued cert carries the *requester's* SID rather than the
+// impersonated target's. Only a KDC at StrongCertificateBindingEnforcement=0
+// (Disabled) ignores that extension. At 1 (Compatibility) a *present* extension
+// is still validated strictly and the mismatch is rejected, and 2 (Full
+// Enforcement) rejects it as well. So the pass condition is ==0, not !=2.
+func (v *Validator) checkESC6KDCBinding(ctx context.Context, w io.Writer, role, hostLabel string) {
+	b, err := v.readKDCBinding(ctx, role)
+	if err != nil {
+		v.addResult(w, "WARN", "ADCS-ESC6",
+			fmt.Sprintf("EDITF_ATTRIBUTESUBJECTALTNAME2 set on %s but %s; cannot confirm ESC6 is exploitable", hostLabel, err), "")
+		return
+	}
+	switch {
+	case !b.Present:
+		v.addResult(w, "FAIL", "ADCS-ESC6",
+			fmt.Sprintf("EDITF_ATTRIBUTESUBJECTALTNAME2 set on %s but %s %s, which rejects the SID mismatch (ESC6 NOT exploitable); pin it with the adcs_esc10_case1 vuln", hostLabel, b.DCLabel, unpinnedKDCNote), "")
+	case b.Value == 0:
+		v.addResult(w, "PASS", "ADCS-ESC6",
+			fmt.Sprintf("EDITF_ATTRIBUTESUBJECTALTNAME2 set on %s and StrongCertificateBindingEnforcement=0 on %s (ESC6 exploitable)", hostLabel, b.DCLabel), "")
+	default:
+		v.addResult(w, "FAIL", "ADCS-ESC6",
+			fmt.Sprintf("EDITF_ATTRIBUTESUBJECTALTNAME2 set on %s but StrongCertificateBindingEnforcement=%d on %s, which validates the security extension and rejects the SID mismatch (ESC6 NOT exploitable)", hostLabel, b.Value, b.DCLabel), "")
 	}
 }
 
@@ -902,33 +1017,38 @@ func (v *Validator) checkACLPermissions(ctx context.Context, w io.Writer) {
 			continue
 		}
 
-		source := v.lab.User(af.ACL.For)
-		target := v.lab.User(af.ACL.To)
+		v.checkSingleACL(ctx, w, af, dcRole)
+	}
+}
 
-		// Use the full source name for sAMAccountName lookup.
-		// Strip trailing $ for gMSA accounts to match the identity reference.
-		sourceSam := strings.TrimSuffix(source, "$")
+func (v *Validator) checkSingleACL(ctx context.Context, w io.Writer, af labmap.ACLFact, dcRole string) {
+	source := v.lab.User(af.ACL.For)
+	target := v.lab.User(af.ACL.To)
 
-		// Build the PowerShell lookup for the target object.
-		// DN paths (containing = signs) are resolved directly via Get-Acl;
-		// SamAccountNames are looked up with Get-ADObject which finds
-		// users, groups, and service accounts alike.
-		//
-		// For well-known accounts (e.g. "NT AUTHORITY\ANONYMOUS LOGON"),
-		// we match the full identity reference string directly.
-		script := fmt.Sprintf(`
+	// Use the full source name for sAMAccountName lookup.
+	// Strip trailing $ for gMSA accounts to match the identity reference.
+	sourceSam := strings.TrimSuffix(source, "$")
+
+	// Build the PowerShell lookup for the target object.
+	// DN paths (containing = signs) are resolved directly via Get-Acl;
+	// SamAccountNames are looked up with Get-ADObject which finds
+	// users, groups, and service accounts alike.
+	//
+	// For well-known accounts (e.g. "NT AUTHORITY\ANONYMOUS LOGON"),
+	// we match the full identity reference string directly.
+	script, err := renderScript(`
 $ErrorActionPreference = 'Stop'
 Import-Module ActiveDirectory
 Set-Location AD:
-$target = '%s'
-$sourceSam = '%s'
-$sourceMatch = '*%s*'
+$target = {{psq .Target}}
+$sourceSam = {{psq .SourceSam}}
+$sourceMatch = ('*' + {{psq .SourceSam}} + '*')
 try {
   if ($target -match '=') {
     $objDN = $target
     $objAcl = Get-Acl -Path $objDN -ErrorAction Stop
   } else {
-    $obj = Get-ADObject -Filter "SamAccountName -eq '$target'" -ErrorAction Stop
+    $obj = Get-ADObject -Filter ('SamAccountName -eq "' + $target + '"') -ErrorAction Stop
     if (-not $obj) { Write-Output 'TARGET_NOT_FOUND'; exit }
     $objAcl = Get-Acl -Path $obj.DistinguishedName -ErrorAction Stop
   }
@@ -966,18 +1086,46 @@ try {
   if ($ace) { Write-Output 'ACL_FOUND' } else { Write-Output 'ACL_NOT_FOUND' }
 } catch {
   Write-Output "CHECK_ERROR: $_"
-}`, target, sourceSam, sourceSam)
+}`, map[string]any{"Target": target, "SourceSam": sourceSam})
+	if err != nil {
+		v.addResult(w, "WARN", "ACL", fmt.Sprintf("Could not render ACL script %s -> %s: %v", source, target, err), "")
+		return
+	}
 
-		output := v.runPS(ctx, dcRole, script)
-
-		switch {
-		case strings.Contains(output, "ACL_FOUND"):
-			v.addResult(w, "PASS", "ACL", fmt.Sprintf("%s has %s on %s", source, af.ACL.Right, target), "")
-		case strings.Contains(output, "ACL_NOT_FOUND"):
-			v.addResult(w, "FAIL", "ACL", fmt.Sprintf("%s does NOT have %s on %s", source, af.ACL.Right, target), "")
-		default:
-			v.addResult(w, "WARN", "ACL", fmt.Sprintf("Could not verify ACL: %s -> %s (%s)", source, target, af.ACL.Right), "")
+	// ACL probes can return empty output under WinRM contention (the
+	// per-VM lock serializes calls, but queued checks may hit transient
+	// WinRM/SOCKS5 issues that persist across runPSErr's internal
+	// retries). Retry inconclusive results at the check level with
+	// backoff before falling through to WARN.
+	var output string
+	var runErr error
+	for attempt := 1; attempt <= transientRetries; attempt++ {
+		output, runErr = v.runPSErr(ctx, dcRole, script)
+		if runErr != nil {
+			break
 		}
+		if strings.Contains(output, "ACL_FOUND") || strings.Contains(output, "ACL_NOT_FOUND") || strings.Contains(output, "TARGET_NOT_FOUND") {
+			break
+		}
+		// Inconclusive (empty or CHECK_ERROR) — retry with backoff.
+		if attempt < transientRetries {
+			if backoffSleep(ctx, attempt) != nil {
+				break
+			}
+		}
+	}
+	if runErr != nil {
+		v.addResult(w, "WARN", "ACL", fmt.Sprintf("Could not verify ACL %s -> %s (%s): %v", source, target, af.ACL.Right, runErr), "")
+		return
+	}
+
+	switch {
+	case strings.Contains(output, "ACL_FOUND"):
+		v.addResult(w, "PASS", "ACL", fmt.Sprintf("%s has %s on %s", source, af.ACL.Right, target), "")
+	case strings.Contains(output, "ACL_NOT_FOUND"):
+		v.addResult(w, "FAIL", "ACL", fmt.Sprintf("%s does NOT have %s on %s", source, af.ACL.Right, target), "")
+	default:
+		v.addResult(w, "WARN", "ACL", fmt.Sprintf("Could not verify ACL: %s -> %s (%s)", source, target, af.ACL.Right), "")
 	}
 }
 
@@ -994,12 +1142,16 @@ func (v *Validator) checkDomainTrusts(ctx context.Context, w io.Writer) {
 		if tf.SourceDCRole != "" {
 			srcHost := strings.ToUpper(tf.SourceDCRole)
 			if v.hasHost(srcHost) {
-				output := v.runPS(ctx, srcHost,
+				output, err := v.runPSErr(ctx, srcHost,
 					`Get-ADTrust -Filter * | Select-Object Name,Direction,TrustType | Format-Table -AutoSize | Out-String`)
-				if strings.Contains(strings.ToLower(output), strings.ToLower(tf.TargetDomain)) {
+				switch {
+				case err != nil:
+					v.addResult(w, "WARN", "Trusts",
+						fmt.Sprintf("Could not query trusts on %s: %v", tf.SourceDomain, err), "")
+				case strings.Contains(strings.ToLower(output), strings.ToLower(tf.TargetDomain)):
 					v.addResult(w, "PASS", "Trusts",
 						fmt.Sprintf("Trust configured: %s -> %s", tf.SourceDomain, tf.TargetDomain), "")
-				} else {
+				default:
 					v.addResult(w, "FAIL", "Trusts",
 						fmt.Sprintf("Trust NOT found: %s -> %s", tf.SourceDomain, tf.TargetDomain), "")
 				}
@@ -1009,12 +1161,16 @@ func (v *Validator) checkDomainTrusts(ctx context.Context, w io.Writer) {
 		if tf.TargetDCRole != "" {
 			tgtHost := strings.ToUpper(tf.TargetDCRole)
 			if v.hasHost(tgtHost) {
-				output := v.runPS(ctx, tgtHost,
+				output, err := v.runPSErr(ctx, tgtHost,
 					`Get-ADTrust -Filter * | Select-Object Name,Direction,TrustType | Format-Table -AutoSize | Out-String`)
-				if strings.Contains(strings.ToLower(output), strings.ToLower(tf.SourceDomain)) {
+				switch {
+				case err != nil:
+					v.addResult(w, "WARN", "Trusts",
+						fmt.Sprintf("Could not query trusts on %s: %v", tf.TargetDomain, err), "")
+				case strings.Contains(strings.ToLower(output), strings.ToLower(tf.SourceDomain)):
 					v.addResult(w, "PASS", "Trusts",
 						fmt.Sprintf("Trust configured: %s -> %s", tf.TargetDomain, tf.SourceDomain), "")
-				} else {
+				default:
 					v.addResult(w, "FAIL", "Trusts",
 						fmt.Sprintf("Trust NOT found: %s -> %s", tf.TargetDomain, tf.SourceDomain), "")
 				}
@@ -1031,8 +1187,12 @@ func (v *Validator) checkServices(ctx context.Context, w io.Writer) {
 		if !v.hasHost(host) {
 			continue
 		}
-		output := v.runPS(ctx, host,
+		output, err := v.runPSErr(ctx, host,
 			`Get-Service Spooler | Select-Object Status | Format-Table -AutoSize | Out-String`)
+		if err != nil {
+			v.addResult(w, "WARN", "Services", fmt.Sprintf("Could not query Spooler on %s: %v", host, err), "")
+			continue
+		}
 		if strings.Contains(strings.ToLower(output), "running") {
 			v.addResult(w, "PASS", "Services", fmt.Sprintf("Print Spooler running on %s (coercion possible)", host), "")
 		} else {
@@ -1046,16 +1206,24 @@ func (v *Validator) checkServices(ctx context.Context, w io.Writer) {
 			continue
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-		output := v.runPS(ctx, host,
+		output, err := v.runPSErr(ctx, host,
 			`Get-Service W3SVC -ErrorAction SilentlyContinue | Select-Object Name,Status | Format-Table -AutoSize | Out-String`)
+		if err != nil {
+			v.addResult(w, "WARN", "Services", fmt.Sprintf("Could not query IIS on %s: %v", hostLabel, err), "")
+			continue
+		}
 		if strings.Contains(strings.ToLower(output), "running") {
 			v.addResult(w, "PASS", "Services", fmt.Sprintf("IIS running on %s", hostLabel), "")
 		} else if strings.TrimSpace(output) != "" {
 			v.addResult(w, "WARN", "Services", fmt.Sprintf("IIS not running on %s", hostLabel), "")
 		}
 
-		output = v.runPS(ctx, host,
+		output, err = v.runPSErr(ctx, host,
 			`Get-Service WebClient -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Status`)
+		if err != nil {
+			v.addResult(w, "WARN", "Services", fmt.Sprintf("Could not query WebClient on %s: %v", hostLabel, err), "")
+			continue
+		}
 		status := strings.TrimSpace(strings.ToLower(output))
 		switch {
 		case status == "running":
@@ -1195,8 +1363,12 @@ func (v *Validator) checkGPOAbuse(ctx context.Context, w io.Writer) {
 		if !v.hasHost(host) {
 			continue
 		}
-		output := v.runPS(ctx, host,
+		output, err := v.runPSErr(ctx, host,
 			`Get-GPO -All | Where-Object { $_.DisplayName -notmatch 'Default Domain' } | Select-Object -ExpandProperty DisplayName`)
+		if err != nil {
+			v.addResult(w, "WARN", "GPO", fmt.Sprintf("Could not query GPOs on %s: %v", host, err), "")
+			continue
+		}
 		gpos := parseOutputLines(output)
 		if len(gpos) > 0 {
 			v.addResult(w, "PASS", "GPO", fmt.Sprintf("Custom GPOs on %s: %s", host, strings.Join(gpos, ", ")), "")
@@ -1392,8 +1564,12 @@ func (v *Validator) checkSMBShares(ctx context.Context, w io.Writer) {
 			continue
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-		output := v.runPS(ctx, host,
+		output, err := v.runPSErr(ctx, host,
 			`Get-SmbShare | Where-Object { $_.Name -notmatch 'ADMIN\$|C\$|IPC\$' } | Select-Object -ExpandProperty Name`)
+		if err != nil {
+			v.addResult(w, "WARN", "Shares", fmt.Sprintf("Could not query shares on %s: %v", hostLabel, err), "")
+			continue
+		}
 		shares := parseOutputLines(output)
 		if len(shares) > 0 {
 			v.addResult(w, "PASS", "Shares", fmt.Sprintf("Custom shares on %s: %s", hostLabel, strings.Join(shares, ", ")), "")
@@ -1418,8 +1594,12 @@ func (v *Validator) checkFirewallDisabled(ctx context.Context, w io.Writer) {
 			continue
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-		output := v.runPS(ctx, host,
+		output, err := v.runPSErr(ctx, host,
 			`Get-NetFirewallProfile | Where-Object { $_.Enabled -eq $true } | Select-Object -ExpandProperty Name`)
+		if err != nil {
+			v.addResult(w, "WARN", "Firewall", fmt.Sprintf("Could not query firewall on %s: %v", hostLabel, err), "")
+			continue
+		}
 		enabledProfiles := parseOutputLines(output)
 		if len(enabledProfiles) == 0 {
 			v.addResult(w, "PASS", "Firewall", fmt.Sprintf("Firewall disabled on %s", hostLabel), "")
@@ -1601,8 +1781,12 @@ func (v *Validator) checkCertEnrollShare(ctx context.Context, w io.Writer) {
 			continue
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
-		output := v.runPS(ctx, host,
+		output, err := v.runPSErr(ctx, host,
 			`Get-SmbShare -Name CertEnroll -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Path`)
+		if err != nil {
+			v.addResult(w, "WARN", "CertEnroll", fmt.Sprintf("Could not query CertEnroll on %s: %v", hostLabel, err), "")
+			continue
+		}
 		if strings.TrimSpace(output) != "" {
 			v.addResult(w, "PASS", "CertEnroll", fmt.Sprintf("CertEnroll share exists on %s (%s)", hostLabel, strings.TrimSpace(output)), "")
 		} else {
@@ -1754,8 +1938,13 @@ func (v *Validator) checkCmdkeyCredentials(ctx context.Context, w io.Writer) {
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
 
-		output := strings.TrimSpace(v.runPS(ctx, host, vaultEnumQuery))
+		output, err := v.runPSErr(ctx, host, vaultEnumQuery)
+		output = strings.TrimSpace(output)
 		switch {
+		case err != nil:
+			v.addResult(w, "WARN", "Credentials",
+				fmt.Sprintf("Could not enumerate credential vault on %s: %v", hostLabel, err), "")
+			continue
 		case output == "":
 			v.addResult(w, "WARN", "Credentials",
 				fmt.Sprintf("Could not enumerate credential vault on %s", hostLabel), "")
@@ -2150,7 +2339,7 @@ func (v *Validator) checkWebDAVRedirector(ctx context.Context, w io.Writer) {
 		return
 	}
 
-	any := false
+	found := false
 	for _, role := range servers {
 		host := strings.ToUpper(role)
 		if !v.hasHost(host) {
@@ -2169,7 +2358,7 @@ func (v *Validator) checkWebDAVRedirector(ctx context.Context, w io.Writer) {
 			v.addResult(w, "INFO", "Network",
 				fmt.Sprintf("WebDAV-Redirector feature not present on %s", hostLabel), "")
 		case r.State == "Installed":
-			any = true
+			found = true
 			v.addResult(w, "PASS", "Network",
 				fmt.Sprintf("WebDAV-Redirector installed on %s", hostLabel), "")
 		case r.State == "Available", r.State == "Removed":
@@ -2180,7 +2369,7 @@ func (v *Validator) checkWebDAVRedirector(ctx context.Context, w io.Writer) {
 				fmt.Sprintf("WebDAV-Redirector state %s on %s", r.State, hostLabel), "")
 		}
 	}
-	if !any {
+	if !found {
 		v.addResult(w, "INFO", "Network", "WebDAV-Redirector not installed on any Windows server", "")
 	}
 }
@@ -2390,7 +2579,7 @@ func (v *Validator) checkADCSESC4(ctx context.Context, w io.Writer) {
 }
 
 func (v *Validator) scanESC4ACL(ctx context.Context, w io.Writer, dc string) {
-	output := v.runPS(ctx, dc,
+	output, err := v.runPSErr(ctx, dc,
 		`$t = Get-ADObject -Filter {cn -eq 'ESC4' -and objectClass -eq 'pKICertificateTemplate'} `+
 			`-SearchBase ("CN=Certificate Templates,CN=Public Key Services,CN=Services," + (Get-ADRootDSE).configurationNamingContext) `+
 			`-ErrorAction SilentlyContinue; `+
@@ -2402,6 +2591,11 @@ func (v *Validator) scanESC4ACL(ctx context.Context, w io.Writer, dc string) {
 			`$_.ActiveDirectoryRights -match 'GenericAll|WriteDacl|WriteOwner' }; `+
 			`if ($bad) { $bad | ForEach-Object { Write-Output ("$($_.IdentityReference)|$($_.ActiveDirectoryRights)") } } `+
 			`else { Write-Output 'NO_ABUSE' }`)
+	if err != nil {
+		v.addResult(w, "WARN", "ADCS-ESC4",
+			fmt.Sprintf("Could not read ESC4 template ACL on %s: %v", dc, err), "")
+		return
+	}
 	switch {
 	case strings.Contains(output, "TEMPLATE_NOT_FOUND"):
 		v.addResult(w, "INFO", "ADCS-ESC4",
@@ -2482,7 +2676,7 @@ func (v *Validator) checkADCSESC9(ctx context.Context, w io.Writer) {
 		asrepDCs[strings.ToUpper(role)] = true
 	}
 
-	any := false
+	found := false
 	for _, role := range v.lab.DCs() {
 		dc := strings.ToUpper(role)
 		if !v.hasHost(dc) {
@@ -2497,26 +2691,114 @@ func (v *Validator) checkADCSESC9(ctx context.Context, w io.Writer) {
 				fmt.Sprintf("AS-REP roasting not configured in %s (no ESC9 pivot expected)", domain), "")
 			continue
 		}
-		output := v.runPS(ctx, dc,
+		output, err := v.runPSErr(ctx, dc,
 			`Get-ADUser -Filter {DoesNotRequirePreAuth -eq $true} -Properties DoesNotRequirePreAuth | `+
 				`Select-Object -ExpandProperty SamAccountName`)
+		if err != nil {
+			v.addResult(w, "WARN", "ADCS-ESC9",
+				fmt.Sprintf("Could not query DONT_REQ_PREAUTH users in %s: %v", domain, err), "")
+			continue
+		}
 		users := parseOutputLines(output)
 		if len(users) == 0 {
 			v.addResult(w, "FAIL", "ADCS-ESC9",
 				fmt.Sprintf("No DONT_REQ_PREAUTH users in %s (no ESC9 pivot)", domain), "")
 			continue
 		}
-		any = true
+		found = true
 		v.addResult(w, "PASS", "ADCS-ESC9",
 			fmt.Sprintf("ESC9 pivot users in %s: %s", domain, strings.Join(users, ", ")), "")
 	}
-	if len(asrepDCs) > 0 && !any {
+	if len(asrepDCs) > 0 && !found {
 		v.addResult(w, "FAIL", "ADCS-ESC9", "No ESC9 pivot users found in any AS-REP-configured domain", "")
+	}
+
+	v.checkESC9Enforcement(ctx, w)
+}
+
+// ctFlagNoSecurityExtension is CT_FLAG_NO_SECURITY_EXTENSION in
+// msPKI-Enrollment-Flag: the bit that makes a template an ESC9 template by
+// omitting szOID_NTDS_CA_SECURITY_EXT from every certificate it issues.
+const ctFlagNoSecurityExtension = 0x00080000
+
+// checkESC9Enforcement verifies the two conditions the pivot user does not
+// establish: that the ESC9 template really drops the SID security extension,
+// and that the KDC which will see the resulting certificate still accepts a
+// weak mapping.
+//
+// Both are checked per template DC, and the template is checked first so labs
+// that publish no ESC9 template (GOAD-Light, GOAD-Mini, NHA) report INFO rather
+// than a KDC verdict about a route they never shipped.
+func (v *Validator) checkESC9Enforcement(ctx context.Context, w io.Writer) {
+	for _, dcRole := range v.adcsTemplateDCs() {
+		dc := strings.ToUpper(dcRole)
+		if !v.hasHost(dc) {
+			continue
+		}
+		output := v.adcsTemplateAttr(ctx, dc, "ESC9", "msPKI-Enrollment-Flag")
+		val := strings.TrimSpace(output)
+		flag, parseErr := strconv.ParseInt(val, 10, 64)
+		switch {
+		case strings.Contains(output, "TEMPLATE_NOT_FOUND"):
+			v.addResult(w, "INFO", "ADCS-ESC9",
+				fmt.Sprintf("ESC9 template not present on %s", dc), "")
+		case val == "" || parseErr != nil:
+			v.addResult(w, "WARN", "ADCS-ESC9",
+				fmt.Sprintf("Could not read ESC9 template msPKI-Enrollment-Flag on %s", dc), "")
+		case uint32(flag)&ctFlagNoSecurityExtension == 0:
+			v.addResult(w, "FAIL", "ADCS-ESC9",
+				fmt.Sprintf("ESC9 template on %s lacks CT_FLAG_NO_SECURITY_EXTENSION (msPKI-Enrollment-Flag=%s)", dc, val), "")
+		default:
+			v.checkESC9KDCBinding(ctx, w, dcRole)
+		}
 	}
 }
 
+// checkESC9KDCBinding decides whether an issued ESC9 certificate can convert to
+// a TGT, which the template flag does not establish.
+//
+// CT_FLAG_NO_SECURITY_EXTENSION works by *removing* szOID_NTDS_CA_SECURITY_EXT
+// from the issued certificate, leaving the KDC no SID to bind and forcing the
+// weak UPN mapping the attack spoofs. StrongCertificateBindingEnforcement 0
+// (Disabled) and 1 (Compatibility) both allow that fallback; 2 (Full
+// Enforcement) refuses any certificate it cannot map strongly, so stripping the
+// extension is itself disqualifying. The pass condition is !=2, unlike ESC6's
+// ==0: ESC6 also loses at 1, because its certificate *has* a security extension
+// and a present extension is validated strictly even in Compatibility mode.
+//
+// This gate is independent of the ACL chain, and deliberately so. Enrolling the
+// ESC9 template on staging as an ordinary domain user, with no UPN spoof and no
+// -sid, yielded a certificate with no object SID whose AS-REQ the KDC dropped
+// with event 39 at Error level. Nothing about the UPN-write primitive was in
+// play, so an ESC9 verdict that waits on the ACL chain waits on the wrong
+// blocker.
+func (v *Validator) checkESC9KDCBinding(ctx context.Context, w io.Writer, dcRole string) {
+	b, err := v.readKDCBinding(ctx, dcRole)
+	switch {
+	case err != nil:
+		v.addResult(w, "WARN", "ADCS-ESC9",
+			fmt.Sprintf("Cannot confirm ESC9 is exploitable: %s", err), "")
+	case !b.Present:
+		v.addResult(w, "FAIL", "ADCS-ESC9",
+			fmt.Sprintf("%s %s, which refuses a certificate carrying no SID (ESC9 NOT exploitable); pin it with the adcs_esc10_case1 vuln", b.DCLabel, unpinnedKDCNote), "")
+	case b.Value >= 2:
+		v.addResult(w, "FAIL", "ADCS-ESC9",
+			fmt.Sprintf("StrongCertificateBindingEnforcement=%d on %s refuses a certificate with no SID security extension, which is exactly what CT_FLAG_NO_SECURITY_EXTENSION produces (ESC9 NOT exploitable)", b.Value, b.DCLabel), "")
+	default:
+		v.addResult(w, "PASS", "ADCS-ESC9",
+			fmt.Sprintf("StrongCertificateBindingEnforcement=%d on %s allows the weak UPN mapping an ESC9 certificate needs (ESC9 exploitable)", b.Value, b.DCLabel), "")
+	}
+}
+
+// esc13IssuanceName is the DisplayName esc13.ps1 gives the issuance policy OID
+// object it creates under the forest OID container.
+const esc13IssuanceName = "IssuancePolicyESC13"
+
 // checkADCSESC13 verifies the ESC13 template's msPKI-Certificate-Policy is
-// populated (the esc13.ps1 script writes the issuance policy OID into it).
+// populated (the esc13.ps1 script writes the issuance policy OID into it) and
+// that the issuance policy OID carries an msDS-OIDToGroupLink. The policy
+// attribute alone is not enough: a template can reference an OID that links to
+// no group, which leaves ESC13 unexploitable while still looking configured.
 func (v *Validator) checkADCSESC13(ctx context.Context, w io.Writer) {
 	printHeader(w, "ADCS ESC13 - Issuance Policy Link")
 
@@ -2549,7 +2831,68 @@ func (v *Validator) checkADCSESC13(ctx context.Context, w io.Writer) {
 			v.addResult(w, "PASS", "ADCS-ESC13",
 				fmt.Sprintf("ESC13 issuance policy set on %s: %s", queryHost, strings.TrimSpace(output)), "")
 		}
+		v.checkESC13GroupLink(ctx, w, queryHost)
 	}
+}
+
+// checkESC13GroupLink verifies the issuance policy OID object is linked to a
+// group via msDS-OIDToGroupLink, and that exactly one such OID object exists.
+func (v *Validator) checkESC13GroupLink(ctx context.Context, w io.Writer, dc string) {
+	output, err := runScriptTextErr(ctx, v, dc,
+		`$base = "CN=OID,CN=Public Key Services,CN=Services," + (Get-ADRootDSE).configurationNamingContext; `+
+			`$oids = @(Get-ADObject -SearchBase $base -Filter {DisplayName -eq {{psq .Name}}} `+
+			`-Properties DisplayName,'msDS-OIDToGroupLink' -ErrorAction SilentlyContinue); `+
+			`if ($oids.Count -eq 0) { Write-Output 'NO_OID'; exit }; `+
+			`$linked = @($oids | Where-Object { $_.'msDS-OIDToGroupLink' }); `+
+			`Write-Output ("COUNT=" + $oids.Count + " LINKED=" + $linked.Count + " GROUP=" + $linked[0].'msDS-OIDToGroupLink')`,
+		map[string]any{"Name": esc13IssuanceName})
+	count, linked, parsed := parseESC13GroupLink(output)
+	switch {
+	case err != nil:
+		v.addResult(w, "WARN", "ADCS-ESC13",
+			fmt.Sprintf("Could not query %s OID on %s: %v", esc13IssuanceName, dc, err), "")
+	case strings.Contains(output, "NO_OID"):
+		v.addResult(w, "FAIL", "ADCS-ESC13",
+			fmt.Sprintf("No %s OID object on %s (esc13.ps1 has not run)", esc13IssuanceName, dc), "")
+	case !parsed:
+		v.addResult(w, "WARN", "ADCS-ESC13",
+			fmt.Sprintf("Unreadable %s OID probe output on %s: %q", esc13IssuanceName, dc, strings.TrimSpace(output)), "")
+	case linked == 0:
+		v.addResult(w, "FAIL", "ADCS-ESC13",
+			fmt.Sprintf("%s OID on %s has no msDS-OIDToGroupLink (ESC13 is not exploitable)", esc13IssuanceName, dc), "")
+	case count != 1:
+		v.addResult(w, "WARN", "ADCS-ESC13",
+			fmt.Sprintf("Duplicate %s OID objects on %s: %s", esc13IssuanceName, dc, strings.TrimSpace(output)), "")
+	default:
+		v.addResult(w, "PASS", "ADCS-ESC13",
+			fmt.Sprintf("ESC13 OID linked on %s: %s", dc, strings.TrimSpace(output)), "")
+	}
+}
+
+// parseESC13GroupLink pulls COUNT and LINKED out of the probe's key=value line.
+// It splits fields rather than substring-matching because "COUNT=10" contains
+// "COUNT=1": a lab that accumulated ten stale OID objects would otherwise read
+// as the healthy single-object case. Trailing GROUP= is a DN that may itself
+// contain spaces and "=", so only the two integer keys are trusted.
+func parseESC13GroupLink(output string) (count, linked int, ok bool) {
+	var haveCount, haveLinked bool
+	for _, field := range strings.Fields(output) {
+		key, val, found := strings.Cut(field, "=")
+		if !found {
+			continue
+		}
+		n, err := strconv.Atoi(val)
+		if err != nil {
+			continue
+		}
+		switch key {
+		case "COUNT":
+			count, haveCount = n, true
+		case "LINKED":
+			linked, haveLinked = n, true
+		}
+	}
+	return count, linked, haveCount && haveLinked
 }
 
 // ---- Section 16: DNS / Audit ----
@@ -2630,8 +2973,13 @@ func (v *Validator) checkDCSACLAudit(ctx context.Context, w io.Writer) {
 		if !v.hasHost(dc) {
 			continue
 		}
-		output := v.runPS(ctx, dc,
+		output, err := v.runPSErr(ctx, dc,
 			`auditpol /get /category:"DS Access" /r 2>&1 | Out-String`)
+		if err != nil {
+			v.addResult(w, "WARN", "Audit",
+				fmt.Sprintf("Could not query auditpol on %s: %v", dc, err), "")
+			continue
+		}
 		v.reportDSAccessAudit(w, dc, output)
 	}
 }
@@ -2810,7 +3158,7 @@ func (v *Validator) checkIISUploadPermissions(ctx context.Context, w io.Writer) 
 		return
 	}
 
-	any := false
+	found := false
 	for _, role := range hosts {
 		host := strings.ToUpper(role)
 		if !v.hasHost(host) {
@@ -2826,18 +3174,18 @@ func (v *Validator) checkIISUploadPermissions(ctx context.Context, w io.Writer) 
 			v.addResult(w, "WARN", "IIS",
 				fmt.Sprintf("Upload ACL query error on %s: %s", hostLabel, r.Error), "")
 		case !r.DirPresent:
-			v.addResult(w, "INFO", "IIS",
+			v.addResult(w, "FAIL", "IIS",
 				fmt.Sprintf("No upload directory on %s (IIS not configured)", hostLabel), "")
 		case !r.ACEPresent:
 			v.addResult(w, "FAIL", "IIS",
 				fmt.Sprintf("Upload dir on %s has no IIS_IUSRS write ACE", hostLabel), "")
 		default:
-			any = true
+			found = true
 			v.addResult(w, "PASS", "IIS",
 				fmt.Sprintf("IIS_IUSRS has %s on upload dir on %s", r.Rights, hostLabel), "")
 		}
 	}
-	if !any {
+	if !found {
 		// Not a failure — IIS is optional in some labs.
 		v.addResult(w, "INFO", "IIS", "No IIS_IUSRS upload permissions found", "")
 	}
@@ -3003,7 +3351,12 @@ func (v *Validator) checkLocalAdmins(ctx context.Context, w io.Writer) {
 		}
 		hostLabel := strings.ToUpper(v.lab.Hostname(role))
 
-		output := v.runPS(ctx, host, localAdminsQuery)
+		output, err := v.runPSErr(ctx, host, localAdminsQuery)
+		if err != nil {
+			v.addResult(w, "WARN", "LocalAdmins",
+				fmt.Sprintf("Could not enumerate local admins on %s: %v", hostLabel, err), "")
+			continue
+		}
 		actual := parseOutputLines(output)
 
 		expected := v.lab.LocalAdminsForHost(role)

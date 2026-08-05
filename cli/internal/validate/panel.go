@@ -194,21 +194,12 @@ func renderCategoryColumn(cats []categoryStats, width int) string {
 		counts := fmt.Sprintf("%d/%d", c.pass, c.total)
 		countsCell := padRight(styleMuted.Render(counts), countsWidth)
 
-		var detail string
-		switch {
-		case c.fail > 0 && c.warn > 0:
-			detail = fmt.Sprintf("x%d !%d", c.fail, c.warn)
-		case c.fail > 0:
-			detail = fmt.Sprintf("x%d", c.fail)
-		case c.warn > 0:
-			detail = fmt.Sprintf("!%d", c.warn)
-		}
+		// Only show the fail/warn breakdown when both are present; otherwise
+		// pass/total + the row icon already convey it (e.g. `[x] 3/6` is 3
+		// fails, `[!] 3/6` is 3 warns).
 		var detailCell string
-		switch {
-		case c.fail > 0:
-			detailCell = styleErr.Render(detail)
-		case c.warn > 0:
-			detailCell = styleWarn.Render(detail)
+		if c.fail > 0 && c.warn > 0 {
+			detailCell = styleErr.Render(fmt.Sprintf("x%d !%d", c.fail, c.warn))
 		}
 		detailCell = padRight(detailCell, detailWidth)
 

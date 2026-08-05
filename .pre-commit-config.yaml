@@ -27,7 +27,7 @@ repos:
         exclude: 'template/provider/ludus/config\.yml|requirements_311\.yml|noansible_requirements\.yml'
 
   - repo: https://github.com/codespell-project/codespell
-    rev: v2.4.2
+    rev: v2.4.3
     hooks:
       - id: codespell
         entry: codespell -q 3 -f -S ".git,.github,README.md" -L "mot,fonction,connexion"
@@ -45,10 +45,19 @@ repos:
       - id: shfmt
 
   - repo: https://github.com/igorshubovych/markdownlint-cli
-    rev: v0.49.0
+    rev: v0.49.1
     hooks:
+      # Local: auto-fix markdown issues on commit.
       - id: markdownlint
         args: ['--fix', '--config', '.hooks/linters/markdownlint.json']
+        stages: [pre-commit]
+      # CI: check-only (no file modifications) so the hook never reports
+      # "files were modified" in read-only CI environments.
+      - id: markdownlint
+        alias: markdownlint-check
+        name: markdownlint (check-only)
+        args: ['--config', '.hooks/linters/markdownlint.json']
+        stages: [manual]
 
   - repo: https://github.com/ansible/ansible-lint
     rev: v26.6.0
@@ -68,12 +77,15 @@ repos:
         additional_dependencies: [".[community]"]
 
   - repo: https://github.com/antonbabenko/pre-commit-terraform
-    rev: v1.108.0
+    rev: v1.108.1
     hooks:
       - id: terraform_fmt
         files: ^(modules|infra)/
       - id: terragrunt_fmt
         files: ^infra/
+      # Skipped in CI (SKIP=terraform_validate) because terraform init
+      # writes .terraform/ which triggers "files were modified". tflint
+      # covers validation in CI instead.
       - id: terraform_validate
         files: ^modules/
         args:

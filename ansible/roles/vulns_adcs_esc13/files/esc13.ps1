@@ -59,57 +59,55 @@ $ConfigNC = $ADRootDSE.configurationNamingContext
 $IssuanceName = "IssuancePolicyESC13"
 $ESC13Template = "CN=$esc13templateName,CN=Certificate Templates,CN=Public Key Services,CN=Services,$ConfigNC"
 
-# Generate a new unique OID
-$OID = New-TemplateOID -ConfigNC $ConfigNC
-
 # Define the path to the OID
 $TemplateOIDPath = "CN=OID,CN=Public Key Services,CN=Services,$ConfigNC"
 
-# Create a new AD object with the generated OID
-$oa = @{
-    'DisplayName' = $IssuanceName
-    'Name' = $IssuanceName
-    'flags' = [System.Int32]'2'
-    'msPKI-Cert-Template-OID' = $OID.TemplateOID
- }
-$theresults = New-ADObject -Path $TemplateOIDPath -OtherAttributes $oa -Name $OID.TemplateName -Type 'msPKI-Enterprise-Oid'
+# Reuse the issuance policy OID if this already ran. Creating one unconditionally
+# leaves a second, unlinked OID object behind on every re-run (lab reset), points
+# the template at both, and links only one of them.
+# @() keeps a single match from unrolling to a bare string, whose [0] would be the
+# character "C" rather than a distinguished name.
+$existing = @(Get-ADObject -SearchBase $TemplateOIDPath -Filter { DisplayName -eq $IssuanceName } -Properties DisplayName, 'msPKI-Cert-Template-OID')
 
-# Get the new OID object
-$OIDContainer = "CN=OID,CN=Public Key Services,CN=Services,"+$ConfigNC
-$OIDs = Get-ADObject -Filter * -SearchBase $OIDContainer -Properties DisplayName,Name,msPKI-Cert-Template-OID,msDS-OIDToGroupLink
-$newOIDObj = ($OIDS | where {$_.DisplayName -eq $IssuanceName })
-$newOIDValue = $newOIDObj | select -ExpandProperty msPKI-Cert-Template-OID
+if ($existing.Count -gt 1) {
+    # Converge the duplicate state an earlier run may have left behind.
+    Write-Output "Removing $($existing.Count - 1) duplicate $IssuanceName OID object(s)"
+    $existing | Select-Object -Skip 1 | ForEach-Object {
+        Remove-ADObject -Identity $_.DistinguishedName -Confirm:$false
+    }
+    $existing = @($existing | Select-Object -First 1)
+}
 
-# Get the ESC13 template object for updating
+if ($existing.Count -eq 0) {
+    $OID = New-TemplateOID -ConfigNC $ConfigNC
+    $oa = @{
+        'DisplayName' = $IssuanceName
+        'Name' = $IssuanceName
+        'flags' = [System.Int32]'2'
+        'msPKI-Cert-Template-OID' = $OID.TemplateOID
+    }
+    New-ADObject -Path $TemplateOIDPath -OtherAttributes $oa -Name $OID.TemplateName -Type 'msPKI-Enterprise-Oid'
+    $existing = @(Get-ADObject -SearchBase $TemplateOIDPath -Filter { DisplayName -eq $IssuanceName } -Properties DisplayName, 'msPKI-Cert-Template-OID')
+}
+
+$newOIDObj = $existing | Select-Object -First 1
+$newOIDValue = $newOIDObj.'msPKI-Cert-Template-OID'
+$esc13OID_dn = $newOIDObj.DistinguishedName
+if (-not $esc13OID_dn) {
+    throw "Could not resolve the $IssuanceName OID object under $TemplateOIDPath"
+}
+$esc13OID_dn
+
+# Point the ESC13 template at exactly this issuance policy
 $adObject = Get-ADObject $ESC13Template -Properties msPKI-Certificate-Policy
-
-# Get the current policies
-$policies = $adObject.'msPKI-Certificate-Policy'
-
-# Add new OID to the policies
-$newPolicy = $newOIDValue # replace with your new OID
-$policies = $newPolicy
-
-# Convert policies to an array of strings
-$policies = $policies | ForEach-Object { $_.ToString() }
-
-# Update the ESC13 template AD object
-Set-ADObject -Identity $adObject.DistinguishedName -Replace @{ 'msPKI-Certificate-Policy' = $policies }
+Set-ADObject -Identity $adObject.DistinguishedName -Replace @{ 'msPKI-Certificate-Policy' = $newOIDValue.ToString() }
 
 # Get DN of the ESC13 Group
 $ludus_esc13_group_dn = (Get-ADGroup $esc13group).DistinguishedName
 $ludus_esc13_group_dn
 
-# Get Distinguished Name of the ESC13 OID Issuance Policy we created
-# Thanks to Jonas (https://twitter.com/Jonas_B_K) for helping with this!
-$ADRootDSE = Get-ADRootDSE
-$ConfigurationNC = $ADRootDSE.configurationNamingContext
-$OIDContainer = "CN=OID,CN=Public Key Services,CN=Services,"+$ConfigurationNC
-$OIDs = Get-ADObject -Filter * -SearchBase $OIDContainer -Properties DisplayName,Name,msPKI-Cert-Template-OID,msDS-OIDToGroupLink
-$esc13OID_dn = ($OIDS | where {$_.DisplayName -eq $IssuanceName }).DistinguishedName[0]
-$esc13OID_dn
-
 # Create a DirectoryEntry object for the Issuance Policy OID
+# Thanks to Jonas (https://twitter.com/Jonas_B_K) for helping with this!
 $object = New-Object System.DirectoryServices.DirectoryEntry("LDAP://$esc13OID_dn")
 
 # Set the msDS-OIDToGroupLink property to the DN of the ESC13 group
@@ -118,3 +116,12 @@ $object.Properties["msDS-OIDToGroupLink"].Value = $Toset
 $object.CommitChanges()
 $object.RefreshCache()
 $object | select msDS-OIDToGroupLink
+
+# The group link is what makes ESC13 exploitable, and a silent no-op here looks
+# identical to success, so confirm it landed in the directory.
+$link = Get-ADObject -Identity $esc13OID_dn -Properties 'msDS-OIDToGroupLink' |
+    Select-Object -ExpandProperty 'msDS-OIDToGroupLink'
+if ($link -ne $ludus_esc13_group_dn) {
+    throw "msDS-OIDToGroupLink on $esc13OID_dn is '$link', expected '$ludus_esc13_group_dn'"
+}
+Write-Output "ESC13 linked: $esc13OID_dn -> $link"
