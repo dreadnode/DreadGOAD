@@ -26,11 +26,11 @@ func runHostsFilter(t *testing.T, content string) (found string, kept string) {
 		t.Fatalf("write fixture: %v", err)
 	}
 
-	countOut, err := exec.Command(awkBin, `!(`+hostsBaselineFilter+`) {c++} END{print c+0}`, path).Output()
+	countOut, err := exec.Command(awkBin, hostsFindProgram, path).Output()
 	if err != nil {
 		t.Fatalf("count filter: %v", err)
 	}
-	keptOut, err := exec.Command(awkBin, hostsBaselineFilter, path).Output()
+	keptOut, err := exec.Command(awkBin, hostsKeepProgram, path).Output()
 	if err != nil {
 		t.Fatalf("keep filter: %v", err)
 	}
@@ -89,6 +89,48 @@ func TestHostsBaselineFilter(t *testing.T) {
 			wantGone:  []string{"evil.corp.local", "srv02.corp.local"},
 		},
 		{
+			// Commenting an entry out hides it from resolution but not from
+			// the next agent reading the file.
+			name: "commented-out entries are artifacts",
+			hosts: "127.0.0.1 localhost\n" +
+				"# 10.10.10.12   dc02.sevenkingdoms.local dc02\n" +
+				"#10.10.10.13 srv03.sevenkingdoms.local\n" +
+				"##  10.10.10.14 srv04.sevenkingdoms.local\n",
+			wantFound: "3",
+			wantKept:  []string{"127.0.0.1 localhost"},
+			wantGone:  []string{"dc02", "srv03", "srv04"},
+		},
+		{
+			// Prose comments are baseline: cloud-init writes this block on
+			// Azure images and stripping it would not restore pristine.
+			name: "prose comments survive",
+			hosts: "# Your system has configured 'manage_etc_hosts' as True.\n" +
+				"# As a result, if you wish for changes to this file to persist\n" +
+				"# then you will need to either:\n" +
+				"# a.) make changes to the master file in /etc/cloud/templates/\n" +
+				"# The following lines are desirable for IPv6 capable hosts\n" +
+				"127.0.0.1 localhost\n",
+			wantFound: "0",
+			wantKept:  []string{"manage_etc_hosts", "IPv6 capable hosts", "a.) make changes"},
+		},
+		{
+			// Splitting an indented line without stripping the leading
+			// whitespace yields an empty first field, which would read as
+			// prose and let the entry through.
+			name:      "indented entries are still artifacts",
+			hosts:     "127.0.0.1 localhost\n  \t10.10.10.15 srv05.sevenkingdoms.local\n",
+			wantFound: "1",
+			wantKept:  []string{"127.0.0.1 localhost"},
+			wantGone:  []string{"srv05"},
+		},
+		{
+			// A commented loopback line leaks nothing.
+			name:      "commented loopback stays baseline",
+			hosts:     "127.0.0.1 localhost\n# 127.0.1.1 oldkali\n# ::1 localhost\n",
+			wantFound: "0",
+			wantKept:  []string{"oldkali", "# ::1 localhost"},
+		},
+		{
 			// An agent that clobbered /etc/hosts outright
 			// (`nxc --generate-hosts-file > /etc/hosts`) leaves nothing for the
 			// filter to keep. Installing that empty result would break hostname
@@ -137,6 +179,7 @@ func TestKaliCleanupScriptStripsAttackerHosts(t *testing.T) {
 	applyScript := buildKaliCleanupScript(true)
 	for _, want := range []string{
 		`dg_t=$(mktemp 2>/dev/null)`, // not a fixed /tmp path root copies from
+		`awk "$dg_hosts_keep" /etc/hosts > "$dg_t"`,
 		`sudo -n cp "$dg_t" /etc/hosts`,
 		`grep -q '^127\.'`,
 	} {

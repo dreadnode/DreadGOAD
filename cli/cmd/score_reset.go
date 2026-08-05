@@ -175,15 +175,44 @@ func resetKali(ctx context.Context, cmd *cobra.Command, cfg *config.Config, appl
 	return nil
 }
 
-// hostsBaselineFilter is an awk condition matching the /etc/hosts lines a
-// pristine Kali image ships: blank, comment, IPv4 loopback, ::1, and the
-// fe/ff IPv6-reserved rows. Everything else maps a routable address to a
-// hostname and is therefore agent-seeded recon. The v6 prefix test is
-// case-insensitive because tools emit FE80::/FF02:: as readily as lowercase.
+// hostsBaselineAwk defines is_baseline(), the single predicate behind both the
+// find and clean commands (clean keeps its matches, find counts its negation)
+// so the two can never drift apart.
 //
-// Both the find and clean commands are derived from this single condition
-// (clean keeps it, find counts its negation) so the two can never drift.
-const hostsBaselineFilter = `NF==0 || $1 ~ /^#/ || $1 ~ /^127\./ || $1 ~ /^::1$/ || tolower($1) ~ /^f[ef]/`
+// A line is baseline if it is blank, or if its first token — after any leading
+// `#` — is not a routable address. That keeps everything a pristine image
+// ships: loopback, ::1, the fe/ff IPv6-reserved rows, and prose comments such
+// as the cloud-init manage_etc_hosts block or Ubuntu's IPv6 header. Reading
+// past the `#` is what catches an entry an agent commented out rather than
+// deleted — `# 10.0.0.5 dc01.corp.local` leaks the same topology as the live
+// line. The v6 prefix test is case-insensitive because tools emit
+// FE80::/FF02:: as readily as lowercase.
+//
+// host_addr makes the `#` optional so it also strips leading whitespace from
+// indented entries; splitting those without stripping yields an empty first
+// field, which would read as prose and let the entry through.
+const hostsBaselineAwk = `
+function host_addr(  s, f) {
+  s = $0
+  sub(/^[ \t]*#*[ \t]*/, "", s)
+  split(s, f, /[ \t]+/)
+  return f[1]
+}
+function is_baseline(  a) {
+  if (NF == 0) return 1
+  a = host_addr()
+  if (a !~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && !(a ~ /:/ && a ~ /^[0-9A-Fa-f:]+$/)) return 1
+  return a ~ /^127\./ || a == "::1" || tolower(a) ~ /^f[ef]/
+}
+`
+
+// The two awk programs the cleanup script runs. Emitted once into shell
+// variables so the generated script stays readable when an operator reads it
+// back off a failing box.
+const (
+	hostsFindProgram = hostsBaselineAwk + `!is_baseline() {c++} END{print c+0}`
+	hostsKeepProgram = hostsBaselineAwk + `is_baseline()`
+)
 
 // hostsCleanScript rewrites /etc/hosts down to the baseline block.
 //
@@ -198,7 +227,7 @@ const hostsBaselineFilter = `NF==0 || $1 ~ /^#/ || $1 ~ /^127\./ || $1 ~ /^::1$/
 const hostsCleanScript = `dg_t=$(mktemp 2>/dev/null)
   if [ -z "$dg_t" ]; then
     echo "  WARN: /etc/hosts rewrite skipped (mktemp unavailable)"
-  elif ! awk '` + hostsBaselineFilter + `' /etc/hosts > "$dg_t" 2>/dev/null; then
+  elif ! awk "$dg_hosts_keep" /etc/hosts > "$dg_t" 2>/dev/null; then
     echo "  WARN: /etc/hosts rewrite skipped (could not read /etc/hosts)"
   elif ! grep -q '^127\.' "$dg_t"; then
     echo "  WARN: /etc/hosts rewrite skipped (no loopback line survived the filter)"
@@ -291,15 +320,20 @@ func buildKaliCleanupScript(apply bool) string {
 			// Anything mapping a routable address to a hostname is agent-seeded
 			// recon (e.g. `nxc --generate-hosts-file`), and handing that to the
 			// next agent leaks the domain topology it is meant to discover.
-			// See hostsBaselineFilter for what counts as baseline.
+			// See hostsBaselineAwk for what counts as baseline.
 			label: "attacker /etc/hosts entries (non-loopback)",
-			find:  `awk '!(` + hostsBaselineFilter + `) {c++} END{print c+0}' /etc/hosts 2>/dev/null || echo 0`,
+			find:  `awk "$dg_hosts_find" /etc/hosts 2>/dev/null || echo 0`,
 			clean: hostsCleanScript,
 		},
 	}
 
 	var sb strings.Builder
 	sb.WriteString("#!/bin/sh\ntotal_found=0\ntotal_removed=0\n")
+
+	// The hosts programs are multi-line; hoisting them out of the per-target
+	// commands keeps the emitted script readable. Neither program touches
+	// anything on its own, so both are safe to define in dry-run mode.
+	fmt.Fprintf(&sb, "\ndg_hosts_find='%s'\ndg_hosts_keep='%s'\n", hostsFindProgram, hostsKeepProgram)
 
 	for i, t := range targets {
 		fmt.Fprintf(&sb, "\n# %s\ncount_%d=$(%s)\ntotal_found=$((total_found + count_%d))\n", t.label, i, t.find, i)
