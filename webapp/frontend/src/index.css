@@ -45,3 +45,22 @@ html, body, #root {
 ::-webkit-scrollbar-thumb:hover { background: var(--dn-text-dim); }
 
 @keyframes blink { 50% { opacity: 0; } }
+
+/* Braille spinner for the "agent working" indicator (matches ALFRED). */
+.agent-working::before {
+  content: '⠋';
+  animation: braille-spin 0.8s steps(1) infinite;
+  margin-right: 6px;
+}
+@keyframes braille-spin {
+  0%   { content: '⠋'; }
+  10%  { content: '⠙'; }
+  20%  { content: '⠹'; }
+  30%  { content: '⠸'; }
+  40%  { content: '⠼'; }
+  50%  { content: '⠴'; }
+  60%  { content: '⠦'; }
+  70%  { content: '⠧'; }
+  80%  { content: '⠇'; }
+  90%  { content: '⠏'; }
+}

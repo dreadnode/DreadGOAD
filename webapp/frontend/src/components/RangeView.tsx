@@ -10,10 +10,10 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { api } from '../api'
-import type { RangeDoc, RangeHost } from '../types'
+import type { RangeDoc, RangeHost, Session } from '../types'
 
 const ROLE_ICON: Record<string, string> = {
-  dc: '🏰', member: '🖥️', workstation: '💻', bastion: '🛡️',
+  dc: '🌐', member: '🖥️', workstation: '💻', bastion: '🛡️',
   attackbox: '☠️', linux: '🐧', other: '❔',
 }
 const STATUS_COLOR: Record<string, string> = {
@@ -64,7 +64,8 @@ function buildNodes(range: RangeDoc): Node[] {
 }
 
 export default function RangeView(
-  { sessionId, refreshKey = 0 }: { sessionId: string | null; refreshKey?: number },
+  { sessionId, session, refreshKey = 0 }:
+    { sessionId: string | null; session?: Session; refreshKey?: number },
 ) {
   const [range, setRange] = useState<RangeDoc | null>(null)
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
@@ -96,6 +97,17 @@ export default function RangeView(
     return `${up}/${range.hosts.length} running`
   }, [range])
 
+  // Key range identity (labeled), from the session anchor + snapshot.
+  const fields = useMemo(() => {
+    if (!session) return [] as [string, string][]
+    const snap = session.snapshot ?? {}
+    return ([
+      ['env', session.anchor?.env],
+      ['provider', snap.provider],
+      ['region', snap.region],
+    ] as [string, string | undefined][]).filter((f): f is [string, string] => !!f[1])
+  }, [session])
+
   if (!sessionId) {
     return <div style={emptyStyle}>No session selected</div>
   }
@@ -103,8 +115,16 @@ export default function RangeView(
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--dn-black)' }}>
       <div style={headerStyle}>
-        <span style={{ color: 'var(--dn-text-muted)', fontSize: 13 }}>RANGE</span>
-        <span style={{ color: 'var(--dg-brand)', fontSize: 11 }}>{header}</span>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 14, minWidth: 0, overflow: 'hidden' }}>
+          <span style={{ color: 'var(--dg-brand)', fontSize: 13, fontWeight: 700 }}>RANGE</span>
+          {fields.map(([label, value]) => (
+            <span key={label} style={{ fontSize: 11, whiteSpace: 'nowrap' }}>
+              <span style={{ color: 'var(--dn-text-dim)' }}>{label} </span>
+              <span style={{ color: 'var(--dn-text-bright)' }}>{value}</span>
+            </span>
+          ))}
+        </div>
+        <span style={{ color: 'var(--dn-text-muted)', fontSize: 11, flexShrink: 0 }}>{header}</span>
       </div>
       <div style={{ flex: 1, position: 'relative' }}>
         {error ? (

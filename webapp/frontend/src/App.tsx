@@ -152,6 +152,8 @@ export default function App() {
       {showSettings && cfg && (
         <SettingsModal
           cfg={cfg}
+          model={sessions.find(s => s.id === activeId)?.model}
+          onModelChange={activeId ? changeModel : undefined}
           onClose={() => setShowSettings(false)}
           onSaved={() => { setShowSettings(false); api.config().then(setCfg).catch(() => {}) }}
         />
@@ -205,12 +207,16 @@ export default function App() {
               processing={!!processing[activeId]}
               onCancel={onCancel}
               model={sessions.find(s => s.id === activeId)?.model}
-              onModelChange={changeModel}
+              onOpenSettings={() => setShowSettings(true)}
             />
           </div>
           <div onMouseDown={onDrag} style={{ width: 4, cursor: 'col-resize', background: 'var(--dn-border)', flexShrink: 0 }} />
           <div style={{ flex: 1, minWidth: MIN_W, height: '100%' }}>
-            <RangeView sessionId={activeId} refreshKey={rangeRefresh[activeId] || 0} />
+            <RangeView
+              sessionId={activeId}
+              session={sessions.find(s => s.id === activeId)}
+              refreshKey={rangeRefresh[activeId] || 0}
+            />
           </div>
         </div>
       ) : (
@@ -367,11 +373,14 @@ function NewSessionModal({ cfg, onClose, onCreate }: {
   )
 }
 
-function SettingsModal({ cfg, onClose, onSaved }: {
+function SettingsModal({ cfg, model, onModelChange, onClose, onSaved }: {
   cfg: AppConfig
+  model?: string
+  onModelChange?: (model: string) => Promise<void> | void
   onClose: () => void
   onSaved: () => void
 }) {
+  const [modelInput, setModelInput] = useState(model ?? '')
   const [apiKey, setApiKey] = useState('')
   const [apiKeyEnv, setApiKeyEnv] = useState('OPENROUTER_API_KEY')
   const [err, setErr] = useState('')
@@ -381,10 +390,13 @@ function SettingsModal({ cfg, onClose, onSaved }: {
     setErr('')
     setSaving(true)
     try {
-      await api.setSettings({
-        api_key: apiKey.trim() || undefined,
-        api_key_env: apiKeyEnv.trim() || undefined,
-      })
+      // Model (per active session) — apply if changed.
+      const m = modelInput.trim()
+      if (onModelChange && m && m !== model) await onModelChange(m)
+      // API key (global) — apply if a key was entered.
+      if (apiKey.trim()) {
+        await api.setSettings({ api_key: apiKey.trim(), api_key_env: apiKeyEnv.trim() || undefined })
+      }
       onSaved()
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
@@ -396,12 +408,27 @@ function SettingsModal({ cfg, onClose, onSaved }: {
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <div onClick={e => e.stopPropagation()} style={{ background: 'var(--dn-surface)', border: '1px solid var(--dn-border-lt)', borderRadius: 6, padding: 20, width: 420, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--dn-text)' }}>
-        <div style={{ color: 'var(--dg-brand)', fontWeight: 700, fontSize: 13, marginBottom: 6 }}>Settings</div>
-        <div style={{ color: cfg.api_key_set ? 'var(--dn-success)' : 'var(--dn-warning)', fontSize: 11, marginBottom: 16 }}>
-          {cfg.api_key_set ? '● API key is set' : '○ No API key set — agent turns will fail'}
-        </div>
+        <div style={{ color: 'var(--dg-brand)', fontWeight: 700, fontSize: 13, marginBottom: 16 }}>Settings</div>
+
+        {onModelChange ? (
+          <>
+            <Field label="Model (this session)" value={modelInput} onChange={setModelInput} placeholder="openrouter/anthropic/claude-sonnet-5" />
+            <div style={{ color: 'var(--dn-text-dim)', fontSize: 10, marginTop: -8, marginBottom: 12 }}>
+              Changing the model continues this session's conversation on the new model.
+            </div>
+          </>
+        ) : (
+          <div style={{ color: 'var(--dn-text-dim)', fontSize: 11, marginBottom: 12 }}>
+            Open a session to change its model.
+          </div>
+        )}
+
         <Field label="API key" value={apiKey} onChange={setApiKey} placeholder="sk-or-…  (stored in memory, never saved)" type="password" />
-        <Field label="Env var" value={apiKeyEnv} onChange={setApiKeyEnv} placeholder="OPENROUTER_API_KEY" />
+        <Field label="API key env var" value={apiKeyEnv} onChange={setApiKeyEnv} placeholder="OPENROUTER_API_KEY" />
+        <div style={{ color: cfg.api_key_set ? 'var(--dn-success)' : 'var(--dn-warning)', fontSize: 11, marginTop: -4, marginBottom: 12 }}>
+          {cfg.api_key_set ? '● API key is set (leave blank to keep)' : '○ No API key set — agent turns will fail'}
+        </div>
+
         {err && <div style={{ color: 'var(--dn-error)', fontSize: 11, marginBottom: 8 }}>{err}</div>}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
           <button onClick={onClose} style={btnStyle(false)}>CANCEL</button>

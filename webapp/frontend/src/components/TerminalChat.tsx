@@ -46,52 +46,7 @@ interface Props {
   processing: boolean
   onCancel: () => void
   model?: string
-  onModelChange?: (model: string) => void
-}
-
-// Editable model label in the header — click to edit, Enter to apply (the agent
-// session continues on the new model), Esc to cancel.
-function ModelField({ model, onChange }: { model?: string; onChange?: (m: string) => void }) {
-  const [editing, setEditing] = useState(false)
-  const [val, setVal] = useState(model ?? '')
-  useEffect(() => { setVal(model ?? '') }, [model])
-  if (!onChange) return null
-  if (!editing) {
-    return (
-      <span
-        role="button"
-        tabIndex={0}
-        onClick={() => { setVal(model ?? ''); setEditing(true) }}
-        title="Click to change model — the conversation continues on the new model"
-        style={{
-          color: 'var(--dn-text-dim)', fontSize: 11, cursor: 'pointer', maxWidth: 260,
-          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-        }}
-      >⚙ {model || 'set model'}</span>
-    )
-  }
-  const commit = () => {
-    const m = val.trim()
-    if (m && m !== model) onChange(m)
-    setEditing(false)
-  }
-  return (
-    <input
-      autoFocus
-      value={val}
-      onChange={e => setVal(e.target.value)}
-      onKeyDown={e => {
-        if (e.key === 'Enter') { e.preventDefault(); commit() }
-        else if (e.key === 'Escape') { e.preventDefault(); setEditing(false) }
-      }}
-      onBlur={() => setEditing(false)}
-      placeholder="openrouter/anthropic/claude-sonnet-5"
-      style={{
-        background: 'var(--dn-bg)', border: '1px solid var(--dn-border-lt)', borderRadius: 3,
-        color: 'var(--dn-text)', fontFamily: 'var(--font-mono)', fontSize: 11, padding: '2px 6px', width: 260,
-      }}
-    />
-  )
+  onOpenSettings?: () => void
 }
 
 function Badge({ text, color }: { text: string; color: string }) {
@@ -150,7 +105,7 @@ function Message({ ev }: { ev: ChatEvent }) {
   }
 }
 
-export default function TerminalChat({ sessionId, messages, status, onSend, processing, onCancel, model, onModelChange }: Props) {
+export default function TerminalChat({ sessionId, messages, status, onSend, processing, onCancel, model, onOpenSettings }: Props) {
   const [input, setInput] = useState('')
   const [commands, setCommands] = useState<CommandDef[]>([])
   const [cmdHighlight, setCmdHighlight] = useState(0)
@@ -219,17 +174,40 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--dn-bg)', borderRight: '1px solid var(--dn-border)' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid var(--dn-border)', background: 'var(--dn-black)' }}>
         <span style={{ color: 'var(--dg-brand)', fontSize: 13, fontWeight: 700 }}>AGENT</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          {sessionId && <ModelField model={model} onChange={onModelChange} />}
-          <span style={{ color: 'var(--dn-text-dim)', fontSize: 11 }}>{status}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+          {model && (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={onOpenSettings}
+              onKeyDown={e => { if (e.key === 'Enter') onOpenSettings?.() }}
+              title="Change model"
+              style={{
+                color: 'var(--dg-interactive)', fontSize: 11, cursor: 'pointer',
+                textDecoration: 'underline', textDecorationStyle: 'dotted', textUnderlineOffset: 3,
+                maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}
+            >{model}</span>
+          )}
+          <span
+            title={status}
+            style={{
+              width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+              background: status === 'connected' ? 'var(--dn-success)'
+                : status === 'connecting' ? 'var(--dn-warning)' : 'var(--dn-error)',
+              boxShadow: status === 'connected' ? '0 0 6px var(--dn-success)' : 'none',
+            }}
+          />
         </div>
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px' }}>
         {!sessionId && <div style={{ color: 'var(--dn-text-dim)', fontSize: 13 }}>Create or select a session to begin.</div>}
         {messages.map((ev, i) => <Message key={ev._cid ?? i} ev={ev} />)}
         {processing && (
-          <div style={{ display: 'flex', gap: 12, alignItems: 'baseline', marginTop: 4 }}>
-            <span style={{ color: 'var(--dg-interactive)', fontSize: 13 }}>working…</span>
+          <div style={{ display: 'flex', gap: 16, alignItems: 'baseline', marginTop: 4 }}>
+            <span className="agent-working" style={{
+              color: 'var(--dg-interactive)', fontSize: 13, fontFamily: 'var(--font-mono)', opacity: 0.6,
+            }}>Agent working</span>
             <span
               role="button"
               tabIndex={0}
