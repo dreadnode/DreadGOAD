@@ -157,11 +157,23 @@ async def run_check(app: t.Any, session_id: str) -> dict[str, t.Any]:
 def parse_health_report(output: str) -> dict[str, t.Any] | None:
     """Extract the ``health-check --json`` report from possibly-noisy output.
 
-    ``/health`` streams via ``start_command`` (stdout+stderr merged), and
-    ``requireInfra`` prints a "credentials OK" line to stdout *before* the JSON,
-    so the report is usually surrounded by log lines. Try the whole string, then
-    the first ``{`` … last ``}`` span. Returns the report dict, or None.
+    ``--json`` streams NDJSON: one compact line per check, then a final line
+    carrying a ``checks`` field (the report). Output is also surrounded by log
+    lines (requireInfra's "credentials OK", merged stderr). Scan lines for the
+    report; fall back to whole-string / first-``{``…last-``}`` for older
+    (single-blob) output. Returns the report dict, or None.
     """
+    for line in output.splitlines():
+        line = line.strip()
+        if not line.startswith("{") or '"checks"' not in line:
+            continue
+        try:
+            parsed = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(parsed, dict) and "checks" in parsed:
+            return parsed
+    # Fallback: whole string, then the first-{ … last-} span (non-NDJSON output).
     candidates = [output]
     start, end = output.find("{"), output.rfind("}")
     if 0 <= start < end:

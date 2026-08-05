@@ -223,6 +223,30 @@ async def emit_event(
         pass  # client dropped mid-send; op continues, events persisted
 
 
+# Commands that mutate infra via terraform/ansible — a hard SIGKILL mid-run can
+# strand a terraform state lock or half-apply, so they get a long SIGINT runway.
+_SLOW_CANCEL = frozenset({"/up", "/provision", "/reset", "/destroy", "/extensions"})
+
+
+def _health_progress(line: str) -> str | None:
+    """Human progress string for a per-check ``health-check --json`` NDJSON line.
+
+    Returns None for the final report line (has ``checks``) and any non-check
+    noise (e.g. requireInfra's "credentials OK") — those aren't shown live.
+    """
+    line = line.strip()
+    if not line.startswith("{") or '"status"' not in line or '"checks"' in line:
+        return None
+    try:
+        c = json.loads(line)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(c, dict) or "checks" in c:
+        return None
+    status, nm, detail = c.get("status", "?"), c.get("name", ""), c.get("detail", "")
+    return f"{status:<5} {nm}" + (f" — {detail}" if detail else "")
+
+
 async def run_cli(
     app: t.Any, session_id: str, name: str, extra: list[str] | None = None
 ) -> tuple[int, str]:
@@ -269,16 +293,25 @@ async def run_cli(
         await app.state.sessions.set_status(session_id, "provisioning")
 
     rc = await start_command(argv, cwd=str(paths.repo_root()))
+    # SIGINT→SIGKILL grace: give terraform/ansible a long runway to unwind on
+    # SIGINT (killing terraform mid-apply strands a state lock); reads/local ops
+    # can be hard-killed quickly if they ignore SIGINT.
+    rc._KILL_GRACE = 300.0 if name in _SLOW_CANCEL else 12.0
     _running[session_id] = rc
     try:
         async for line in rc.stream_lines():
-            # /health runs `health-check --json`: silent until it emits one JSON
-            # blob, which we render as a structured health_report instead. Still
-            # consume the stream (drives the process + accumulates output).
-            if name != "/health":
-                await emit_event(
-                    app, session_id, "command_progress", {"line": line}, persist=False
-                )
+            if name == "/health":
+                # health-check --json streams NDJSON: show each check live as a
+                # readable line; the final report line is parsed for the table.
+                prog = _health_progress(line)
+                if prog is not None:
+                    await emit_event(
+                        app, session_id, "command_progress", {"line": prog}, persist=False
+                    )
+                continue
+            await emit_event(
+                app, session_id, "command_progress", {"line": line}, persist=False
+            )
     finally:
         _running.pop(session_id, None)
     exit_code = rc.returncode

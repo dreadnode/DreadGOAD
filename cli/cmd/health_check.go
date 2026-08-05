@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"os/signal"
 	"strings"
 	"time"
 
@@ -63,7 +65,10 @@ type healthReport struct {
 }
 
 func runHealthCheck(cmd *cobra.Command, args []string) error {
-	ctx := context.Background()
+	// Signal-aware context so SIGINT (e.g. the web app's cancel) aborts the
+	// in-flight checks promptly instead of running to completion.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 	jsonOut := healthCheckJSON
 
 	// In JSON mode the human table is suppressed so stdout carries only the
@@ -104,13 +109,25 @@ func runHealthCheck(cmd *cobra.Command, args []string) error {
 		RetryDelay: time.Duration(cfg.RetryDelay) * time.Second,
 	}
 
+	// In JSON mode, stream each check as a compact JSON line the moment it
+	// completes (NDJSON) so callers can show live progress; the final line is
+	// the full report — the only line carrying a "checks" field.
+	emit := func(res healthCheckResult) {
+		results = append(results, res)
+		if jsonOut {
+			if b, err := json.Marshal(res); err == nil {
+				fmt.Println(string(b))
+			}
+		}
+	}
+
 	for _, check := range checks {
 		instanceID, ok := infra.HostMap[check.host]
 		if !ok {
 			if !jsonOut {
 				color.Yellow("%-40s %-10s %s", check.name, "SKIP", "instance not found")
 			}
-			results = append(results, healthCheckResult{check.name, check.host, "SKIP", "instance not found"})
+			emit(healthCheckResult{check.name, check.host, "SKIP", "instance not found"})
 			skipped++
 			continue
 		}
@@ -129,7 +146,7 @@ func runHealthCheck(cmd *cobra.Command, args []string) error {
 			if !jsonOut {
 				color.Red("%-40s %-10s %s", check.name, "FAIL", err.Error())
 			}
-			results = append(results, healthCheckResult{check.name, check.host, "FAIL", err.Error()})
+			emit(healthCheckResult{check.name, check.host, "FAIL", err.Error()})
 			failed++
 			continue
 		}
@@ -137,7 +154,7 @@ func runHealthCheck(cmd *cobra.Command, args []string) error {
 			if !jsonOut {
 				color.Red("%-40s %-10s %s", check.name, "FAIL", "command status: "+result.Status)
 			}
-			results = append(results, healthCheckResult{check.name, check.host, "FAIL", "command status: " + result.Status})
+			emit(healthCheckResult{check.name, check.host, "FAIL", "command status: " + result.Status})
 			failed++
 			continue
 		}
@@ -154,20 +171,20 @@ func runHealthCheck(cmd *cobra.Command, args []string) error {
 			if attempts > 1 {
 				retried++
 			}
-			results = append(results, healthCheckResult{check.name, check.host, "OK", detail})
+			emit(healthCheckResult{check.name, check.host, "OK", detail})
 			passed++
 		} else {
 			if !jsonOut {
 				color.Red("%-40s %-10s %s", check.name, "FAIL", detail)
 			}
-			results = append(results, healthCheckResult{check.name, check.host, "FAIL", detail})
+			emit(healthCheckResult{check.name, check.host, "FAIL", detail})
 			failed++
 		}
 	}
 
 	if jsonOut {
 		report := healthReport{Passed: passed, Failed: failed, Skipped: skipped, Checks: results}
-		b, err := json.MarshalIndent(report, "", "  ")
+		b, err := json.Marshal(report)
 		if err != nil {
 			return err
 		}

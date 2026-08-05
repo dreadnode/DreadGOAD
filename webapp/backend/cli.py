@@ -19,19 +19,40 @@ OnLine = t.Callable[[str], t.Any]
 class RunningCommand:
     """A live CLI subprocess with a streamed-output future and cancel()."""
 
+    # Grace after SIGINT before a hard SIGKILL. Long enough for terraform/ansible
+    # to unwind on SIGINT, short enough that a command which *ignores* SIGINT
+    # (e.g. a stuck health-check) still gets cancelled.
+    _KILL_GRACE = 12.0
+
     def __init__(self, proc: asyncio.subprocess.Process) -> None:
         self._proc = proc
         self.lines: list[str] = []
         self.cancelled = False
+        self._kill_task: asyncio.Task[None] | None = None
 
     def cancel(self) -> None:
-        """SIGINT the whole process group so the CLI *and* its terraform/ansible
-        children unwind gracefully (§5.4). The child is a group leader via
-        ``start_new_session`` in ``start_command``."""
+        """Cancel the run: SIGINT the process group (so the CLI *and* its
+        terraform/ansible children unwind gracefully), then escalate to SIGKILL
+        if it hasn't exited within the grace period — some commands trap SIGINT
+        (§5.4). The child is a group leader via ``start_new_session``."""
+        if self._proc.returncode is not None:
+            return
+        self.cancelled = True
+        self._killpg(signal.SIGINT)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return  # no loop → best-effort SIGINT only
+        self._kill_task = loop.create_task(self._force_kill_after(self._KILL_GRACE))
+
+    async def _force_kill_after(self, grace: float) -> None:
+        await asyncio.sleep(grace)
         if self._proc.returncode is None:
-            self.cancelled = True
-            with _suppress():
-                os.killpg(os.getpgid(self._proc.pid), signal.SIGINT)
+            self._killpg(signal.SIGKILL)
+
+    def _killpg(self, sig: int) -> None:
+        with _suppress():
+            os.killpg(os.getpgid(self._proc.pid), sig)
 
     @property
     def returncode(self) -> int:

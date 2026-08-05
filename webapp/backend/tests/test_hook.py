@@ -339,24 +339,25 @@ async def test_apply_health_targets_config_hosts() -> None:
 
 
 def test_parse_health_report_noisy() -> None:
-    """The report parses even with requireInfra's stdout prefix + ANSI + trailing noise."""
-    report = {
-        "passed": 1,
-        "failed": 0,
-        "skipped": 0,
-        "checks": [{"host": "DC01", "status": "OK"}],
-    }
-    body = json.dumps(report, indent=2)
-    # requireInfra prints "credentials OK" (with ANSI) to stdout before the JSON,
-    # and start_command merges stderr — so the report is surrounded by log lines.
-    noisy = f"  \x1b[32maws credentials OK (arn:aws:iam::123:user/x)\x1b[0m\n{body}\nsome trailing log\n"
-    parsed = hook.parse_health_report(noisy)
-    assert parsed is not None, "must extract JSON from noisy output"
-    assert parsed["checks"][0]["host"] == "DC01", parsed
+    """Report parses from NDJSON: per-check lines + noise, report is the line w/ 'checks'."""
+    # NDJSON stream: credentials prefix, per-check lines, then the report line.
+    lines = [
+        "  \x1b[32maws credentials OK (arn:aws:iam::123:user/x)\x1b[0m",
+        json.dumps({"name": "DC01 DC", "host": "DC01", "status": "OK", "detail": "DC01"}),
+        json.dumps({"name": "DC02 Trust", "host": "DC02", "status": "FAIL", "detail": "x"}),
+        json.dumps({"passed": 1, "failed": 1, "skipped": 0, "checks": [{"host": "DC01", "status": "OK"}]}),
+        "some trailing log",
+    ]
+    parsed = hook.parse_health_report("\n".join(lines))
+    assert parsed is not None, "must find the report line among NDJSON + noise"
+    assert parsed["passed"] == 1 and parsed["checks"][0]["host"] == "DC01", parsed
+    # Fallback: an older single indented blob still parses.
+    blob = "creds ok\n" + json.dumps({"checks": [{"host": "DC1", "status": "OK"}]}, indent=2)
+    assert hook.parse_health_report(blob) is not None, "fallback for non-NDJSON output"
     # genuinely non-JSON → None
     assert hook.parse_health_report("no json here") is None
-    # JSON that isn't a report (no 'checks') → None
-    assert hook.parse_health_report('{"foo": 1}') is None
+    # JSON lines that aren't a report (no 'checks') → None
+    assert hook.parse_health_report('{"foo": 1}\n{"status": "OK"}') is None
     print("PASS test_parse_health_report_noisy")
 
 

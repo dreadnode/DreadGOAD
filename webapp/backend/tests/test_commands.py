@@ -15,7 +15,7 @@ import tempfile
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
 from webapp.backend import commands  # noqa: E402
-from webapp.backend.cli import run_command  # noqa: E402
+from webapp.backend.cli import run_command, start_command  # noqa: E402
 
 _SESSION = {"anchor": {"config_path": "/x/dreadgoad.yaml", "env": "dev"}}
 
@@ -201,6 +201,27 @@ async def test_runner_streams_and_returns_rc() -> None:
         print("PASS test_runner_streams_and_returns_rc")
 
 
+async def test_cancel_escalates_to_sigkill() -> None:
+    """cancel() SIGKILLs a process that ignores SIGINT, after the grace period."""
+    with tempfile.TemporaryDirectory() as d:
+        stub = pathlib.Path(d) / "ignore_sigint.sh"
+        # Ignore SIGINT, then block — only SIGKILL can stop it.
+        stub.write_text("#!/usr/bin/env bash\ntrap '' INT\necho started\nsleep 30\n")
+        stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+
+        rc = await start_command([str(stub)], cwd=d)
+        rc._KILL_GRACE = 0.4  # shorten the SIGINT→SIGKILL grace for the test
+        stream = rc.stream_lines()
+        assert await stream.__anext__() == "started"
+
+        rc.cancel()  # SIGINT is ignored → SIGKILL fires after the grace
+        async for _ in stream:  # drains until the process is killed
+            pass
+        assert rc.cancelled is True
+        assert rc.returncode != 0, f"expected non-zero (killed), got {rc.returncode}"
+        print("PASS test_cancel_escalates_to_sigkill")
+
+
 def main() -> None:
     test_argv_injects_config_and_env()
     test_argv_multiword_and_flag_verbs()
@@ -213,6 +234,7 @@ def main() -> None:
     test_resolve_bin_prefers_repo_binary()
     test_parse_command_shlex()
     asyncio.run(test_runner_streams_and_returns_rc())
+    asyncio.run(test_cancel_escalates_to_sigkill())
     print("ALL PASS")
 
 

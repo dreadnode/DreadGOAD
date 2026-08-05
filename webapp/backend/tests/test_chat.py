@@ -319,34 +319,19 @@ async def test_health_emits_report_and_suppresses_json() -> None:
         svc = SessionService(db, repo_root=str(_REPO), sessions_root=tmp / "sessions")
         app = types.SimpleNamespace(state=types.SimpleNamespace(db=db, sessions=svc))
 
-        report = json.dumps(
-            {
-                "passed": 1,
-                "failed": 1,
-                "skipped": 0,
-                "checks": [
-                    {
-                        "name": "DC01 DC",
-                        "host": "DC01",
-                        "status": "OK",
-                        "detail": "DC01",
-                    },
-                    {
-                        "name": "DC02 Trust",
-                        "host": "DC02",
-                        "status": "FAIL",
-                        "detail": "no trust",
-                    },
-                ],
-            }
-        )
-
-        # requireInfra prints a "credentials OK" line to stdout before the JSON;
-        # the report must still be extracted from the noisy, merged output.
-        noisy = "  aws credentials OK (arn:aws:iam::1:user/x)\n" + report
+        checks = [
+            {"name": "DC01 DC", "host": "DC01", "status": "OK", "detail": "DC01"},
+            {"name": "DC02 Trust", "host": "DC02", "status": "FAIL", "detail": "no trust"},
+        ]
+        report = {"passed": 1, "failed": 1, "skipped": 0, "checks": checks}
+        # NDJSON stream: requireInfra's "credentials OK", a compact line per
+        # check (streamed live), then the final report line (parsed for the table).
+        lines = ["  aws credentials OK (arn:aws:iam::1:user/x)"]
+        lines += [json.dumps(c) for c in checks]
+        lines.append(json.dumps(report))
 
         async def fake_start(argv, cwd):  # noqa: ANN001
-            return FakeRC(noisy.splitlines(), rc=1)  # exit 1: a check failed
+            return FakeRC(lines, rc=1)  # exit 1: a check failed
 
         async def fake_check(a, sid_):  # noqa: ANN001
             return {"hosts_updated": 0}
@@ -361,9 +346,12 @@ async def test_health_emits_report_and_suppresses_json() -> None:
 
             kinds = [m["kind"] for m in ws.sent]
             assert "health_report" in kinds, kinds
-            assert "command_progress" not in kinds, (
-                "raw JSON must be suppressed for /health"
-            )
+            # per-check progress streams live (one readable line per check)
+            progs = [m["line"] for m in ws.sent if m["kind"] == "command_progress"]
+            assert len(progs) == 2, progs
+            assert any("DC01 DC" in p for p in progs), progs
+            # the raw report JSON line is NOT streamed
+            assert not any('"checks"' in p for p in progs), progs
             hr = next(m for m in ws.sent if m["kind"] == "health_report")
             assert hr["passed"] == 1 and hr["failed"] == 1, hr
             assert len(hr["checks"]) == 2, hr
