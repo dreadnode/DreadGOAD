@@ -175,6 +175,62 @@ func resetKali(ctx context.Context, cmd *cobra.Command, cfg *config.Config, appl
 	return nil
 }
 
+// hostsBaselineAwk defines is_baseline(), shared by the find and clean
+// commands so the two cannot drift apart.
+//
+// Reading past a leading `#` is deliberate: an entry an agent commented out
+// leaks the same topology as the live line, while prose comments (cloud-init's
+// manage_etc_hosts block, Ubuntu's IPv6 header) are baseline and must survive.
+// tolower because tools emit FE80::/FF02:: as readily as lowercase. The `#` is
+// optional in host_addr so it strips indentation too — without that, an
+// indented entry splits to an empty first field and reads as prose.
+const hostsBaselineAwk = `
+function host_addr(  s, f) {
+  s = $0
+  sub(/^[ \t]*#*[ \t]*/, "", s)
+  split(s, f, /[ \t]+/)
+  return f[1]
+}
+function is_baseline(  a) {
+  if (NF == 0) return 1
+  a = host_addr()
+  if (a !~ /^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/ && !(a ~ /:/ && a ~ /^[0-9A-Fa-f:]+$/)) return 1
+  return a ~ /^127\./ || a == "::1" || tolower(a) ~ /^f[ef]/
+}
+`
+
+const (
+	hostsFindProgram = hostsBaselineAwk + `!is_baseline() {c++} END{print c+0}`
+	hostsKeepProgram = hostsBaselineAwk + `is_baseline()`
+)
+
+// hostsLoopbackGuard matches a surviving loopback line. The `::1` arm is
+// delimiter-anchored so it cannot match a routable address starting with
+// those characters.
+const hostsLoopbackGuard = `^127\.|^::1([[:space:]]|$)`
+
+// hostsCleanScript rewrites /etc/hosts down to the baseline block.
+//
+// mktemp, not a fixed path: /tmp is world-writable and root copies this file,
+// so a predictable name lets a local user swap the contents between the write
+// and the copy. cp, not mv or install: writing into the existing /etc/hosts
+// keeps that inode's mode and owner, so the 0600 temp file does not make
+// /etc/hosts root-only. The loopback guard refuses to install a filtered
+// result with no baseline left — an agent that clobbered /etc/hosts with `>`
+// leaves nothing to keep, and an empty one breaks resolution for the next run.
+// `sudo -n` fails closed rather than prompting.
+const hostsCleanScript = `dg_t=$(mktemp 2>/dev/null)
+  if [ -z "$dg_t" ]; then
+    echo "  WARN: /etc/hosts rewrite skipped (mktemp unavailable)"
+  elif ! awk "$dg_hosts_keep" /etc/hosts > "$dg_t" 2>/dev/null; then
+    echo "  WARN: /etc/hosts rewrite skipped (could not read /etc/hosts)"
+  elif ! grep -qE '` + hostsLoopbackGuard + `' "$dg_t"; then
+    echo "  WARN: /etc/hosts rewrite skipped (no loopback line survived the filter)"
+  elif ! sudo -n cp "$dg_t" /etc/hosts 2>/dev/null; then
+    echo "  WARN: /etc/hosts rewrite skipped (needs passwordless sudo)"
+  fi
+  rm -f "$dg_t" 2>/dev/null`
+
 // buildKaliCleanupScript generates the shell script for Kali artifact cleanup.
 // Uses $HOME so it works for both ssm-user (AWS) and kali (Azure).
 func buildKaliCleanupScript(apply bool) string {
@@ -255,10 +311,23 @@ func buildKaliCleanupScript(apply bool) string {
 			find:  `find $HOME -maxdepth 3 \( -name "*.ccache" -o -name "*.kirbi" -o -name "*.keytab" -o -name "*.pfx" \) ! -path "*/.local/*" 2>/dev/null | wc -l`,
 			clean: `find $HOME -maxdepth 3 \( -name "*.ccache" -o -name "*.kirbi" -o -name "*.keytab" -o -name "*.pfx" \) ! -path "*/.local/*" -delete 2>/dev/null`,
 		},
+		{
+			// A routable address mapped to a hostname is agent-seeded recon
+			// (e.g. `nxc --generate-hosts-file`), and leaks the domain topology
+			// the next agent is meant to discover.
+			label: "attacker /etc/hosts entries (non-loopback)",
+			find:  `awk "$dg_hosts_find" /etc/hosts 2>/dev/null || echo 0`,
+			clean: hostsCleanScript,
+		},
 	}
 
 	var sb strings.Builder
 	sb.WriteString("#!/bin/sh\ntotal_found=0\ntotal_removed=0\n")
+
+	// Hoisted out of the per-target commands because they are multi-line; an
+	// operator reads this script back off a failing box. Defining them is
+	// inert, so dry-run gets them too.
+	fmt.Fprintf(&sb, "\ndg_hosts_find='%s'\ndg_hosts_keep='%s'\n", hostsFindProgram, hostsKeepProgram)
 
 	for i, t := range targets {
 		fmt.Fprintf(&sb, "\n# %s\ncount_%d=$(%s)\ntotal_found=$((total_found + count_%d))\n", t.label, i, t.find, i)
@@ -271,7 +340,9 @@ func buildKaliCleanupScript(apply bool) string {
 			fmt.Fprintf(&sb, "  total_removed=$((total_removed + removed_%d))\n", i)
 			sb.WriteString("fi\n")
 		}
-		fmt.Fprintf(&sb, "echo \"  %s: $count_%d files\"\n", t.label, i)
+		// "items" because not every target counts files. Display only; the
+		// caller parses the JSON past the marker.
+		fmt.Fprintf(&sb, "echo \"  %s: $count_%d items\"\n", t.label, i)
 	}
 
 	fmt.Fprintf(&sb, "\necho '%s'\n", resetResultMarker)

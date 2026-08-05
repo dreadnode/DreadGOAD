@@ -28,24 +28,34 @@
     dest: c:\setup\mssql\SSMS_installer.exe
   when: not ssms_installer_file.stat.exists
 
-# Check for any SSMS version (18, 19, 20, 21)
+# Detect any installed SSMS across BOTH Program Files roots by locating Ssms.exe.
+# SSMS 21+ installs 64-bit to C:\Program Files\Microsoft SQL Server Management
+# Studio NN\..., not the legacy C:\Program Files (x86)\...{18,19,20} path, so a
+# version-pinned x86 check misses it and re-runs the install every time.
 - name: Check SSMS installation already done
   ansible.windows.win_powershell:
     script: |
       $installed = $false
-      $paths = @(
-        'C:\Program Files (x86)\Microsoft SQL Server Management Studio 18',
-        'C:\Program Files (x86)\Microsoft SQL Server Management Studio 19',
-        'C:\Program Files (x86)\Microsoft SQL Server Management Studio 20',
-        'C:\Program Files (x86)\Microsoft SQL Server Management Studio 21'
-      )
-      foreach ($p in $paths) { if (Test-Path $p) { $installed = $true; break } }
+      foreach ($root in @($env:ProgramFiles, ${env:ProgramFiles(x86)})) {
+        $hit = Get-ChildItem -Path $root -Directory -Filter 'Microsoft SQL Server Management Studio*' -EA 0 |
+               ForEach-Object { Get-ChildItem $_.FullName -Recurse -Filter 'Ssms.exe' -EA 0 } | Select-Object -First 1
+        if ($hit) { $installed = $true; break }
+      }
       $installed
   register: ssms_installation
 
+# SSMS 22 ships the Visual Studio bootstrapper, which the legacy invocation cannot
+# drive: it needs --quiet --norestart --wait (not /install /quiet /norestart), a
+# full token (run as SYSTEM -- under WinRM's network logon it hangs indefinitely),
+# and exit 3010 = ERROR_SUCCESS_REBOOT_REQUIRED must be treated as success (the
+# "Reboot after install" task below finalizes it).
 - name: Install SSMS
-  ansible.windows.win_command: c:\setup\mssql\SSMS_installer.exe /install /quiet /norestart
+  ansible.windows.win_command: c:\setup\mssql\SSMS_installer.exe --quiet --norestart --wait
+  become: true
+  become_method: ansible.builtin.runas
+  become_user: SYSTEM
   register: install_ssms
+  failed_when: install_ssms.rc not in [0, 3010]
   when: not (ssms_installation.output[0] | default(false) | bool)
 
 - name: Reboot after install
