@@ -166,6 +166,60 @@ func TestHostsBaselineFilter(t *testing.T) {
 	}
 }
 
+// TestHostsLoopbackGuard runs the real guard against real filter output. The
+// rewrite is refused unless baseline survived, and either loopback family
+// counts as baseline — a file whose only loopback is `::1` still resolves
+// localhost, so skipping the scrub there would leave artifacts behind.
+func TestHostsLoopbackGuard(t *testing.T) {
+	grepBin, err := exec.LookPath("grep")
+	if err != nil {
+		t.Skip("grep not available")
+	}
+
+	tests := []struct {
+		name       string
+		hosts      string
+		wantAccept bool
+	}{
+		{
+			name:       "IPv4 loopback survives",
+			hosts:      "127.0.0.1 localhost\n10.10.10.10 dc01.local\n",
+			wantAccept: true,
+		},
+		{
+			name:       "IPv6-only baseline survives",
+			hosts:      "::1 localhost ip6-localhost\nff02::1 ip6-allnodes\n10.10.10.10 dc01.local\n",
+			wantAccept: true,
+		},
+		{
+			name:       "clobbered file leaves no loopback",
+			hosts:      "10.10.10.10 dc01.local\n10.10.10.11 srv02.local\n",
+			wantAccept: false,
+		},
+		{
+			name:       "comments alone are not a loopback line",
+			hosts:      "# 127.0.1.1 oldkali\n# prose\n10.10.10.10 dc01.local\n",
+			wantAccept: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, kept := runHostsFilter(t, tt.hosts)
+
+			path := filepath.Join(t.TempDir(), "filtered")
+			if err := os.WriteFile(path, []byte(kept), 0o644); err != nil {
+				t.Fatalf("write filtered: %v", err)
+			}
+
+			err := exec.Command(grepBin, "-qE", hostsLoopbackGuard, path).Run()
+			if accepted := err == nil; accepted != tt.wantAccept {
+				t.Errorf("guard accepted = %v, want %v (filtered:\n%s)", accepted, tt.wantAccept, kept)
+			}
+		})
+	}
+}
+
 // TestKaliCleanupScriptStripsAttackerHosts pins the script shape: both modes
 // inspect /etc/hosts, apply mode rewrites it through a mktemp file under
 // non-prompting sudo, and dry-run never mutates it.
@@ -181,7 +235,7 @@ func TestKaliCleanupScriptStripsAttackerHosts(t *testing.T) {
 		`dg_t=$(mktemp 2>/dev/null)`, // not a fixed /tmp path root copies from
 		`awk "$dg_hosts_keep" /etc/hosts > "$dg_t"`,
 		`sudo -n cp "$dg_t" /etc/hosts`,
-		`grep -q '^127\.'`,
+		`grep -qE '` + hostsLoopbackGuard + `'`,
 	} {
 		if !strings.Contains(applyScript, want) {
 			t.Errorf("apply mode missing %q", want)

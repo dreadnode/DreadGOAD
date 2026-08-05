@@ -214,6 +214,11 @@ const (
 	hostsKeepProgram = hostsBaselineAwk + `is_baseline()`
 )
 
+// hostsLoopbackGuard matches a surviving loopback line in the filtered output.
+// The `::1` arm is anchored to a delimiter so it cannot match a routable
+// address that merely starts with those characters.
+const hostsLoopbackGuard = `^127\.|^::1([[:space:]]|$)`
+
 // hostsCleanScript rewrites /etc/hosts down to the baseline block.
 //
 // The filtered copy goes to a mktemp path rather than a fixed one: /tmp is
@@ -222,14 +227,19 @@ const (
 // refused unless a loopback line survived — an agent that clobbered
 // /etc/hosts outright (`nxc --generate-hosts-file > /etc/hosts`) leaves
 // nothing to keep, and an empty /etc/hosts breaks hostname resolution for the
-// next run. Every skip path says why; `sudo -n` fails closed instead of
-// prompting, so a box without passwordless sudo reports found-but-not-removed.
+// next run. Either loopback family counts: the guard asks whether baseline
+// survived, and a file whose baseline is `::1` alone still resolves localhost.
+// Every skip path says why; `sudo -n` fails closed instead of prompting, so a
+// box without passwordless sudo reports found-but-not-removed.
+//
+// cp is deliberate: writing into the existing /etc/hosts keeps that inode's
+// mode and owner, so the 0600 mktemp file does not make /etc/hosts root-only.
 const hostsCleanScript = `dg_t=$(mktemp 2>/dev/null)
   if [ -z "$dg_t" ]; then
     echo "  WARN: /etc/hosts rewrite skipped (mktemp unavailable)"
   elif ! awk "$dg_hosts_keep" /etc/hosts > "$dg_t" 2>/dev/null; then
     echo "  WARN: /etc/hosts rewrite skipped (could not read /etc/hosts)"
-  elif ! grep -q '^127\.' "$dg_t"; then
+  elif ! grep -qE '` + hostsLoopbackGuard + `' "$dg_t"; then
     echo "  WARN: /etc/hosts rewrite skipped (no loopback line survived the filter)"
   elif ! sudo -n cp "$dg_t" /etc/hosts 2>/dev/null; then
     echo "  WARN: /etc/hosts rewrite skipped (needs passwordless sudo)"
