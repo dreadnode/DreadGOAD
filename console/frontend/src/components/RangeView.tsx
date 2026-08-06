@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ReactFlow,
   Background,
@@ -220,48 +220,47 @@ function formatAge(ms: number): string {
   return `${Math.floor(hours / 24)}d ago`
 }
 
-/** One labelled pill in the range header. */
+/** One labelled field in the range header. */
 interface HeaderField {
   label: string
   value: string
   title?: string
-  /** Force a wrap before this pill, starting a new row of the header. */
-  newRow?: boolean
 }
 
-/** One range-identity pair as a segmented pill: tinted label fused to its value. */
+/**
+ * One range-identity pair, label stacked above its value.
+ *
+ * Replaces a segmented pill (tinted label fused beside the value). The pill
+ * put the label to the LEFT, so a wide key like "RESOURCE GROUP" spent ~110px
+ * before its value began — five fields could not fit one row at any realistic
+ * panel width, and the header always cost two. Stacking reclaims that width for
+ * ~4px of height, which is paid once rather than per row: measured across
+ * 620/820/1000px panels the header goes 106/50/50px → 54/24/24px.
+ *
+ * The key/value distinction now comes from type and colour rather than a box:
+ * 9px uppercase electric-blue label over a 12px bright value.
+ */
 function Field({ label, value, title }: HeaderField) {
   return (
-    // Hover always reveals the untruncated pair, since the value half
-    // ellipsizes when a single field is wider than the whole header.
+    // Hover reveals the untruncated pair — the value ellipsizes when a field is
+    // wider than the header (a 90-char Azure resource group is legal).
     <span title={title ?? `${label}: ${value}`} style={{
-      display: 'inline-flex', alignItems: 'stretch', flexShrink: 0,
-      border: '1px solid var(--dn-border-lt)', borderRadius: 4,
-      overflow: 'hidden', whiteSpace: 'nowrap',
-      // A pill can't wrap or shrink, so one field longer than the header (a
-      // 90-char Azure resource group is legal) would otherwise escape the
-      // panel entirely. Bounded here, truncated in the value half below.
-      maxWidth: '100%',
-      // lineHeight 1 on both halves: a unitless value resolves against each
-      // element's OWN font-size, so 10px and 12px text got line boxes of
-      // different heights and the smaller label sat high in its stretched half.
-      // Height now comes from padding, and each half centres its own text.
-      lineHeight: 1,
+      display: 'flex', flexDirection: 'column', flexShrink: 0,
+      // Both lines share this, so the two-line block stays compact and the
+      // label sits tight under nothing and directly over its value.
+      lineHeight: 1.2, minWidth: 0, maxWidth: '100%',
     }}>
       <span style={{
-        // Tinted half — reads as the key, not another value. Never truncates:
-        // a pill with no readable label is worse than one with no value.
-        display: 'flex', alignItems: 'center', flexShrink: 0,
-        background: 'var(--dn-surface)', color: 'var(--dn-electric)',
-        fontSize: 10, fontWeight: 700, letterSpacing: 0.6,
-        textTransform: 'uppercase', padding: '4px 7px',
+        color: 'var(--dn-electric)', fontSize: 9, fontWeight: 700,
+        letterSpacing: 0.7, textTransform: 'uppercase', whiteSpace: 'nowrap',
       }}>{label}</span>
       <span style={{
-        // block, not flex: `text-overflow` needs a text container, and
-        // minWidth 0 is what lets it shrink below its content width at all.
-        display: 'block', color: 'var(--dn-text-bright)', fontSize: 12,
-        padding: '4px 8px', minWidth: 0, overflow: 'hidden',
-        textOverflow: 'ellipsis',
+        color: 'var(--dn-text-bright)', fontSize: 12, whiteSpace: 'nowrap',
+        // minWidth 0 is what lets the value shrink below its content width, so
+        // an over-long one truncates instead of pushing the row wider.
+        minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis',
+        // Digits line up between stacked fields (account ids, CIDRs).
+        fontVariantNumeric: 'tabular-nums',
       }}>{value}</span>
     </span>
   )
@@ -347,39 +346,39 @@ export default function RangeView(
     [range, now],
   )
 
-  // Key range identity, from the session anchor + snapshot. Split across two
-  // rows by where the values come from: the config anchor (env/provider/region,
-  // known before anything is deployed) on the first, then the cloud placement
-  // the ingestion hook learns post-deploy on the second. Both providers report
-  // an account; only Azure has a resource group, absent on AWS.
+  // Key range identity, from the session anchor + snapshot. Ordered by when the
+  // value becomes known: the config anchor first (env/cloud, known before
+  // anything is deployed), then the placement the ingestion hook learns
+  // post-deploy. Both providers report an account; only Azure has a resource
+  // group, absent on AWS. No forced row break — four fields fit one row at a
+  // normal panel width, and wrapping handles the narrow case on its own.
   const fields = useMemo<HeaderField[]>(() => {
     if (!session) return []
     const snap = session.snapshot ?? {}
     // Provider-neutral: `account` is an AWS account ID or an Azure subscription,
     // `group` an Azure resource group (absent on AWS, which has no equivalent).
     const account = snap.account
-    // Values are nullable here and filtered below, so the pill list only ever
-    // holds fields that actually have something to show.
+    // Provider and region are never useful apart — "azure" alone doesn't locate
+    // anything — so they share one field and save a whole column of width.
+    const cloud = [snap.provider, snap.region].filter(Boolean).join('/')
+    // Values are nullable here and filtered below, so the list only ever holds
+    // fields that actually have something to show.
     const rows: Array<Omit<HeaderField, 'value'> & { value?: string | null }> = [
       { label: 'env', value: session.anchor?.env },
-      { label: 'provider', value: snap.provider },
-      { label: 'region', value: snap.region },
-      { label: 'resource group', value: snap.group, newRow: true },
-      // An Azure subscription GUID is 36 chars — far too wide for a header pill,
-      // so show the leading segment with the whole value in the tooltip. An AWS
-      // account ID is 12 digits and has no dashes, so it renders in full.
+      { label: 'cloud', value: cloud || null },
+      { label: 'resource group', value: snap.group },
+      // An Azure subscription GUID is 36 chars — far too wide for a header
+      // field, so show the leading segment with the whole value in the tooltip.
+      // An AWS account ID is 12 digits and has no dashes, so it renders in full.
       {
         label: 'account',
         value: account ? `${account.split('-')[0]}${account.includes('-') ? '…' : ''}` : null,
         title: account ?? undefined,
-        // Carries the break when there's no resource group to carry it (AWS),
-        // so the placement row starts on its own line either way.
-        newRow: !snap.group,
       },
     ]
     return rows
       .filter(r => !!r.value)
-      .map(r => ({ label: r.label, value: r.value as string, title: r.title, newRow: r.newRow }))
+      .map(r => ({ label: r.label, value: r.value as string, title: r.title }))
   }, [session])
 
   if (!sessionId) {
@@ -389,31 +388,31 @@ export default function RangeView(
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--dn-black)' }}>
       <div style={headerStyle}>
-        {/* Wraps rather than clips: the pill row grows with the range (a long
-            resource group, an Azure subscription), and a truncated account id
-            is worse than a two-line header. `rowGap` keeps wrapped rows from
-            touching; the status block opposite stays on the first row. */}
+        {/* Wraps rather than clips: a long resource group or an Azure
+            subscription still gets a second row rather than being cut off.
+            columnGap is wide (18) because the fields have no borders now —
+            whitespace is what separates them, so it has to be doing more work
+            than it did between boxes. */}
         <div style={{
           display: 'flex', alignItems: 'center', flexWrap: 'wrap',
-          columnGap: 8, rowGap: 6, minWidth: 0,
+          columnGap: 18, rowGap: 8, minWidth: 0,
         }}>
-          {/* Extra right margin (on top of the flex gap) sets the label apart
-              from the identity fields, which are spaced more tightly. */}
-          <span style={{ color: 'var(--dn-electric)', fontSize: 13, fontWeight: 700, marginRight: 10 }}>RANGE</span>
+          {/* Sits closer to the fields than they sit to each other, so it reads
+              as the row's title rather than as another field. */}
+          <span style={{
+            color: 'var(--dn-electric)', fontSize: 13, fontWeight: 700,
+            marginRight: -4, alignSelf: 'center',
+          }}>RANGE</span>
           {fields.map(f => (
-            <Fragment key={f.label}>
-              {/* A full-width zero-height item is the only way to force a wrap
-                  in a flex row — it fills the line, pushing what follows down. */}
-              {f.newRow && <span style={{ flexBasis: '100%', height: 0 }} />}
-              <Field label={f.label} value={f.value} title={f.title} />
-            </Fragment>
+            <Field key={f.label} label={f.label} value={f.value} title={f.title} />
           ))}
         </div>
-        {/* minHeight = one pill (12px text + 8px padding + 2px border), so the
-            status centres against the FIRST pill row, not the wrapped block. */}
+        {/* minHeight = one stacked field (9px label + 12px value at lineHeight
+            1.2 ≈ 26), so the status centres against the FIRST row rather than
+            drifting to the middle of a wrapped block. */}
         <div style={{
           display: 'flex', alignItems: 'center', gap: 12,
-          flexShrink: 0, minHeight: 22,
+          flexShrink: 0, minHeight: 26,
         }}>
           {checked && (
             <span

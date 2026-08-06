@@ -206,9 +206,13 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 		legacy := filepath.Join(cfg.ProjectRoot, "infra", "azure", region)
 		if _, lerr := os.Stat(legacy); lerr == nil {
 			workDir = legacy
-		} else {
-			return fmt.Errorf("infra working directory not found: %s", workDir)
 		}
+	}
+	// Checked after the fallback so the legacy layout is still accepted, and
+	// state-aware so a destroy with nothing to destroy says why (see
+	// infra_state.go) rather than pointing at a directory.
+	if err := checkInfraWorkDir(workDir, cfg.Env, region, action); err != nil {
+		return err
 	}
 
 	opts.LogFile = infraLogPath(cfg, action, deployment, module)
@@ -288,8 +292,8 @@ func runInfraActionAWS(cmd *cobra.Command, cfg *config.Config, action string) er
 	basePath := filepath.Join(cfg.ProjectRoot, "infra", deployment)
 	workDir := filepath.Join(basePath, cfg.Env, region)
 
-	if _, err := os.Stat(workDir); os.IsNotExist(err) {
-		return fmt.Errorf("infra working directory not found: %s\nRun 'dreadgoad infra validate' to check your setup", workDir)
+	if err := checkInfraWorkDir(workDir, cfg.Env, region, action); err != nil {
+		return err
 	}
 
 	opts.LogFile = infraLogPath(cfg, action, deployment, module)

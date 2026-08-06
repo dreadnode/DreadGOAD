@@ -4,6 +4,7 @@ import remarkGfm from 'remark-gfm'
 import type { ChatEvent, HealthCheck, Instance } from '../types'
 import type { ConnectionStatus } from '../hooks/useWebSocket'
 import { api, type CommandDef } from '../api'
+import { buildHelpLines, type HelpLineKind } from '../help'
 
 const HEALTH_COLOR: Record<string, string> = {
   OK: 'var(--dn-success)',
@@ -342,8 +343,52 @@ function Message({ ev }: { ev: ChatEvent }) {
   }
 }
 
+// Client-side only: /help maps to no CLI verb, so it lives here rather than in
+// the server registry (which the agent may run — it must not "run" the guide).
+const HELP_COMMAND: CommandDef = {
+  name: '/help',
+  description: 'How a range run works, start to finish',
+  detail: 'read-only; shown automatically in an empty session',
+  cli: '',
+  dispatch: 'direct',
+  long_running: false,
+  takes_args: false,
+}
+
+// Keyed off the line's declared kind, not its text. Detail paragraphs
+// often open with a command name ("/scrub deletes ..."), so styling by a
+// leading slash painted five of them as command rows.
+const HELP_LINE_COLOR: Record<HelpLineKind, string> = {
+  title: 'var(--dg-interactive)',
+  command: 'var(--dn-text-bright)',
+  detail: 'var(--dg-node-label)',
+  blank: 'transparent',
+}
+
+/** The workflow guide, rendered as a monospaced block. */
+function HelpPanel({ commands }: { commands: CommandDef[] }) {
+  const lines = useMemo(() => buildHelpLines(commands), [commands])
+  return (
+    <div style={{
+      fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.6,
+      whiteSpace: 'pre-wrap', marginBottom: 12,
+    }}>
+      {lines.map((line, i) => (
+        <div key={i} style={{
+          color: HELP_LINE_COLOR[line.kind],
+          fontWeight: line.kind === 'title' ? 700 : 400,
+          marginTop: line.kind === 'title' && i > 0 ? 6 : 0,
+        }}>{line.text || ' '}</div>
+      ))}
+    </div>
+  )
+}
+
 export default function TerminalChat({ sessionId, messages, status, onSend, processing, turnStartedAt, onCancel, model, onOpenSettings }: Props) {
   const [input, setInput] = useState('')
+  // Transcript position the guide was last requested at; null = never asked.
+  // An empty pane shows it regardless, so a new session opens on the workflow.
+  const [helpAfter, setHelpAfter] = useState<number | null>(null)
   const [commands, setCommands] = useState<CommandDef[]>([])
   const [cmdHighlight, setCmdHighlight] = useState(0)
   const endRef = useRef<HTMLDivElement>(null)
@@ -365,13 +410,23 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
   // (the menu is a fixed-height scroll box; arrow-nav can move past the fold).
   useEffect(() => { activeCmdRef.current?.scrollIntoView({ block: 'nearest' }) }, [cmdHighlight])
 
+  // The guide is per-session. This component is never remounted when tabs
+  // change (App renders one instance and swaps its props), so without this the
+  // index would carry into the next session — showing the panel where /help was
+  // never typed, and at an offset that means nothing in that transcript.
+  useEffect(() => { setHelpAfter(null) }, [sessionId])
+
   // Load the slash-command registry once for the autocomplete menu (§5.1).
   // Sorted by name: the registry is grouped by lifecycle, but in a menu you
   // scan for a command you already know the name of, so alphabetical wins.
+  // HELP_COMMAND is merged in client-side — it has no CLI verb, so it isn't in
+  // the server registry, but it must still be discoverable by typing "/".
   useEffect(() => {
     api.commands()
-      .then(r => setCommands([...r.commands].sort((a, b) => a.name.localeCompare(b.name))))
-      .catch(() => {})
+      .then(r => setCommands(
+        [...r.commands, HELP_COMMAND].sort((a, b) => a.name.localeCompare(b.name)),
+      ))
+      .catch(() => setCommands([HELP_COMMAND]))
   }, [])
 
   // Autocomplete: filter to the typed `/`-token; hide once a space is typed (args).
@@ -411,7 +466,20 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
 
   const submit = () => {
     const t = input.trim()
-    if (!t || !sessionId || status !== 'connected') return
+    if (!t) return
+    // /help is client-side: it maps to no CLI verb, so it never reaches the
+    // registry or the agent. Handled before the connection guard too, so the
+    // guide is readable while disconnected or before a session exists — which
+    // is exactly when someone is most likely to need it.
+    if (t === HELP_COMMAND.name) {
+      // Remember where in the transcript it was asked for, so it renders
+      // inline at that point rather than pinned above or below everything.
+      setHelpAfter(messages.length)
+      setInput('')
+      setCmdHighlight(0)
+      return
+    }
+    if (!sessionId || status !== 'connected' || processing) return
     onSend(t)
     setInput('')
     setCmdHighlight(0)
@@ -485,7 +553,16 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px' }}>
         {!sessionId && <div style={{ color: 'var(--dn-text-dim)', fontSize: 13 }}>Create or select a session to begin.</div>}
-        {messages.map((ev, i) => <Message key={ev._cid ?? i} ev={ev} />)}
+        {/* The guide leads an empty pane, so a fresh session opens on the
+            workflow rather than a blank screen. After /help it renders at the
+            point in the transcript where it was asked for, so later output
+            still lands below it and the scroll position stays truthful. */}
+        {messages.length === 0 && <HelpPanel commands={commands} />}
+        {messages.slice(0, helpAfter ?? messages.length)
+          .map((ev, i) => <Message key={ev._cid ?? i} ev={ev} />)}
+        {helpAfter !== null && messages.length > 0 && <HelpPanel commands={commands} />}
+        {helpAfter !== null && messages.slice(helpAfter)
+          .map((ev, i) => <Message key={ev._cid ?? `h${i}`} ev={ev} />)}
         {processing && (
           <div style={{ display: 'flex', gap: 16, alignItems: 'baseline', marginTop: 4 }}>
             <span className="agent-working" style={{
@@ -567,7 +644,7 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
             ref={inputRef}
             value={input}
             rows={1}
-            disabled={!sessionId || status !== 'connected'}
+            disabled={!sessionId || status !== 'connected' || processing}
             onChange={e => { setInput(e.target.value); setCmdHighlight(0) }}
             onKeyDown={handleKeyDown}
             placeholder={
@@ -575,7 +652,9 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
                 ? `${status}…`
                 : !sessionId
                   ? 'create or select a session (+ NEW) to begin'
-                  : 'message or /command  (type / for commands)'
+                  : processing
+                    ? 'wait for the current turn, or press Esc to cancel'
+                    : 'message or /command  (type / for commands)'
             }
             style={{
               flex: 1, background: 'transparent', border: 'none', outline: 'none', resize: 'none',
