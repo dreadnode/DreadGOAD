@@ -440,6 +440,9 @@ async def _emit_overlays(
     elif name == "/exec":
         results = summary.parse_json_array(output)
         if results is not None:
+            # Host output is arbitrary and may be colourised (PowerShell 7 does
+            # by default). The chat pane renders text, not a terminal.
+            results = summary.clean_exec_results(results)
             await emit_event(
                 app,
                 session_id,
@@ -447,9 +450,7 @@ async def _emit_overlays(
                 {
                     "results": results,
                     "succeeded": sum(
-                        1
-                        for r in results
-                        if str(r.get("status", "")).lower() == "succeeded"
+                        1 for r in results if summary.exec_succeeded(r.get("status"))
                     ),
                     "total": len(results),
                 },
@@ -478,7 +479,17 @@ async def run_cli(
         await emit_event(app, session_id, "error", {"message": exc.emit})
         return exc.code, exc.output
 
-    argv = commands.build_argv(session, name, extra, repo_root=str(paths.repo_root()))
+    try:
+        argv = commands.build_argv(
+            session, name, extra, repo_root=str(paths.repo_root())
+        )
+    except ValueError as exc:
+        # Refused before anything ran — the args tried to retarget the range.
+        # Surfaced as a normal failure so the agent reads the reason and can
+        # retry without it, rather than the turn dying on an exception.
+        await emit_event(app, session_id, "error", {"message": str(exc)})
+        return 1, str(exc)
+
     await emit_event(
         app,
         session_id,

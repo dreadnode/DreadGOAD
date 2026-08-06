@@ -22,6 +22,7 @@ os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = _TMP
 from fastapi import WebSocketDisconnect  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+from console.backend import commands  # noqa: E402
 from console.backend.db import Database  # noqa: E402
 from console.backend.server import (  # noqa: E402
     app,
@@ -98,7 +99,9 @@ def main() -> None:
 
         # command catalog (drives the frontend autocomplete)
         cat = client.get("/api/commands").json()["commands"]
-        assert len(cat) == 14, cat
+        # The endpoint must expose the whole registry — compared against it
+        # rather than a literal, which only ever needs bumping.
+        assert len(cat) == len(commands.REGISTRY), cat
         names = {c["name"] for c in cat}
         assert "/up" in names and "/destroy" in names, names
         up = next(c for c in cat if c["name"] == "/up")

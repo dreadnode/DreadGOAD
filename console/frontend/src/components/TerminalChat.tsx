@@ -215,8 +215,10 @@ function ExecReport({ ev }: { ev: ChatEvent }) {
         <div key={i} style={{ marginLeft: 12, marginBottom: 6, fontSize: 11 }}>
           <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
             <span style={{ color: 'var(--dn-text-bright)' }}>{r.host}</span>
+            {/* The CLI's convention is "Success"; "Succeeded" is Azure's raw
+                ARM state, accepted so this can't drift from the Go side. */}
             <span style={{
-              color: r.status?.toLowerCase() === 'succeeded'
+              color: ['success', 'succeeded'].includes(r.status?.toLowerCase() ?? '')
                 ? 'var(--dn-success)' : 'var(--dn-error)',
             }}>{r.status}</span>
           </div>

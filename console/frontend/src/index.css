@@ -70,6 +70,15 @@ html, body, #root {
   overflow: hidden;
 }
 
+/* Agent markdown lists. The marker inherits currentColor, so bullets rendered
+   at the body colour — near-white, the same weight as the text beside them.
+   Tinting the marker alone (::marker, not the li) keeps the item text readable
+   while the bullets read as structure. Nested levels inherit it too. */
+.markdown-body ul li::marker,
+.markdown-body ol li::marker {
+  color: var(--dg-interactive);
+}
+
 /* "Agent working" indicator — the standard braille spinner: one cell, frame
    swapped with steps(1), no transforms. The dot pair rotates around the cell,
    which reads as motion at a glance without pulling the eye off the output. */

@@ -101,6 +101,28 @@ type InteractiveShell interface {
 	StartInteractiveShell(ctx context.Context, instanceID, region string) error
 }
 
+// OutOfBandRunner is an optional interface for providers that can execute a
+// script WITHOUT an in-guest network listener — via the cloud control plane
+// (Azure Run Command, AWS SSM) rather than WinRM/SSH.
+//
+// This is deliberately separate from Provider.RunCommand. On Azure the latter
+// goes over WinRM through a bastion tunnel: fast and fine for fan-out checks
+// like validate and health-check, but useless for the one case that matters
+// here — a host that is broken badly enough to stop answering on 5985. The
+// control plane reaches the VM through its guest agent, so it still works.
+//
+// AWS's RunCommand is already SSM-backed and so is already out-of-band; it
+// implements this by delegating. Callers that need the guarantee must type-
+// assert for this interface rather than assuming RunCommand provides it.
+type OutOfBandRunner interface {
+	// RunCommandOutOfBand executes a script via the control plane and reports
+	// which channel served it, for surfacing to the operator.
+	RunCommandOutOfBand(ctx context.Context, instanceID, command string, timeout time.Duration) (*CommandResult, error)
+
+	// OutOfBandChannel names the mechanism (e.g. "Azure Run Command", "AWS SSM").
+	OutOfBandChannel() string
+}
+
 // Session represents an active remote session.
 type Session struct {
 	SessionID  string

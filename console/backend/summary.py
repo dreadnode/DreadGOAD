@@ -202,17 +202,79 @@ def summarize_instances(instances: list[dict[str, t.Any]]) -> str:
 _AZURE_STREAM_CAP = 4096
 
 
+def exec_succeeded(status: t.Any) -> bool:
+    """Whether one host's ``exec`` status means the script actually ran.
+
+    The CLI's convention is ``"Success"`` — what every provider emits and every
+    other consumer compares against. ``"Succeeded"`` is Azure's raw ARM
+    execution state, accepted so this can't drift out of step with the Go side
+    if that mapping changes. Anything else (``Failed``, ``Error``, ``no
+    result``) counts as a failure.
+
+    Matching only ``"Succeeded"`` here reported every successful run as a
+    failure; it stayed hidden because the host under test never succeeded.
+    """
+    return str(status or "").strip().lower() in ("success", "succeeded")
+
+
+def decode_windows_text(text: str) -> str:
+    """Undo UTF-16LE mojibake and drop stray NULs from Windows host output.
+
+    The CLI normalises this too (provider.DecodeWindowsText), so in a matched
+    pair this is a no-op. It exists because the console can be pointed at an
+    older ``cli/dreadgoad`` binary than it shipped with — that skew has bitten
+    before — and because a raw NUL inside a JSON string reaches the model and
+    the browser as garbage either way.
+
+    Mirrors the Go heuristic: only alternating-NUL text is treated as UTF-16, so
+    ordinary output is returned unchanged.
+    """
+    if not text or "\x00" not in text:
+        return text
+    raw = text.encode("utf-8", "surrogatepass")
+    odd = raw[1::2]
+    even = raw[0::2]
+    if odd and odd.count(0) * 4 >= len(odd) * 3 and even.count(0) * 4 <= len(even):
+        try:
+            return raw[: len(raw) - len(raw) % 2].decode("utf-16-le")
+        except (UnicodeDecodeError, ValueError):
+            pass
+    return text.replace("\x00", "")
+
+
+def clean_exec_results(results: list[dict[str, t.Any]]) -> list[dict[str, t.Any]]:
+    """Strip ANSI from each host's captured streams, returning new dicts.
+
+    ``summarize``'s up-front ``strip_ansi`` cannot do this: at that point the
+    escapes are inside JSON string values, encoded as the six characters
+    ``\\u001b`` rather than a real ESC byte, so the CSI pattern doesn't match.
+    They become real escapes only after ``json.loads``. PowerShell 7 colourises
+    output by default, so an operator running ``Get-Service`` through /exec
+    would otherwise put raw escape codes in front of both the model and the
+    chat pane, neither of which renders a terminal.
+    """
+    cleaned: list[dict[str, t.Any]] = []
+    for r in results:
+        item = dict(r)
+        for stream in ("stdout", "stderr"):
+            if stream in item:
+                item[stream] = strip_ansi(decode_windows_text(str(item[stream] or "")))
+        cleaned.append(item)
+    return cleaned
+
+
 def summarize_exec(results: list[dict[str, t.Any]]) -> str:
     """Render ``exec --json`` as a per-host status + output block.
 
-    Keeps stdout and stderr verbatim (the agent is reading them to diagnose);
-    ``clip`` bounds the total afterwards. Hosts are kept in the order the CLI
-    reported them, which is the order the operator named them.
+    Keeps stdout and stderr otherwise verbatim (the agent is reading them to
+    diagnose); ``clip`` bounds the total afterwards. Hosts are kept in the order
+    the CLI reported them, which is the order the operator named them.
     """
     if not results:
         return "no hosts matched — nothing ran."
+    results = clean_exec_results(results)
 
-    ok = sum(1 for r in results if str(r.get("status", "")).lower() == "succeeded")
+    ok = sum(1 for r in results if exec_succeeded(r.get("status")))
     lines = [f"{len(results)} host(s), {ok} succeeded:"]
     for r in results:
         host = str(r.get("host") or "?")

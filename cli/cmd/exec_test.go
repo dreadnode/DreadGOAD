@@ -1,10 +1,16 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
+	"github.com/dreadnode/dreadgoad/internal/aws"
+	"github.com/dreadnode/dreadgoad/internal/azure"
 	"github.com/dreadnode/dreadgoad/internal/provider"
 )
 
@@ -97,6 +103,92 @@ func TestResolveExecTargetsAmbiguousIsAnError(t *testing.T) {
 	_, err := resolveExecTargets(dupes, "web")
 	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
 		t.Fatalf("expected an ambiguity error, got: %v", err)
+	}
+}
+
+// fakeOOB records which channel served each call.
+type fakeOOB struct {
+	mu    sync.Mutex
+	calls []string
+	fail  map[string]bool
+}
+
+func (f *fakeOOB) RunCommandOutOfBand(
+	_ context.Context, id, _ string, _ time.Duration,
+) (*provider.CommandResult, error) {
+	f.mu.Lock()
+	f.calls = append(f.calls, id)
+	f.mu.Unlock()
+	if f.fail[id] {
+		return nil, errors.New("guest agent unreachable")
+	}
+	return &provider.CommandResult{Status: "Succeeded", Stdout: "ok"}, nil
+}
+
+func (f *fakeOOB) OutOfBandChannel() string { return "test channel" }
+
+// The regression that shipped: exec called Provider.RunCommandOnMultiple, which
+// on Azure goes over WinRM — the exact dependency the verb claims to avoid.
+func TestRunOutOfBandOnAllUsesTheControlPlaneForEveryHost(t *testing.T) {
+	f := &fakeOOB{}
+	ids := []string{"/subs/x/DC01", "/subs/x/DC02", "/subs/x/DC03"}
+	got := runOutOfBandOnAll(context.Background(), f, ids, "Get-Service", time.Minute)
+
+	if len(got) != len(ids) {
+		t.Fatalf("expected %d results, got %d", len(ids), len(got))
+	}
+	if len(f.calls) != len(ids) {
+		t.Fatalf("expected one out-of-band call per host, got %d", len(f.calls))
+	}
+	for _, id := range ids {
+		if got[id] == nil || got[id].Status != "Succeeded" {
+			t.Fatalf("host %s: %+v", id, got[id])
+		}
+	}
+}
+
+// One broken host must not discard the others' output — with several hosts the
+// healthy ones are the context that makes the broken one legible.
+func TestRunOutOfBandOnAllIsolatesPerHostFailure(t *testing.T) {
+	f := &fakeOOB{fail: map[string]bool{"/subs/x/DC02": true}}
+	ids := []string{"/subs/x/DC01", "/subs/x/DC02"}
+	got := runOutOfBandOnAll(context.Background(), f, ids, "x", time.Minute)
+
+	if got["/subs/x/DC01"].Status != "Succeeded" {
+		t.Fatalf("healthy host lost: %+v", got["/subs/x/DC01"])
+	}
+	bad := got["/subs/x/DC02"]
+	if bad.Status != "Error" || !strings.Contains(bad.Stderr, "guest agent") {
+		t.Fatalf("failure not reported on its own host: %+v", bad)
+	}
+}
+
+// Both cloud providers must satisfy the interface, or exec refuses them at
+// runtime with "no control-plane execution channel".
+func TestCloudProvidersImplementOutOfBandRunner(t *testing.T) {
+	var _ provider.OutOfBandRunner = (*azure.AzureProvider)(nil)
+	var _ provider.OutOfBandRunner = (*aws.AWSProvider)(nil)
+}
+
+// The bug this pins: exec compared against "Succeeded" while every provider in
+// the tree emits "Success", so a successful run was counted as a failure and
+// exec exited non-zero. It stayed invisible because the host under test was
+// broken on every attempt.
+func TestIsCommandSuccessMatchesTheProviderVocabulary(t *testing.T) {
+	for _, ok := range []string{"Success", "success", "SUCCESS", "Succeeded", "succeeded"} {
+		if !isCommandSuccess(ok) {
+			t.Fatalf("%q must count as success", ok)
+		}
+	}
+	for _, bad := range []string{"Failed", "Error", "no result", "", "Succeededish"} {
+		if isCommandSuccess(bad) {
+			t.Fatalf("%q must NOT count as success", bad)
+		}
+	}
+	// Guard the real coupling: azure's WinRM and Run Command paths both emit
+	// this literal, so a rename there must break this test.
+	if !isCommandSuccess("Success") {
+		t.Fatal("azure winrm.go:265 and runcommand.go:150 both emit \"Success\"")
 	}
 }
 

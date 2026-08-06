@@ -116,6 +116,7 @@ def _instructions(session: dict[str, t.Any]) -> str:
         return _SYSTEM_FALLBACK
 
     def field(value: t.Any) -> str:
+        """Render one snapshot value, or ``(not set)`` when it's absent."""
         # A bare None would render as the string "None" and read to the model as
         # a real value; say plainly that it isn't set.
         text = str(value).strip() if value is not None else ""

@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dreadnode/dreadgoad/internal/provider"
@@ -23,6 +24,13 @@ import (
 // WinRM/psrp-based path (ansible, `provision`, `health-check`) cannot reach a
 // host whose 5985 is refusing — the reason this verb exists, and why it
 // replaced the old `diagnose` verb rather than sitting alongside it.
+//
+// It routes through provider.OutOfBandRunner, NOT Provider.RunCommand. That is
+// load-bearing, not stylistic: AzureProvider.RunCommand goes over WinRM through
+// the bastion tunnel, so an earlier version of this verb inherited exactly the
+// dependency it claims to avoid and failed against the first genuinely wedged
+// host it met. A provider without the interface is refused outright rather than
+// silently downgraded to an in-guest channel.
 var execCmd = &cobra.Command{
 	Use:   "exec",
 	Short: "Run a script on range hosts via the cloud control plane",
@@ -103,12 +111,26 @@ func runExec(cmd *cobra.Command, args []string) error {
 		ids = append(ids, t.ID)
 	}
 
+	// The whole point of this verb is reaching a host that has stopped
+	// answering on WinRM, so demand the control-plane channel rather than
+	// trusting RunCommandOnMultiple to be one. On Azure it is NOT: that path
+	// goes over WinRM through the bastion tunnel and fails on exactly the hosts
+	// this command exists to rescue.
+	oob, hasOOB := prov.(provider.OutOfBandRunner)
+	if !hasOOB {
+		return fmt.Errorf(
+			"provider %q has no control-plane execution channel; exec would need "+
+				"an in-guest listener and so cannot reach an unresponsive host",
+			prov.Name())
+	}
+
 	if !asJSON {
 		names := make([]string, 0, len(targets))
 		for _, t := range targets {
 			names = append(names, t.Name)
 		}
 		fmt.Printf("Running on: %s\n", strings.Join(names, ", "))
+		fmt.Printf("Via: %s (control plane, no WinRM)\n", oob.OutOfBandChannel())
 		fmt.Printf("Command: %s\n\n", script)
 	}
 
@@ -123,10 +145,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	results, err := prov.RunCommandOnMultiple(ctx, ids, script, timeout)
-	if err != nil {
-		return err
-	}
+	results := runOutOfBandOnAll(ctx, oob, ids, script, timeout)
 
 	out := make([]execResult, 0, len(targets))
 	failed := 0
@@ -135,7 +154,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 		if res := results[t.ID]; res != nil {
 			r.Status, r.Stdout, r.Stderr = res.Status, res.Stdout, res.Stderr
 		}
-		if !strings.EqualFold(r.Status, "Succeeded") {
+		if !isCommandSuccess(r.Status) {
 			failed++
 		}
 		out = append(out, r)
@@ -167,6 +186,58 @@ func runExec(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%d of %d host(s) did not succeed", failed, len(out))
 	}
 	return nil
+}
+
+// isCommandSuccess reports whether a CommandResult.Status means the script ran.
+//
+// The codebase convention is "Success" — every provider emits it (azure winrm
+// and runcommand, ludus, proxmox) and every other consumer compares against it
+// (health_check, verify_trusts, lab_reset, provider/retry). "Succeeded" is
+// accepted too because that is Azure's own ARM ExecutionState spelling, which
+// resultFromInstanceView currently maps down to "Success" but which would leak
+// through if that mapping were ever removed.
+//
+// Getting this wrong is silent and total: an exact "Succeeded" check counted
+// EVERY successful run as a failure, exiting non-zero and reporting 0 hosts
+// succeeded. It went unnoticed only because the host under test was genuinely
+// broken every time.
+func isCommandSuccess(status string) bool {
+	return strings.EqualFold(status, "Success") ||
+		strings.EqualFold(status, "Succeeded")
+}
+
+// runOutOfBandOnAll fans the script out across hosts, one goroutine each.
+//
+// Mirrors RunCommandOnMultiple's contract — a per-host error becomes that
+// host's result rather than failing the batch — because with several hosts the
+// interesting outcome is usually that ONE of them is broken, and aborting on
+// the first error would discard the healthy hosts' output that gives it
+// context.
+func runOutOfBandOnAll(
+	ctx context.Context,
+	oob provider.OutOfBandRunner,
+	ids []string,
+	script string,
+	timeout time.Duration,
+) map[string]*provider.CommandResult {
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	out := make(map[string]*provider.CommandResult, len(ids))
+	for _, id := range ids {
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			res, err := oob.RunCommandOutOfBand(ctx, id, script, timeout)
+			if err != nil {
+				res = &provider.CommandResult{Status: "Error", Stderr: err.Error()}
+			}
+			mu.Lock()
+			out[id] = res
+			mu.Unlock()
+		}(id)
+	}
+	wg.Wait()
+	return out
 }
 
 // resolveExecTargets maps a comma-separated host list onto instances.

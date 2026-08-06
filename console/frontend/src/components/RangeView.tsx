@@ -34,8 +34,28 @@ const TIER: Record<string, number> = {
   linux: 3, other: 3,         // extensions & everything else
 }
 const INGRESS_ROLES = new Set(['bastion', 'attackbox'])
-const TIER_Y = 165
-const COL_W = 220
+
+// Node geometry, in border-box terms. The previous spacing was derived from
+// HostNode's `maxWidth: 210`, which is the CONTENT box — the rendered node adds
+// 12px padding and 1px border on each side, so it is up to 236px wide, and the
+// old 220px column made neighbours overlap by 16px. Height grew past the old
+// 165px tier the same way, once the detail block (os / vm / pub) landed.
+//
+// Measured in a browser against the tallest possible content: an INGRESS badge
+// plus all three detail rows. Every variable-length line in HostNode is clamped
+// to one line (hostname, role/domain, and the detail rows all ellipsize), which
+// is what makes this a real bound rather than a sample — an unclamped hostname
+// wrapped to two lines measured 180px and broke the guarantee.
+//
+// Re-measure if HostNode gains a row, or if any line is allowed to wrap.
+// Exported for verification: a layout test can assert no two nodes overlap
+// without re-deriving these, and will fail if a future edit shrinks them.
+export const NODE_MAX_W = 236
+export const NODE_MAX_H = 176
+// Guaranteed clear space between adjacent nodes on both axes.
+export const NODE_GUTTER = 28
+const COL_W = NODE_MAX_W + NODE_GUTTER
+const TIER_Y = NODE_MAX_H + NODE_GUTTER
 
 // The bastion is Azure's *managed* Bastion service, not a VM — it never appears
 // in `lab status`, so its host would sit permanently at "absent". Render it as
@@ -91,11 +111,30 @@ function HostNode({ data }: NodeProps) {
           fontSize: 9, letterSpacing: 0.5, color, marginBottom: 4, fontWeight: 700,
         }}>◆ INGRESS</div>
       )}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontSize: 18 }}>{ROLE_ICON[h.role] ?? ROLE_ICON.other}</span>
-        <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--dn-text-bright)' }}>{h.hostname}</span>
+      {/* Hostname and role/domain are clamped to one line each. Both are
+          variable-length, and left to wrap they made the node taller than
+          NODE_MAX_H — which the tier spacing is derived from, so a long name
+          reintroduced the overlap this layout exists to prevent. A name with no
+          break opportunity (no dots or dashes) overflowed the box sideways
+          instead. Ellipsis + tooltip keeps the full value reachable. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+        <span style={{ fontSize: 18, flexShrink: 0 }}>{ROLE_ICON[h.role] ?? ROLE_ICON.other}</span>
+        <span
+          title={h.hostname}
+          style={{
+            fontSize: 13, fontWeight: 700, color: 'var(--dn-text-bright)',
+            minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >{h.hostname}</span>
       </div>
-      <div style={{ fontSize: 11, color: 'var(--dg-node-label)', marginTop: 4 }}>
+      <div
+        title={h.domain ? `${h.role} · ${h.domain}` : h.role}
+        style={{
+          fontSize: 11, color: 'var(--dg-node-label)', marginTop: 4,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}
+      >
         {h.role}{h.domain ? ` · ${h.domain}` : ''}
       </div>
       <div style={{ display: 'flex', gap: 8, marginTop: 6, fontSize: 11 }}>

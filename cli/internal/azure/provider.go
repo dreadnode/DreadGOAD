@@ -113,13 +113,37 @@ func (p *AzureProvider) runner() *winrmRunner {
 	return p.winrm
 }
 
+// RunCommand goes over WinRM through the bastion tunnel. It is the fast path
+// used by fan-out callers (validate, health-check, verify-trusts) and requires
+// the host to be answering on 5985. For a host too broken to do that, use
+// RunCommandOutOfBand.
 func (p *AzureProvider) RunCommand(ctx context.Context, instanceID, command string, timeout time.Duration) (*provider.CommandResult, error) {
 	res, err := p.runner().runPS(ctx, instanceID, command, timeout)
 	if err != nil {
 		return nil, err
 	}
-	return &provider.CommandResult{Status: res.Status, Stdout: res.Stdout, Stderr: res.Stderr}, nil
+	return provider.CleanResult(
+		&provider.CommandResult{Status: res.Status, Stdout: res.Stdout, Stderr: res.Stderr},
+	), nil
 }
+
+// RunCommandOutOfBand executes via Azure Managed Run Command — the ARM control
+// plane, reaching the VM through its guest agent with no in-guest listener and
+// no bastion tunnel. Slower than WinRM (~5-15s per call, output capped at 4096
+// bytes per stream), and the only channel that survives a host whose WinRM has
+// stopped answering.
+func (p *AzureProvider) RunCommandOutOfBand(ctx context.Context, instanceID, command string, timeout time.Duration) (*provider.CommandResult, error) {
+	res, err := p.client.RunPowerShellCommand(ctx, instanceID, command, timeout)
+	if err != nil {
+		return nil, err
+	}
+	return provider.CleanResult(
+		&provider.CommandResult{Status: res.Status, Stdout: res.Stdout, Stderr: res.Stderr},
+	), nil
+}
+
+// OutOfBandChannel implements provider.OutOfBandRunner.
+func (p *AzureProvider) OutOfBandChannel() string { return "Azure Run Command" }
 
 func (p *AzureProvider) RunCommandOnMultiple(ctx context.Context, instanceIDs []string, command string, timeout time.Duration) (map[string]*provider.CommandResult, error) {
 	type result struct {

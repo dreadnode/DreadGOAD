@@ -93,12 +93,23 @@ func (p *AWSProvider) RunCommand(ctx context.Context, instanceID, command string
 	if err != nil {
 		return nil, err
 	}
-	return &provider.CommandResult{
+	return provider.CleanResult(&provider.CommandResult{
 		Status: result.Status,
 		Stdout: result.Stdout,
 		Stderr: result.Stderr,
-	}, nil
+	}), nil
 }
+
+// RunCommandOutOfBand satisfies provider.OutOfBandRunner. On AWS this is just
+// RunCommand: it already runs through SSM, which is the control plane and
+// needs no in-guest listener. The interface exists so callers can *require*
+// that guarantee rather than assume it — on Azure the two differ.
+func (p *AWSProvider) RunCommandOutOfBand(ctx context.Context, instanceID, command string, timeout time.Duration) (*provider.CommandResult, error) {
+	return p.RunCommand(ctx, instanceID, command, timeout)
+}
+
+// OutOfBandChannel implements provider.OutOfBandRunner.
+func (p *AWSProvider) OutOfBandChannel() string { return "AWS SSM" }
 
 func (p *AWSProvider) RunCommandOnMultiple(ctx context.Context, instanceIDs []string, command string, timeout time.Duration) (map[string]*provider.CommandResult, error) {
 	results, err := p.client.RunPowerShellOnMultiple(ctx, instanceIDs, command, timeout)

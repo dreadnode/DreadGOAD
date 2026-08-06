@@ -61,7 +61,13 @@ to "look something up". Most take no arguments and act on the whole range; the
 redeploy/regenerate ones (/up, /provision, /variant) do their full job when run
 bare, so an unqualified invocation is the widest-reaching one, not the safest:
 - **/start** — powers stopped instances back on. Resumes compute billing.
+  Range-wide; it has no per-host flag.
 - **/stop** — powers instances off. Disks and range state are preserved.
+  Range-wide; it has no per-host flag.
+- **/restart <host>** — reboots ONE host, leaving the rest of the range up.
+  This is the fix for a host too wedged to answer — out of memory, a hung
+  service, a failed boot. Reach for it rather than /stop + /start, which cycle
+  every machine.
 - **/up** — deploys real cloud infrastructure (costs money).
 - **/provision** — re-runs config playbooks against live hosts.
 - **/reset** — restores the AD baseline and DELETES unmanaged objects.

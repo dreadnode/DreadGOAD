@@ -90,6 +90,14 @@ REGISTRY: dict[str, Command] = {
         description="Power off the running lab instances",
         detail="stops compute billing; disks and range state are preserved",
     ),
+    "/restart": Command(
+        "/restart",
+        ("lab", "restart-vm"),
+        dispatch="agent",
+        takes_args=True,
+        description="Reboot one host by name, leaving the rest of the range up",
+        detail="the fix for a host too wedged to answer; give it a hostname",
+    ),
     "/destroy": Command(
         "/destroy",
         ("infra", "destroy"),
@@ -285,6 +293,13 @@ def _verb_for(cmd: Command, extra: list[str]) -> tuple[list[str], list[str]]:
         # output falls through to a generic clip. Any --hosts/--cmd/--timeout
         # the agent supplied passes straight through.
         return ["exec", "--json"], extra
+    if cmd.name == "/restart":
+        # `lab restart-vm` takes the hostname positionally, so a bare /restart
+        # would hit cobra's arg validation with an unhelpful message. Say what's
+        # missing instead — the agent can then ask the operator which host.
+        if not extra:
+            raise ValueError("/restart needs a hostname, e.g. /restart dc02")
+        return ["lab", "restart-vm", extra[0]], extra[1:]
     if cmd.name == "/extensions":
         if extra:
             return ["extension", "provision", extra[0]], extra[1:]
@@ -296,6 +311,30 @@ def _verb_for(cmd: Command, extra: list[str]) -> tuple[list[str], list[str]]:
     return list(cmd.verb), extra
 
 
+# Global flags that select WHICH range the CLI acts on. The console injects
+# these from the session anchor, but cobra's persistent flags are last-wins, so
+# a trailing copy in the agent's args would silently override the injected one
+# and point a command at a different range than the session it runs in.
+_ANCHOR_FLAGS = frozenset({"--config", "--env", "-c", "-e"})
+
+
+def _rejects_anchor_override(extra: list[str]) -> None:
+    """Raise if the caller tried to retarget the range via ``--config``/``--env``.
+
+    The system prompt tells the agent the range is fixed by the tool; this is
+    what makes that true. Both the bare and ``--flag=value`` spellings count.
+    Raising rather than stripping: a silently ignored flag would leave the agent
+    believing it acted on the range it named.
+    """
+    for arg in extra:
+        head = arg.split("=", 1)[0]
+        if head in _ANCHOR_FLAGS:
+            raise ValueError(
+                f"refusing to run: {head!r} would retarget the range. The "
+                f"session's config/env are fixed; drop it and try again."
+            )
+
+
 def build_argv(
     session: dict[str, t.Any],
     name: str,
@@ -305,11 +344,16 @@ def build_argv(
     """Build the full dreadgoad argv for a command in a session's context.
 
     Shape: ``[bin, --config <abs>, --env <env>, <verb…>, <extra…>]``.
+
+    Raises:
+        KeyError: the command isn't registered.
+        ValueError: the extra args try to override the session's range anchor.
     """
     if name not in REGISTRY:
         raise KeyError(f"unknown command: {name}")
     cmd = REGISTRY[name]
     anchor = session["anchor"]
+    _rejects_anchor_override(list(extra_args or []))
     verb, trailing = _verb_for(cmd, list(extra_args or []))
     return [
         resolve_bin(repo_root),

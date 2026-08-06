@@ -168,12 +168,17 @@ def test_dispatch_and_agent_commands() -> None:
         # /exec takes a free-form request ("restart winrm on dc02") that the
         # agent turns into --hosts/--cmd, so it can't be dispatched directly.
         "/exec",
+        # /restart needs a hostname pulled out of the operator's phrasing.
+        "/restart",
     }, agent_dispatch
     # The agent's run_dreadgoad may run ANY registered command (reads + actions).
     assert commands.AGENT_RUNNABLE == frozenset(commands.REGISTRY), (
         commands.AGENT_RUNNABLE
     )
-    assert len(commands.AGENT_RUNNABLE) == 14
+    # Derived, not hardcoded: the point is that AGENT_RUNNABLE covers the whole
+    # registry, which the equality above already states. A literal count just
+    # breaks every time a command is added and teaches you to bump it.
+    assert len(commands.AGENT_RUNNABLE) == len(commands.REGISTRY)
     print("PASS test_dispatch_and_agent_commands")
 
 
@@ -285,6 +290,82 @@ def test_exec_verb_and_json_flag() -> None:
     # /diagnose is gone — it was a broken playbook, replaced by /exec.
     assert "/diagnose" not in commands.REGISTRY
     print("PASS test_exec_verb_and_json_flag")
+
+
+def test_restart_targets_one_host() -> None:
+    """/restart maps to `lab restart-vm <host>` and demands a hostname.
+
+    The capability already existed in the CLI but wasn't in the registry, so the
+    agent inspected /stop and /start, found no per-host flag, and told the
+    operator a single-host reboot was impossible.
+    """
+    assert _argv("/restart", ["dc02"])[5:] == ["lab", "restart-vm", "dc02"]
+    # Extra args ride along after the hostname.
+    assert _argv("/restart", ["dc02", "--force"])[5:] == [
+        "lab",
+        "restart-vm",
+        "dc02",
+        "--force",
+    ]
+    # Bare /restart must say what's missing rather than hand cobra an empty
+    # positional and surface its generic arg error.
+    try:
+        _argv("/restart", [])
+    except ValueError as exc:
+        assert "hostname" in str(exc), exc
+    else:
+        raise AssertionError("bare /restart should be refused")
+
+    # Range-wide power commands stay range-wide; /restart is the per-host one.
+    assert _argv("/stop")[5:] == ["lab", "stop"]
+    assert _argv("/start")[5:] == ["lab", "start"]
+    print("PASS test_restart_targets_one_host")
+
+
+def test_anchor_cannot_be_overridden_by_extra_args() -> None:
+    """Trailing --config/--env must be refused, not silently obeyed.
+
+    cobra's persistent flags are last-wins, so a trailing copy overrides the
+    anchor the console injected and points the command at a DIFFERENT range
+    than the session. Proven against the real binary: a later --config is the
+    one it opens. Every arg-taking command forwards agent args, so all of them
+    are exposed, and /exec would run admin scripts on the wrong range.
+    """
+    arg_taking = [n for n, c in commands.REGISTRY.items() if c.takes_args]
+    assert arg_taking, "expected some commands to forward free-form args"
+
+    for name in arg_taking:
+        for bad in (
+            ["--config", "/evil.yaml"],
+            ["--env", "other"],
+            ["--config=/evil.yaml"],
+            ["--env=other"],
+            ["-c", "/evil.yaml"],
+            ["--hosts", "dc02", "--cmd", "x", "--config", "/evil.yaml"],
+        ):
+            try:
+                _argv(name, bad)
+            except ValueError as exc:
+                assert "retarget" in str(exc), exc
+            else:
+                raise AssertionError(f"{name} accepted {bad!r} — range escape")
+
+    # Legitimate args that merely start with the same letters still work.
+    assert "--configure" in _argv("/exec", ["--configure", "x"])
+    assert _argv("/scrub", ["--purge-ad"])[5:] == [
+        "score",
+        "reset",
+        "--apply",
+        "--purge-ad",
+    ]
+    # And the anchor still leads the argv.
+    assert _argv("/exec", ["--hosts", "dc02"])[1:5] == [
+        "--config",
+        "/x/dreadgoad.yaml",
+        "--env",
+        "dev",
+    ]
+    print("PASS test_anchor_cannot_be_overridden_by_extra_args")
 
 
 def test_exec_guidance_states_the_dangerous_parts() -> None:
@@ -476,6 +557,8 @@ def main() -> None:
     test_load_prompt_and_guidance_injection()
     test_system_prompt_covers_the_registry()
     test_exec_verb_and_json_flag()
+    test_restart_targets_one_host()
+    test_anchor_cannot_be_overridden_by_extra_args()
     test_exec_guidance_states_the_dangerous_parts()
     test_guidance_fallback_when_file_absent()
     test_resolve_bin_prefers_repo_binary()

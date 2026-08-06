@@ -176,6 +176,93 @@ def test_summarize_exec_flags_truncated_output() -> None:
     print("PASS test_summarize_exec_flags_truncated_output")
 
 
+def test_exec_decodes_utf16_from_a_stale_cli() -> None:
+    """Defence in depth: the CLI normalises UTF-16, but binaries can skew.
+
+    Windows PowerShell writes its fatal banner as UTF-16LE. provider.CleanResult
+    handles it Go-side, but the console can be pointed at an older
+    cli/dreadgoad than it shipped with, and a raw NUL in a JSON string is
+    garbage to both the model and the browser regardless.
+    """
+    banner = "Windows PowerShell terminated with the following error:"
+    utf16 = "".join(c + "\x00" for c in banner)
+    out = summary.summarize(
+        "/exec",
+        json.dumps([{"host": "h", "status": "Failed", "stdout": "", "stderr": utf16}]),
+    )
+    assert banner in out, out
+    assert "\x00" not in out, "NULs reached the model"
+
+    # Ordinary output must be byte-identical — this runs on every result.
+    for plain in ("", "Status : Running", "ünïcode ✓ 日本語", "A" * 4096):
+        assert summary.decode_windows_text(plain) == plain, repr(plain)
+    # A stray NUL in UTF-8 text is dropped, not misread as UTF-16.
+    assert summary.decode_windows_text("service\x00 stopped") == "service stopped"
+    print("PASS test_exec_decodes_utf16_from_a_stale_cli")
+
+
+def test_exec_success_vocabulary_matches_the_cli() -> None:
+    """The CLI emits "Success"; matching only "Succeeded" hid every success.
+
+    Every provider in the Go tree (azure winrm + runcommand, ludus, proxmox)
+    sets Status="Success". Counting only "Succeeded" reported a fully healthy
+    run as 0 succeeded — invisible until a host actually worked.
+    """
+    for ok in ("Success", "success", "SUCCESS", "Succeeded", " succeeded "):
+        assert summary.exec_succeeded(ok), ok
+    for bad in ("Failed", "Error", "no result", "", None, "Successish"):
+        assert not summary.exec_succeeded(bad), bad
+
+    # End to end: a healthy two-host run must read as fully succeeded.
+    out = summary.summarize(
+        "/exec",
+        json.dumps(
+            [
+                {"host": "a", "status": "Success", "stdout": "ok", "stderr": ""},
+                {"host": "b", "status": "Success", "stdout": "ok", "stderr": ""},
+            ]
+        ),
+    )
+    assert out.startswith("2 host(s), 2 succeeded:"), out
+    print("PASS test_exec_success_vocabulary_matches_the_cli")
+
+
+def test_summarize_exec_strips_ansi_from_host_output() -> None:
+    """Colourised host output must not reach the model or the chat pane.
+
+    summarize()'s up-front strip_ansi can't catch this: inside the JSON the
+    escape is the six characters ``\\u001b``, so the CSI pattern doesn't match
+    until after json.loads. PowerShell 7 colourises by default, so /exec would
+    otherwise hand raw escapes to both consumers.
+    """
+    payload = json.dumps(
+        [
+            {
+                "host": "h",
+                "instance_id": "i",
+                "status": "Succeeded",
+                "stdout": "\x1b[32;1mStatus\x1b[0m : Stopped",
+                "stderr": "\x1b[31mboom\x1b[0m",
+            }
+        ]
+    )
+    out = summary.summarize("/exec", payload)
+    assert "\x1b" not in out, "agent path still sees escapes"
+    assert "Status : Stopped" in out and "STDERR: boom" in out, out
+
+    # The chat overlay parses separately (chat._emit_overlays) and must clean
+    # the same way, or the UI renders literal escape codes.
+    cleaned = summary.clean_exec_results(summary.parse_json_array(payload) or [])
+    assert cleaned[0]["stdout"] == "Status : Stopped", cleaned
+    assert cleaned[0]["stderr"] == "boom", cleaned
+
+    # Cleaning must not mutate the caller's list, which chat.py also holds.
+    original = [{"host": "h", "stdout": "\x1b[31mx\x1b[0m", "stderr": ""}]
+    summary.clean_exec_results(original)
+    assert original[0]["stdout"] == "\x1b[31mx\x1b[0m", "input was mutated"
+    print("PASS test_summarize_exec_strips_ansi_from_host_output")
+
+
 def test_summarize_exec_edge_cases() -> None:
     assert "nothing ran" in summary.summarize("/exec", "[]")
     # A host that produced neither stream is stated, not silently blank.
@@ -529,6 +616,9 @@ if __name__ == "__main__":
     test_instances_surface_cloud_placement()
     test_summarize_exec_per_host_blocks()
     test_summarize_exec_flags_truncated_output()
+    test_exec_decodes_utf16_from_a_stale_cli()
+    test_exec_success_vocabulary_matches_the_cli()
+    test_summarize_exec_strips_ansi_from_host_output()
     test_summarize_exec_edge_cases()
     test_instances_empty_and_unparseable()
     test_non_object_array_falls_back_instead_of_raising()
