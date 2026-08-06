@@ -198,6 +198,45 @@ function ScrubReport({ ev }: { ev: ChatEvent }) {
   )
 }
 
+function ExecReport({ ev }: { ev: ChatEvent }) {
+  const results = ev.results ?? []
+  const succeeded = ev.succeeded ?? 0
+  const total = ev.total ?? results.length
+  const allOk = succeeded === total
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ marginBottom: 4 }}>
+        <Badge text="EXEC" color="var(--dg-interactive)" />
+        <span style={{ color: allOk ? 'var(--dn-success)' : 'var(--dn-error)', fontSize: 12 }}>
+          {succeeded}/{total} succeeded
+        </span>
+      </div>
+      {results.map((r, i) => (
+        <div key={i} style={{ marginLeft: 12, marginBottom: 6, fontSize: 11 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+            <span style={{ color: 'var(--dn-text-bright)' }}>{r.host}</span>
+            <span style={{
+              color: r.status?.toLowerCase() === 'succeeded'
+                ? 'var(--dn-success)' : 'var(--dn-error)',
+            }}>{r.status}</span>
+          </div>
+          {/* Output is raw host text — pre-wrapped, never rendered as markdown.
+              It comes off a deliberately vulnerable range and is untrusted. */}
+          {r.stdout ? (
+            <pre style={preStyle}>{r.stdout}</pre>
+          ) : null}
+          {r.stderr ? (
+            <pre style={{ ...preStyle, color: 'var(--dn-error)' }}>{r.stderr}</pre>
+          ) : null}
+          {!r.stdout && !r.stderr ? (
+            <span style={{ color: 'var(--dg-node-label)' }}>(no output)</span>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  )
+}
+
 /**
  * Elapsed turn time as `m:ss`, or `h:mm:ss` once it passes an hour — a `/up`
  * legitimately runs for tens of minutes, so minutes alone would wrap awkwardly.
@@ -290,6 +329,8 @@ function Message({ ev }: { ev: ChatEvent }) {
       return <ValidateReport ev={ev} />
     case 'scrub_report':
       return <ScrubReport ev={ev} />
+    case 'exec_report':
+      return <ExecReport ev={ev} />
     case 'status':
       return <div style={{ margin: '6px 0', fontSize: 11, color: 'var(--dn-text-dim)', fontStyle: 'italic' }}>{ev.content}</div>
     case 'error':

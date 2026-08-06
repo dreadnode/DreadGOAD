@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ReactFlow,
   Background,
@@ -186,6 +186,8 @@ interface HeaderField {
   label: string
   value: string
   title?: string
+  /** Force a wrap before this pill, starting a new row of the header. */
+  newRow?: boolean
 }
 
 /** One range-identity pair as a segmented pill: tinted label fused to its value. */
@@ -306,21 +308,24 @@ export default function RangeView(
     [range, now],
   )
 
-  // Key range identity, from the session anchor + snapshot. The account fields
-  // are learned by the ingestion hook post-deploy, so they appear only once the
-  // range has been read at least once. Both providers report an account; only
-  // Azure has a resource group, so that pill is simply absent on AWS.
+  // Key range identity, from the session anchor + snapshot. Split across two
+  // rows by where the values come from: the config anchor (env/provider/region,
+  // known before anything is deployed) on the first, then the cloud placement
+  // the ingestion hook learns post-deploy on the second. Both providers report
+  // an account; only Azure has a resource group, absent on AWS.
   const fields = useMemo<HeaderField[]>(() => {
     if (!session) return []
     const snap = session.snapshot ?? {}
     // Provider-neutral: `account` is an AWS account ID or an Azure subscription,
     // `group` an Azure resource group (absent on AWS, which has no equivalent).
     const account = snap.account
-    const rows: Array<{ label: string; value?: string | null; title?: string }> = [
+    // Values are nullable here and filtered below, so the pill list only ever
+    // holds fields that actually have something to show.
+    const rows: Array<Omit<HeaderField, 'value'> & { value?: string | null }> = [
       { label: 'env', value: session.anchor?.env },
       { label: 'provider', value: snap.provider },
       { label: 'region', value: snap.region },
-      { label: 'group', value: snap.group },
+      { label: 'resource group', value: snap.group, newRow: true },
       // An Azure subscription GUID is 36 chars — far too wide for a header pill,
       // so show the leading segment with the whole value in the tooltip. An AWS
       // account ID is 12 digits and has no dashes, so it renders in full.
@@ -328,11 +333,14 @@ export default function RangeView(
         label: 'account',
         value: account ? `${account.split('-')[0]}${account.includes('-') ? '…' : ''}` : null,
         title: account ?? undefined,
+        // Carries the break when there's no resource group to carry it (AWS),
+        // so the placement row starts on its own line either way.
+        newRow: !snap.group,
       },
     ]
     return rows
       .filter(r => !!r.value)
-      .map(r => ({ label: r.label, value: r.value as string, title: r.title }))
+      .map(r => ({ label: r.label, value: r.value as string, title: r.title, newRow: r.newRow }))
   }, [session])
 
   if (!sessionId) {
@@ -354,7 +362,12 @@ export default function RangeView(
               from the identity fields, which are spaced more tightly. */}
           <span style={{ color: 'var(--dn-electric)', fontSize: 13, fontWeight: 700, marginRight: 10 }}>RANGE</span>
           {fields.map(f => (
-            <Field key={f.label} label={f.label} value={f.value} title={f.title} />
+            <Fragment key={f.label}>
+              {/* A full-width zero-height item is the only way to force a wrap
+                  in a flex row — it fills the line, pushing what follows down. */}
+              {f.newRow && <span style={{ flexBasis: '100%', height: 0 }} />}
+              <Field label={f.label} value={f.value} title={f.title} />
+            </Fragment>
           ))}
         </div>
         {/* minHeight = one pill (12px text + 8px padding + 2px border), so the

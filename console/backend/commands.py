@@ -117,12 +117,14 @@ REGISTRY: dict[str, Command] = {
         description="Check the vulnerability configuration matches this variant",
         detail="read-only; needs the variant's mapping.json and an inventory",
     ),
-    "/diagnose": Command(
-        "/diagnose",
-        ("diagnose",),
+    "/exec": Command(
+        "/exec",
+        ("exec",),
+        dispatch="agent",
         long_running=True,
-        description="Deep connectivity checks against the domain controllers",
-        detail="read-only; use when /health fails and you need the reason",
+        takes_args=True,
+        description="Run a script on range hosts via the cloud control plane",
+        detail="admin-level and no dry run; reaches hosts whose WinRM is down",
     ),
     "/score": Command(
         "/score",
@@ -277,6 +279,12 @@ def _verb_for(cmd: Command, extra: list[str]) -> tuple[list[str], list[str]]:
             rest.append(arg)
         verb = ["score", "reset"] if dry else ["score", "reset", "--apply"]
         return verb, rest
+    if cmd.name == "/exec":
+        # Always --json: the console parses per-host results into a report, and
+        # leaving the flag to the agent means it eventually forgets and the
+        # output falls through to a generic clip. Any --hosts/--cmd/--timeout
+        # the agent supplied passes straight through.
+        return ["exec", "--json"], extra
     if cmd.name == "/extensions":
         if extra:
             return ["extension", "provision", extra[0]], extra[1:]

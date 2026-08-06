@@ -162,6 +162,11 @@ def summarize_instances(instances: list[dict[str, t.Any]]) -> str:
     Keeps every record — the whole point — and drops the cloud resource ids,
     which are ~120 chars each on Azure and which the agent never needs (the
     attack box is discovered by the ingestion hook, not by the model).
+
+    Account and resource group ARE kept, once rather than per row: every
+    instance in a range shares them, and they're how the agent answers "which
+    subscription/account is this in?". The system prompt promises this read can
+    answer that, so dropping them here would make the prompt lie.
     """
     if not instances:
         return "0 instances found (the range is not deployed, or was destroyed)."
@@ -174,7 +179,62 @@ def summarize_instances(instances: list[dict[str, t.Any]]) -> str:
         state = str(inst.get("state") or "?")
         ip = str(inst.get("private_ip") or "-")
         lines.append(f"  {state:<10} {name:<{width}}  {ip}")
+
+    # Both are `omitempty` in the CLI's JSON, so absence means the provider
+    # couldn't determine them — say nothing rather than printing a blank field.
+    placement: list[str] = []
+    account = next((str(i["account"]) for i in instances if i.get("account")), None)
+    group = next((str(i["group"]) for i in instances if i.get("group")), None)
+    if account:
+        placement.append(f"account/subscription {account}")
+    if group:
+        placement.append(f"resource group {group}")
+    if placement:
+        lines.append("deployed into: " + ", ".join(placement))
     lines.append("(cloud resource ids omitted)")
+    return "\n".join(lines)
+
+
+# Azure Run Command truncates each stream at 4096 bytes without saying so. When a
+# host's stdout lands exactly at the cap it is almost certainly cut, and the agent
+# would otherwise treat the fragment as the whole answer — the same failure the
+# clip() marker exists to prevent, one layer down.
+_AZURE_STREAM_CAP = 4096
+
+
+def summarize_exec(results: list[dict[str, t.Any]]) -> str:
+    """Render ``exec --json`` as a per-host status + output block.
+
+    Keeps stdout and stderr verbatim (the agent is reading them to diagnose);
+    ``clip`` bounds the total afterwards. Hosts are kept in the order the CLI
+    reported them, which is the order the operator named them.
+    """
+    if not results:
+        return "no hosts matched — nothing ran."
+
+    ok = sum(1 for r in results if str(r.get("status", "")).lower() == "succeeded")
+    lines = [f"{len(results)} host(s), {ok} succeeded:"]
+    for r in results:
+        host = str(r.get("host") or "?")
+        status = str(r.get("status") or "?")
+        lines.append(f"\n=== {host} — {status} ===")
+        raw_stdout = str(r.get("stdout") or "")
+        stdout = raw_stdout.strip()
+        stderr = str(r.get("stderr") or "").strip()
+        if stdout:
+            lines.append(stdout)
+            # Measure the RAW length: the provider cuts at 4096 bytes, and
+            # PowerShell output almost always ends in a newline, so stripping
+            # first put the common case at 4095 and silently un-flagged it.
+            if len(raw_stdout) >= _AZURE_STREAM_CAP:
+                lines.append(
+                    "[stdout hit the provider's 4096-byte cap and is almost "
+                    "certainly truncated — re-run with a narrower query]"
+                )
+        if stderr:
+            lines.append(f"STDERR: {stderr}")
+        if not stdout and not stderr:
+            lines.append("(no output)")
     return "\n".join(lines)
 
 
@@ -425,4 +485,8 @@ def summarize(command: str, output: str, limit: int = DEFAULT_LIMIT) -> str:
         report = parse_scrub_report(output)
         if report is not None:
             return clip(summarize_scrub(report), limit)
+    elif command == "/exec":
+        results = parse_json_array(output)
+        if results is not None:
+            return clip(summarize_exec(results), limit)
     return clip(output, limit)

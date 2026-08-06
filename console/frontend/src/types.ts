@@ -102,6 +102,16 @@ export interface ScrubHost {
   errors: string[]
 }
 
+// One host's result from /exec. `stdout`/`stderr` are raw output from a
+// deliberately vulnerable range — render as text, never as markup.
+export interface ExecResult {
+  host: string
+  instance_id: string
+  status: string
+  stdout: string
+  stderr: string
+}
+
 // Chat event as sent over the WebSocket (kind + kind-specific fields).
 export interface ChatEvent {
   _cid?: number // client-assigned stable key (App-side)
@@ -131,6 +141,8 @@ export interface ChatEvent {
   hosts?: ScrubHost[]
   found?: number
   removed?: number
+  results?: ExecResult[]
+  succeeded?: number
   usage?: { input_tokens?: number; output_tokens?: number }
   events?: ChatEvent[]
   [key: string]: unknown

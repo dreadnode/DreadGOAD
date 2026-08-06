@@ -69,7 +69,7 @@ never run a direct command or raw cloud CLI — a safety property.
 | `/instances` | `lab status --json` | ⚡ direct | Cloud power state |
 | `/health` | `health-check --json` | ⚡ direct | Per-host AD health (rendered as a table) |
 | `/validate` | `validate` | ⚡ direct | Vuln-config correctness |
-| `/diagnose` | `diagnose` | ⚡ direct | DC connectivity drill-down |
+| `/exec` | `exec --json` | 🤖 agent | Run a script on named hosts via the cloud control plane |
 | `/start` | `lab start` | ⚡ direct | Power on |
 | `/stop` | `lab stop` | ⚡ direct | Power off |
 | `/scrub` | `score reset` | ⚡ direct | Clean agent artifacts |

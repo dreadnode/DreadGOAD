@@ -94,17 +94,41 @@ def _instructions(session: dict[str, t.Any]) -> str:
 
     The template uses ``$placeholder`` fields filled from the session's anchor
     and snapshot. Falls back to a terse inline prompt if the file is missing.
+
+    Only config-derived snapshot fields belong here. Instructions are rendered
+    once, when the agent is first created and cached (see chat._get_agent), so a
+    field the ingestion hook learns post-deploy — ``account``, ``group``,
+    ``attack_box`` — would freeze at whatever it was on the first turn, usually
+    empty. Those stay out; the agent reads them from ``/instances``, which is
+    always current.
+
+    Editing ``system.md``: every ``$name`` in it is a substitution, so a literal
+    dollar sign must be written ``$$``. This bites hardest on PowerShell — a
+    ``/exec`` example containing ``$env:COMPUTERNAME`` silently renders as
+    ``dreadindex:COMPUTERNAME``, because ``env`` is one of the keys below. The
+    corruption leaves no ``$`` behind, so the "no unsubstituted placeholder"
+    test in test_commands.py cannot catch it.
     """
     anchor = session["anchor"]
     snap = session.get("snapshot", {})
     template = commands.load_prompt("system")
     if template is None:
         return _SYSTEM_FALLBACK
+
+    def field(value: t.Any) -> str:
+        # A bare None would render as the string "None" and read to the model as
+        # a real value; say plainly that it isn't set.
+        text = str(value).strip() if value is not None else ""
+        return text or "(not set)"
+
     return string.Template(template).safe_substitute(
         config_path=anchor["config_path"],
         env=anchor["env"],
-        provider=snap.get("provider"),
-        lab=snap.get("lab"),
+        provider=field(snap.get("provider")),
+        lab=field(snap.get("lab")),
+        region=field(snap.get("region")),
+        variant_name=field(snap.get("variant_name")),
+        vpc_cidr=field(snap.get("vpc_cidr")),
     )
 
 
@@ -122,13 +146,16 @@ def _make_run_dreadgoad(app: t.Any, session_id: str, run_cli: RunCli):  # noqa: 
     async def run_dreadgoad(command: str, args: list[str] | None = None) -> str:
         """Run a dreadgoad command for THIS session and return its result.
 
-        Use reads (/instances, /health, /validate, /diagnose) to answer questions,
-        and the action commands to perform what the operator asked.
+        Use reads (/instances, /health, /validate) to answer questions, and the
+        action commands to perform what the operator asked.
 
         Args:
             command: a dreadgoad slash command — reads (/instances, /health,
-                /validate, /diagnose, /start, /stop, /scrub) or actions (/up,
-                /provision, /reset, /variant, /extensions, /score, /destroy).
+                /validate) or actions, which change the range (/start, /stop,
+                /up, /provision, /reset, /scrub, /exec, /variant, /extensions,
+                /score, /destroy). /scrub deletes by default; pass "dry" to
+                preview. /exec runs an arbitrary admin-level script on named
+                hosts and has no dry run.
             args: CLI flags/values interpreted from the operator's request, e.g.
                 ["--from", "ad-data.yml"] or ["/remote/report.jsonl", "--live-verify"].
                 Do NOT pass --config/--env — the range is fixed.

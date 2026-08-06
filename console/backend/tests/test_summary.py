@@ -54,6 +54,152 @@ def test_instances_scale_and_states() -> None:
     print("PASS test_instances_scale_and_states")
 
 
+def test_instances_surface_cloud_placement() -> None:
+    """Account/resource group reach the agent — system.md promises this read has them.
+
+    They're identical across a range, so they're reported once, not per row.
+    """
+    azure = _instances(3)
+    for i in azure:
+        i["account"] = "70a9c8a4-6bc6-4a48-ae24-27996cea8c02"
+        i["group"] = "DREADINDEX-DREADGOAD-RG"
+    out = summary.summarize("/instances", json.dumps(azure))
+    assert "70a9c8a4-6bc6-4a48-ae24-27996cea8c02" in out, out
+    assert "DREADINDEX-DREADGOAD-RG" in out, out
+    assert out.count("DREADINDEX-DREADGOAD-RG") == 1, "once, not per instance"
+
+    # AWS: an account but no resource group — no empty "resource group" field.
+    aws = _instances(2)
+    for i in aws:
+        i["account"] = "123456789012"
+    out = summary.summarize("/instances", json.dumps(aws))
+    assert "123456789012" in out, out
+    assert "resource group" not in out, out
+
+    # Pre-deploy / older CLI: neither key present → no placement line at all.
+    out = summary.summarize("/instances", json.dumps(_instances(2)))
+    assert "deployed into" not in out, out
+    print("PASS test_instances_surface_cloud_placement")
+
+
+def test_summarize_exec_per_host_blocks() -> None:
+    """/exec renders status + output per host, mixed outcomes included."""
+    out = summary.summarize(
+        "/exec",
+        json.dumps(
+            [
+                {
+                    "host": "env-DC02-vm",
+                    "instance_id": "/s/1",
+                    "status": "Succeeded",
+                    "stdout": "Status : Stopped\nStartType : Manual",
+                    "stderr": "",
+                },
+                {
+                    "host": "env-DC03-vm",
+                    "instance_id": "/s/2",
+                    "status": "Failed",
+                    "stdout": "",
+                    "stderr": "run command timed out",
+                },
+            ]
+        ),
+    )
+    assert "2 host(s), 1 succeeded" in out, out
+    assert "env-DC02-vm" in out and "StartType : Manual" in out, out
+    assert "STDERR: run command timed out" in out, out
+    print("PASS test_summarize_exec_per_host_blocks")
+
+
+def test_summarize_exec_flags_truncated_output() -> None:
+    """Azure silently caps a stream at 4096 bytes — say so, don't let the agent
+    treat the fragment as the whole answer."""
+    capped = "A" * 4096
+    out = summary.summarize(
+        "/exec",
+        json.dumps(
+            [
+                {
+                    "host": "h",
+                    "instance_id": "i",
+                    "status": "Succeeded",
+                    "stdout": capped,
+                    "stderr": "",
+                }
+            ]
+        ),
+        limit=99_000,
+    )
+    assert "almost certainly truncated" in out, out
+    # Just under the cap is NOT flagged — a false warning teaches the agent to
+    # ignore the real one.
+    ok = summary.summarize(
+        "/exec",
+        json.dumps(
+            [
+                {
+                    "host": "h",
+                    "instance_id": "i",
+                    "status": "Succeeded",
+                    "stdout": "A" * 4095,
+                    "stderr": "",
+                }
+            ]
+        ),
+        limit=99_000,
+    )
+    assert "truncated" not in ok, "sub-cap output must not be flagged"
+
+    # Regression: the length was measured AFTER .strip(), so a capped stream
+    # ending in whitespace read as 4095 and was silently not flagged — and
+    # PowerShell output nearly always ends in a newline, so that was the
+    # common case, not an edge case.
+    for tail in ("\n", "\r\n", "  ", " \n"):
+        padded = "A" * (4096 - len(tail)) + tail
+        assert len(padded) == 4096
+        out = summary.summarize(
+            "/exec",
+            json.dumps(
+                [
+                    {
+                        "host": "h",
+                        "instance_id": "i",
+                        "status": "Succeeded",
+                        "stdout": padded,
+                        "stderr": "",
+                    }
+                ]
+            ),
+            limit=99_000,
+        )
+        assert "almost certainly truncated" in out, f"tail {tail!r} not flagged"
+    print("PASS test_summarize_exec_flags_truncated_output")
+
+
+def test_summarize_exec_edge_cases() -> None:
+    assert "nothing ran" in summary.summarize("/exec", "[]")
+    # A host that produced neither stream is stated, not silently blank.
+    out = summary.summarize(
+        "/exec",
+        json.dumps(
+            [
+                {
+                    "host": "h",
+                    "instance_id": "i",
+                    "status": "Succeeded",
+                    "stdout": "",
+                    "stderr": "",
+                }
+            ]
+        ),
+    )
+    assert "(no output)" in out, out
+    # Not JSON (the verb failed before emitting any) → error text preserved.
+    err = 'host "dc0" is ambiguous, matches: DC01, DC02'
+    assert err in summary.summarize("/exec", err)
+    print("PASS test_summarize_exec_edge_cases")
+
+
 def test_instances_empty_and_unparseable() -> None:
     assert "0 instances" in summary.summarize("/instances", "[]")
     # Not JSON at all (e.g. the command errored) → the error text is preserved.
@@ -380,6 +526,10 @@ def test_unknown_command_falls_back_to_clip() -> None:
 if __name__ == "__main__":
     test_regression_seven_vms_all_survive()
     test_instances_scale_and_states()
+    test_instances_surface_cloud_placement()
+    test_summarize_exec_per_host_blocks()
+    test_summarize_exec_flags_truncated_output()
+    test_summarize_exec_edge_cases()
     test_instances_empty_and_unparseable()
     test_non_object_array_falls_back_instead_of_raising()
     test_validate_report_read_from_saved_path()

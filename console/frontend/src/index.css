@@ -70,31 +70,28 @@ html, body, #root {
   overflow: hidden;
 }
 
-/* "Agent working" indicator — a braille octopus, same idiom as the spinner it
-   replaces: one cell, frame-swapped with steps(1), no transforms.
-   A braille cell is 2x4 dots, which is just enough:
-       1 4     dots 1,2,4,5  = the mantle, held still
-       2 5     dots 3,6      = tentacles raised
-       3 6     dots 7,8      = tentacles lowered
-       7 8
-   Alternating the bottom two rows makes the tentacles undulate out of phase,
-   which reads as swimming rather than blinking. The tucked frame is the beat
-   that turns the wiggle into a stroke: spread, sweep down, pull in, spread
-   again. Slower than the 0.8s spinner — a creature drifts, it doesn't spin. */
+/* "Agent working" indicator — the standard braille spinner: one cell, frame
+   swapped with steps(1), no transforms. The dot pair rotates around the cell,
+   which reads as motion at a glance without pulling the eye off the output. */
 .agent-working::before {
-  content: '⠿';
-  animation: octo-wiggle 0.9s steps(1) infinite;
+  content: '⠋';
+  animation: braille-spin 0.8s steps(1) infinite;
   margin-right: 6px;
 }
-@keyframes octo-wiggle {
-  0%   { content: '⠿'; }  /* spread — both tentacles raised */
-  20%  { content: '⡻'; }  /* left drops, right holds        */
-  40%  { content: '⣛'; }  /* both lowered — end of sweep    */
-  60%  { content: '⠛'; }  /* tucked in — the beat           */
-  80%  { content: '⢟'; }  /* spreading back out             */
+@keyframes braille-spin {
+  0%   { content: '⠋'; }
+  10%  { content: '⠙'; }
+  20%  { content: '⠹'; }
+  30%  { content: '⠸'; }
+  40%  { content: '⠼'; }
+  50%  { content: '⠴'; }
+  60%  { content: '⠦'; }
+  70%  { content: '⠧'; }
+  80%  { content: '⠇'; }
+  90%  { content: '⠏'; }
 }
 
-/* Respect a reduced-motion preference: keep the octopus, drop the animation. */
+/* Respect a reduced-motion preference: keep the glyph, drop the animation. */
 @media (prefers-reduced-motion: reduce) {
   .agent-working::before {
     animation: none;

@@ -51,6 +51,7 @@ CHAT_KINDS = [
     "health_report",
     "validate_report",
     "scrub_report",
+    "exec_report",
 ]
 
 # Per-session agent runtime (isolated; §4.2). Keyed by session id.
@@ -434,6 +435,23 @@ async def _emit_overlays(
                     "hosts": hosts,
                     "found": sum(int(h.get("found", 0)) for h in hosts),
                     "removed": sum(int(h.get("removed", 0)) for h in hosts),
+                },
+            )
+    elif name == "/exec":
+        results = summary.parse_json_array(output)
+        if results is not None:
+            await emit_event(
+                app,
+                session_id,
+                "exec_report",
+                {
+                    "results": results,
+                    "succeeded": sum(
+                        1
+                        for r in results
+                        if str(r.get("status", "")).lower() == "succeeded"
+                    ),
+                    "total": len(results),
                 },
             )
     elif name in ("/variant", "/extensions"):

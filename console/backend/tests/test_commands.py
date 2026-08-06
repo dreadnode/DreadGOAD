@@ -165,6 +165,9 @@ def test_dispatch_and_agent_commands() -> None:
         "/variant",
         "/extensions",
         "/score",
+        # /exec takes a free-form request ("restart winrm on dc02") that the
+        # agent turns into --hosts/--cmd, so it can't be dispatched directly.
+        "/exec",
     }, agent_dispatch
     # The agent's run_dreadgoad may run ANY registered command (reads + actions).
     assert commands.AGENT_RUNNABLE == frozenset(commands.REGISTRY), (
@@ -208,6 +211,91 @@ def test_load_prompt_and_guidance_injection() -> None:
     assert "extension list" in commands.expand_command_prompt("/extensions", [])
     assert "pipeline" in commands.expand_command_prompt("/up", []).lower()
     print("PASS test_load_prompt_and_guidance_injection")
+
+
+def test_system_prompt_covers_the_registry() -> None:
+    """Every command the agent may run is described in system.md.
+
+    The agent can invoke the whole registry, so a command the prompt omits is one
+    it runs with no idea of the consequences — /scrub was missing while it was
+    already able to delete.
+
+    Placeholders are rendered through the REAL renderer (agent._instructions)
+    rather than a list maintained here: the failure mode is system.md gaining a
+    ``$field`` that agent.py never substitutes, and a hand-kept list in this test
+    would drift in exactly the same way and hide it.
+    """
+    tpl = commands.load_prompt("system")
+    assert tpl is not None
+    for name in commands.AGENT_RUNNABLE:
+        assert name in tpl, f"{name} is agent-runnable but absent from system.md"
+
+    from console.backend import agent  # local: pulls the agent runtime deps
+
+    rendered = agent._instructions(
+        {
+            "anchor": {"config_path": "/r/dreadgoad.yaml", "env": "dev"},
+            "snapshot": {
+                "provider": "aws",
+                "lab": "ad/GOAD",
+                "region": "us-west-2",
+                "variant_name": "redteam",
+                "vpc_cidr": "10.0.0.0/16",
+            },
+        }
+    )
+    assert "$" not in rendered, "system.md has a placeholder agent.py doesn't fill"
+    for value in ("us-west-2", "redteam", "10.0.0.0/16"):
+        assert value in rendered, f"{value} missing from the rendered prompt"
+
+    # A fresh session has no region/variant yet; the prompt must say so rather
+    # than rendering the literal string "None", which reads as a real value.
+    sparse = agent._instructions(
+        {"anchor": {"config_path": "/r/c.yaml", "env": "dev"}, "snapshot": {}}
+    )
+    assert "$" not in sparse and "None" not in sparse, sparse
+    assert "(not set)" in sparse, sparse
+
+    # Hook-learned fields must NOT be interpolated: instructions render once and
+    # are cached, so they would freeze empty for the life of the session.
+    for absent in ("$account", "$group", "$attack_box"):
+        assert absent not in tpl, f"{absent} is hook-learned and would go stale"
+    # /scrub's console default is inverted vs the CLI's, so the prompt has to say
+    # so — otherwise the agent treats a bare /scrub as the CLI's dry run.
+    assert "APPLIES BY DEFAULT" in rendered, "/scrub's inverted default must be stated"
+    print("PASS test_system_prompt_covers_the_registry")
+
+
+def test_exec_verb_and_json_flag() -> None:
+    """/exec always carries --json, and the agent's flags pass through."""
+    # The console adds --json so summarize_exec can parse; the agent is told
+    # NOT to pass it, so forgetting it must not degrade the output.
+    assert _argv("/exec")[5:] == ["exec", "--json"]
+    assert _argv("/exec", ["--hosts", "dc02", "--cmd", "Get-Service WinRM"])[5:] == [
+        "exec",
+        "--json",
+        "--hosts",
+        "dc02",
+        "--cmd",
+        "Get-Service WinRM",
+    ]
+    # It routes to the agent (free-form request -> flags) and takes args.
+    assert commands.REGISTRY["/exec"].dispatch == "agent"
+    assert commands.REGISTRY["/exec"].takes_args is True
+    # /diagnose is gone — it was a broken playbook, replaced by /exec.
+    assert "/diagnose" not in commands.REGISTRY
+    print("PASS test_exec_verb_and_json_flag")
+
+
+def test_exec_guidance_states_the_dangerous_parts() -> None:
+    """prompts/exec.md must carry the facts that keep /exec from misfiring."""
+    p = commands.expand_command_prompt("/exec", ["restart winrm on dc02"])
+    assert "## Command-specific guidance" in p
+    # The three that cause silent wrong answers or unintended writes.
+    assert "4096" in p, "output cap must be stated or the agent reads fragments"
+    assert "no dry run" in p.lower(), "irreversibility must be stated"
+    assert "untrusted" in p.lower(), "output is attacker-influenced data"
+    print("PASS test_exec_guidance_states_the_dangerous_parts")
 
 
 def test_guidance_fallback_when_file_absent() -> None:
@@ -386,6 +474,9 @@ def main() -> None:
     test_dispatch_and_agent_commands()
     test_expand_command_prompt()
     test_load_prompt_and_guidance_injection()
+    test_system_prompt_covers_the_registry()
+    test_exec_verb_and_json_flag()
+    test_exec_guidance_states_the_dangerous_parts()
     test_guidance_fallback_when_file_absent()
     test_resolve_bin_prefers_repo_binary()
     test_parse_command_shlex()
