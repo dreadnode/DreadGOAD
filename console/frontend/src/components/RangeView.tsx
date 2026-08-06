@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ReactFlow,
   Background,
@@ -10,7 +10,8 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { api } from '../api'
-import type { RangeDoc, RangeHost, Session } from '../types'
+import type { RangeDoc, RangeHost, RangeLayout, Session } from '../types'
+import { LatestLayoutSaver } from '../layoutSaveQueue'
 
 const ROLE_ICON: Record<string, string> = {
   dc: '🌐', member: '🖥️', workstation: '💻', bastion: '🛡️',
@@ -301,13 +302,36 @@ export default function RangeView(
   const [range, setRange] = useState<RangeDoc | null>(null)
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [error, setError] = useState<string | null>(null)
+  const loadRef = useRef<() => void>(() => {})
+  const activeSessionRef = useRef(sessionId)
+  activeSessionRef.current = sessionId
+
+  const layoutSaver = useMemo(() => {
+    if (!sessionId) return null
+    const saverSessionId = sessionId
+    return new LatestLayoutSaver(
+      (layout, revision) => api.saveLayout(saverSessionId, layout, revision)
+        .then(result => result.layout_revision),
+      () => {
+        // A 409 means another tab wrote a newer revision; other failures are
+        // equally unsafe to assume succeeded. Reload the authoritative layout.
+        if (activeSessionRef.current === saverSessionId) loadRef.current()
+      },
+    )
+  }, [sessionId])
 
   const load = useCallback(() => {
     if (!sessionId) { setRange(null); return }
     api.getRange(sessionId)
-      .then(r => { setRange(r); setNodes(buildNodes(r)); setError(null) })
+      .then(r => {
+        layoutSaver?.setRevision(r.layout_revision ?? 0)
+        setRange(r)
+        setNodes(buildNodes(r))
+        setError(null)
+      })
       .catch(() => setError('range not found'))
-  }, [sessionId, refreshKey, setNodes])
+  }, [sessionId, refreshKey, setNodes, layoutSaver])
+  loadRef.current = load
 
   useEffect(() => { load() }, [load])
 
@@ -315,12 +339,20 @@ export default function RangeView(
     onNodesChange(changes)
   }, [onNodesChange])
 
-  const persistLayout = useCallback(() => {
-    if (!sessionId) return
-    const layout: Record<string, { x: number; y: number }> = {}
-    for (const n of nodes) layout[n.id] = { x: Math.round(n.position.x), y: Math.round(n.position.y) }
-    api.saveLayout(sessionId, layout).catch(() => {})
-  }, [sessionId, nodes])
+  const persistLayout = useCallback((draggedNode: Node) => {
+    if (!layoutSaver) return
+    const layout: RangeLayout = {}
+    for (const n of nodes) {
+      // React may not have committed the final drag update yet; the callback's
+      // node is authoritative for the node that just stopped moving.
+      const current = n.id === draggedNode.id ? draggedNode : n
+      layout[current.id] = {
+        x: Math.round(current.position.x),
+        y: Math.round(current.position.y),
+      }
+    }
+    layoutSaver.enqueue(layout)
+  }, [layoutSaver, nodes])
 
   const header = useMemo(() => {
     if (!range) return ''
@@ -437,7 +469,7 @@ export default function RangeView(
             edges={[]}
             nodeTypes={nodeTypes}
             onNodesChange={handleChange}
-            onNodeDragStop={persistLayout}
+            onNodeDragStop={(_, node) => persistLayout(node)}
             fitView
             proOptions={{ hideAttribution: true }}
           >

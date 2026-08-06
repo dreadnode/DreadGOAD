@@ -323,24 +323,34 @@ def test_restart_targets_one_host() -> None:
 
 
 def test_anchor_cannot_be_overridden_by_extra_args() -> None:
-    """Trailing --config/--env must be refused, not silently obeyed.
+    """Trailing scope selectors must be refused in every Cobra spelling.
 
     cobra's persistent flags are last-wins, so a trailing copy overrides the
     anchor the console injected and points the command at a DIFFERENT range
-    than the session. Proven against the real binary: a later --config is the
-    one it opens. Every arg-taking command forwards agent args, so all of them
-    are exposed, and /exec would run admin scripts on the wrong range.
+    than the session. The agent tool accepts args for every registered command,
+    regardless of the UI's ``takes_args`` hint, so every command is covered.
     """
-    arg_taking = [n for n, c in commands.REGISTRY.items() if c.takes_args]
-    assert arg_taking, "expected some commands to forward free-form args"
-
-    for name in arg_taking:
+    for name in commands.REGISTRY:
         for bad in (
             ["--config", "/evil.yaml"],
             ["--env", "other"],
             ["--config=/evil.yaml"],
             ["--env=other"],
             ["-c", "/evil.yaml"],
+            ["-e", "other"],
+            ["-e=other"],
+            ["-eother"],
+            ["--provider", "aws"],
+            ["--provider=aws"],
+            ["-p", "aws"],
+            ["-p=aws"],
+            ["-paws"],
+            ["--region", "us-west-2"],
+            ["--region=us-west-2"],
+            ["--deployment", "other"],
+            ["-dother"],
+            ["--profile", "other"],
+            ["--attack-box", "i-0123456789"],
             ["--hosts", "dc02", "--cmd", "x", "--config", "/evil.yaml"],
         ):
             try:

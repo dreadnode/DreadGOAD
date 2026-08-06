@@ -60,7 +60,7 @@ _agents: dict[str, t.Any] = {}
 # In-flight CLI commands, keyed by session id, for cancellation (§5.4).
 _running: dict[str, t.Any] = {}
 
-# Per-session serialization locks (same session = one turn at a time, §6.4).
+# Per-session coordination locks (turns and model swaps must not overlap, §6.4).
 _locks: dict[str, asyncio.Lock] = {}
 
 # Strong refs to in-flight turn tasks so they aren't GC'd and survive a client
@@ -78,6 +78,8 @@ _conns: dict[str, t.Any] = {}
 # purpose — if the server restarted, the turn really is gone, and reporting
 # nothing is the honest answer (matching the provisioning→interrupted reconcile).
 _turns: dict[str, dict[str, t.Any]] = {}
+
+TURN_BUSY_MESSAGE = "A turn is already running for this session; wait or cancel it first."
 
 
 def active_turn(session_id: str) -> dict[str, t.Any] | None:
@@ -113,34 +115,69 @@ def _session_lock(session_id: str) -> asyncio.Lock:
     return lock
 
 
-def dispatch(app: t.Any, session_id: str, content: str) -> asyncio.Task[t.Any]:
-    """Run a turn in a background task, serialized per session (§6.4, §7).
+def dispatch(
+    app: t.Any, session_id: str, content: str
+) -> asyncio.Task[t.Any] | None:
+    """Start one background turn, or reject it if the session is busy (§6.4, §7).
 
     The WS recv loop calls this and immediately keeps reading, so `cancel` and
-    other sessions' messages are handled while a long op streams (§5.4). The
-    per-session lock makes same-session turns run one at a time; different
-    sessions run concurrently. Tasks are kept in ``_tasks`` so they survive the
-    connection closing; emits target the session's *current* socket (`_conns`).
+    other sessions' messages are handled while a long op streams (§5.4).
+    Admission is reserved synchronously, before the task can yield, so two rapid
+    messages cannot both slip past the check and queue behind the session lock.
+    Tasks are kept in ``_tasks`` so they survive the connection closing; emits
+    target the session's *current* socket (`_conns`).
     """
 
+    if session_id in _turns:
+        return None
+
+    turn: dict[str, t.Any] = {
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "command": None,
+    }
+    _turns[session_id] = turn
+
     async def _runner() -> None:
-        async with _session_lock(session_id):
-            # Registered after the lock is acquired, so a queued turn doesn't
-            # report itself as running (and doesn't overwrite the one ahead of
-            # it). Cleared in a finally so a crash can't strand the flag.
-            _turns[session_id] = {
-                "started_at": datetime.now(timezone.utc).isoformat(),
-                "command": None,
-            }
-            try:
+        try:
+            async with _session_lock(session_id):
                 await handle_message(app, session_id, content)
-            finally:
+        finally:
+            # Identity check protects a newer reservation if cleanup removed
+            # this one while its task was still unwinding.
+            if _turns.get(session_id) is turn:
                 _turns.pop(session_id, None)
 
-    task = asyncio.create_task(_runner())
+    try:
+        task = asyncio.create_task(_runner())
+    except Exception:
+        if _turns.get(session_id) is turn:
+            _turns.pop(session_id, None)
+        raise
     _tasks.add(task)
-    task.add_done_callback(_tasks.discard)
+    task.add_done_callback(
+        lambda finished: _turn_task_done(session_id, turn, finished)
+    )
     return task
+
+
+def _turn_task_done(
+    session_id: str, turn: dict[str, t.Any], task: asyncio.Task[t.Any]
+) -> None:
+    """Release a finished turn and observe any exception it carried.
+
+    ``dispatch`` deliberately runs turns in the background, so most tasks are
+    never awaited by a caller. Retrieving the exception here prevents an
+    unexpected pipeline failure from becoming an unobserved "Task exception was
+    never retrieved" warning; focused tests may still await the task and receive
+    the same exception normally.
+    """
+    _tasks.discard(task)
+    # A task cancelled before its coroutine first runs never enters the
+    # coroutine's ``finally`` block, so release its admission here as well.
+    if _turns.get(session_id) is turn:
+        _turns.pop(session_id, None)
+    if not task.cancelled():
+        task.exception()
 
 
 def cleanup_session(session_id: str) -> None:
@@ -507,7 +544,29 @@ async def run_cli(
     if cmd.long_running:
         await app.state.sessions.set_status(session_id, "provisioning")
 
-    rc = await start_command(argv, cwd=str(paths.repo_root()))
+    try:
+        rc = await start_command(argv, cwd=str(paths.repo_root()))
+    except OSError as exc:
+        # A missing/non-executable CLI is an ordinary command failure, not a
+        # background-task crash. In particular, do not leave a long-running
+        # command stuck at ``provisioning`` when no process ever started.
+        message = f"failed to start {name}: {exc}"
+        if cmd.long_running:
+            await app.state.sessions.set_status(session_id, "error")
+        await emit_event(app, session_id, "error", {"message": message})
+        await emit_event(
+            app,
+            session_id,
+            "command_run",
+            {
+                "phase": "end",
+                "command": name,
+                "exit_code": 1,
+                "cancelled": False,
+                "tail": message,
+            },
+        )
+        return 1, message
     # SIGINT→SIGKILL grace: give terraform/ansible a long runway to unwind on
     # SIGINT (killing terraform mid-apply strands a state lock); reads/local ops
     # can be hard-killed quickly if they ignore SIGINT.

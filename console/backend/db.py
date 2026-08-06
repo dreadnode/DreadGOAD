@@ -150,16 +150,89 @@ class Database:
     # --- ranges ------------------------------------------------------------
 
     async def upsert_range(self, session_id: str, rng: dict[str, t.Any]) -> None:
-        """Insert or replace a session's range topology document."""
+        """Insert or replace a session's range topology document.
+
+        Range discovery/health writers often hold a snapshot across network
+        I/O. If a layout save landed meanwhile, keep that newer layout instead
+        of letting the stale whole-document write restore old coordinates.
+        """
         await self._run(self._upsert_range, session_id, rng)
 
     def _upsert_range(self, session_id: str, rng: dict[str, t.Any]) -> None:
+        document = dict(rng)
+        incoming_revision = self._range_layout_revision(document)
+        row = self._c.execute(
+            "SELECT data FROM ranges WHERE session_id=?", (session_id,)
+        ).fetchone()
+        if row is not None:
+            current = json.loads(row["data"])
+            current_revision = self._range_layout_revision(current)
+            if current_revision > incoming_revision:
+                document["layout"] = current.get("layout", {})
+                incoming_revision = current_revision
+        document["layout_revision"] = incoming_revision
+        document.setdefault("layout", {})
         self._c.execute(
             "INSERT INTO ranges (session_id, data) VALUES (?, ?) "
             "ON CONFLICT(session_id) DO UPDATE SET data=excluded.data",
-            (session_id, json.dumps(rng)),
+            (session_id, json.dumps(document)),
         )
         self._c.commit()
+
+    @staticmethod
+    def _range_layout_revision(rng: dict[str, t.Any]) -> int:
+        revision = rng.get("layout_revision", 0)
+        return (
+            revision
+            if isinstance(revision, int)
+            and not isinstance(revision, bool)
+            and revision >= 0
+            else 0
+        )
+
+    async def update_range_layout(
+        self,
+        session_id: str,
+        layout: dict[str, dict[str, int]],
+        expected_revision: int,
+    ) -> tuple[bool, int] | None:
+        """Atomically replace layout when ``expected_revision`` is current.
+
+        ``None`` means the range does not exist. Otherwise the boolean reports
+        whether the write succeeded and the integer is the current/new layout
+        revision. The complete read-check-write runs as one database-worker job,
+        so range status updates cannot interleave inside it.
+        """
+        return await self._run(
+            self._update_range_layout, session_id, layout, expected_revision
+        )
+
+    def _update_range_layout(
+        self,
+        session_id: str,
+        layout: dict[str, dict[str, int]],
+        expected_revision: int,
+    ) -> tuple[bool, int] | None:
+        row = self._c.execute(
+            "SELECT data FROM ranges WHERE session_id=?", (session_id,)
+        ).fetchone()
+        if row is None:
+            return None
+
+        rng = json.loads(row["data"])
+        current_revision = self._range_layout_revision(rng)
+        if expected_revision != current_revision:
+            return False, current_revision
+
+        new_revision = current_revision + 1
+        rng["layout"] = layout
+        rng["layout_revision"] = new_revision
+        self._c.execute(
+            "UPDATE ranges SET data=? WHERE session_id=?",
+            (json.dumps(rng), session_id),
+        )
+        self._c.commit()
+        return True, new_revision
 
     async def get_range(self, session_id: str) -> dict[str, t.Any] | None:
         """Return a session's range document, or None if it doesn't exist."""
@@ -169,7 +242,12 @@ class Database:
         row = self._c.execute(
             "SELECT data FROM ranges WHERE session_id=?", (session_id,)
         ).fetchone()
-        return json.loads(row["data"]) if row else None
+        if row is None:
+            return None
+        rng = json.loads(row["data"])
+        rng.setdefault("layout", {})
+        rng["layout_revision"] = self._range_layout_revision(rng)
+        return rng
 
     # --- events ------------------------------------------------------------
 

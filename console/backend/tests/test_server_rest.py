@@ -7,6 +7,7 @@ Requires fastapi + httpx (installed in the project venv).
 from __future__ import annotations
 
 import asyncio
+import json
 import pathlib
 import sys
 import tempfile
@@ -22,10 +23,14 @@ os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = _TMP
 from fastapi import WebSocketDisconnect  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from console.backend import commands  # noqa: E402
+from console.backend import chat, commands  # noqa: E402
 from console.backend.db import Database  # noqa: E402
 from console.backend.server import (  # noqa: E402
+    WS_MAX_CONTENT_CHARS,
+    WS_MAX_MESSAGE_CHARS,
+    WS_MAX_SESSION_ID_CHARS,
     app,
+    parse_ws_message,
     reconcile_interrupted,
     ws_origin_allowed,
 )
@@ -201,7 +206,42 @@ def main() -> None:
         # range read (seeded topology, infra-only since ad/GOAD is the base lab)
         rng = client.get(f"/api/ranges/{sid}").json()
         assert any(h["id"] == "attackbox" for h in rng["hosts"]), rng
+        assert rng["layout_revision"] == 0, rng
         print("PASS range read")
+
+        # Layout updates use optimistic revisions: the first write preserves
+        # the rest of the range, and a repeated revision cannot overwrite it.
+        node_id = rng["hosts"][0]["id"]
+        first_layout = {node_id: {"x": 101.4, "y": 202.6}}
+        saved = client.put(
+            f"/api/ranges/{sid}/layout",
+            json={"layout": first_layout, "revision": 0},
+        )
+        assert saved.status_code == 200 and saved.json()["layout_revision"] == 1
+        after_layout = client.get(f"/api/ranges/{sid}").json()
+        assert after_layout["layout"][node_id] == {"x": 101, "y": 203}
+        assert after_layout["hosts"] == rng["hosts"], "layout save replaced topology"
+
+        stale = client.put(
+            f"/api/ranges/{sid}/layout",
+            json={"layout": {node_id: {"x": 1, "y": 2}}, "revision": 0},
+        )
+        assert stale.status_code == 409, stale.text
+        assert stale.json()["detail"]["layout_revision"] == 1, stale.text
+        assert client.get(f"/api/ranges/{sid}").json()["layout"] == after_layout["layout"]
+
+        for invalid_layout in (
+            {"layout": [], "revision": 1},
+            {"layout": {}, "revision": -1},
+            {"layout": {node_id: {"x": True, "y": 2}}, "revision": 1},
+            {"layout": {node_id: {"x": 1}}, "revision": 1},
+            {"layout": {node_id: {"x": 10**400, "y": 2}}, "revision": 1},
+        ):
+            response = client.put(
+                f"/api/ranges/{sid}/layout", json=invalid_layout
+            )
+            assert response.status_code == 400, (invalid_layout, response.text)
+        print("PASS versioned layout update + validation")
 
         # delete
         assert client.delete(f"/api/sessions/{sid}").status_code == 200
@@ -209,7 +249,10 @@ def main() -> None:
         print("PASS delete session")
 
         test_ws_origin_allowed()
+        test_parse_ws_message_validation()
         test_ws_rejects_cross_origin(client)
+        test_ws_invalid_message_does_not_close_connection(client)
+        test_ws_reports_rejected_busy_turn(client)
 
     asyncio.run(test_reconcile_interrupted())
     print("ALL PASS")
@@ -239,6 +282,57 @@ def test_ws_origin_allowed() -> None:
     print("PASS test_ws_origin_allowed")
 
 
+def test_parse_ws_message_validation() -> None:
+    """Only the three bounded protocol shapes reach the chat runtime."""
+    valid = (
+        ('{"session_id":"s-1","content":" hello "}', "message", "hello"),
+        ('{"type":"message","session_id":"s-1","content":"hello"}', "message", "hello"),
+        ('{"type":"resume","session_id":"s-1"}', "resume", None),
+        ('{"type":"cancel","session_id":"s-1"}', "cancel", None),
+    )
+    for raw, expected_type, expected_content in valid:
+        message, error, session_id = parse_ws_message(raw)
+        assert error is None and session_id == "s-1", (message, error, session_id)
+        assert message is not None and message["type"] == expected_type, message
+        assert message.get("content") == expected_content, message
+
+    invalid = (
+        ("not json", "valid JSON"),
+        ("[]", "JSON object"),
+        ("null", "JSON object"),
+        ('{"content":"hello"}', "session_id"),
+        ('{"session_id":[],"content":"hello"}', "session_id"),
+        ('{"session_id":"s-1","type":false}', "type must"),
+        ('{"session_id":"s-1","type":"unknown"}', "unknown message type"),
+        ('{"session_id":"s-1","content":7}', "content must"),
+        ('{"session_id":"s-1","content":"  "}', "must not be empty"),
+        ('{"session_id":"s-1","type":"cancel","content":"x"}', "unexpected field"),
+        (
+            json.dumps(
+                {
+                    "session_id": "s" * (WS_MAX_SESSION_ID_CHARS + 1),
+                    "type": "resume",
+                }
+            ),
+            "session_id is too long",
+        ),
+    )
+    for raw, expected_error in invalid:
+        message, error, _ = parse_ws_message(raw)
+        assert message is None and error is not None, (raw, message, error)
+        assert expected_error in error, (raw, error)
+
+    oversized_content = json.dumps(
+        {"session_id": "s-1", "content": "x" * (WS_MAX_CONTENT_CHARS + 1)}
+    )
+    assert parse_ws_message(oversized_content)[1] == "content is too large"
+    assert (
+        parse_ws_message(" " * (WS_MAX_MESSAGE_CHARS + 1))[1]
+        == "message is too large"
+    )
+    print("PASS test_parse_ws_message_validation")
+
+
 def test_ws_rejects_cross_origin(client: TestClient) -> None:
     """A page on another origin can't drive the console over the socket."""
     accepted = False
@@ -256,6 +350,63 @@ def test_ws_rejects_cross_origin(client: TestClient) -> None:
     ):
         pass
     print("PASS test_ws_rejects_cross_origin")
+
+
+def test_ws_invalid_message_does_not_close_connection(client: TestClient) -> None:
+    """Bad frames report errors while later valid frames still dispatch."""
+    dispatched: list[tuple[str, str]] = []
+    original = chat.dispatch
+
+    def record_dispatch(app_, session_id, content):  # noqa: ANN001, ANN202
+        dispatched.append((session_id, content))
+        return object()  # Any non-None value represents accepted admission here.
+
+    chat.dispatch = record_dispatch
+    try:
+        with client.websocket_connect(
+            "/ws/chat", headers={"origin": "http://localhost:7331"}
+        ) as websocket:
+            websocket.send_text("[]")
+            assert websocket.receive_json() == {
+                "kind": "error",
+                "message": "message must be a JSON object",
+            }
+
+            websocket.send_json({"session_id": "s-valid", "content": 7})
+            assert websocket.receive_json() == {
+                "session_id": "s-valid",
+                "kind": "error",
+                "message": "content must be a string",
+            }
+
+            # The same socket remains usable after both validation failures.
+            websocket.send_json({"session_id": "s-valid", "content": " go "})
+            websocket.send_json({"session_id": "s-valid", "type": "wat"})
+            assert websocket.receive_json()["message"] == "unknown message type: wat"
+            assert dispatched == [("s-valid", "go")], dispatched
+        print("PASS test_ws_invalid_message_does_not_close_connection")
+    finally:
+        chat.dispatch = original
+
+
+def test_ws_reports_rejected_busy_turn(client: TestClient) -> None:
+    """A refused second turn gets a visible, non-terminal error event."""
+    original = chat.dispatch
+    chat.dispatch = lambda app_, sid_, content: None
+    try:
+        with client.websocket_connect(
+            "/ws/chat", headers={"origin": "http://localhost:7331"}
+        ) as websocket:
+            websocket.send_json({"session_id": "busy-session", "content": "second"})
+            event = websocket.receive_json()
+            assert event == {
+                "session_id": "busy-session",
+                "kind": "error",
+                "message": chat.TURN_BUSY_MESSAGE,
+            }, event
+        print("PASS test_ws_reports_rejected_busy_turn")
+    finally:
+        chat.dispatch = original
 
 
 async def test_reconcile_interrupted() -> None:

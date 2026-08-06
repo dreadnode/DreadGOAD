@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test:layout": "esbuild tests/layoutSaveQueue.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/dreadgoad-layout-save-test.mjs && node node_modules/.cache/dreadgoad-layout-save-test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

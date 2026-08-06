@@ -146,11 +146,61 @@ async def test_concurrent_writes_no_loss() -> None:
         await db.close()
 
 
+async def test_layout_revision_protects_against_stale_range_writes() -> None:
+    """A stale health/topology snapshot cannot restore an older layout."""
+    db, _ = await _fresh_db()
+    try:
+        original = {
+            "session_id": "s-layout",
+            "hosts": [{"id": "dc01", "status": "pending"}],
+            "edges": [],
+            "layout": {"dc01": {"x": 1, "y": 2}},
+        }
+        await db.upsert_range("s-layout", original)
+        stale = await db.get_range("s-layout")
+        assert stale is not None and stale["layout_revision"] == 0, stale
+
+        # A normal range update lands first; the atomic layout update must keep
+        # every non-layout field from that latest document.
+        current = await db.get_range("s-layout")
+        assert current is not None
+        current["hosts"][0]["status"] = "running"
+        await db.upsert_range("s-layout", current)
+        saved = await db.update_range_layout(
+            "s-layout", {"dc01": {"x": 100, "y": 200}}, 0
+        )
+        assert saved == (True, 1), saved
+        after_layout = await db.get_range("s-layout")
+        assert after_layout is not None
+        assert after_layout["hosts"][0]["status"] == "running", after_layout
+        assert after_layout["layout"]["dc01"] == {"x": 100, "y": 200}
+
+        # A writer that read revision 0 before the drag may still update range
+        # state, but its old coordinates must be replaced by revision 1.
+        stale["hosts"][0]["status"] = "stopped"
+        await db.upsert_range("s-layout", stale)
+        after_stale_writer = await db.get_range("s-layout")
+        assert after_stale_writer is not None
+        assert after_stale_writer["layout_revision"] == 1, after_stale_writer
+        assert after_stale_writer["layout"]["dc01"] == {"x": 100, "y": 200}
+
+        # A stale browser save is refused rather than overwriting revision 1.
+        rejected = await db.update_range_layout(
+            "s-layout", {"dc01": {"x": 3, "y": 4}}, 0
+        )
+        assert rejected == (False, 1), rejected
+        assert await db.update_range_layout("missing", {}, 0) is None
+        print("PASS test_layout_revision_protects_against_stale_range_writes")
+    finally:
+        await db.close()
+
+
 async def _main() -> None:
     await test_session_and_range_crud()
     await test_event_seq_and_replay()
     await test_meta_round_trip()
     await test_concurrent_writes_no_loss()
+    await test_layout_revision_protects_against_stale_range_writes()
     print("ALL PASS")
 
 

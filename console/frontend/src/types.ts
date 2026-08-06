@@ -54,11 +54,14 @@ export interface RangeEdge {
   type: string
 }
 
+export type RangeLayout = Record<string, { x: number; y: number }>
+
 export interface RangeDoc {
   session_id: string
   hosts: RangeHost[]
   edges: RangeEdge[]
-  layout: Record<string, { x: number; y: number }>
+  layout: RangeLayout
+  layout_revision?: number
   last_checked_at?: string | null
 }
 

@@ -1,7 +1,7 @@
 """Tests for the chat runtime (Phase 3: T3.1) — the F1/F2/F3 fixes.
 
-Covers: direct-dispatch flow (emit sequence + event persistence), per-session
-serialization vs cross-session concurrency, and cleanup_session eviction.
+Covers: direct-dispatch flow (emit sequence + event persistence), single-turn
+admission vs cross-session concurrency, and cleanup_session eviction.
 
 Standalone:  python console/backend/tests/test_chat.py
 """
@@ -120,6 +120,59 @@ async def test_direct_dispatch_emits_and_persists() -> None:
             print("PASS test_direct_dispatch_emits_and_persists")
         finally:
             chat.start_command, hook.run_check = orig_start, orig_check
+            await db.close()
+
+
+async def test_start_failure_finishes_turn_and_restores_status() -> None:
+    """A missing CLI must fail visibly, not strand status at provisioning."""
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        cfg = tmp / "dreadgoad.yaml"
+        cfg.write_text(_YAML)
+        db = await Database(str(tmp / "state.db")).connect()
+        svc = SessionService(db, repo_root=str(_REPO), sessions_root=tmp / "sessions")
+        app = types.SimpleNamespace(state=types.SimpleNamespace(db=db, sessions=svc))
+
+        async def missing_cli(argv, cwd):  # noqa: ANN001
+            raise FileNotFoundError(2, "No such file or directory", argv[0])
+
+        async def check_must_not_run(a, sid_):  # noqa: ANN001
+            raise AssertionError("post-command check ran even though nothing started")
+
+        orig_start, orig_check = chat.start_command, hook.run_check
+        chat.start_command, hook.run_check = missing_cli, check_must_not_run
+        session_id: str | None = None
+        try:
+            s = await svc.create_session(str(cfg), "dev")
+            session_id = s["id"]
+            ws = FakeWS()
+            chat.register_conn(session_id, ws)
+
+            # /health is long-running, so it first moves the session into
+            # provisioning. A launch failure must move it back out again.
+            await chat.handle_message(app, session_id, "/health")
+
+            current = await db.get_session(session_id)
+            assert current is not None and current["status"] == "error", current
+            assert session_id not in chat._running, "a failed spawn cannot be cancellable"
+
+            kinds = [m["kind"] for m in ws.sent]
+            assert kinds[-1] == "agent_end", kinds
+            assert "error" in kinds, kinds
+            ends = [
+                m
+                for m in ws.sent
+                if m["kind"] == "command_run" and m.get("phase") == "end"
+            ]
+            assert len(ends) == 1 and ends[0]["exit_code"] == 1, ends
+            assert ends[0]["cancelled"] is False, ends[0]
+            assert "failed to start /health" in ends[0]["tail"], ends[0]
+            assert ws.sent[-1]["failed"] is True, ws.sent[-1]
+            print("PASS test_start_failure_finishes_turn_and_restores_status")
+        finally:
+            chat.start_command, hook.run_check = orig_start, orig_check
+            if session_id is not None:
+                chat.cleanup_session(session_id)
             await db.close()
 
 
@@ -311,33 +364,51 @@ async def test_reattach_targets_current_conn() -> None:
             await db.close()
 
 
-async def test_dispatch_serialization_and_concurrency() -> None:
-    """Same session runs serially; different sessions overlap (§6.4/§7)."""
+async def test_dispatch_rejects_queued_turn_and_allows_concurrency() -> None:
+    """Same-session extras are rejected; different sessions overlap (§6.4/§7)."""
     order: list[str] = []
+    gate = asyncio.Event()
 
     async def fake_handle(app, sid, content):  # noqa: ANN001
-        order.append(f"start:{sid}")
-        await asyncio.sleep(0.02)
-        order.append(f"end:{sid}")
+        order.append(f"start:{sid}:{content}")
+        if sid == "A":
+            await gate.wait()
+        else:
+            await asyncio.sleep(0.02)
+        order.append(f"end:{sid}:{content}")
 
     orig = chat.handle_message
     chat.handle_message = fake_handle
     try:
-        # same session → strictly serial (no interleave)
-        await asyncio.gather(
-            chat.dispatch(None, "A", "1"),
-            chat.dispatch(None, "A", "2"),
-        )
-        assert order == ["start:A", "end:A", "start:A", "end:A"], order
+        # Admission is synchronous: the second message is rejected even before
+        # the first task gets CPU time, rather than sitting behind its lock.
+        first = chat.dispatch(None, "A", "1")
+        queued = chat.dispatch(None, "A", "2")
+        assert first is not None
+        assert queued is None, "a second same-session turn must not be queued"
+        await asyncio.sleep(0)
+        assert order == ["start:A:1"], order
+        gate.set()
+        await first
+        assert order == ["start:A:1", "end:A:1"], order
+
+        # Completion releases admission for the next deliberate turn.
+        next_turn = chat.dispatch(None, "A", "3")
+        assert next_turn is not None
+        await next_turn
+        assert order[-2:] == ["start:A:3", "end:A:3"], order
 
         # different sessions → overlap
         order.clear()
-        await asyncio.gather(
-            chat.dispatch(None, "X", "1"),
-            chat.dispatch(None, "Y", "1"),
-        )
-        assert order[:2] in (["start:X", "start:Y"], ["start:Y", "start:X"]), order
-        print("PASS test_dispatch_serialization_and_concurrency")
+        x = chat.dispatch(None, "X", "1")
+        y = chat.dispatch(None, "Y", "1")
+        assert x is not None and y is not None
+        await asyncio.gather(x, y)
+        assert order[:2] in (
+            ["start:X:1", "start:Y:1"],
+            ["start:Y:1", "start:X:1"],
+        ), order
+        print("PASS test_dispatch_rejects_queued_turn_and_allows_concurrency")
     finally:
         chat.handle_message = orig
 
@@ -645,6 +716,7 @@ async def test_cleanup_session_evicts() -> None:
 
 async def _main() -> None:
     await test_direct_dispatch_emits_and_persists()
+    await test_start_failure_finishes_turn_and_restores_status()
     test_final_status_precedence()
     await test_replay_matches_live_event_shape()
     await test_resume_reports_in_flight_turn()
@@ -657,7 +729,7 @@ async def _main() -> None:
     await test_health_emits_report_and_suppresses_json()
     await test_swap_model_preserves_thread_and_persists()
     await test_swap_model_no_live_agent()
-    await test_dispatch_serialization_and_concurrency()
+    await test_dispatch_rejects_queued_turn_and_allows_concurrency()
     await test_cleanup_session_evicts()
     print("ALL PASS")
 

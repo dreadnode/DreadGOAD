@@ -311,27 +311,58 @@ def _verb_for(cmd: Command, extra: list[str]) -> tuple[list[str], list[str]]:
     return list(cmd.verb), extra
 
 
-# Global flags that select WHICH range the CLI acts on. The console injects
-# these from the session anchor, but cobra's persistent flags are last-wins, so
-# a trailing copy in the agent's args would silently override the injected one
-# and point a command at a different range than the session it runs in.
-_ANCHOR_FLAGS = frozenset({"--config", "--env", "-c", "-e"})
+# Flags that select WHICH range/cloud context the CLI acts on. The console
+# injects config/env from the session anchor and derives provider/region from
+# that config, but cobra's persistent flags are last-wins: a trailing copy in
+# the agent's args would silently override the session. ``infra --deployment``
+# and the score commands' explicit profile/attack-box selectors are included
+# for the same reason.
+_SCOPE_LONG_FLAGS = frozenset(
+    {
+        "--config",
+        "--env",
+        "--provider",
+        "--region",
+        "--deployment",
+        "--profile",
+        "--attack-box",
+    }
+)
+
+# Cobra/pflag accepts a string shorthand both as ``-e value`` and concatenated
+# as ``-evalue`` (plus ``-e=value``). Checking only whole argv tokens leaves the
+# concatenated form as a range escape. ``-c`` is retained defensively for older
+# CLI builds even though the current root flag has no config shorthand.
+_SCOPE_SHORT_FLAGS = frozenset({"-c", "-e", "-p", "-d"})
+
+
+def _scope_override_flag(arg: str) -> str | None:
+    """Return the scope selector encoded in one argv token, if any."""
+    head = arg.split("=", 1)[0]
+    if head in _SCOPE_LONG_FLAGS or head in _SCOPE_SHORT_FLAGS:
+        return head
+    if not arg.startswith("--"):
+        for flag in _SCOPE_SHORT_FLAGS:
+            if arg.startswith(flag) and len(arg) > len(flag):
+                return flag
+    return None
 
 
 def _rejects_anchor_override(extra: list[str]) -> None:
-    """Raise if the caller tried to retarget the range via ``--config``/``--env``.
+    """Raise if caller-supplied flags could retarget the session's range.
 
-    The system prompt tells the agent the range is fixed by the tool; this is
-    what makes that true. Both the bare and ``--flag=value`` spellings count.
-    Raising rather than stripping: a silently ignored flag would leave the agent
-    believing it acted on the range it named.
+    The system prompt tells the agent the range is fixed by the tool; this is what
+    makes that true. Long ``--flag=value`` and concatenated short ``-evalue``
+    spellings count as well as separate flag/value tokens. Raising rather than
+    stripping keeps the agent from believing it acted on the context it named.
     """
     for arg in extra:
-        head = arg.split("=", 1)[0]
-        if head in _ANCHOR_FLAGS:
+        flag = _scope_override_flag(arg)
+        if flag is not None:
             raise ValueError(
-                f"refusing to run: {head!r} would retarget the range. The "
-                f"session's config/env are fixed; drop it and try again."
+                f"refusing to run: {flag!r} would retarget the range/cloud "
+                "context. The session's config, environment, provider, region, "
+                "deployment, and credentials are fixed; drop it and try again."
             )
 
 

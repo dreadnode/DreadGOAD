@@ -1,6 +1,6 @@
 // REST client for session lifecycle + RangeView reads (design §7).
 
-import type { RangeDoc, Session } from './types'
+import type { RangeDoc, RangeLayout, Session } from './types'
 
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) throw new Error(`${res.status} ${await res.text()}`)
@@ -63,10 +63,14 @@ export const api = {
   getRange: (id: string): Promise<RangeDoc> =>
     fetch(`/api/ranges/${id}`).then(r => json<RangeDoc>(r)),
 
-  saveLayout: (id: string, layout: Record<string, { x: number; y: number }>): Promise<unknown> =>
+  saveLayout: (
+    id: string,
+    layout: RangeLayout,
+    revision: number,
+  ): Promise<{ ok: boolean; layout_revision: number }> =>
     fetch(`/api/ranges/${id}/layout`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ layout }),
+      body: JSON.stringify({ layout, revision }),
     }).then(r => json(r)),
 }
