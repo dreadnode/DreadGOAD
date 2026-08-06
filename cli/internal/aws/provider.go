@@ -200,6 +200,9 @@ func toProviderInstance(i Instance) provider.Instance {
 		Name:      i.Name,
 		PrivateIP: i.PrivateIP,
 		State:     i.State,
+		Account:   i.Account,
+		// Group stays empty: AWS has no resource-group equivalent. A range is
+		// identified by tag convention (see DiscoverInstances), not containment.
 	}
 }
 

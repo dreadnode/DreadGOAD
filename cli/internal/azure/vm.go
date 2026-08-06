@@ -17,9 +17,12 @@ type Instance struct {
 	ID            string // full Azure resource ID (used for run-command targeting)
 	Name          string // VM resource name (e.g. "test-goad-dreadgoad-kingslanding-vm")
 	ResourceGroup string
-	PrivateIP     string
-	State         string            // "running", "stopped", etc. (normalized from PowerState/* )
-	Tags          map[string]string // Azure resource tags (Role, Lab, Project, Environment, …)
+	// SubscriptionID the VM lives in, parsed from its own resource ID rather
+	// than read from the client, so it reflects where the resource actually is.
+	SubscriptionID string
+	PrivateIP      string
+	State          string            // "running", "stopped", etc. (normalized from PowerState/* )
+	Tags           map[string]string // Azure resource tags (Role, Lab, Project, Environment, …)
 }
 
 // DiscoverInstances finds GOAD VMs for the given env (running by default).
@@ -138,12 +141,13 @@ func (c *Client) enrichInstance(ctx context.Context, vm *armcompute.VirtualMachi
 	}
 
 	return Instance{
-		ID:            id,
-		Name:          name,
-		ResourceGroup: rid.ResourceGroupName,
-		PrivateIP:     privateIP,
-		State:         state,
-		Tags:          stringMap(vm.Tags),
+		ID:             id,
+		Name:           name,
+		ResourceGroup:  rid.ResourceGroupName,
+		SubscriptionID: rid.SubscriptionID,
+		PrivateIP:      privateIP,
+		State:          state,
+		Tags:           stringMap(vm.Tags),
 	}, nil
 }
 

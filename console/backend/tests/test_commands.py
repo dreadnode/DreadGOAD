@@ -1,0 +1,401 @@
+"""Tests for the command registry, argv builder, and CLI runner (Phase 3).
+
+Standalone:  python console/backend/tests/test_commands.py
+"""
+
+from __future__ import annotations
+
+import asyncio
+import pathlib
+import shutil
+import stat
+import sys
+import tempfile
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
+
+from console.backend import commands  # noqa: E402
+from console.backend.cli import run_command, start_command  # noqa: E402
+
+_SESSION = {"anchor": {"config_path": "/x/dreadgoad.yaml", "env": "dev"}}
+
+
+def _argv(name: str, extra: list[str] | None = None) -> list[str]:
+    return commands.build_argv(_SESSION, name, extra, repo_root="/repo")
+
+
+def test_argv_injects_config_and_env() -> None:
+    a = _argv("/up")
+    assert a[0].endswith("dreadgoad"), a
+    assert a[1:5] == ["--config", "/x/dreadgoad.yaml", "--env", "dev"], a
+    assert a[5:] == ["up"], a
+    print("PASS test_argv_injects_config_and_env")
+
+
+def test_argv_multiword_and_flag_verbs() -> None:
+    assert _argv("/reset")[5:] == ["lab", "reset"]
+    assert _argv("/instances")[5:] == ["lab", "status", "--json"]
+    # /scrub carries --apply by default; see test_scrub_applies_by_default.
+    assert _argv("/scrub")[5:] == ["score", "reset", "--apply"]
+    print("PASS test_argv_multiword_and_flag_verbs")
+
+
+def test_argv_arg_shaped_commands() -> None:
+    # /extensions: list vs provision
+    assert _argv("/extensions")[5:] == ["extension", "list"]
+    assert _argv("/extensions", ["elk"])[5:] == ["extension", "provision", "elk"]
+    # /score: report path + passthrough flag
+    assert _argv("/score", ["/tmp/r.jsonl", "--live-verify"])[5:] == [
+        "score",
+        "--report",
+        "/tmp/r.jsonl",
+        "--live-verify",
+    ]
+    # /variant: passthrough
+    assert _argv("/variant", ["--name", "v2"])[5:] == [
+        "variant",
+        "generate",
+        "--name",
+        "v2",
+    ]
+    print("PASS test_argv_arg_shaped_commands")
+
+
+def test_scrub_applies_by_default() -> None:
+    """/scrub cleans for real; a dry token previews instead.
+
+    The CLI defaults to a dry run, the console inverts it — a command whose
+    whole purpose is cleaning that silently changed nothing was the more
+    surprising behaviour.
+    """
+    assert _argv("/scrub")[5:] == ["score", "reset", "--apply"]
+
+    for token in (
+        "dry",
+        "dry-run",
+        "dryrun",
+        "--dry",
+        "--dry-run",
+        "-n",
+        "preview",
+        "DRY",
+    ):
+        got = _argv("/scrub", [token])[5:]
+        assert got == ["score", "reset"], (
+            f"{token!r} should suppress --apply, got {got}"
+        )
+
+    # Unrecognised args pass straight through, and still apply.
+    assert _argv("/scrub", ["--purge-ad"])[5:] == [
+        "score",
+        "reset",
+        "--apply",
+        "--purge-ad",
+    ]
+    # A dry token is consumed, not forwarded to the CLI as a bogus arg.
+    assert _argv("/scrub", ["dry", "--purge-ad"])[5:] == [
+        "score",
+        "reset",
+        "--purge-ad",
+    ]
+    # ...and it's recognised after a flag too, not only in leading position.
+    assert _argv("/scrub", ["--purge-ad", "dry"])[5:] == [
+        "score",
+        "reset",
+        "--purge-ad",
+    ]
+
+    # Regression: a *value* that happens to spell a dry token must not be eaten.
+    # The naive filter dropped --apply here and left --report-output dangling,
+    # so a scrub the operator asked to run would silently change nothing.
+    assert _argv("/scrub", ["--report-output", "dry"])[5:] == [
+        "score",
+        "reset",
+        "--apply",
+        "--report-output",
+        "dry",
+    ]
+    assert _argv("/scrub", ["--ssh-user", "dry"])[5:] == [
+        "score",
+        "reset",
+        "--apply",
+        "--ssh-user",
+        "dry",
+    ]
+    # A real dry token after a consumed value is still honoured.
+    assert _argv("/scrub", ["--report-output", "/tmp/r.jsonl", "dry"])[5:] == [
+        "score",
+        "reset",
+        "--report-output",
+        "/tmp/r.jsonl",
+    ]
+    print("PASS test_scrub_applies_by_default")
+
+
+def test_registry_flags_and_parsing() -> None:
+    assert commands.REGISTRY["/up"].long_running is True
+    assert commands.REGISTRY["/instances"].long_running is False
+    assert commands.REGISTRY["/destroy"].verb == ("infra", "destroy")
+    assert commands.is_command("/health") and not commands.is_command("hello there")
+    assert commands.parse_command("/score /tmp/r.jsonl --live-verify") == (
+        "/score",
+        ["/tmp/r.jsonl", "--live-verify"],
+    )
+    try:
+        _argv("/nope")
+        raise AssertionError("expected KeyError for unknown command")
+    except KeyError:
+        pass
+    print("PASS test_registry_flags_and_parsing")
+
+
+def test_dispatch_and_agent_commands() -> None:
+    # dispatch drives OPERATOR-typed routing: mutating → agent (expand),
+    # reads + /destroy → direct (fast, deterministic).
+    assert commands.REGISTRY["/up"].dispatch == "agent"
+    assert commands.REGISTRY["/variant"].dispatch == "agent"
+    assert commands.REGISTRY["/instances"].dispatch == "direct"
+    assert commands.REGISTRY["/destroy"].dispatch == "direct"
+    # The agent-dispatch (expand-to-prompt) set = the mutating/arg-flexible ones.
+    agent_dispatch = {n for n, c in commands.REGISTRY.items() if c.dispatch == "agent"}
+    assert agent_dispatch == {
+        "/up",
+        "/provision",
+        "/reset",
+        "/variant",
+        "/extensions",
+        "/score",
+    }, agent_dispatch
+    # The agent's run_dreadgoad may run ANY registered command (reads + actions).
+    assert commands.AGENT_RUNNABLE == frozenset(commands.REGISTRY), (
+        commands.AGENT_RUNNABLE
+    )
+    assert len(commands.AGENT_RUNNABLE) == 14
+    print("PASS test_dispatch_and_agent_commands")
+
+
+def test_expand_command_prompt() -> None:
+    p = commands.expand_command_prompt("/up", ["using", "the", "variant"])
+    assert "/up" in p and "run_dreadgoad" in p, p
+    assert "using the variant" in p, p
+    assert "raw cloud CLI" in p, "must forbid raw cloud CLI"
+    # /up ships prompts/up.md → guidance section present.
+    assert "## Command-specific guidance" in p, "up.md guidance expected"
+    # no-args form is explicit
+    assert "(no extra arguments given)" in commands.expand_command_prompt(
+        "/provision", []
+    )
+    print("PASS test_expand_command_prompt")
+
+
+def test_load_prompt_and_guidance_injection() -> None:
+    """Per-command markdown is loaded and injected; missing files → None."""
+    # loader: existing stem vs missing stem
+    assert commands.load_prompt("system") is not None, "system.md must exist"
+    assert commands.load_prompt("does-not-exist") is None
+    # Every agent-dispatch command ships a guidance file, injected before the request.
+    agent_dispatch = sorted(
+        n for n, c in commands.REGISTRY.items() if c.dispatch == "agent"
+    )
+    for name in agent_dispatch:
+        p = commands.expand_command_prompt(name, [])
+        assert "## Command-specific guidance" in p, f"{name} missing guidance"
+        gi, oi = p.index("## Command-specific guidance"), p.index("Operator's request:")
+        assert gi < oi, f"{name}: guidance must precede operator request"
+    # Real content from specific files (not hallucinated).
+    assert "variant generate" in commands.expand_command_prompt("/variant", [])
+    assert "report path" in commands.expand_command_prompt("/score", []).lower()
+    assert "extension list" in commands.expand_command_prompt("/extensions", [])
+    assert "pipeline" in commands.expand_command_prompt("/up", []).lower()
+    print("PASS test_load_prompt_and_guidance_injection")
+
+
+def test_guidance_fallback_when_file_absent() -> None:
+    """With no prompts/<cmd>.md, the generic template stands (no guidance block)."""
+    orig = commands.load_prompt
+    commands.load_prompt = lambda stem: None  # type: ignore[assignment]
+    try:
+        p = commands.expand_command_prompt("/up", ["x"])
+        assert "## Command-specific guidance" not in p, "no block when file absent"
+        assert "run_dreadgoad" in p and "raw cloud CLI" in p, "generic template intact"
+    finally:
+        commands.load_prompt = orig
+    print("PASS test_guidance_fallback_when_file_absent")
+
+
+def test_resolve_bin_prefers_repo_binary() -> None:
+    """The repo's freshly-built cli/dreadgoad wins over PATH (C3)."""
+    with tempfile.TemporaryDirectory() as d:
+        repo = pathlib.Path(d)
+        cli = repo / "cli"
+        cli.mkdir()
+        binp = cli / "dreadgoad"
+        binp.write_text("#!/usr/bin/env bash\n")
+        binp.chmod(binp.stat().st_mode | stat.S_IEXEC)
+        assert commands.resolve_bin(repo) == str(binp), "must prefer repo binary"
+
+        # No repo binary → falls back to the expected repo path (clear error),
+        # unless dreadgoad is on PATH (env-dependent, so only assert the miss case).
+        empty = pathlib.Path(d) / "empty"
+        empty.mkdir()
+        got = commands.resolve_bin(empty)
+        assert got in (
+            shutil.which("dreadgoad"),
+            str(empty / "cli" / "dreadgoad"),
+        ), got
+    print("PASS test_resolve_bin_prefers_repo_binary")
+
+
+def test_parse_command_shlex() -> None:
+    """Quoted args (paths with spaces) survive tokenization (C5)."""
+    assert commands.parse_command('/score "/tmp/my report.jsonl" --live-verify') == (
+        "/score",
+        ["/tmp/my report.jsonl", "--live-verify"],
+    )
+    # Unbalanced quotes → graceful fallback to plain split (no crash).
+    name, extra = commands.parse_command('/variant --name "v2')
+    assert name == "/variant" and extra == ["--name", '"v2'], (name, extra)
+    print("PASS test_parse_command_shlex")
+
+
+async def test_runner_streams_and_returns_rc() -> None:
+    """Runner streams lines and reports the exit code (stubbed CLI)."""
+    with tempfile.TemporaryDirectory() as d:
+        stub = pathlib.Path(d) / "fakecli.sh"
+        stub.write_text("#!/usr/bin/env bash\necho line-one\necho line-two\nexit 3\n")
+        stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+
+        seen: list[str] = []
+        rc, out = await run_command([str(stub)], cwd=d, on_line=seen.append)
+        assert rc == 3, f"rc={rc}"
+        assert seen == ["line-one", "line-two"], seen
+        assert "line-one" in out and "line-two" in out, out
+        print("PASS test_runner_streams_and_returns_rc")
+
+
+async def test_surviving_child_does_not_hang_the_stream() -> None:
+    """Regression: a child holding stdout open must not block the turn forever.
+
+    `health-check` on Azure leaves an `az network bastion tunnel` running; it
+    inherits the CLI's stdout pipe, so EOF never arrives. Streaming keyed on
+    pipe EOF hung here indefinitely, holding the per-session lock and wedging
+    the whole chat. The stub reproduces it: background a sleeper that inherits
+    stdout, print, exit.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        stub = pathlib.Path(d) / "leaky.sh"
+        stub.write_text(
+            "#!/usr/bin/env bash\n"
+            "sleep 45 &\n"  # inherits stdout and outlives us — the tunnel
+            "echo did-work\n"
+            "exit 0\n"
+        )
+        stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+
+        rc = await start_command([str(stub)], cwd=d)
+        seen: list[str] = []
+
+        async def consume() -> None:
+            async for line in rc.stream_lines():
+                seen.append(line)
+
+        # Generous vs the 0.25s drain, tiny vs the 45s sleeper: only a fix that
+        # keys on process exit can finish inside this.
+        await asyncio.wait_for(consume(), timeout=10)
+        assert "did-work" in seen, seen
+        assert rc.returncode == 0, rc.returncode
+        print("PASS test_surviving_child_does_not_hang_the_stream")
+
+
+async def test_chatty_survivor_does_not_stream_forever() -> None:
+    """A survivor that keeps *writing* must not keep the turn alive either.
+
+    Bounding only the idle read isn't enough: a child logging on a timer
+    satisfies every read, so the exit check has to run on each iteration and the
+    post-exit drain needs a hard ceiling.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        stub = pathlib.Path(d) / "chatty.sh"
+        stub.write_text(
+            "#!/usr/bin/env bash\n"
+            "( while true; do echo tunnel-noise; sleep 0.05; done ) &\n"
+            "echo did-work\n"
+            "exit 0\n"
+        )
+        stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+
+        rc = await start_command([str(stub)], cwd=d)
+        seen: list[str] = []
+
+        async def consume() -> None:
+            async for line in rc.stream_lines():
+                seen.append(line)
+
+        await asyncio.wait_for(consume(), timeout=10)
+        assert "did-work" in seen, seen
+        # Bounded by the drain budget, not by the child's lifetime.
+        assert len(seen) < 200, f"drained unbounded: {len(seen)} lines"
+        print("PASS test_chatty_survivor_does_not_stream_forever")
+
+
+async def test_output_at_exit_is_not_truncated() -> None:
+    """Regression: bounding the read must not drop the CLI's own output."""
+    with tempfile.TemporaryDirectory() as d:
+        stub = pathlib.Path(d) / "bursty.sh"
+        # 500 lines then immediate exit — all of it must survive.
+        stub.write_text(
+            "#!/usr/bin/env bash\nfor i in $(seq 1 500); do echo line-$i; done\nexit 0\n"
+        )
+        stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+
+        rc, out = await run_command([str(stub)], cwd=d)
+        assert rc == 0, rc
+        lines = out.splitlines()
+        assert len(lines) == 500, f"expected 500 lines, got {len(lines)}"
+        assert lines[0] == "line-1" and lines[-1] == "line-500", (lines[0], lines[-1])
+        print("PASS test_output_at_exit_is_not_truncated")
+
+
+async def test_cancel_escalates_to_sigkill() -> None:
+    """cancel() SIGKILLs a process that ignores SIGINT, after the grace period."""
+    with tempfile.TemporaryDirectory() as d:
+        stub = pathlib.Path(d) / "ignore_sigint.sh"
+        # Ignore SIGINT, then block — only SIGKILL can stop it.
+        stub.write_text("#!/usr/bin/env bash\ntrap '' INT\necho started\nsleep 30\n")
+        stub.chmod(stub.stat().st_mode | stat.S_IEXEC)
+
+        rc = await start_command([str(stub)], cwd=d)
+        rc._KILL_GRACE = 0.4  # shorten the SIGINT→SIGKILL grace for the test
+        stream = rc.stream_lines()
+        assert await stream.__anext__() == "started"
+
+        rc.cancel()  # SIGINT is ignored → SIGKILL fires after the grace
+        async for _ in stream:  # drains until the process is killed
+            pass
+        assert rc.cancelled is True
+        assert rc.returncode != 0, f"expected non-zero (killed), got {rc.returncode}"
+        print("PASS test_cancel_escalates_to_sigkill")
+
+
+def main() -> None:
+    test_argv_injects_config_and_env()
+    test_argv_multiword_and_flag_verbs()
+    test_argv_arg_shaped_commands()
+    test_scrub_applies_by_default()
+    test_registry_flags_and_parsing()
+    test_dispatch_and_agent_commands()
+    test_expand_command_prompt()
+    test_load_prompt_and_guidance_injection()
+    test_guidance_fallback_when_file_absent()
+    test_resolve_bin_prefers_repo_binary()
+    test_parse_command_shlex()
+    asyncio.run(test_runner_streams_and_returns_rc())
+    asyncio.run(test_surviving_child_does_not_hang_the_stream())
+    asyncio.run(test_chatty_survivor_does_not_stream_forever())
+    asyncio.run(test_output_at_exit_is_not_truncated())
+    asyncio.run(test_cancel_escalates_to_sigkill())
+    print("ALL PASS")
+
+
+if __name__ == "__main__":
+    main()

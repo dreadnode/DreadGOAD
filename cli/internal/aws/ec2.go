@@ -16,6 +16,11 @@ type Instance struct {
 	Name       string
 	PrivateIP  string
 	State      string
+	// Account is the AWS account ID that owns the instance. It comes from the
+	// enclosing Reservation's OwnerId, which DescribeInstances already returns —
+	// no STS call and no extra IAM permission. Note this is the *owning*
+	// account, which for a single-account range is also the calling account.
+	Account string
 }
 
 // DiscoverInstances finds GOAD instances by tag pattern.
@@ -42,6 +47,7 @@ func (c *Client) DiscoverInstances(ctx context.Context, env string, extraStates 
 				InstanceID: deref(i.InstanceId),
 				PrivateIP:  deref(i.PrivateIpAddress),
 				State:      string(i.State.Name),
+				Account:    deref(r.OwnerId),
 			}
 			for _, t := range i.Tags {
 				if deref(t.Key) == "Name" {
@@ -110,6 +116,7 @@ func (c *Client) DiscoverAllInstances(ctx context.Context, env string) ([]Instan
 				InstanceID: deref(i.InstanceId),
 				PrivateIP:  deref(i.PrivateIpAddress),
 				State:      string(i.State.Name),
+				Account:    deref(r.OwnerId),
 			}
 			for _, t := range i.Tags {
 				if deref(t.Key) == "Name" {

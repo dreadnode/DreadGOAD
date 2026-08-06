@@ -178,6 +178,8 @@ func toProviderInstance(i Instance) provider.Instance {
 		Name:      i.Name,
 		PrivateIP: i.PrivateIP,
 		State:     i.State,
+		Account:   i.SubscriptionID,
+		Group:     i.ResourceGroup,
 	}
 }
 

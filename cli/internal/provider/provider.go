@@ -11,6 +11,15 @@ type Instance struct {
 	Name      string
 	PrivateIP string
 	State     string // "running", "stopped", etc.
+	// Account is the cloud account the instance belongs to: the AWS account ID
+	// or the Azure subscription ID. Both come from data already fetched during
+	// discovery, so populating it costs no extra API call. Empty when the
+	// provider cannot determine it.
+	Account string
+	// Group is the provider's resource container: an Azure resource group.
+	// Empty on providers that have no such concept — AWS has none, where a
+	// range is identified by tag convention rather than by containment.
+	Group string
 }
 
 // CommandResult holds the output of a remote command execution.

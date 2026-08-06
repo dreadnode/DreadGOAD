@@ -136,6 +136,12 @@ type statusJSONInstance struct {
 	ID        string `json:"id"`
 	State     string `json:"state"`
 	PrivateIP string `json:"private_ip"`
+	// Where the instance lives. Account is the AWS account ID or Azure
+	// subscription ID; Group is the Azure resource group (AWS has no
+	// equivalent). Both are omitted when the provider can't determine them, so
+	// consumers can distinguish "unknown" from "empty".
+	Account string `json:"account,omitempty"`
+	Group   string `json:"group,omitempty"`
 }
 
 // instancesToStatusJSON renders discovered instances as a JSON array.
@@ -148,6 +154,8 @@ func instancesToStatusJSON(instances []provider.Instance) ([]byte, error) {
 			ID:        inst.ID,
 			State:     inst.State,
 			PrivateIP: inst.PrivateIP,
+			Account:   inst.Account,
+			Group:     inst.Group,
 		})
 	}
 	return json.MarshalIndent(out, "", "  ")

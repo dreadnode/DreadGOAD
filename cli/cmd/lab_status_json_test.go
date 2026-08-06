@@ -28,6 +28,18 @@ func TestInstancesToStatusJSON(t *testing.T) {
 		},
 	}
 
+	tests = append(tests, struct {
+		name      string
+		instances []provider.Instance
+		wantLen   int
+	}{
+		name: "account and group carried through",
+		instances: []provider.Instance{
+			{ID: "i-0abc", Name: "aws-box", State: "running", Account: "123456789012"},
+		},
+		wantLen: 1,
+	})
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			b, err := instancesToStatusJSON(tt.instances)

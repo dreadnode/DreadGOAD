@@ -1,0 +1,102 @@
+:root {
+  /* DreadGOAD brand (ported from ALFRED, retinted) */
+  --dg-brand:       #ef562f;
+  --dg-interactive: #ff7a52;  /* coral tint of the brand (was ALFRED gold #f5c842) */
+
+  /* Dreadnode palette */
+  --dn-black:       #0a0a0a;
+  --dn-bg:          #111111;
+  --dn-surface:     #1a1a1a;
+  --dn-surface-alt: #151515;
+  --dn-border:      #1f1f1f;
+  --dn-border-lt:   #2a2a2a;
+  --dn-accent:      #ef562f;
+  --dn-electric:    #4da6ff;  /* electric blue — range identity fields */
+  --dn-accent-dim:  rgba(239, 86, 47, 0.15);
+  --dn-text:        #e0e0e0;
+  --dn-text-bright: #ffffff;
+  --dn-text-muted:  #666666;
+  --dn-text-dim:    #444444;
+  --dn-success:     #3ecf6a;
+  --dn-warning:     #f0a830;
+  --dn-error:       #ef4444;
+
+  /* RangeView node metadata. The generic muted/dim tokens measure 3.0:1 and
+     1.8:1 against --dn-surface — below the 4.5:1 WCAG AA floor for small text,
+     and unreadable for data you scan character by character (IPs). These clear
+     it: label 6.5:1, value 8.4:1. */
+  --dg-node-label:  #9e9e9e;
+  --dg-node-value:  #b4b4b4;
+
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--dn-black);
+  color: var(--dn-text);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection { background: var(--dn-accent-dim); color: var(--dn-text-bright); }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--dn-black); }
+::-webkit-scrollbar-thumb { background: var(--dn-border-lt); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--dn-text-dim); }
+
+@keyframes blink { 50% { opacity: 0; } }
+
+/* RangeView zoom/fit controls. The library ships near-white glyphs; grey them
+   so they sit back against the topology. Themed through @xyflow's own custom
+   properties rather than by overriding its selectors — the button icons are
+   `fill: currentColor`, so the *-color vars drive the glyphs too. */
+.react-flow__controls {
+  --xy-controls-button-background-color: var(--dn-surface);
+  --xy-controls-button-background-color-hover: var(--dn-border-lt);
+  --xy-controls-button-color: var(--dn-text-muted);
+  --xy-controls-button-color-hover: var(--dn-text-bright);
+  --xy-controls-button-border-color: var(--dn-border);
+  --xy-controls-box-shadow: none;
+  border: 1px solid var(--dn-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+/* "Agent working" indicator — a braille octopus, same idiom as the spinner it
+   replaces: one cell, frame-swapped with steps(1), no transforms.
+   A braille cell is 2x4 dots, which is just enough:
+       1 4     dots 1,2,4,5  = the mantle, held still
+       2 5     dots 3,6      = tentacles raised
+       3 6     dots 7,8      = tentacles lowered
+       7 8
+   Alternating the bottom two rows makes the tentacles undulate out of phase,
+   which reads as swimming rather than blinking. The tucked frame is the beat
+   that turns the wiggle into a stroke: spread, sweep down, pull in, spread
+   again. Slower than the 0.8s spinner — a creature drifts, it doesn't spin. */
+.agent-working::before {
+  content: '⠿';
+  animation: octo-wiggle 0.9s steps(1) infinite;
+  margin-right: 6px;
+}
+@keyframes octo-wiggle {
+  0%   { content: '⠿'; }  /* spread — both tentacles raised */
+  20%  { content: '⡻'; }  /* left drops, right holds        */
+  40%  { content: '⣛'; }  /* both lowered — end of sweep    */
+  60%  { content: '⠛'; }  /* tucked in — the beat           */
+  80%  { content: '⢟'; }  /* spreading back out             */
+}
+
+/* Respect a reduced-motion preference: keep the octopus, drop the animation. */
+@media (prefers-reduced-motion: reduce) {
+  .agent-working::before {
+    animation: none;
+  }
+}
