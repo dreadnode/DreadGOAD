@@ -510,9 +510,16 @@ async def test_run_dreadgoad_tool_validates_and_runs() -> None:
     assert "Refused" in refused, refused
     assert calls == [], "run_cli must not run for an unknown command"
 
-    # The real tool execution wrapper catches ordinary exceptions for the
-    # model, but must let turn cancellation escape instead of returning a
-    # retryable tool error.
+    # A cancelled command must end the turn without giving the model something
+    # it can retry. This asserted that CancelledError escapes the wrapper, which
+    # met the "no retry" half but broke the conversation: CancelledError is a
+    # BaseException, so rigging's dispatch never sees it, no tool_result is
+    # produced, and the agent's next request carries a tool_use with nothing
+    # answering it — a 400 from every provider (see thread_repair.py).
+    #
+    # Stop meets both halves. It is caught by name in handle_tool_call, so the
+    # result exists and the pair is closed, and stop=True makes the agent raise
+    # Finish rather than generate again — no retry, and no wedged thread.
     async def cancelled_run_cli(app, sid, cmd, args):  # noqa: ANN001, ANN202
         raise asyncio.CancelledError
 
@@ -524,12 +531,10 @@ async def test_run_dreadgoad_tool_validates_and_runs() -> None:
             arguments='{"command":"/health","args":[]}',
         ),
     )
-    try:
-        await cancelled_tool.handle_tool_call(call)
-    except asyncio.CancelledError:
-        pass
-    else:
-        raise AssertionError("tool wrapper converted cancellation into a model result")
+    cancel_message, cancel_stop = await cancelled_tool.handle_tool_call(call)
+    assert cancel_message.role == "tool", cancel_message.role
+    assert cancel_message.tool_call_id == "cancel-1", cancel_message.tool_call_id
+    assert cancel_stop is True, "a cancelled command must stop the agent loop"
     print("PASS test_run_dreadgoad_tool_validates_and_runs")
 
 
@@ -897,9 +902,7 @@ async def test_cancelled_command_aborts_turn_before_agent_can_retry() -> None:
                 if chat_runtime.runtime(sid).running:
                     break
                 await asyncio.sleep(0.01)
-            assert chat_runtime.runtime(sid).running, (
-                "command never became cancellable"
-            )
+            assert chat_runtime.runtime(sid).running, "command never became cancellable"
 
             assert chat.cancel_session(sid) is True
             with contextlib.suppress(asyncio.CancelledError):

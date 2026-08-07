@@ -19,7 +19,7 @@ import asyncio
 import typing as t
 from copy import deepcopy
 
-from . import chat_events, chat_runtime, command_runner, commands
+from . import chat_events, chat_runtime, command_runner, commands, thread_repair
 from .agent import create_agent
 
 # Public facade used by server.py. Internal state remains owned and tested in
@@ -214,6 +214,26 @@ async def _run_agent(app: t.Any, session_id: str, prompt: str) -> None:
         await emit_event(app, session_id, "error", {"message": "session not found"})
         await emit_event(app, session_id, "agent_end", {"failed": True})
         return
+    # An unpaired tool call in the thread is rejected by the provider before the
+    # turn starts, and it is re-sent by every turn after this one, so a single
+    # orphan silently ends the session's ability to talk. Sweeping here costs a
+    # list walk and leaves a well-formed thread untouched.
+    thread = getattr(agent, "thread", None)
+    if thread is not None:
+        repaired = thread_repair.repair_tool_pairing(thread.messages)
+        if repaired:
+            await emit_event(
+                app,
+                session_id,
+                "status",
+                {
+                    "content": (
+                        f"Recovered {len(repaired)} unfinished tool call(s) from "
+                        "an interrupted turn."
+                    )
+                },
+            )
+
     try:
         async with agent.stream(prompt) as events:
             async for event in events:

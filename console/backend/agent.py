@@ -9,12 +9,14 @@ slash commands are dispatched directly (see server WS handler).
 
 from __future__ import annotations
 
+import asyncio
 import string
 import typing as t
 from contextlib import AsyncExitStack, aclosing, asynccontextmanager
 from copy import deepcopy
 
 import rigging as rg
+from rigging.error import Stop
 from dreadnode.agent import TaskAgent
 from dreadnode.agent.agent import CommitBehavior
 from dreadnode.agent.events import AgentEvent
@@ -170,7 +172,54 @@ def _make_run_dreadgoad(app: t.Any, session_id: str, run_cli: RunCli):  # noqa: 
                 f"Refused: {command!r} is not a known dreadgoad command. "
                 f"Valid commands: {sorted(commands.AGENT_RUNNABLE)}."
             )
-        exit_code, output = await run_cli(app, session_id, command, list(args or []))
+        # An operator cancel reaches us as CancelledError, raised deliberately by
+        # run_cli as a signal (command_runner.py). Letting it escape a tool call
+        # is what produced the "tool_use ids were found without tool_result"
+        # 400s: CancelledError is a BaseException, so every layer above catches
+        # only Exception and none of them see it —
+        #
+        #   rigging @tool(catch=True)  except Exception   (tools/base.py)
+        #   _process_tool_call         except Exception   (agent/agent.py)
+        #   join_generators            except Exception   (util.py)
+        #
+        # The last one has a `finally` that queues its FINISHED sentinel, so the
+        # join loop ends *normally* with no ToolEnd. The tool_use block is
+        # already in the message list, its tool_result never arrives, and the
+        # agent then makes another generation call against an unpaired list —
+        # rejected by every provider, and the turn dies with a confusing 400
+        # instead of reading as a cancel.
+        #
+        # Stop is rigging's own way for a tool to end a run: it is caught by
+        # name in handle_tool_call, so a real tool_result IS appended and the
+        # agent raises Finish instead of generating again. The pair stays
+        # balanced and the run ends immediately — which is also the behaviour
+        # cancelling is supposed to have, no chance for the agent to retry.
+        try:
+            exit_code, output = await run_cli(
+                app, session_id, command, list(args or [])
+            )
+        except asyncio.CancelledError:
+            # Only convert the signal. A genuine teardown (task.cancel(), e.g.
+            # cleanup_session on shutdown) must never be swallowed, and
+            # cancelling() is the one thing that tells them apart: it counts
+            # cancel() calls against THIS task, so it is 0 for run_cli's raise
+            # and non-zero only when someone really cancelled us.
+            #
+            # getattr because cancelling() is 3.11+ and the console documents
+            # 3.10 (console/README.md). Calling it bare there would raise an
+            # AttributeError *from inside this handler*, replacing the cancel
+            # with a crash. Where it is unavailable the signal is the far more
+            # common case, so treat it as one: a genuine cancel then ends the
+            # turn through Finish instead of CancelledError, which still stops
+            # the run immediately rather than letting it continue.
+            current = asyncio.current_task()
+            cancelling = getattr(current, "cancelling", None)
+            if cancelling is not None and cancelling() > 0:
+                raise
+            raise Stop(
+                f"The operator cancelled `dreadgoad {command}`. "
+                "Stopping this turn; do not retry the command."
+            ) from None
         # Distinguishes a cancel from a failure: a negative code means the run
         # was signalled, and calling that "failed" made the model report a
         # deliberate stop as an error (see summary.describe_exit).
