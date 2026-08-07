@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -11,11 +12,19 @@ import (
 
 type ssmDiscoveryProvider struct {
 	provider.Provider
-	byName    *provider.Instance
-	instances []provider.Instance
+	byName        *provider.Instance
+	byNameErr     error
+	instances     []provider.Instance
+	discoverErr   error
+	findCalls     int
+	discoverCalls int
 }
 
 func (p *ssmDiscoveryProvider) FindInstanceByHostname(context.Context, string, string) (*provider.Instance, error) {
+	p.findCalls++
+	if p.byNameErr != nil {
+		return nil, p.byNameErr
+	}
 	if p.byName == nil {
 		return nil, fmt.Errorf("not found")
 	}
@@ -23,7 +32,8 @@ func (p *ssmDiscoveryProvider) FindInstanceByHostname(context.Context, string, s
 }
 
 func (p *ssmDiscoveryProvider) DiscoverInstances(context.Context, string) ([]provider.Instance, error) {
-	return p.instances, nil
+	p.discoverCalls++
+	return p.instances, p.discoverErr
 }
 
 func TestResolveSSMHostFallsBackToDiscovery(t *testing.T) {
@@ -52,6 +62,9 @@ func TestResolveSSMHostAcceptsAttackBoxRole(t *testing.T) {
 	if got.ID != "i-kali" {
 		t.Fatalf("resolveSSMHost() ID = %q, want i-kali", got.ID)
 	}
+	if prov.findCalls != 0 || prov.discoverCalls != 1 {
+		t.Fatalf("resolveSSMHost() calls = find:%d discover:%d, want find:0 discover:1", prov.findCalls, prov.discoverCalls)
+	}
 }
 
 func TestResolveSSMHostPrefersInventory(t *testing.T) {
@@ -78,5 +91,25 @@ func TestFilterProviderInstancesAllExcludesAttackBox(t *testing.T) {
 	ids, names := filterProviderInstances(instances, "all")
 	if len(ids) != 1 || ids[0] != "i-dc" || len(names) != 1 || names[0] != "dc01" {
 		t.Fatalf("filterProviderInstances(all) = ids=%v names=%v, want only dc01", ids, names)
+	}
+}
+
+func TestResolveSSMHostPropagatesHostnameDiscoveryError(t *testing.T) {
+	wantErr := errors.New("describe instances: access denied")
+	prov := &ssmDiscoveryProvider{byNameErr: wantErr}
+
+	_, err := resolveSSMHost(context.Background(), prov, "test", nil, "kali")
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("resolveSSMHost() error = %v, want wrapped %v", err, wantErr)
+	}
+}
+
+func TestResolveSSMHostPropagatesAttackBoxDiscoveryError(t *testing.T) {
+	wantErr := errors.New("describe instances: access denied")
+	prov := &ssmDiscoveryProvider{discoverErr: wantErr}
+
+	_, err := resolveSSMHost(context.Background(), prov, "test", nil, "attack-box")
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("resolveSSMHost() error = %v, want wrapped %v", err, wantErr)
 	}
 }

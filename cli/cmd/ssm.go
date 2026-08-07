@@ -178,7 +178,10 @@ func runSSMConnect(cmd *cobra.Command, args []string) error {
 	// The optional attack box is intentionally absent from the Ansible
 	// inventory. Prefer inventory for the Windows hosts, then fall back to
 	// provider discovery for tagged or otherwise out-of-inventory instances.
-	inv, _ := inventory.Parse(cfg.InventoryPath())
+	inv, invErr := inventory.Parse(cfg.InventoryPath())
+	if invErr != nil {
+		slog.Warn("inventory unavailable; falling back to AWS discovery", "path", cfg.InventoryPath(), "error", invErr)
+	}
 	target, err := resolveSSMHost(ctx, prov, cfg.Env, inv, args[0])
 	if err != nil {
 		return err
@@ -203,19 +206,25 @@ func resolveSSMHost(ctx context.Context, prov provider.Provider, env string, inv
 		}
 	}
 
-	if inst, err := prov.FindInstanceByHostname(ctx, env, hostName); err == nil && inst.ID != "" {
-		return inst, nil
-	}
-
 	// Also accept the stable role name so callers do not need to know whether
 	// the attack box resource is named "kali", "attacker", or something else.
 	if strings.EqualFold(hostName, "attack-box") || strings.EqualFold(hostName, "attackbox") {
 		instances, err := prov.DiscoverInstances(ctx, env)
-		if err == nil {
-			if inst := provider.FindInstanceByRole(instances, "AttackBox"); inst != nil {
-				return inst, nil
-			}
+		if err != nil {
+			return nil, fmt.Errorf("discover AWS attack box: %w", err)
 		}
+		if inst := provider.FindInstanceByRole(instances, "AttackBox"); inst != nil {
+			return inst, nil
+		}
+		return nil, fmt.Errorf("no running AWS attack box (Role=AttackBox) found for env=%s", env)
+	}
+
+	inst, err := prov.FindInstanceByHostname(ctx, env, hostName)
+	if err != nil {
+		return nil, fmt.Errorf("discover AWS host %q: %w", hostName, err)
+	}
+	if inst != nil && inst.ID != "" {
+		return inst, nil
 	}
 
 	return nil, fmt.Errorf("host %q not found via AWS discovery or inventory", hostName)
