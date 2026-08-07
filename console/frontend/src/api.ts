@@ -2,8 +2,43 @@
 
 import type { RangeDoc, RangeLayout, Session } from './types'
 
+/**
+ * The human-readable part of a failed response.
+ *
+ * FastAPI puts the message in `detail`, so the raw body is JSON. Rendering it
+ * verbatim put things like
+ *
+ *   400 {"detail":"[Errno 2] No such file or directory: '/path/to.yaml'"}
+ *
+ * in front of the operator — the status code, the envelope and the quoting all
+ * competing with the one sentence that matters. `detail` may itself be a list
+ * of objects (FastAPI's validation errors), so those are flattened to their
+ * messages rather than stringified into "[object Object]".
+ */
+export function errorMessage(status: number, body: string): string {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(body)
+  } catch {
+    // Not JSON — a proxy error page or a plain-text body. Use it as-is, but
+    // keep the status, which is the only signal such a response carries.
+    const text = body.trim()
+    return text ? `${status}: ${text}` : `request failed (${status})`
+  }
+
+  const detail = (parsed as { detail?: unknown } | null)?.detail
+  if (typeof detail === 'string' && detail.trim()) return detail.trim()
+  if (Array.isArray(detail)) {
+    const parts = detail
+      .map(d => (typeof d === 'string' ? d : (d as { msg?: string })?.msg))
+      .filter((m): m is string => typeof m === 'string' && m.trim().length > 0)
+    if (parts.length) return parts.join('; ')
+  }
+  return `request failed (${status})`
+}
+
 async function json<T>(res: Response): Promise<T> {
-  if (!res.ok) throw new Error(`${res.status} ${await res.text()}`)
+  if (!res.ok) throw new Error(errorMessage(res.status, await res.text()))
   return res.json() as Promise<T>
 }
 
