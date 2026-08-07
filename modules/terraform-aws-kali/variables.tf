@@ -40,12 +40,6 @@ variable "root_volume_size" {
   }
 }
 
-variable "assign_public_ip" {
-  description = "Assign a public IP for standalone deployments in a public subnet. No public ingress is opened."
-  type        = bool
-  default     = false
-}
-
 variable "ami_name_pattern" {
   description = "Official Kali Marketplace AMI pattern, constrained to Kali product ID 804fcc46-63fc-4eb6-85a1-50e66d6c7215. Ignored when ami_id is set."
   type        = string

@@ -35,10 +35,6 @@ module "kali" {
   vpc_id    = var.vpc_id
   subnet_id = var.subnet_id
 
-  # Private by default. A public IP can be explicitly enabled for standalone
-  # smoke tests in a public subnet without NAT or VPC endpoints.
-  assign_public_ip = var.assign_public_ip
-
   # The instance factory creates the IAM role/profile with
   # AmazonSSMManagedInstanceCore. The Kali image needs the agent installed by
   # user data before it can register with Systems Manager.

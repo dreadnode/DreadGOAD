@@ -10,6 +10,5 @@ The instance is tagged `Role=AttackBox`, `Project=DreadGOAD`, and
 `Environment=<env>` so the CLI can discover it without adding it to the Ansible
 inventory.
 
-The instance is private by default. Set `assign_public_ip = true` only for a
-standalone deployment in a public subnet that has no NAT gateway or SSM VPC
-endpoints. The module still creates no public ingress rule.
+The instance remains private and is managed through AWS Systems Manager; the
+module creates no public ingress rule.

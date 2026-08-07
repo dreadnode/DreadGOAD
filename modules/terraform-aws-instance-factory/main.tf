@@ -37,7 +37,7 @@ resource "aws_instance" "this" {
   monitoring                  = var.enable_monitoring
   user_data                   = var.user_data != "" ? var.user_data : null
   user_data_replace_on_change = true
-  associate_public_ip_address = var.assign_public_ip
+  associate_public_ip_address = var.assign_public_ip && !var.enable_ssm
   source_dest_check           = var.source_dest_check
 
   root_block_device {

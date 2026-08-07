@@ -8,11 +8,6 @@ output "private_ip" {
   value       = one(module.kali.instance_private_ips)
 }
 
-output "public_ip" {
-  description = "Public IPv4 address when assign_public_ip is enabled."
-  value       = one(module.kali.instance_public_ips)
-}
-
 output "security_group_id" {
   description = "Security group attached to the Kali attack box."
   value       = module.kali.security_group_id
