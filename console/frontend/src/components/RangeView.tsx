@@ -44,6 +44,26 @@ const STATUS_COLOR: Record<string, string> = {
   unknown: 'var(--dg-node-label)',
 }
 
+// The health vocabulary is closed: health_sync.py derives exactly these three
+// per host, worst-wins across that host's checks. `unknown` is the seed value
+// every host carries until /health has run, and the node hides it rather than
+// stamping "unknown" across a range nobody has checked yet — so grey here is
+// only a fallback for a value this map does not know.
+const HEALTH_COLOR: Record<string, string> = {
+  healthy: 'var(--dn-success)',
+  unhealthy: 'var(--dn-warning)',
+  unknown: 'var(--dg-node-label)',
+}
+
+// One FAIL among twenty checks marks the whole host unhealthy, so the word
+// alone overstates: say what it aggregates, since the node has no room to.
+const HEALTH_TITLE: Record<string, string> = {
+  healthy: 'healthy — every /health check on this host passed',
+  unhealthy: 'unhealthy — at least one /health check on this host failed; '
+    + 'run /health for the per-check detail',
+  unknown: 'unknown — /health has not run since this range was read',
+}
+
 // Vertical tiers: access enters at the top and reaches the lab below it.
 const TIER: Record<string, number> = {
   bastion: 0, attackbox: 0,   // ingress
@@ -197,9 +217,17 @@ export function HostNode({ data }: NodeProps) {
           : <span style={{ color, whiteSpace: 'nowrap', flexShrink: 0 }}>● {h.status}</span>}
         {!service && h.health !== 'unknown' && (
           <span
-            title={h.health}
+            title={HEALTH_TITLE[h.health] ?? h.health}
             style={{
-              color: 'var(--dg-node-label)', minWidth: 0,
+              // Coloured, because this is the field that says something is
+              // wrong and it read identically to the one saying all is well —
+              // both grey, beside a status dot coloured for power state, so
+              // the only failure signal on the node was a word you had to
+              // stop and read. Amber not red: the range is still up, and a
+              // failing check here is usually one broken service on an
+              // otherwise reachable host (8.6:1 on the node surface).
+              color: HEALTH_COLOR[h.health] ?? 'var(--dg-node-label)',
+              minWidth: 0,
               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
             }}
           >{h.health}</span>
