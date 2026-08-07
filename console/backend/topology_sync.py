@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import typing as t
 
-from . import commands, labconfig, paths
+from . import commands, labconfig, paths, projectroot
 from .cli import capture
 
 Capture = t.Callable[[list[str], str], t.Awaitable[tuple[int, str, str]]]
@@ -31,7 +31,11 @@ async def extension_nodes(
         "--json",
     ]
     runner = capture_command or capture
-    return_code, stdout, _stderr = await runner(argv, str(paths.repo_root()))
+    # `extension list` reads the config's own tree; run there, like every other
+    # spawn (projectroot.run_cwd).
+    return_code, stdout, _stderr = await runner(
+        argv, projectroot.run_cwd(session, paths.repo_root())
+    )
     if return_code != 0:
         return []
     try:

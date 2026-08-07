@@ -19,7 +19,7 @@ from __future__ import annotations
 import os
 import typing as t
 
-from . import commands, paths
+from . import commands, paths, projectroot
 from .cli import capture
 
 Capture = t.Callable[[list[str], str], t.Awaitable[tuple[int, str, str]]]
@@ -100,7 +100,10 @@ async def fetch_report(
 ) -> tuple[int, str, str]:
     """Fetch the report into the session dir. Returns (rc, local_path, message)."""
     local = local_report_path(session["session_dir"], remote_path)
+    # repo_root locates the binary; the cwd decides which tree's inventory the
+    # fetch reaches hosts through. They are different questions — see
+    # projectroot.run_cwd.
     argv = build_fetch_argv(session, remote_path, local, str(paths.repo_root()))
     runner = capture_command or capture
-    rc, out, err = await runner(argv, str(paths.repo_root()))
+    rc, out, err = await runner(argv, projectroot.run_cwd(session, paths.repo_root()))
     return rc, local, (err or out)

@@ -12,7 +12,16 @@ import json
 import typing as t
 from functools import partial
 
-from . import chat_events, chat_runtime, commands, fetch, hook, paths, summary
+from . import (
+    chat_events,
+    chat_runtime,
+    commands,
+    fetch,
+    hook,
+    paths,
+    projectroot,
+    summary,
+)
 from .cli import start_capture, start_command
 
 # Commands that mutate infra via terraform/ansible need a long graceful runway
@@ -258,11 +267,42 @@ async def run_cli(
         await chat_events.emit_event(app, session_id, "error", {"message": str(exc)})
         return 1, str(exc)
 
+    # Where the CLI will resolve the range's files. The config path and the
+    # working directory are independent inputs to the CLI (see projectroot),
+    # and this used to be a fixed repo_root() — so a config in another checkout
+    # had its inventory and lab data looked up in the console's tree instead of
+    # its own. Running in the config's directory makes the CLI's inference land
+    # where it would running by hand next to that config.
+    #
+    # repo_root() still locates the *binary* in build_argv above; that is the
+    # console's own checkout and is a separate question from where the range's
+    # files live.
+    config_path = projectroot.config_path_of(session)
+    if config_path:
+        # long_running is the registry's marker for the commands that drive
+        # hosts (/health, /provision, /reset, /exec, /up, /validate) as opposed
+        # to cloud-only reads (/instances). Only those need an inventory, and
+        # warning about it on every read would make the warning worth ignoring.
+        checks = projectroot.preflight(
+            config_path,
+            session["anchor"]["env"],
+            check_inventory=commands.REGISTRY[name].long_running,
+        )
+        run_cwd = str(checks.root)
+        # Advisory, and emitted before the spawn: a missing inventory otherwise
+        # surfaces only as every host failing identically, long afterwards.
+        for warning in checks.warnings:
+            await chat_events.emit_event(
+                app, session_id, "status", {"content": warning}
+            )
+    else:
+        run_cwd = str(paths.repo_root())
+
     await chat_events.emit_event(
         app,
         session_id,
         "command_run",
-        {"phase": "start", "command": name, "argv": argv},
+        {"phase": "start", "command": name, "argv": argv, "cwd": run_cwd},
     )
 
     current = chat_runtime.runtime(session_id)
@@ -277,7 +317,7 @@ async def run_cli(
     if turn is not None:
         turn.commands_starting += 1
     try:
-        command = await start_command(argv, cwd=str(paths.repo_root()))
+        command = await start_command(argv, cwd=run_cwd)
     except OSError as exc:
         message = f"failed to start {name}: {exc}"
         if command_spec.long_running:

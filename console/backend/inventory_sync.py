@@ -7,7 +7,7 @@ import re
 import typing as t
 from datetime import datetime, timezone
 
-from . import commands, labconfig, paths
+from . import commands, labconfig, paths, projectroot
 from .cli import capture
 
 Capture = t.Callable[[list[str], str], t.Awaitable[tuple[int, str, str]]]
@@ -165,7 +165,12 @@ async def run_check(
     argv = commands.build_argv(session, "/instances", repo_root=str(paths.repo_root()))
     try:
         runner = capture_command or capture
-        return_code, stdout, stderr = await runner(argv, str(paths.repo_root()))
+        # Same tree as the commands whose results this records — see
+        # projectroot.run_cwd. (lab_config_path above stays on repo_root: the
+        # lab definitions are console-side, not part of the range's checkout.)
+        return_code, stdout, stderr = await runner(
+            argv, projectroot.run_cwd(session, paths.repo_root())
+        )
         if return_code != 0:
             raise RuntimeError(
                 f"lab status --json exited {return_code}: {stderr[-500:]}"
