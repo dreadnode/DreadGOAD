@@ -49,7 +49,8 @@ class Command:
     detail: str = ""
 
 
-# The 14 slash commands (§5.2).
+# The slash commands (§5.2). `/help` is not here: it runs nothing, so it is
+# merged into the catalog client-side rather than given a registry entry.
 # dispatch="agent": prose → structured prompt → the agent's run_dreadgoad tool
 #   (robust arg interpretation; the arg-flexible/mutating commands).
 # dispatch="direct": deterministic reads + /destroy, run programmatically.

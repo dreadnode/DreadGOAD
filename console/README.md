@@ -53,10 +53,11 @@ environment name), and drive it with `/` commands or plain text.
 
 ## Commands
 
-A message is either a slash-command or free text. Free text and **agent-dispatch**
-commands go to the LLM agent (which runs the CLI via a constrained `run_dreadgoad`
-tool); **direct-dispatch** commands run the CLI programmatically. The agent can
-never run a direct command or raw cloud CLI — a safety property.
+A message is either a slash-command or free text. The **dispatch** column says
+what happens when *you type it*: **agent** commands go to the LLM, which turns
+your prose into flags and runs the CLI through its constrained `run_dreadgoad`
+tool; **direct** commands run the CLI programmatically, with no model in the
+loop.
 
 | Command | dreadgoad CLI | Dispatch | Purpose |
 |---------|--------------|----------|---------|
@@ -64,20 +65,41 @@ never run a direct command or raw cloud CLI — a safety property.
 | `/provision` | `provision` | 🤖 agent | Re-run config playbooks |
 | `/reset` | `lab reset` | 🤖 agent | Restore known-clean AD baseline |
 | `/variant` | `variant generate` | 🤖 agent | Generate a randomized-name variant |
-| `/extensions` | `extension list` / `provision` | 🤖 agent | List or provision extensions |
-| `/score` | `score fetch` + `score --report` | 🤖 agent | Fetch an agent report off the attack box and score it |
+| `/extensions` | `extension` | 🤖 agent | List available extensions, or provision one |
+| `/score` | `score` | 🤖 agent | Fetch an agent report off the attack box and score it |
+| `/exec` | `exec --json` | 🤖 agent | Run a script on named hosts via the cloud control plane |
+| `/restart` | `lab restart-vm` | 🤖 agent | Reboot one host, leaving the rest of the range up |
 | `/instances` | `lab status --json` | ⚡ direct | Cloud power state |
 | `/health` | `health-check --json` | ⚡ direct | Per-host AD health (rendered as a table) |
 | `/validate` | `validate` | ⚡ direct | Vuln-config correctness |
-| `/exec` | `exec --json` | 🤖 agent | Run a script on named hosts via the cloud control plane |
 | `/start` | `lab start` | ⚡ direct | Power on |
 | `/stop` | `lab stop` | ⚡ direct | Power off |
-| `/scrub` | `score reset` | ⚡ direct | Clean agent artifacts |
+| `/scrub` | `score reset` | ⚡ direct | Clean agent artifacts (add `dry` to preview) |
 | `/destroy` | `infra destroy` | ⚡ direct | Tear down infra (operator-only) |
 
+`/help` is a sixteenth command that runs nothing: it prints the range workflow
+end to end and is what an empty chat pane shows, so a new session opens on the
+guide rather than a blank screen. It is client-side — it maps to no CLI verb,
+and the agent cannot "run" it.
+
 Config/env are injected from the session — you never pass `--config`/`--env`.
-Direct commands take no arguments; agent commands accept free-form text the agent
-interprets into flags (e.g. `/up using the variant at ad/GOAD-foo`).
+Agent commands accept free-form text the agent interprets into flags (e.g. `/up
+using the variant at ad/GOAD-foo`); of the direct commands only `/scrub` takes
+an argument.
+
+### What the agent may run
+
+The agent's tool can reach **every command in the table**, direct ones included,
+so it can answer a question by running a read and act on a request in plain
+English. Confirmation before something destructive is a prompt-level guarantee,
+not a mechanical one — that is an operator's choice, and it is the reason
+`system.md` matters.
+
+Two limits *are* mechanical. The agent picks a command name and arguments; it
+never picks the program, so it cannot invoke `az`, `aws`, `terraform` or a
+shell. And `--config`/`--env` come from the session anchor and are rejected in
+any supplied argument: cobra resolves repeated flags last-wins, so an appended
+`--config other.yaml` would otherwise retarget the run at a different range.
 
 ## Prompts
 
@@ -105,6 +127,10 @@ config-seeded range topology (this is also where the attack box is discovered fo
 `/score`). State persists to SQLite (document model over JSON columns); **no
 credentials are stored** — only config/env references.
 
+Node positions in the RangeView survive a reload: dragging a node saves through
+`PUT /api/ranges/{id}/layout`, which carries a revision so a stale write from a
+second tab is rejected with a 409 rather than overwriting the newer layout.
+
 ### Backend modules
 
 | Module | Responsibility |
@@ -113,6 +139,7 @@ credentials are stored** — only config/env references.
 | `chat.py` | Multiplexed WS runtime, `run_cli` pipeline, dispatch routing |
 | `agent.py` | Per-session `LocalTaskAgent` + the constrained `run_dreadgoad` tool |
 | `commands.py` | Slash-command registry, argv builder, prompt loader |
+| `summary.py` | Condenses CLI output into bounded tool results (structured, else clipped with a marker) |
 | `cli.py` | Subprocess runner (streaming + cancel; `capture` for JSON reads) |
 | `hook.py` | Ingestion hook: instance→host overlay, health overlay, attack-box sync |
 | `labconfig.py` | Snapshot derivation + range topology seeding from lab config |
@@ -128,8 +155,8 @@ credentials are stored** — only config/env references.
 
 # Backend tests (each suite is standalone-runnable, no pytest required):
 .venv/bin/python console/backend/tests/test_commands.py
-# ... test_db.py, test_labconfig.py, test_sessions.py, test_server_rest.py,
-#     test_commands.py, test_hook.py, test_longops.py, test_chat.py, test_fetch.py
+# ... test_chat.py, test_db.py, test_fetch.py, test_hook.py, test_labconfig.py,
+#     test_longops.py, test_server_rest.py, test_sessions.py, test_summary.py
 
 ruff format console/backend/ && ruff check console/backend/
 pyright --pythonpath .venv/bin/python console/backend/
