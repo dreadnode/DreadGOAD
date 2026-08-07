@@ -31,13 +31,13 @@ A **⚠ no key** indicator shows in the tab bar until one is set.
 Launch from the repo root:
 
 ```bash
-./dreadgoad-console            # build frontend, serve on http://localhost:7331
+./dreadgoad-console            # build frontend, serve on http://localhost:24749
 ./dreadgoad-console --dev      # vite hot-reload + uvicorn --reload (development)
 ```
 
 The launcher creates `.venv`, installs `console/backend/requirements.txt` (prefers
 `uv`), builds the SPA, and serves it plus the API from one uvicorn process. Open
-`http://localhost:7331`, create a session (point it at a `dreadgoad.yaml` + an
+`http://localhost:24749`, create a session (point it at a `dreadgoad.yaml` + an
 environment name), and drive it with `/` commands or plain text.
 
 ## Environment variables
@@ -45,7 +45,7 @@ environment name), and drive it with `/` commands or plain text.
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `OPENROUTER_API_KEY` | — | LLM key for the agent. Reads work without it; agent turns don't. |
-| `DREADGOAD_CONSOLE_PORT` | `7331` | HTTP port |
+| `DREADGOAD_CONSOLE_PORT` | `24749` | HTTP port |
 | `DREADGOAD_CONSOLE_MODEL` | `openrouter/anthropic/claude-sonnet-5` | Default agent model |
 | `DREADGOAD_CONSOLE_STATE_ROOT` | `.dreadgoad/console/` | SQLite DB + per-session working dirs |
 | `DREADGOAD_CONSOLE_DB` | `<state_root>/state.db` | Override the DB path |

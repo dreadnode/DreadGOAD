@@ -111,7 +111,10 @@ def _discard_idle_runtime(session_id: str, runtime: SessionRuntime) -> None:
     ):
         _runtimes.pop(session_id, None)
 
-TURN_BUSY_MESSAGE = "A turn is already running for this session; wait or cancel it first."
+
+TURN_BUSY_MESSAGE = (
+    "A turn is already running for this session; wait or cancel it first."
+)
 
 
 def active_turn(session_id: str) -> TurnState | None:
@@ -173,11 +176,7 @@ def cancel_session(session_id: str) -> bool:
     # With no CLI to unwind, interrupt model generation immediately. A running
     # CLI is allowed to handle SIGINT first; run_cli then aborts the owning turn
     # before the agent can interpret the cancellation as a failure and retry.
-    if (
-        not running
-        and turn is not None
-        and not turn.commands_starting
-    ):
+    if not running and turn is not None and not turn.commands_starting:
         task = turn.task
         if task is not None and not task.done():
             if turn.started:
@@ -191,9 +190,7 @@ def _session_lock(session_id: str) -> asyncio.Lock:
     return _runtime(session_id).lock
 
 
-def dispatch(
-    app: t.Any, session_id: str, content: str
-) -> asyncio.Task[t.Any] | None:
+def dispatch(app: t.Any, session_id: str, content: str) -> asyncio.Task[t.Any] | None:
     """Start one background turn, or reject it if the session is busy (§6.4, §7).
 
     The WS recv loop calls this and immediately keeps reading, so `cancel` and
@@ -242,9 +239,7 @@ def dispatch(
         raise
     turn.task = task
     _tasks.add(task)
-    task.add_done_callback(
-        lambda finished: _turn_task_done(session_id, turn, finished)
-    )
+    task.add_done_callback(lambda finished: _turn_task_done(session_id, turn, finished))
     return task
 
 
@@ -505,7 +500,9 @@ async def _prepare_extra(
         return extra
     try:
         rc_fetch, local, msg = await fetch.fetch_report(
-            session, extra[0], lambda argv, cwd: _capture_for_turn(session_id, argv, cwd)
+            session,
+            extra[0],
+            lambda argv, cwd: _capture_for_turn(session_id, argv, cwd),
         )
     except ValueError as exc:
         raise _Aborted(1, str(exc)) from exc

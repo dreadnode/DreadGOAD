@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Launch the DreadGOAD Console.
 #
-#   ./dreadgoad-console                 # build frontend, serve on :7331
+#   ./dreadgoad-console                 # build frontend, serve on :24749
 #   ./dreadgoad-console --dev           # run vite dev server + backend (hot reload)
 #
 # Requires: python3, node/npm, and the compiled `dreadgoad` Go binary on PATH
@@ -12,7 +12,10 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 BACKEND="$ROOT/console/backend"
 FRONTEND="$ROOT/console/frontend"
 VENV="$ROOT/.venv"
-PORT="${DREADGOAD_CONSOLE_PORT:-${DREADGOAD_WEBAPP_PORT:-7331}}"
+# 24749 == 0x60AD — "GOAD" in hex (G->6, O->0). Outside the Linux
+# ephemeral range (32768-60999) so the bind never races an outbound
+# connection, and unregistered with IANA.
+PORT="${DREADGOAD_CONSOLE_PORT:-${DREADGOAD_WEBAPP_PORT:-24749}}"
 MODEL="${DREADGOAD_CONSOLE_MODEL:-${DREADGOAD_WEBAPP_MODEL:-openrouter/anthropic/claude-sonnet-5}}"
 DEV=0
 [ "${1:-}" = "--dev" ] && DEV=1

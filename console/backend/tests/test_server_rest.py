@@ -228,7 +228,9 @@ def main() -> None:
         )
         assert stale.status_code == 409, stale.text
         assert stale.json()["detail"]["layout_revision"] == 1, stale.text
-        assert client.get(f"/api/ranges/{sid}").json()["layout"] == after_layout["layout"]
+        assert (
+            client.get(f"/api/ranges/{sid}").json()["layout"] == after_layout["layout"]
+        )
 
         for invalid_layout in (
             {"layout": [], "revision": 1},
@@ -237,9 +239,7 @@ def main() -> None:
             {"layout": {node_id: {"x": 1}}, "revision": 1},
             {"layout": {node_id: {"x": 10**400, "y": 2}}, "revision": 1},
         ):
-            response = client.put(
-                f"/api/ranges/{sid}/layout", json=invalid_layout
-            )
+            response = client.put(f"/api/ranges/{sid}/layout", json=invalid_layout)
             assert response.status_code == 400, (invalid_layout, response.text)
         print("PASS versioned layout update + validation")
 
@@ -339,8 +339,7 @@ def test_parse_ws_message_validation() -> None:
     )
     assert parse_ws_message(oversized_content)[1] == "content is too large"
     assert (
-        parse_ws_message(" " * (WS_MAX_MESSAGE_CHARS + 1))[1]
-        == "message is too large"
+        parse_ws_message(" " * (WS_MAX_MESSAGE_CHARS + 1))[1] == "message is too large"
     )
     print("PASS test_parse_ws_message_validation")
 
@@ -457,7 +456,9 @@ def test_ws_cancel_reaches_runtime(client: TestClient) -> None:
             # A following request/response is a synchronization barrier: the
             # server processed the cancel before it reports this protocol error.
             websocket.send_text("[]")
-            assert websocket.receive_json()["message"] == "message must be a JSON object"
+            assert (
+                websocket.receive_json()["message"] == "message must be a JSON object"
+            )
 
         assert first.cancelled and second.cancelled
         assert runtime.turn is not None and runtime.turn.cancelled is True

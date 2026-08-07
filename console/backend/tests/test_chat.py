@@ -145,17 +145,18 @@ async def test_start_failure_finishes_turn_and_restores_status() -> None:
         session_id: str | None = None
         try:
             s = await svc.create_session(str(cfg), "dev")
-            session_id = s["id"]
+            sid = str(s["id"])
+            session_id = sid  # tracked separately for the finally cleanup
             ws = FakeWS()
-            chat.register_conn(session_id, ws)
+            chat.register_conn(sid, ws)
 
             # /health is long-running, so it first moves the session into
             # provisioning. A launch failure must move it back out again.
-            await chat.handle_message(app, session_id, "/health")
+            await chat.handle_message(app, sid, "/health")
 
-            current = await db.get_session(session_id)
+            current = await db.get_session(sid)
             assert current is not None and current["status"] == "error", current
-            assert not chat._runtime(session_id).running, (
+            assert not chat._runtime(sid).running, (
                 "a failed spawn cannot be cancellable"
             )
 
@@ -283,6 +284,7 @@ async def test_resume_reports_in_flight_turn() -> None:
 
             # Start a turn and let it reach the lock, then "reload" the client.
             task = chat.dispatch(app, sid, "/up")
+            assert task is not None, "an idle session must accept a turn"
             await asyncio.sleep(0.05)
 
             turn = chat.active_turn(sid)
@@ -326,6 +328,7 @@ async def test_turn_flag_cleared_when_turn_raises() -> None:
     chat.handle_message = boom
     try:
         task = chat.dispatch(None, "s-boom", "hi")
+        assert task is not None, "an idle session must accept a turn"
         with contextlib.suppress(RuntimeError):
             await task
         assert chat.active_turn("s-boom") is None, "finally must clear the flag"
@@ -507,9 +510,7 @@ async def test_run_dreadgoad_tool_validates_and_runs() -> None:
     async def cancelled_run_cli(app, sid, cmd, args):  # noqa: ANN001, ANN202
         raise asyncio.CancelledError
 
-    cancelled_tool = agent._make_run_dreadgoad(
-        object(), "s-1", cancelled_run_cli
-    )
+    cancelled_tool = agent._make_run_dreadgoad(object(), "s-1", cancelled_run_cli)
     call = ToolCall(
         id="cancel-1",
         function=FunctionCall(
@@ -811,10 +812,15 @@ async def test_captured_helper_is_owned_and_cancelled_with_turn() -> None:
         assert turn.commands_starting == 1
         assert not task.done(), "launching helper's owner task was cancelled"
         release_spawn.set()
+        # sleep(0.01), not sleep(0): getting here runs session reads that
+        # aiosqlite services on a worker thread, and a bare yield only drains
+        # callbacks already queued — 20 of those pass in microseconds, before
+        # the thread has replied. Overshooting is safe here because FakeCapture
+        # blocks in communicate() until the test releases it.
         for _ in range(20):
             if command in runtime.running:
                 break
-            await asyncio.sleep(0)
+            await asyncio.sleep(0.01)
         assert command in runtime.running, "captured helper was not turn-owned"
         assert command.cancelled, "deferred Esc did not signal helper after launch"
         command.stopped.set()
@@ -841,7 +847,27 @@ async def test_cancelled_command_aborts_turn_before_agent_can_retry() -> None:
         sid = session["id"]
         ws = FakeWS()
         chat.register_conn(sid, ws)
-        command = FakeRC(["waiting"] * 100)
+
+        class SlowRC(FakeRC):
+            """A command that is observably mid-run.
+
+            FakeRC separates its lines with ``sleep(0)``, so all 100 drain
+            inside a single turn of the loop and the command joins and leaves
+            ``running`` almost instantaneously. Whether the poll below caught
+            that window came down to how many loop turns the dispatch path
+            happened to take, and the assertion failed on roughly half of all
+            runs. A real per-line delay keeps the command in ``running`` until
+            the test cancels it, which is the state under test.
+            """
+
+            async def stream_lines(self):
+                for line in self._lines:
+                    if self.cancelled:
+                        return
+                    await asyncio.sleep(0.01)
+                    yield line
+
+        command = SlowRC(["waiting"] * 100)
         hook_called = False
 
         async def fake_start(argv, cwd):  # noqa: ANN001
@@ -857,10 +883,12 @@ async def test_cancelled_command_aborts_turn_before_agent_can_retry() -> None:
         try:
             task = chat.dispatch(app, sid, "/health")
             assert task is not None
+            # Real sleep, safe only because SlowRC holds the window open: a
+            # plain FakeRC drains before the first poll and this fails 100%.
             for _ in range(20):
                 if chat._runtime(sid).running:
                     break
-                await asyncio.sleep(0)
+                await asyncio.sleep(0.01)
             assert chat._runtime(sid).running, "command never became cancellable"
 
             assert chat.cancel_session(sid) is True

@@ -429,11 +429,12 @@ export default function RangeView(
           display: 'flex', alignItems: 'center', flexWrap: 'wrap',
           columnGap: 18, rowGap: 8, minWidth: 0,
         }}>
-          {/* Sits closer to the fields than they sit to each other, so it reads
-              as the row's title rather than as another field. */}
+          {/* Set apart from the fields by more than they are from each other,
+              so it reads as the row's title rather than as another field.
+              marginRight adds to the 18px columnGap → 32px of clear space. */}
           <span style={{
             color: 'var(--dn-electric)', fontSize: 13, fontWeight: 700,
-            marginRight: -4, alignSelf: 'center',
+            marginRight: 14, alignSelf: 'center',
           }}>RANGE</span>
           {fields.map(f => (
             <Field key={f.label} label={f.label} value={f.value} title={f.title} />
@@ -483,11 +484,15 @@ export default function RangeView(
 }
 
 const headerStyle: React.CSSProperties = {
-  // flex-start, not center: when the field pills wrap to a second row the
-  // header grows downward and the status block stays put on the first row.
+  // flex-start, not center: when the fields wrap to a second row the header
+  // grows downward and the status block stays put on the first row.
   display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
   gap: 16, padding: '12px 16px', borderBottom: '1px solid var(--dn-border)',
   background: 'var(--dn-black)', flexShrink: 0,
+  // Shared with the AGENT pane header so the two banners align across the
+  // split — see --dg-pane-header-h in index.css. minHeight, not height: this
+  // one still grows when the fields wrap.
+  minHeight: 'var(--dg-pane-header-h)',
 }
 const emptyStyle: React.CSSProperties = {
   display: 'flex', alignItems: 'center', justifyContent: 'center',

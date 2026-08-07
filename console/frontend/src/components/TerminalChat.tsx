@@ -392,10 +392,23 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
   const [commands, setCommands] = useState<CommandDef[]>([])
   const [cmdHighlight, setCmdHighlight] = useState(0)
   const endRef = useRef<HTMLDivElement>(null)
+  // The scrolling transcript container — needed to pin it to the TOP for the
+  // guide, which endRef (an anchor at the bottom) can't express.
+  const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const activeCmdRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages])
+  // Follow the transcript, EXCEPT while the pane holds only the workflow guide.
+  // The guide is taller than the pane, so scrolling to the end would open a new
+  // session on its last line — the reader needs its first line. As soon as a
+  // turn produces output, following resumes and stays on for the session.
+  useEffect(() => {
+    if (messages.length === 0) {
+      scrollRef.current?.scrollTo({ top: 0 })
+      return
+    }
+    endRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
 
   // Auto-grow the input upward as it wraps to multiple lines (like ALFRED).
   // Reset to 'auto' first so it also shrinks back when text is deleted.
@@ -523,7 +536,13 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--dn-bg)', borderRight: '1px solid var(--dn-border)' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid var(--dn-border)', background: 'var(--dn-black)' }}>
+      {/* minHeight is shared with RangeView's header so the two pane banners
+          line up across the split — see --dg-pane-header-h in index.css. */}
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        padding: '12px 16px', borderBottom: '1px solid var(--dn-border)',
+        background: 'var(--dn-black)', minHeight: 'var(--dg-pane-header-h)',
+      }}>
         <span style={{ color: 'var(--dg-brand)', fontSize: 13, fontWeight: 700 }}>AGENT</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
           {model && (
@@ -551,7 +570,7 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
           />
         </div>
       </div>
-      <div style={{ flex: 1, overflowY: 'auto', padding: '12px 16px' }}>
+      <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '12px 16px' }}>
         {!sessionId && <div style={{ color: 'var(--dn-text-dim)', fontSize: 13 }}>Create or select a session to begin.</div>}
         {/* The guide leads an empty pane, so a fresh session opens on the
             workflow rather than a blank screen. After /help it renders at the
@@ -565,8 +584,12 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
           .map((ev, i) => <Message key={ev._cid ?? `h${i}`} ev={ev} />)}
         {processing && (
           <div style={{ display: 'flex', gap: 16, alignItems: 'baseline', marginTop: 4 }}>
+            {/* Colour and opacity live in the stylesheet, not here: the shimmer
+                paints the text with a clipped gradient, which an inline `color`
+                would override and an inline `opacity` would fade along with the
+                highlight, flattening the sweep. */}
             <span className="agent-working" style={{
-              color: 'var(--dg-interactive)', fontSize: 13, fontFamily: 'var(--font-mono)', opacity: 0.6,
+              fontSize: 13, fontFamily: 'var(--font-mono)',
             }}>Agent working</span>
             <span
               // Tabular figures so the digits don't shuffle the row every tick.
