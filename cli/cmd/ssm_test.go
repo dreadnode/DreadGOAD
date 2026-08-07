@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
+	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/dreadnode/dreadgoad/internal/inventory"
 	"github.com/dreadnode/dreadgoad/internal/provider"
 )
@@ -37,7 +39,7 @@ func (p *ssmDiscoveryProvider) DiscoverInstances(context.Context, string) ([]pro
 }
 
 func TestResolveSSMHostFallsBackToDiscovery(t *testing.T) {
-	want := &provider.Instance{ID: "i-kali", Name: "test-goad-dreadgoad-kali"}
+	want := &provider.Instance{ID: "i-kali", Name: "test-goad-dreadgoad-kali", State: "running"}
 	prov := &ssmDiscoveryProvider{byName: want}
 
 	got, err := resolveSSMHost(context.Background(), prov, "test", nil, "kali")
@@ -46,6 +48,21 @@ func TestResolveSSMHostFallsBackToDiscovery(t *testing.T) {
 	}
 	if got.ID != want.ID {
 		t.Fatalf("resolveSSMHost() ID = %q, want %q", got.ID, want.ID)
+	}
+}
+
+func TestResolveSSMProviderOptionsPrefersInventoryRegion(t *testing.T) {
+	cfg := &config.Config{Region: "us-west-2"}
+	inv := &inventory.Inventory{Vars: map[string]string{
+		"ansible_aws_ssm_region": "us-east-2",
+	}}
+
+	opts, err := resolveSSMProviderOptions(cfg, inv)
+	if err != nil {
+		t.Fatalf("resolveSSMProviderOptions() error = %v", err)
+	}
+	if opts.Region != "us-east-2" {
+		t.Fatalf("resolveSSMProviderOptions() region = %q, want us-east-2", opts.Region)
 	}
 }
 
@@ -111,5 +128,18 @@ func TestResolveSSMHostPropagatesAttackBoxDiscoveryError(t *testing.T) {
 	_, err := resolveSSMHost(context.Background(), prov, "test", nil, "attack-box")
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("resolveSSMHost() error = %v, want wrapped %v", err, wantErr)
+	}
+}
+
+func TestResolveSSMHostRejectsStoppedDiscoveryTarget(t *testing.T) {
+	prov := &ssmDiscoveryProvider{byName: &provider.Instance{
+		ID:    "i-kali",
+		Name:  "test-goad-dreadgoad-kali",
+		State: "stopped",
+	}}
+
+	_, err := resolveSSMHost(context.Background(), prov, "test", nil, "kali")
+	if err == nil || !strings.Contains(err.Error(), "is stopped") {
+		t.Fatalf("resolveSSMHost() error = %v, want actionable stopped-state error", err)
 	}
 }

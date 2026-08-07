@@ -19,39 +19,14 @@ type Instance struct {
 	Tags       map[string]string
 }
 
-// DiscoverInstances finds DreadGOAD instances by their project and environment tags.
+// DiscoverInstances finds DreadGOAD instances by project/environment tags or
+// the legacy environment-scoped Name pattern.
 // By default only running instances are returned. Pass additional states
 // (e.g. "stopped") to include them.
 func (c *Client) DiscoverInstances(ctx context.Context, env string, extraStates ...string) ([]Instance, error) {
 	states := []string{"running"}
 	states = append(states, extraStates...)
-	out, err := c.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
-		Filters: discoveryFilters(env, states),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("describe instances: %w", err)
-	}
-
-	var instances []Instance
-	for _, r := range out.Reservations {
-		for _, i := range r.Instances {
-			inst := Instance{
-				InstanceID: deref(i.InstanceId),
-				PrivateIP:  deref(i.PrivateIpAddress),
-				State:      string(i.State.Name),
-				Tags:       make(map[string]string, len(i.Tags)),
-			}
-			for _, t := range i.Tags {
-				key, value := deref(t.Key), deref(t.Value)
-				inst.Tags[key] = value
-				if key == "Name" {
-					inst.Name = value
-				}
-			}
-			instances = append(instances, inst)
-		}
-	}
-	return instances, nil
+	return c.discoverInstances(ctx, env, states)
 }
 
 // GetInstancePrivateIPs queries EC2 for private IPs of the given instance IDs.
@@ -90,21 +65,36 @@ func (c *Client) StopInstances(ctx context.Context, instanceIDs []string) error 
 
 // DiscoverAllInstances finds GOAD instances in any state (including stopped).
 func (c *Client) DiscoverAllInstances(ctx context.Context, env string) ([]Instance, error) {
-	out, err := c.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
-		Filters: discoveryFilters(env, nil),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("describe instances: %w", err)
-	}
+	return c.discoverInstances(ctx, env, nil)
+}
 
+func (c *Client) discoverInstances(ctx context.Context, env string, states []string) ([]Instance, error) {
 	var instances []Instance
-	for _, r := range out.Reservations {
+	seen := make(map[string]struct{})
+	for _, filters := range discoveryFilterSets(env, states) {
+		out, err := c.EC2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{Filters: filters})
+		if err != nil {
+			return nil, fmt.Errorf("describe instances: %w", err)
+		}
+		instances = appendDiscoveredInstances(instances, seen, out.Reservations)
+	}
+	return instances, nil
+}
+
+func appendDiscoveredInstances(instances []Instance, seen map[string]struct{}, reservations []types.Reservation) []Instance {
+	for _, r := range reservations {
 		for _, i := range r.Instances {
 			if i.State.Name == types.InstanceStateNameTerminated {
 				continue
 			}
+			instanceID := deref(i.InstanceId)
+			if _, exists := seen[instanceID]; exists {
+				continue
+			}
+			seen[instanceID] = struct{}{}
+
 			inst := Instance{
-				InstanceID: deref(i.InstanceId),
+				InstanceID: instanceID,
 				PrivateIP:  deref(i.PrivateIpAddress),
 				State:      string(i.State.Name),
 				Tags:       make(map[string]string, len(i.Tags)),
@@ -119,18 +109,25 @@ func (c *Client) DiscoverAllInstances(ctx context.Context, env string) ([]Instan
 			instances = append(instances, inst)
 		}
 	}
-	return instances, nil
+	return instances
 }
 
-func discoveryFilters(env string, states []string) []types.Filter {
-	filters := []types.Filter{
-		{Name: Ptr("tag:Project"), Values: []string{"DreadGOAD"}},
-		{Name: Ptr("tag:Environment"), Values: []string{env}},
+func discoveryFilterSets(env string, states []string) [][]types.Filter {
+	filterSets := [][]types.Filter{
+		{
+			{Name: Ptr("tag:Project"), Values: []string{"DreadGOAD"}},
+			{Name: Ptr("tag:Environment"), Values: []string{env}},
+		},
+		{
+			{Name: Ptr("tag:Name"), Values: []string{fmt.Sprintf("*%s*dreadgoad*", env)}},
+		},
 	}
 	if len(states) > 0 {
-		filters = append(filters, types.Filter{Name: Ptr("instance-state-name"), Values: states})
+		for i := range filterSets {
+			filterSets[i] = append(filterSets[i], types.Filter{Name: Ptr("instance-state-name"), Values: states})
+		}
 	}
-	return filters
+	return filterSets
 }
 
 // FindInstanceByHostnameAll finds an instance (any state except terminated) whose Name tag contains the hostname.

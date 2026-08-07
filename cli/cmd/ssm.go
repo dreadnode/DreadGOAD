@@ -166,7 +166,18 @@ func runSSMConnect(cmd *cobra.Command, args []string) error {
 	}
 	ctx := context.Background()
 
-	prov, err := cfg.NewProvider(ctx)
+	// The optional attack box is intentionally absent from the Ansible
+	// inventory. Prefer inventory for the Windows hosts, then fall back to
+	// provider discovery for tagged or otherwise out-of-inventory instances.
+	inv, invErr := inventory.Parse(cfg.InventoryPath())
+	if invErr != nil {
+		slog.Warn("inventory unavailable; falling back to AWS discovery", "path", cfg.InventoryPath(), "error", invErr)
+	}
+	opts, err := resolveSSMProviderOptions(cfg, inv)
+	if err != nil {
+		return err
+	}
+	prov, err := provider.New(ctx, provider.NameAWS, opts)
 	if err != nil {
 		return err
 	}
@@ -175,13 +186,6 @@ func runSSMConnect(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("provider %s does not support interactive shells", prov.Name())
 	}
 
-	// The optional attack box is intentionally absent from the Ansible
-	// inventory. Prefer inventory for the Windows hosts, then fall back to
-	// provider discovery for tagged or otherwise out-of-inventory instances.
-	inv, invErr := inventory.Parse(cfg.InventoryPath())
-	if invErr != nil {
-		slog.Warn("inventory unavailable; falling back to AWS discovery", "path", cfg.InventoryPath(), "error", invErr)
-	}
 	target, err := resolveSSMHost(ctx, prov, cfg.Env, inv, args[0])
 	if err != nil {
 		return err
@@ -190,13 +194,17 @@ func runSSMConnect(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("AWS Session Manager plugin not found in PATH; install it before running ssm connect")
 	}
 
+	fmt.Printf("Starting SSM session to %s (%s) in %s...\n", target.Name, target.ID, opts.Region)
+
+	return shell.StartInteractiveShell(ctx, target.ID, opts.Region)
+}
+
+func resolveSSMProviderOptions(cfg *config.Config, inv *inventory.Inventory) (provider.ConstructorOpts, error) {
 	region, err := cfg.ResolveRegionWithInventory(inv)
 	if err != nil {
-		return err
+		return provider.ConstructorOpts{}, err
 	}
-	fmt.Printf("Starting SSM session to %s (%s) in %s...\n", target.Name, target.ID, region)
-
-	return shell.StartInteractiveShell(ctx, target.ID, region)
+	return provider.ConstructorOpts{Region: region}, nil
 }
 
 func resolveSSMHost(ctx context.Context, prov provider.Provider, env string, inv *inventory.Inventory, hostName string) (*provider.Instance, error) {
@@ -224,6 +232,9 @@ func resolveSSMHost(ctx context.Context, prov provider.Provider, env string, inv
 		return nil, fmt.Errorf("discover AWS host %q: %w", hostName, err)
 	}
 	if inst != nil && inst.ID != "" {
+		if inst.State != "" && !strings.EqualFold(inst.State, "running") {
+			return nil, fmt.Errorf("AWS host %q is %s; it must be running before ssm connect", hostName, inst.State)
+		}
 		return inst, nil
 	}
 
