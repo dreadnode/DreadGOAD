@@ -17,6 +17,8 @@ from datetime import datetime, timezone
 from . import commands, labconfig, paths
 from .cli import capture
 
+Capture = t.Callable[[list[str], str], t.Awaitable[tuple[int, str, str]]]
+
 # Cloud power state → our host.status enum (§6.3).
 _STATE = {
     "running": "running",
@@ -197,7 +199,11 @@ def summarize_changes(
     return {"hosts_updated": len(changes), "changes": changes}
 
 
-async def run_check(app: t.Any, session_id: str) -> dict[str, t.Any]:
+async def run_check(
+    app: t.Any,
+    session_id: str,
+    capture_command: Capture | None = None,
+) -> dict[str, t.Any]:
     """Discover live state and overlay it onto the range (§6.4 flow).
 
     On failure: leave the range untouched (stale), don't advance
@@ -222,7 +228,8 @@ async def run_check(app: t.Any, session_id: str) -> dict[str, t.Any]:
     argv = commands.build_argv(session, "/instances", repo_root=str(paths.repo_root()))
     try:
         # Separate streams: stderr noise must not corrupt the JSON on stdout.
-        rc, out, err = await capture(argv, cwd=str(paths.repo_root()))
+        runner = capture_command or capture
+        rc, out, err = await runner(argv, str(paths.repo_root()))
         if rc != 0:
             raise RuntimeError(f"lab status --json exited {rc}: {err[-500:]}")
         instances = json.loads(out)
@@ -366,7 +373,9 @@ async def apply_health(
 _EXT_ROLE = "linux"
 
 
-async def _extension_nodes(session: dict[str, t.Any]) -> list[dict[str, t.Any]]:
+async def _extension_nodes(
+    session: dict[str, t.Any], capture_command: Capture | None = None
+) -> list[dict[str, t.Any]]:
     """Nodes for the range's **enabled** extensions, via `extension list --json`.
 
     This is how extension machines (ELK, Wazuh, …) reach the RangeView —
@@ -386,7 +395,8 @@ async def _extension_nodes(session: dict[str, t.Any]) -> list[dict[str, t.Any]]:
         "list",
         "--json",
     ]
-    rc, out, _err = await capture(argv, cwd=str(paths.repo_root()))
+    runner = capture_command or capture
+    rc, out, _err = await runner(argv, str(paths.repo_root()))
     if rc != 0:
         return []
     try:
@@ -416,7 +426,11 @@ async def _extension_nodes(session: dict[str, t.Any]) -> list[dict[str, t.Any]]:
     return nodes
 
 
-async def reseed(app: t.Any, session_id: str) -> None:
+async def reseed(
+    app: t.Any,
+    session_id: str,
+    capture_command: Capture | None = None,
+) -> None:
     """Re-seed topology after /extensions or /variant change the node set (§6.3).
 
     Node set = config hosts + infra nodes (``seed_topology``) + enabled
@@ -433,7 +447,7 @@ async def reseed(app: t.Any, session_id: str) -> None:
     seeded = labconfig.seed_topology(cfg, snap.get("provider"))
 
     existing_ids = {h["id"] for h in seeded["hosts"]}
-    for node in await _extension_nodes(session):
+    for node in await _extension_nodes(session, capture_command):
         if node["id"] not in existing_ids:
             seeded["hosts"].append(node)
             existing_ids.add(node["id"])

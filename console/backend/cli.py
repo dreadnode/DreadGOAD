@@ -29,6 +29,11 @@ _DRAIN_BUDGET = 2.0
 # How long to wait for exit after the pipe closes, before giving up on it.
 _EXIT_GRACE = 30.0
 
+# A process group has already received SIGKILL on this path. Waiting longer
+# would make the chat runtime's bounded shutdown misleading; this window exists
+# only to let asyncio's child watcher collect the exit status.
+_FORCE_REAP_GRACE = 2.0
+
 
 class RunningCommand:
     """A live CLI subprocess with a streamed-output future and cancel()."""
@@ -43,6 +48,7 @@ class RunningCommand:
         self.lines: list[str] = []
         self.cancelled = False
         self._kill_task: asyncio.Task[None] | None = None
+        self._closed = False
         # Capture the process group now, while the child is certainly alive.
         # Resolving it later with getpgid() is unsafe: we also signal *after*
         # exit (see _reap_group), and a reaped PID can be recycled by the OS —
@@ -58,7 +64,7 @@ class RunningCommand:
         terraform/ansible children unwind gracefully), then escalate to SIGKILL
         if it hasn't exited within the grace period — some commands trap SIGINT
         (§5.4). The child is a group leader via ``start_new_session``."""
-        if self._proc.returncode is not None:
+        if self._closed:
             return
         self.cancelled = True
         self._killpg(signal.SIGINT)
@@ -73,15 +79,20 @@ class RunningCommand:
 
     def force_kill(self) -> None:
         """Immediately stop the owned process group during bounded teardown."""
-        if self._proc.returncode is None:
-            self.cancelled = True
-            self._killpg(signal.SIGKILL)
+        # Signal even if the group leader has exited: a surviving helper may
+        # still own an inherited stdout/stderr pipe and keep communicate()
+        # blocked.  _closed prevents signalling this cached pgid after the
+        # command has been fully reaped, when reuse could make it unsafe.
+        if self._closed:
+            return
+        self.cancelled = True
+        self._killpg(signal.SIGKILL)
         self._cancel_kill_task()
 
     async def _force_kill_after(self, grace: float) -> None:
         try:
             await asyncio.sleep(grace)
-            if self._proc.returncode is None:
+            if self.cancelled and not self._closed:
                 self._killpg(signal.SIGKILL)
         finally:
             if self._kill_task is asyncio.current_task():
@@ -176,7 +187,10 @@ class RunningCommand:
         if self._proc.returncode is None:
             return  # still running; not ours to reap yet
         self._cancel_kill_task()
-        self._killpg(signal.SIGTERM)
+        # A cancelled run must leave no helper behind. Normal completion uses
+        # SIGTERM so an outliving tunnel can still shut down cleanly.
+        self._killpg(signal.SIGKILL if self.cancelled else signal.SIGTERM)
+        self._closed = True
 
     async def wait(self, on_line: OnLine | None = None) -> tuple[int, str]:
         """Stream stdout (merged stderr) until exit; return (rc, full_output)."""
@@ -184,6 +198,62 @@ class RunningCommand:
             if on_line is not None:
                 on_line(line)
         return self.returncode, self.output
+
+    async def communicate(self) -> tuple[int, str, str]:
+        """Capture separate stdout/stderr, bounded after exit, and reap the group.
+
+        A caller cancelling ``Process.communicate`` does not terminate the
+        subprocess.  Standalone users of :func:`capture` therefore hard-stop
+        the group before propagating cancellation; session-owned callers signal
+        this handle directly and normally let the readers finish after SIGINT.
+
+        Read the two streams ourselves instead of using ``Process.communicate``:
+        an outliving helper can inherit either pipe and prevent communicate()
+        from ever seeing EOF after the CLI itself exits. Once exit is observed,
+        preserve a small drain window and then stop reading, just like the live
+        merged-output path.
+        """
+        assert self._proc.stdout is not None
+        assert self._proc.stderr is not None
+        out = bytearray()
+        err = bytearray()
+
+        async def drain(reader: asyncio.StreamReader, target: bytearray) -> None:
+            while chunk := await reader.read(64 * 1024):
+                target.extend(chunk)
+
+        readers = {
+            asyncio.create_task(drain(self._proc.stdout, out)),
+            asyncio.create_task(drain(self._proc.stderr, err)),
+        }
+        try:
+            # proc.wait() is deliberately avoided: asyncio may wait for pipe
+            # closure too, which is exactly what a surviving child prevents.
+            while self._proc.returncode is None:
+                await asyncio.sleep(_POLL_INTERVAL)
+            _done, pending = await asyncio.wait(readers, timeout=_DRAIN_BUDGET)
+            for task in pending:
+                task.cancel()
+        except asyncio.CancelledError:
+            self.force_kill()
+            raise
+        except BaseException:
+            self.force_kill()
+            raise
+        finally:
+            for task in readers:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*readers, return_exceptions=True)
+            if self._proc.returncode is None and self.cancelled:
+                with _suppress():
+                    await asyncio.wait_for(self._proc.wait(), _FORCE_REAP_GRACE)
+            self._reap_group()
+        return (
+            self.returncode,
+            out.decode("utf-8", errors="replace"),
+            err.decode("utf-8", errors="replace"),
+        )
 
 
 class _suppress:
@@ -229,15 +299,17 @@ async def capture(argv: list[str], cwd: str | Path) -> tuple[int, str, str]:
     stderr into stdout would let a stray log/warning line corrupt JSON
     parsing. Returns (returncode, stdout, stderr).
     """
+    command = await start_capture(argv, cwd)
+    return await command.communicate()
+
+
+async def start_capture(argv: list[str], cwd: str | Path) -> RunningCommand:
+    """Launch a separately-captured command with an owned process group."""
     proc = await asyncio.create_subprocess_exec(
         *argv,
         cwd=str(cwd),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        start_new_session=True,
     )
-    out, err = await proc.communicate()
-    return (
-        proc.returncode or 0,
-        out.decode("utf-8", errors="replace"),
-        err.decode("utf-8", errors="replace"),
-    )
+    return RunningCommand(proc)

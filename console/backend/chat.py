@@ -33,7 +33,7 @@ from dreadnode.agent.events import (
 
 from . import commands, fetch, hook, paths, summary
 from .agent import create_agent
-from .cli import start_command
+from .cli import start_capture, start_command
 
 # Chat-kind events replayed on resume (§6.3).
 CHAT_KINDS = [
@@ -490,7 +490,10 @@ def final_status(name: str, exit_code: int, cancelled: bool) -> str:
 
 
 async def _prepare_extra(
-    session: dict[str, t.Any], name: str, extra: list[str]
+    session: dict[str, t.Any],
+    session_id: str,
+    name: str,
+    extra: list[str],
 ) -> list[str]:
     """Resolve command arguments that need work before the CLI runs.
 
@@ -501,7 +504,9 @@ async def _prepare_extra(
     if name != "/score" or not extra:
         return extra
     try:
-        rc_fetch, local, msg = await fetch.fetch_report(session, extra[0])
+        rc_fetch, local, msg = await fetch.fetch_report(
+            session, extra[0], lambda argv, cwd: _capture_for_turn(session_id, argv, cwd)
+        )
     except ValueError as exc:
         raise _Aborted(1, str(exc)) from exc
     if rc_fetch != 0:
@@ -623,7 +628,39 @@ async def _emit_overlays(
                 },
             )
     elif name in ("/variant", "/extensions"):
-        await hook.reseed(app, session_id)
+        await hook.reseed(
+            app,
+            session_id,
+            lambda argv, cwd: _capture_for_turn(session_id, argv, cwd),
+        )
+
+
+async def _capture_for_turn(
+    session_id: str, argv: list[str], cwd: str
+) -> tuple[int, str, str]:
+    """Run a machine-readable helper as an owned subprocess of this turn."""
+    runtime = _runtime(session_id)
+    turn = runtime.turn
+    if turn is not None:
+        turn.commands_starting += 1
+    try:
+        command = await start_capture(argv, cwd)
+    finally:
+        if turn is not None:
+            turn.commands_starting = max(0, turn.commands_starting - 1)
+
+    if turn is not None and turn.cancelled:
+        command.cancel()
+    runtime.running.add(command)
+    try:
+        result = await command.communicate()
+    finally:
+        runtime.running.discard(command)
+
+    turn = runtime.turn
+    if command.cancelled or (turn is not None and turn.cancelled):
+        raise asyncio.CancelledError
+    return result
 
 
 async def run_cli(
@@ -642,7 +679,7 @@ async def run_cli(
         return 1, "session not found"
 
     try:
-        extra = await _prepare_extra(session, name, list(extra or []))
+        extra = await _prepare_extra(session, session_id, name, list(extra or []))
     except _Aborted as exc:
         await emit_event(app, session_id, "error", {"message": exc.emit})
         return exc.code, exc.output
@@ -744,7 +781,11 @@ async def run_cli(
     if rc.cancelled or (turn is not None and turn.cancelled):
         raise asyncio.CancelledError
 
-    payload = await hook.run_check(app, session_id)
+    payload = await hook.run_check(
+        app,
+        session_id,
+        lambda argv, cwd: _capture_for_turn(session_id, argv, cwd),
+    )
     await emit_event(app, session_id, "check_run", payload)
     await _emit_overlays(app, session_id, name, output, exit_code)
 

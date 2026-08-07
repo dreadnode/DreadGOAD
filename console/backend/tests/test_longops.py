@@ -6,7 +6,10 @@ Standalone:  python console/backend/tests/test_longops.py
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import os
 import pathlib
+import shlex
 import stat
 import sys
 import tempfile
@@ -15,6 +18,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
 import json  # noqa: E402
 
+from console.backend import cli  # noqa: E402
 from console.backend.cli import capture, start_command  # noqa: E402
 
 
@@ -70,10 +74,73 @@ async def test_capture_separates_stdout_stderr() -> None:
     print("PASS test_capture_separates_stdout_stderr")
 
 
+async def test_cancelled_capture_kills_its_process_group() -> None:
+    """Cancelling capture cannot detach the child it was awaiting."""
+    pidfile = pathlib.Path(tempfile.mkdtemp()) / "capture.pid"
+    stub = _script(f"echo $$ > {shlex.quote(str(pidfile))}\nsleep 30\n")
+    task = asyncio.create_task(capture([stub], cwd="."))
+
+    pid: int | None = None
+    for _ in range(50):
+        if pidfile.exists():
+            pid = int(pidfile.read_text().strip())
+            break
+        await asyncio.sleep(0.01)
+    assert pid is not None, "capture child did not start"
+
+    task.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await task
+
+    for _ in range(50):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        await asyncio.sleep(0.01)
+    else:
+        raise AssertionError(f"cancelled capture left process {pid} alive")
+    print("PASS test_cancelled_capture_kills_its_process_group")
+
+
+async def test_capture_surviving_child_does_not_hold_pipes_open() -> None:
+    """A helper inheriting separate pipes cannot wedge capture after CLI exit."""
+    child_pidfile = pathlib.Path(tempfile.mkdtemp()) / "capture-child.pid"
+    stub = _script(
+        "echo captured-out\n"
+        "echo captured-err 1>&2\n"
+        "sleep 30 &\n"
+        f"echo $! > {shlex.quote(str(child_pidfile))}\n"
+        "exit 0\n"
+    )
+    old_budget = cli._DRAIN_BUDGET
+    cli._DRAIN_BUDGET = 0.05
+    try:
+        rc, out, err = await asyncio.wait_for(capture([stub], cwd="."), 2.0)
+    finally:
+        cli._DRAIN_BUDGET = old_budget
+
+    assert rc == 0, rc
+    assert "captured-out" in out, out
+    assert "captured-err" in err, err
+    child_pid = int(child_pidfile.read_text().strip())
+    for _ in range(50):
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            break
+        await asyncio.sleep(0.01)
+    else:
+        raise AssertionError(f"capture left descendant {child_pid} alive")
+    print("PASS test_capture_surviving_child_does_not_hold_pipes_open")
+
+
 async def _main() -> None:
     await test_stream_lines_live()
     await test_cancel_sigint_stops_before_completion()
     await test_capture_separates_stdout_stderr()
+    await test_cancelled_capture_kills_its_process_group()
+    await test_capture_surviving_child_does_not_hold_pipes_open()
     print("ALL PASS")
 
 

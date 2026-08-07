@@ -81,7 +81,7 @@ async def test_direct_dispatch_emits_and_persists() -> None:
         async def fake_start(argv, cwd):  # noqa: ANN001
             return FakeRC(["line-1", "line-2"])
 
-        async def fake_check(a, sid_):  # noqa: ANN001
+        async def fake_check(a, sid_, capture_command=None):  # noqa: ANN001
             return {"hosts_updated": 0}
 
         orig_start, orig_check = chat.start_command, hook.run_check
@@ -348,7 +348,7 @@ async def test_reattach_targets_current_conn() -> None:
         async def fake_start(argv, cwd):  # noqa: ANN001
             return FakeRC(["l1"])
 
-        async def fake_check(a, sid_):  # noqa: ANN001
+        async def fake_check(a, sid_, capture_command=None):  # noqa: ANN001
             return {"hosts_updated": 0}
 
         orig_start, orig_check = chat.start_command, hook.run_check
@@ -607,7 +607,7 @@ async def test_health_emits_report_and_suppresses_json() -> None:
         async def fake_start(argv, cwd):  # noqa: ANN001
             return FakeRC(lines, rc=1)  # exit 1: a check failed
 
-        async def fake_check(a, sid_):  # noqa: ANN001
+        async def fake_check(a, sid_, capture_command=None):  # noqa: ANN001
             return {"hosts_updated": 0}
 
         orig_start, orig_check = chat.start_command, hook.run_check
@@ -766,6 +766,68 @@ async def test_cancel_session_cancels_every_parallel_command() -> None:
         chat._runtimes.pop(sid, None)
 
 
+async def test_captured_helper_is_owned_and_cancelled_with_turn() -> None:
+    """Esc reaches post-command helpers that capture separate output streams."""
+
+    class FakeCapture:
+        def __init__(self) -> None:
+            self.cancelled = False
+            self.stopped = asyncio.Event()
+
+        async def communicate(self) -> tuple[int, str, str]:
+            await self.stopped.wait()
+            return -2, "", ""
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+        def force_kill(self) -> None:
+            self.cancel()
+            self.stopped.set()
+
+    sid = "s-captured-helper"
+    command = FakeCapture()
+    spawned = asyncio.Event()
+    release_spawn = asyncio.Event()
+
+    async def fake_start(argv, cwd):  # noqa: ANN001
+        spawned.set()
+        await release_spawn.wait()
+        return command
+
+    original = chat.start_capture
+    chat.start_capture = fake_start
+    runtime = chat._runtime(sid)
+    turn = chat.TurnState(started=True)
+    runtime.turn = turn
+    try:
+        task = asyncio.create_task(chat._capture_for_turn(sid, ["helper"], "."))
+        turn.task = task
+        await spawned.wait()
+
+        # Esc during create_subprocess_exec must reserve cancellation without
+        # cancelling the owner task out from under a just-created process.
+        assert chat.cancel_session(sid) is True
+        assert turn.commands_starting == 1
+        assert not task.done(), "launching helper's owner task was cancelled"
+        release_spawn.set()
+        for _ in range(20):
+            if command in runtime.running:
+                break
+            await asyncio.sleep(0)
+        assert command in runtime.running, "captured helper was not turn-owned"
+        assert command.cancelled, "deferred Esc did not signal helper after launch"
+        command.stopped.set()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+        assert command not in runtime.running, "finished helper remained registered"
+        print("PASS test_captured_helper_is_owned_and_cancelled_with_turn")
+    finally:
+        chat.start_capture = original
+        chat._runtimes.pop(sid, None)
+
+
 async def test_cancelled_command_aborts_turn_before_agent_can_retry() -> None:
     """A cancelled CLI must skip hooks and finish the owning turn as cancelled."""
     with tempfile.TemporaryDirectory() as d:
@@ -785,7 +847,7 @@ async def test_cancelled_command_aborts_turn_before_agent_can_retry() -> None:
         async def fake_start(argv, cwd):  # noqa: ANN001
             return command
 
-        async def forbidden_hook(a, sid_):  # noqa: ANN001
+        async def forbidden_hook(a, sid_, capture_command=None):  # noqa: ANN001
             nonlocal hook_called
             hook_called = True
             return {"hosts_updated": 0}
@@ -916,6 +978,7 @@ async def _main() -> None:
     await test_swap_model_no_live_agent()
     await test_dispatch_rejects_queued_turn_and_allows_concurrency()
     await test_cancel_session_cancels_every_parallel_command()
+    await test_captured_helper_is_owned_and_cancelled_with_turn()
     await test_cancelled_command_aborts_turn_before_agent_can_retry()
     await test_immediate_cancel_still_finishes_the_ui_turn()
     await test_cleanup_all_force_stops_and_awaits_stubborn_turn()

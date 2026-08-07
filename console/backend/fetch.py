@@ -22,6 +22,8 @@ import typing as t
 from . import commands, paths
 from .cli import capture
 
+Capture = t.Callable[[list[str], str], t.Awaitable[tuple[int, str, str]]]
+
 
 def build_fetch_argv(
     session: dict[str, t.Any],
@@ -92,10 +94,13 @@ def local_report_path(session_dir: str, remote_path: str) -> str:
 
 
 async def fetch_report(
-    session: dict[str, t.Any], remote_path: str
+    session: dict[str, t.Any],
+    remote_path: str,
+    capture_command: Capture | None = None,
 ) -> tuple[int, str, str]:
     """Fetch the report into the session dir. Returns (rc, local_path, message)."""
     local = local_report_path(session["session_dir"], remote_path)
     argv = build_fetch_argv(session, remote_path, local, str(paths.repo_root()))
-    rc, out, err = await capture(argv, cwd=str(paths.repo_root()))
+    runner = capture_command or capture
+    rc, out, err = await runner(argv, str(paths.repo_root()))
     return rc, local, (err or out)
