@@ -11,7 +11,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
-from console.backend import chat, summary  # noqa: E402
+from console.backend import command_runner, summary  # noqa: E402
 
 
 def _instances(n: int) -> list[dict[str, str]]:
@@ -250,13 +250,13 @@ def test_summarize_exec_strips_ansi_from_host_output() -> None:
     assert "\x1b" not in out, "agent path still sees escapes"
     assert "Status : Stopped" in out and "STDERR: boom" in out, out
 
-    # The chat overlay parses separately (chat._emit_overlays) and must clean
+    # The command overlay parses separately and must clean
     # the same way, or the UI renders literal escape codes.
     cleaned = summary.clean_exec_results(summary.parse_json_array(payload) or [])
     assert cleaned[0]["stdout"] == "Status : Stopped", cleaned
     assert cleaned[0]["stderr"] == "boom", cleaned
 
-    # Cleaning must not mutate the caller's list, which chat.py also holds.
+    # Cleaning must not mutate the caller's list, which the overlay also holds.
     original = [{"host": "h", "stdout": "\x1b[31mx\x1b[0m", "stderr": ""}]
     summary.clean_exec_results(original)
     assert original[0]["stdout"] == "\x1b[31mx\x1b[0m", "input was mutated"
@@ -591,15 +591,15 @@ def test_clip_edge_cases() -> None:
     print("PASS test_clip_edge_cases")
 
 
-def test_chat_parser_shares_one_implementation() -> None:
-    """chat.parse_instances and the agent path must read output identically."""
+def test_command_parser_shares_one_implementation() -> None:
+    """The command overlay and agent path must parse output identically."""
     raw = json.dumps(_instances(3), indent=2)
-    assert chat.parse_instances(raw) == summary.parse_json_array(raw)
-    assert chat.parse_instances("no json") is None
-    assert chat.parse_instances("[]") == []
+    assert command_runner.parse_instances(raw) == summary.parse_json_array(raw)
+    assert command_runner.parse_instances("no json") is None
+    assert command_runner.parse_instances("[]") == []
     # A JSON object (not an array) is not an instance list.
-    assert chat.parse_instances('{"a": 1}') is None
-    print("PASS test_chat_parser_shares_one_implementation")
+    assert command_runner.parse_instances('{"a": 1}') is None
+    print("PASS test_command_parser_shares_one_implementation")
 
 
 def test_unknown_command_falls_back_to_clip() -> None:
@@ -634,6 +634,6 @@ if __name__ == "__main__":
     test_summarize_scrub_leads_with_dirty_hosts()
     test_clip_keeps_head_and_tail_and_marks_the_gap()
     test_clip_edge_cases()
-    test_chat_parser_shares_one_implementation()
+    test_command_parser_shares_one_implementation()
     test_unknown_command_falls_back_to_clip()
     print("ALL PASS")

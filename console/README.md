@@ -136,7 +136,10 @@ second tab is rejected with a 409 rather than overwriting the newer layout.
 | Module | Responsibility |
 |--------|---------------|
 | `server.py` | FastAPI app, REST endpoints, `/ws/chat` |
-| `chat.py` | Multiplexed WS runtime, `run_cli` pipeline, dispatch routing |
+| `chat.py` | Thin chat facade: turn dispatch, agent routing, model switching |
+| `chat_runtime.py` | Per-session state, connection ownership, cancellation, cleanup |
+| `chat_events.py` | Event formatting, persistence, WebSocket delivery, replay |
+| `command_runner.py` | Shared CLI pipeline, streaming, hooks, and report overlays |
 | `agent.py` | Per-session `LocalTaskAgent` + the constrained `run_dreadgoad` tool |
 | `commands.py` | Slash-command registry, argv builder, prompt loader |
 | `summary.py` | Condenses CLI output into bounded tool results (structured, else clipped with a marker) |

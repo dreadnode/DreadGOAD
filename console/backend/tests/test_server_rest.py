@@ -23,7 +23,7 @@ os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = _TMP
 from fastapi import WebSocketDisconnect  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from console.backend import chat, commands  # noqa: E402
+from console.backend import chat, chat_runtime, commands  # noqa: E402
 from console.backend.db import Database  # noqa: E402
 from console.backend.server import (  # noqa: E402
     WS_MAX_CONTENT_CHARS,
@@ -245,8 +245,8 @@ def main() -> None:
 
         # An active turn owns the session: deletion must not remove persistence
         # or files out from under it.
-        runtime = chat._runtime(sid)
-        runtime.turn = chat.TurnState()
+        runtime = chat_runtime.runtime(sid)
+        runtime.turn = chat_runtime.TurnState()
         try:
             busy_delete = client.delete(f"/api/sessions/{sid}")
             assert busy_delete.status_code == 409, busy_delete.text
@@ -445,8 +445,8 @@ def test_ws_cancel_reaches_runtime(client: TestClient) -> None:
 
     sid = "s-ws-cancel"
     first, second = FakeCommand(), FakeCommand()
-    runtime = chat._runtime(sid)
-    runtime.turn = chat.TurnState()
+    runtime = chat_runtime.runtime(sid)
+    runtime.turn = chat_runtime.TurnState()
     runtime.running.update({first, second})
     try:
         with client.websocket_connect(
@@ -464,7 +464,7 @@ def test_ws_cancel_reaches_runtime(client: TestClient) -> None:
         assert runtime.turn is not None and runtime.turn.cancelled is True
         print("PASS test_ws_cancel_reaches_runtime")
     finally:
-        chat._runtimes.pop(sid, None)
+        chat_runtime.runtimes.pop(sid, None)
 
 
 async def test_reconcile_interrupted() -> None:

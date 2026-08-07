@@ -21,7 +21,13 @@ from contextlib import asynccontextmanager
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = tempfile.mkdtemp(prefix="dg-chat-")
 
-from console.backend import agent, chat, hook  # noqa: E402
+from console.backend import (  # noqa: E402
+    agent,
+    chat,
+    chat_runtime,
+    command_runner,
+    hook,
+)
 from console.backend.db import Database  # noqa: E402
 from console.backend.sessions import SessionService  # noqa: E402
 from dreadnode.agent.tools import FunctionCall, ToolCall  # noqa: E402
@@ -84,8 +90,8 @@ async def test_direct_dispatch_emits_and_persists() -> None:
         async def fake_check(a, sid_, capture_command=None):  # noqa: ANN001
             return {"hosts_updated": 0}
 
-        orig_start, orig_check = chat.start_command, hook.run_check
-        chat.start_command = fake_start
+        orig_start, orig_check = command_runner.start_command, hook.run_check
+        command_runner.start_command = fake_start
         hook.run_check = fake_check
         try:
             s = await svc.create_session(str(cfg), "dev")
@@ -112,7 +118,7 @@ async def test_direct_dispatch_emits_and_persists() -> None:
                     json.dumps([{"name": "dc01", "state": "running"}]).splitlines()
                 )
 
-            chat.start_command = fake_json_start
+            command_runner.start_command = fake_json_start
             ws.sent.clear()
             await chat.handle_message(app, s["id"], "/instances")
             kinds = [m["kind"] for m in ws.sent]
@@ -120,7 +126,7 @@ async def test_direct_dispatch_emits_and_persists() -> None:
             assert "instances_report" in kinds, kinds
             print("PASS test_direct_dispatch_emits_and_persists")
         finally:
-            chat.start_command, hook.run_check = orig_start, orig_check
+            command_runner.start_command, hook.run_check = orig_start, orig_check
             await db.close()
 
 
@@ -140,8 +146,8 @@ async def test_start_failure_finishes_turn_and_restores_status() -> None:
         async def check_must_not_run(a, sid_):  # noqa: ANN001
             raise AssertionError("post-command check ran even though nothing started")
 
-        orig_start, orig_check = chat.start_command, hook.run_check
-        chat.start_command, hook.run_check = missing_cli, check_must_not_run
+        orig_start, orig_check = command_runner.start_command, hook.run_check
+        command_runner.start_command, hook.run_check = missing_cli, check_must_not_run
         session_id: str | None = None
         try:
             s = await svc.create_session(str(cfg), "dev")
@@ -156,7 +162,7 @@ async def test_start_failure_finishes_turn_and_restores_status() -> None:
 
             current = await db.get_session(sid)
             assert current is not None and current["status"] == "error", current
-            assert not chat._runtime(sid).running, (
+            assert not chat_runtime.runtime(sid).running, (
                 "a failed spawn cannot be cancellable"
             )
 
@@ -174,7 +180,7 @@ async def test_start_failure_finishes_turn_and_restores_status() -> None:
             assert ws.sent[-1]["failed"] is True, ws.sent[-1]
             print("PASS test_start_failure_finishes_turn_and_restores_status")
         finally:
-            chat.start_command, hook.run_check = orig_start, orig_check
+            command_runner.start_command, hook.run_check = orig_start, orig_check
             if session_id is not None:
                 await chat.cleanup_session(session_id)
             await db.close()
@@ -185,7 +191,7 @@ def test_final_status_precedence() -> None:
 
     Extracted from run_cli, where this branching was inlined and untestable.
     """
-    fs = chat.final_status
+    fs = command_runner.final_status
     # A user cancel is never a failure, whatever the command or exit code.
     assert fs("/up", 1, True) == "interrupted"
     assert fs("/destroy", 0, True) == "interrupted"
@@ -354,8 +360,8 @@ async def test_reattach_targets_current_conn() -> None:
         async def fake_check(a, sid_, capture_command=None):  # noqa: ANN001
             return {"hosts_updated": 0}
 
-        orig_start, orig_check = chat.start_command, hook.run_check
-        chat.start_command, hook.run_check = fake_start, fake_check
+        orig_start, orig_check = command_runner.start_command, hook.run_check
+        command_runner.start_command, hook.run_check = fake_start, fake_check
         try:
             s = await svc.create_session(str(cfg), "dev")
             ws1, ws2 = FakeWS(), FakeWS()
@@ -366,7 +372,7 @@ async def test_reattach_targets_current_conn() -> None:
             assert not ws1.sent, "stale socket must NOT receive events"
             print("PASS test_reattach_targets_current_conn")
         finally:
-            chat.start_command, hook.run_check = orig_start, orig_check
+            command_runner.start_command, hook.run_check = orig_start, orig_check
             await db.close()
 
 
@@ -611,8 +617,8 @@ async def test_health_emits_report_and_suppresses_json() -> None:
         async def fake_check(a, sid_, capture_command=None):  # noqa: ANN001
             return {"hosts_updated": 0}
 
-        orig_start, orig_check = chat.start_command, hook.run_check
-        chat.start_command, hook.run_check = fake_start, fake_check
+        orig_start, orig_check = command_runner.start_command, hook.run_check
+        command_runner.start_command, hook.run_check = fake_start, fake_check
         try:
             s = await svc.create_session(str(cfg), "dev")
             ws = FakeWS()
@@ -637,7 +643,7 @@ async def test_health_emits_report_and_suppresses_json() -> None:
             assert sess["status"] == "running", sess["status"]
             print("PASS test_health_emits_report_and_suppresses_json")
         finally:
-            chat.start_command, hook.run_check = orig_start, orig_check
+            command_runner.start_command, hook.run_check = orig_start, orig_check
             await db.close()
 
 
@@ -662,7 +668,7 @@ async def test_swap_model_preserves_thread_and_persists() -> None:
         chat.register_conn(s["id"], ws)
 
         old = FakeThreadAgent(["msg-1", "msg-2"])
-        chat._runtime(s["id"]).agent = old
+        chat_runtime.runtime(s["id"]).agent = old
         seen = {}
 
         def fake_create(model, session, app_, sid_, run_cli):  # noqa: ANN001, ANN202
@@ -679,7 +685,7 @@ async def test_swap_model_preserves_thread_and_persists() -> None:
             assert sess is not None and sess["model"] == "openrouter/x/y", sess
             # rebuilt with the new model, old conversation grafted on
             assert seen["model"] == "openrouter/x/y"
-            new = chat._runtime(s["id"]).agent
+            new = chat_runtime.runtime(s["id"]).agent
             assert new is not old, "agent must be rebuilt"
             assert new.thread.messages == ["msg-1", "msg-2"], "history must carry over"
             # a status event announces the change
@@ -690,7 +696,7 @@ async def test_swap_model_preserves_thread_and_persists() -> None:
             print("PASS test_swap_model_preserves_thread_and_persists")
         finally:
             chat.create_agent = orig
-            chat._runtime(s["id"]).agent = None
+            chat_runtime.runtime(s["id"]).agent = None
             await db.close()
 
 
@@ -704,7 +710,7 @@ async def test_swap_model_no_live_agent() -> None:
         svc = SessionService(db, repo_root=str(_REPO), sessions_root=tmp / "sessions")
         app = types.SimpleNamespace(state=types.SimpleNamespace(db=db, sessions=svc))
         s = await svc.create_session(str(cfg), "dev")
-        chat._runtime(s["id"]).agent = None  # ensure not cached
+        chat_runtime.runtime(s["id"]).agent = None  # ensure not cached
 
         called = False
 
@@ -719,7 +725,7 @@ async def test_swap_model_no_live_agent() -> None:
             out = await chat.swap_model(app, s["id"], "m2")
             assert out is not None
             assert not called, "no cached agent → must not build one eagerly"
-            assert chat._runtime(s["id"]).agent is None
+            assert chat_runtime.runtime(s["id"]).agent is None
             sess = await db.get_session(s["id"])
             assert sess is not None and sess["model"] == "m2", sess
             # unknown session → None
@@ -731,12 +737,12 @@ async def test_swap_model_no_live_agent() -> None:
 
 
 async def test_cleanup_session_evicts() -> None:
-    runtime = chat._runtime("z")
+    runtime = chat_runtime.runtime("z")
     runtime.agent = object()
     command = FakeRC([])
     runtime.running.add(command)
     await chat.cleanup_session("z")
-    assert "z" not in chat._runtimes, "runtime not evicted"
+    assert "z" not in chat_runtime.runtimes, "runtime not evicted"
     assert command.cancelled, "cleanup must cancel the session's commands"
     print("PASS test_cleanup_session_evicts")
 
@@ -754,8 +760,8 @@ async def test_cancel_session_cancels_every_parallel_command() -> None:
     """One Esc owns the turn, including parallel tools launched by the agent."""
     sid = "s-parallel-cancel"
     first, second = FakeRC([]), FakeRC([])
-    runtime = chat._runtime(sid)
-    runtime.turn = chat.TurnState()
+    runtime = chat_runtime.runtime(sid)
+    runtime.turn = chat_runtime.TurnState()
     runtime.running.update({first, second})
     try:
         assert chat.cancel_session(sid) is True
@@ -764,7 +770,7 @@ async def test_cancel_session_cancels_every_parallel_command() -> None:
         assert chat.cancel_session("s-idle") is False
         print("PASS test_cancel_session_cancels_every_parallel_command")
     finally:
-        chat._runtimes.pop(sid, None)
+        chat_runtime.runtimes.pop(sid, None)
 
 
 async def test_captured_helper_is_owned_and_cancelled_with_turn() -> None:
@@ -796,13 +802,15 @@ async def test_captured_helper_is_owned_and_cancelled_with_turn() -> None:
         await release_spawn.wait()
         return command
 
-    original = chat.start_capture
-    chat.start_capture = fake_start
-    runtime = chat._runtime(sid)
-    turn = chat.TurnState(started=True)
+    original = command_runner.start_capture
+    command_runner.start_capture = fake_start
+    runtime = chat_runtime.runtime(sid)
+    turn = chat_runtime.TurnState(started=True)
     runtime.turn = turn
     try:
-        task = asyncio.create_task(chat._capture_for_turn(sid, ["helper"], "."))
+        task = asyncio.create_task(
+            command_runner._capture_for_turn(sid, ["helper"], ".")
+        )
         turn.task = task
         await spawned.wait()
 
@@ -830,8 +838,8 @@ async def test_captured_helper_is_owned_and_cancelled_with_turn() -> None:
         assert command not in runtime.running, "finished helper remained registered"
         print("PASS test_captured_helper_is_owned_and_cancelled_with_turn")
     finally:
-        chat.start_capture = original
-        chat._runtimes.pop(sid, None)
+        command_runner.start_capture = original
+        chat_runtime.runtimes.pop(sid, None)
 
 
 async def test_cancelled_command_aborts_turn_before_agent_can_retry() -> None:
@@ -878,18 +886,20 @@ async def test_cancelled_command_aborts_turn_before_agent_can_retry() -> None:
             hook_called = True
             return {"hosts_updated": 0}
 
-        orig_start, orig_check = chat.start_command, hook.run_check
-        chat.start_command, hook.run_check = fake_start, forbidden_hook
+        orig_start, orig_check = command_runner.start_command, hook.run_check
+        command_runner.start_command, hook.run_check = fake_start, forbidden_hook
         try:
             task = chat.dispatch(app, sid, "/health")
             assert task is not None
             # Real sleep, safe only because SlowRC holds the window open: a
             # plain FakeRC drains before the first poll and this fails 100%.
             for _ in range(20):
-                if chat._runtime(sid).running:
+                if chat_runtime.runtime(sid).running:
                     break
                 await asyncio.sleep(0.01)
-            assert chat._runtime(sid).running, "command never became cancellable"
+            assert chat_runtime.runtime(sid).running, (
+                "command never became cancellable"
+            )
 
             assert chat.cancel_session(sid) is True
             with contextlib.suppress(asyncio.CancelledError):
@@ -904,7 +914,7 @@ async def test_cancelled_command_aborts_turn_before_agent_can_retry() -> None:
             assert ends[0]["failed"] is False
             print("PASS test_cancelled_command_aborts_turn_before_agent_can_retry")
         finally:
-            chat.start_command, hook.run_check = orig_start, orig_check
+            command_runner.start_command, hook.run_check = orig_start, orig_check
             await chat.cleanup_session(sid)
             await db.close()
 
@@ -974,14 +984,14 @@ async def test_cleanup_all_force_stops_and_awaits_stubborn_turn() -> None:
             task = chat.dispatch(app, sid, "wait forever")
             assert task is not None
             await started.wait()
-            chat._runtime(sid).running.add(command)
+            chat_runtime.runtime(sid).running.add(command)
 
             await chat.cleanup_all(timeout=0.01)
 
             assert command.cancelled, "shutdown did not request graceful cancellation"
             assert command.force_killed, "shutdown deadline did not force-stop command"
             assert task.done(), "shutdown returned before the turn finished"
-            runtime = chat._runtime(sid)
+            runtime = chat_runtime.runtime(sid)
             assert runtime.turn is None and not runtime.running
             print("PASS test_cleanup_all_force_stops_and_awaits_stubborn_turn")
         finally:

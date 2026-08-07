@@ -455,7 +455,7 @@ async def ws_chat(websocket: WebSocket) -> None:
                     persist=False,
                 )
     except WebSocketDisconnect:
-        # In-flight turns keep running server-side (tracked in chat._tasks) and
+        # In-flight turns keep running server-side (owned by chat_runtime) and
         # emit to the session's current socket; a reconnect re-attaches.
         chat.unregister_conn(websocket)
         return
