@@ -243,6 +243,17 @@ def main() -> None:
             assert response.status_code == 400, (invalid_layout, response.text)
         print("PASS versioned layout update + validation")
 
+        # An active turn owns the session: deletion must not remove persistence
+        # or files out from under it.
+        runtime = chat._runtime(sid)
+        runtime.turn = chat.TurnState()
+        try:
+            busy_delete = client.delete(f"/api/sessions/{sid}")
+            assert busy_delete.status_code == 409, busy_delete.text
+            assert client.get(f"/api/sessions/{sid}").status_code == 200
+        finally:
+            runtime.turn = None
+
         # delete
         assert client.delete(f"/api/sessions/{sid}").status_code == 200
         assert client.get(f"/api/sessions/{sid}").status_code == 404
@@ -253,6 +264,7 @@ def main() -> None:
         test_ws_rejects_cross_origin(client)
         test_ws_invalid_message_does_not_close_connection(client)
         test_ws_reports_rejected_busy_turn(client)
+        test_ws_cancel_reaches_runtime(client)
 
     asyncio.run(test_reconcile_interrupted())
     print("ALL PASS")
@@ -356,12 +368,17 @@ def test_ws_invalid_message_does_not_close_connection(client: TestClient) -> Non
     """Bad frames report errors while later valid frames still dispatch."""
     dispatched: list[tuple[str, str]] = []
     original = chat.dispatch
+    original_get_session = app.state.db.get_session
+
+    async def existing_session(session_id):  # noqa: ANN001, ANN202
+        return {"id": session_id}
 
     def record_dispatch(app_, session_id, content):  # noqa: ANN001, ANN202
         dispatched.append((session_id, content))
         return object()  # Any non-None value represents accepted admission here.
 
     chat.dispatch = record_dispatch
+    app.state.db.get_session = existing_session
     try:
         with client.websocket_connect(
             "/ws/chat", headers={"origin": "http://localhost:7331"}
@@ -387,12 +404,19 @@ def test_ws_invalid_message_does_not_close_connection(client: TestClient) -> Non
         print("PASS test_ws_invalid_message_does_not_close_connection")
     finally:
         chat.dispatch = original
+        app.state.db.get_session = original_get_session
 
 
 def test_ws_reports_rejected_busy_turn(client: TestClient) -> None:
     """A refused second turn gets a visible, non-terminal error event."""
     original = chat.dispatch
+    original_get_session = app.state.db.get_session
+
+    async def existing_session(session_id):  # noqa: ANN001, ANN202
+        return {"id": session_id}
+
     chat.dispatch = lambda app_, sid_, content: None
+    app.state.db.get_session = existing_session
     try:
         with client.websocket_connect(
             "/ws/chat", headers={"origin": "http://localhost:7331"}
@@ -407,6 +431,39 @@ def test_ws_reports_rejected_busy_turn(client: TestClient) -> None:
         print("PASS test_ws_reports_rejected_busy_turn")
     finally:
         chat.dispatch = original
+        app.state.db.get_session = original_get_session
+
+
+def test_ws_cancel_reaches_runtime(client: TestClient) -> None:
+    """The exact frame sent by Esc reaches every registered CLI command."""
+
+    class FakeCommand:
+        def __init__(self) -> None:
+            self.cancelled = False
+
+        def cancel(self) -> None:
+            self.cancelled = True
+
+    sid = "s-ws-cancel"
+    first, second = FakeCommand(), FakeCommand()
+    runtime = chat._runtime(sid)
+    runtime.turn = chat.TurnState()
+    runtime.running.update({first, second})
+    try:
+        with client.websocket_connect(
+            "/ws/chat", headers={"origin": "http://localhost:7331"}
+        ) as websocket:
+            websocket.send_json({"type": "cancel", "session_id": sid})
+            # A following request/response is a synchronization barrier: the
+            # server processed the cancel before it reports this protocol error.
+            websocket.send_text("[]")
+            assert websocket.receive_json()["message"] == "message must be a JSON object"
+
+        assert first.cancelled and second.cancelled
+        assert runtime.turn is not None and runtime.turn.cancelled is True
+        print("PASS test_ws_cancel_reaches_runtime")
+    finally:
+        chat._runtimes.pop(sid, None)
 
 
 async def test_reconcile_interrupted() -> None:

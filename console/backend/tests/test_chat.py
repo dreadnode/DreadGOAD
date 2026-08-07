@@ -24,6 +24,7 @@ os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = tempfile.mkdtemp(prefix="dg-chat-")
 from console.backend import agent, chat, hook  # noqa: E402
 from console.backend.db import Database  # noqa: E402
 from console.backend.sessions import SessionService  # noqa: E402
+from dreadnode.agent.tools import FunctionCall, ToolCall  # noqa: E402
 
 _REPO = pathlib.Path(__file__).resolve().parents[3]
 _YAML = (
@@ -154,7 +155,9 @@ async def test_start_failure_finishes_turn_and_restores_status() -> None:
 
             current = await db.get_session(session_id)
             assert current is not None and current["status"] == "error", current
-            assert session_id not in chat._running, "a failed spawn cannot be cancellable"
+            assert not chat._runtime(session_id).running, (
+                "a failed spawn cannot be cancellable"
+            )
 
             kinds = [m["kind"] for m in ws.sent]
             assert kinds[-1] == "agent_end", kinds
@@ -172,7 +175,7 @@ async def test_start_failure_finishes_turn_and_restores_status() -> None:
         finally:
             chat.start_command, hook.run_check = orig_start, orig_check
             if session_id is not None:
-                chat.cleanup_session(session_id)
+                await chat.cleanup_session(session_id)
             await db.close()
 
 
@@ -243,7 +246,7 @@ async def test_replay_matches_live_event_shape() -> None:
             assert by_kind["health_report"]["passed"] == 2, by_kind
             print("PASS test_replay_matches_live_event_shape")
         finally:
-            chat.cleanup_session(sid)
+            await chat.cleanup_session(sid)
             await db.close()
 
 
@@ -284,7 +287,7 @@ async def test_resume_reports_in_flight_turn() -> None:
 
             turn = chat.active_turn(sid)
             assert turn is not None, "turn should be registered while running"
-            turn["command"] = "/up"  # normally set by run_cli
+            turn.command = "/up"  # normally set by run_cli
 
             ws2 = FakeWS()
             chat.register_conn(sid, ws2)
@@ -309,7 +312,7 @@ async def test_resume_reports_in_flight_turn() -> None:
             print("PASS test_resume_reports_in_flight_turn")
         finally:
             chat.handle_message = orig
-            chat.cleanup_session(sid)
+            await chat.cleanup_session(sid)
             await db.close()
 
 
@@ -329,7 +332,7 @@ async def test_turn_flag_cleared_when_turn_raises() -> None:
         print("PASS test_turn_flag_cleared_when_turn_raises")
     finally:
         chat.handle_message = orig
-        chat.cleanup_session("s-boom")
+        await chat.cleanup_session("s-boom")
 
 
 async def test_reattach_targets_current_conn() -> None:
@@ -497,6 +500,29 @@ async def test_run_dreadgoad_tool_validates_and_runs() -> None:
     refused = await tool.fn(command="/bogus", args=[])
     assert "Refused" in refused, refused
     assert calls == [], "run_cli must not run for an unknown command"
+
+    # The real tool execution wrapper catches ordinary exceptions for the
+    # model, but must let turn cancellation escape instead of returning a
+    # retryable tool error.
+    async def cancelled_run_cli(app, sid, cmd, args):  # noqa: ANN001, ANN202
+        raise asyncio.CancelledError
+
+    cancelled_tool = agent._make_run_dreadgoad(
+        object(), "s-1", cancelled_run_cli
+    )
+    call = ToolCall(
+        id="cancel-1",
+        function=FunctionCall(
+            name="run_dreadgoad",
+            arguments='{"command":"/health","args":[]}',
+        ),
+    )
+    try:
+        await cancelled_tool.handle_tool_call(call)
+    except asyncio.CancelledError:
+        pass
+    else:
+        raise AssertionError("tool wrapper converted cancellation into a model result")
     print("PASS test_run_dreadgoad_tool_validates_and_runs")
 
 
@@ -635,7 +661,7 @@ async def test_swap_model_preserves_thread_and_persists() -> None:
         chat.register_conn(s["id"], ws)
 
         old = FakeThreadAgent(["msg-1", "msg-2"])
-        chat._agents[s["id"]] = old
+        chat._runtime(s["id"]).agent = old
         seen = {}
 
         def fake_create(model, session, app_, sid_, run_cli):  # noqa: ANN001, ANN202
@@ -652,7 +678,7 @@ async def test_swap_model_preserves_thread_and_persists() -> None:
             assert sess is not None and sess["model"] == "openrouter/x/y", sess
             # rebuilt with the new model, old conversation grafted on
             assert seen["model"] == "openrouter/x/y"
-            new = chat._agents[s["id"]]
+            new = chat._runtime(s["id"]).agent
             assert new is not old, "agent must be rebuilt"
             assert new.thread.messages == ["msg-1", "msg-2"], "history must carry over"
             # a status event announces the change
@@ -663,7 +689,7 @@ async def test_swap_model_preserves_thread_and_persists() -> None:
             print("PASS test_swap_model_preserves_thread_and_persists")
         finally:
             chat.create_agent = orig
-            chat._agents.pop(s["id"], None)
+            chat._runtime(s["id"]).agent = None
             await db.close()
 
 
@@ -677,7 +703,7 @@ async def test_swap_model_no_live_agent() -> None:
         svc = SessionService(db, repo_root=str(_REPO), sessions_root=tmp / "sessions")
         app = types.SimpleNamespace(state=types.SimpleNamespace(db=db, sessions=svc))
         s = await svc.create_session(str(cfg), "dev")
-        chat._agents.pop(s["id"], None)  # ensure not cached
+        chat._runtime(s["id"]).agent = None  # ensure not cached
 
         called = False
 
@@ -692,7 +718,7 @@ async def test_swap_model_no_live_agent() -> None:
             out = await chat.swap_model(app, s["id"], "m2")
             assert out is not None
             assert not called, "no cached agent → must not build one eagerly"
-            assert s["id"] not in chat._agents
+            assert chat._runtime(s["id"]).agent is None
             sess = await db.get_session(s["id"])
             assert sess is not None and sess["model"] == "m2", sess
             # unknown session → None
@@ -704,14 +730,173 @@ async def test_swap_model_no_live_agent() -> None:
 
 
 async def test_cleanup_session_evicts() -> None:
-    chat._agents["z"] = object()
-    chat._locks["z"] = asyncio.Lock()
-    chat._running["z"] = FakeRC([])
-    chat.cleanup_session("z")
-    assert "z" not in chat._agents, "agent not evicted"
-    assert "z" not in chat._locks, "lock not evicted"
-    assert "z" not in chat._running, "running not evicted"
+    runtime = chat._runtime("z")
+    runtime.agent = object()
+    command = FakeRC([])
+    runtime.running.add(command)
+    await chat.cleanup_session("z")
+    assert "z" not in chat._runtimes, "runtime not evicted"
+    assert command.cancelled, "cleanup must cancel the session's commands"
     print("PASS test_cleanup_session_evicts")
+
+
+def test_cleanup_reservation_is_exclusive() -> None:
+    sid = "s-cleanup-reservation"
+    assert chat.begin_cleanup(sid) is True
+    assert chat.begin_cleanup(sid) is False, "two deletes reserved one session"
+    assert chat.dispatch(None, sid, "late turn") is None
+    chat.release_cleanup(sid)
+    print("PASS test_cleanup_reservation_is_exclusive")
+
+
+async def test_cancel_session_cancels_every_parallel_command() -> None:
+    """One Esc owns the turn, including parallel tools launched by the agent."""
+    sid = "s-parallel-cancel"
+    first, second = FakeRC([]), FakeRC([])
+    runtime = chat._runtime(sid)
+    runtime.turn = chat.TurnState()
+    runtime.running.update({first, second})
+    try:
+        assert chat.cancel_session(sid) is True
+        assert first.cancelled and second.cancelled
+        assert runtime.turn is not None and runtime.turn.cancelled is True
+        assert chat.cancel_session("s-idle") is False
+        print("PASS test_cancel_session_cancels_every_parallel_command")
+    finally:
+        chat._runtimes.pop(sid, None)
+
+
+async def test_cancelled_command_aborts_turn_before_agent_can_retry() -> None:
+    """A cancelled CLI must skip hooks and finish the owning turn as cancelled."""
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        cfg = tmp / "dreadgoad.yaml"
+        cfg.write_text(_YAML)
+        db = await Database(str(tmp / "state.db")).connect()
+        svc = SessionService(db, repo_root=str(_REPO), sessions_root=tmp / "sessions")
+        app = types.SimpleNamespace(state=types.SimpleNamespace(db=db, sessions=svc))
+        session = await svc.create_session(str(cfg), "dev")
+        sid = session["id"]
+        ws = FakeWS()
+        chat.register_conn(sid, ws)
+        command = FakeRC(["waiting"] * 100)
+        hook_called = False
+
+        async def fake_start(argv, cwd):  # noqa: ANN001
+            return command
+
+        async def forbidden_hook(a, sid_):  # noqa: ANN001
+            nonlocal hook_called
+            hook_called = True
+            return {"hosts_updated": 0}
+
+        orig_start, orig_check = chat.start_command, hook.run_check
+        chat.start_command, hook.run_check = fake_start, forbidden_hook
+        try:
+            task = chat.dispatch(app, sid, "/health")
+            assert task is not None
+            for _ in range(20):
+                if chat._runtime(sid).running:
+                    break
+                await asyncio.sleep(0)
+            assert chat._runtime(sid).running, "command never became cancellable"
+
+            assert chat.cancel_session(sid) is True
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+            assert command.cancelled
+            assert not hook_called, "post-command work ran after cancellation"
+            assert chat.active_turn(sid) is None
+            ends = [event for event in ws.sent if event["kind"] == "agent_end"]
+            assert len(ends) == 1, ends
+            assert ends[0].get("cancelled") is True
+            assert ends[0]["failed"] is False
+            print("PASS test_cancelled_command_aborts_turn_before_agent_can_retry")
+        finally:
+            chat.start_command, hook.run_check = orig_start, orig_check
+            await chat.cleanup_session(sid)
+            await db.close()
+
+
+async def test_immediate_cancel_still_finishes_the_ui_turn() -> None:
+    """Esc can arrive before a newly dispatched task gets its first timeslice."""
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        db = await Database(str(tmp / "state.db")).connect()
+        app = types.SimpleNamespace(state=types.SimpleNamespace(db=db))
+        sid = "s-immediate-cancel"
+        await db.upsert_session({"id": sid})
+        ws = FakeWS()
+        chat.register_conn(sid, ws)
+
+        async def must_not_run(app_, sid_, content):  # noqa: ANN001
+            raise AssertionError("cancelled turn entered message handling")
+
+        orig = chat.handle_message
+        chat.handle_message = must_not_run
+        try:
+            task = chat.dispatch(app, sid, "hello")
+            assert task is not None
+            assert chat.cancel_session(sid) is True
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+            ends = [event for event in ws.sent if event["kind"] == "agent_end"]
+            assert len(ends) == 1 and ends[0].get("cancelled") is True, ends
+            assert chat.active_turn(sid) is None
+            print("PASS test_immediate_cancel_still_finishes_the_ui_turn")
+        finally:
+            chat.handle_message = orig
+            await chat.cleanup_session(sid)
+            await db.close()
+
+
+async def test_cleanup_all_force_stops_and_awaits_stubborn_turn() -> None:
+    """Shutdown cannot close the DB while an unresponsive turn is still alive."""
+
+    class StubbornCommand(FakeRC):
+        def __init__(self) -> None:
+            super().__init__([])
+            self.force_killed = False
+
+        def force_kill(self) -> None:
+            self.force_killed = True
+
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        db = await Database(str(tmp / "state.db")).connect()
+        sid = "s-shutdown"
+        await db.upsert_session({"id": sid})
+        app = types.SimpleNamespace(state=types.SimpleNamespace(db=db))
+        ws = FakeWS()
+        chat.register_conn(sid, ws)
+        started = asyncio.Event()
+
+        async def stubborn_turn(app_, sid_, content):  # noqa: ANN001
+            started.set()
+            await asyncio.Event().wait()
+
+        original = chat.handle_message
+        chat.handle_message = stubborn_turn
+        command = StubbornCommand()
+        try:
+            task = chat.dispatch(app, sid, "wait forever")
+            assert task is not None
+            await started.wait()
+            chat._runtime(sid).running.add(command)
+
+            await chat.cleanup_all(timeout=0.01)
+
+            assert command.cancelled, "shutdown did not request graceful cancellation"
+            assert command.force_killed, "shutdown deadline did not force-stop command"
+            assert task.done(), "shutdown returned before the turn finished"
+            runtime = chat._runtime(sid)
+            assert runtime.turn is None and not runtime.running
+            print("PASS test_cleanup_all_force_stops_and_awaits_stubborn_turn")
+        finally:
+            chat.handle_message = original
+            await db.close()
 
 
 async def _main() -> None:
@@ -730,7 +915,12 @@ async def _main() -> None:
     await test_swap_model_preserves_thread_and_persists()
     await test_swap_model_no_live_agent()
     await test_dispatch_rejects_queued_turn_and_allows_concurrency()
+    await test_cancel_session_cancels_every_parallel_command()
+    await test_cancelled_command_aborts_turn_before_agent_can_retry()
+    await test_immediate_cancel_still_finishes_the_ui_turn()
+    await test_cleanup_all_force_stops_and_awaits_stubborn_turn()
     await test_cleanup_session_evicts()
+    test_cleanup_reservation_is_exclusive()
     print("ALL PASS")
 
 

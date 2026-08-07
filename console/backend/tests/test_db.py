@@ -56,6 +56,13 @@ async def test_session_and_range_crud() -> None:
         await db.delete_session("s-1")
         assert await db.get_session("s-1") is None, "session not deleted"
         assert await db.get_range("s-1") is None, "range not cascade-deleted"
+        try:
+            await db.append_event("s-1", "generation", {"content": "late"})
+        except LookupError:
+            pass
+        else:
+            raise AssertionError("deleted session accepted an orphan event")
+        assert await db.get_events("s-1") == [], "late event survived deletion"
         print("PASS test_session_and_range_crud")
     finally:
         await db.close()
@@ -64,6 +71,8 @@ async def test_session_and_range_crud() -> None:
 async def test_event_seq_and_replay() -> None:
     db, _ = await _fresh_db()
     try:
+        await db.upsert_session({"id": "s-1"})
+        await db.upsert_session({"id": "s-2"})
         await db.append_event("s-1", "user_message", {"content": "hi"})
         await db.append_event("s-1", "generation", {"content": "hello", "usage": {}})
         await db.append_event("s-1", "check_run", {"hosts_updated": 3})
@@ -123,6 +132,7 @@ async def test_concurrent_writes_no_loss() -> None:
     """N interleaved async writes must all persist with unique, gapless seqs."""
     db, _ = await _fresh_db()
     try:
+        await db.upsert_session({"id": "s-1"})
         n = 100
         await asyncio.gather(
             *[db.append_event("s-1", "generation", {"i": i}) for i in range(n)]

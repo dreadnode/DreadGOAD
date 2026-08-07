@@ -66,12 +66,32 @@ class RunningCommand:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return  # no loop → best-effort SIGINT only
-        self._kill_task = loop.create_task(self._force_kill_after(self._KILL_GRACE))
+        if self._kill_task is None or self._kill_task.done():
+            self._kill_task = loop.create_task(
+                self._force_kill_after(self._KILL_GRACE)
+            )
+
+    def force_kill(self) -> None:
+        """Immediately stop the owned process group during bounded teardown."""
+        if self._proc.returncode is None:
+            self.cancelled = True
+            self._killpg(signal.SIGKILL)
+        self._cancel_kill_task()
 
     async def _force_kill_after(self, grace: float) -> None:
-        await asyncio.sleep(grace)
-        if self._proc.returncode is None:
-            self._killpg(signal.SIGKILL)
+        try:
+            await asyncio.sleep(grace)
+            if self._proc.returncode is None:
+                self._killpg(signal.SIGKILL)
+        finally:
+            if self._kill_task is asyncio.current_task():
+                self._kill_task = None
+
+    def _cancel_kill_task(self) -> None:
+        task = self._kill_task
+        self._kill_task = None
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            task.cancel()
 
     def _killpg(self, sig: int) -> None:
         if self._pgid is None:
@@ -155,6 +175,7 @@ class RunningCommand:
         """
         if self._proc.returncode is None:
             return  # still running; not ours to reap yet
+        self._cancel_kill_task()
         self._killpg(signal.SIGTERM)
 
     async def wait(self, on_line: OnLine | None = None) -> tuple[int, str]:

@@ -44,6 +44,9 @@ async def test_cancel_sigint_stops_before_completion() -> None:
     assert first == "started", first
 
     rc.cancel()  # SIGINT
+    escalation = rc._kill_task
+    rc.cancel()  # repeated Esc must reuse, not leak another timer
+    assert rc._kill_task is escalation
 
     rest = []
     async for line in it:
@@ -52,6 +55,7 @@ async def test_cancel_sigint_stops_before_completion() -> None:
         f"command should have been cancelled before 'done': {rest}"
     )
     assert rc.returncode != 0, "cancelled command should have non-zero exit"
+    assert rc._kill_task is None, "completed command retained a delayed kill timer"
     print("PASS test_cancel_sigint_stops_before_completion")
 
 

@@ -7,6 +7,7 @@ create time (config hosts if the lab exists, infra nodes otherwise).
 
 from __future__ import annotations
 
+import asyncio
 import re
 import shutil
 import typing as t
@@ -110,10 +111,15 @@ class SessionService:
         session = await self.db.get_session(session_id)
         if session is None:
             return False
-        await self.db.delete_session(session_id)
         sdir = session.get("session_dir")
         if sdir:
-            shutil.rmtree(sdir, ignore_errors=True)
+            root = self.sessions_root.resolve()
+            target = Path(sdir).resolve()
+            if target == root or root not in target.parents:
+                raise ValueError("refusing to delete a session dir outside sessions root")
+            if target.exists():
+                await asyncio.to_thread(shutil.rmtree, target)
+        await self.db.delete_session(session_id)
         return True
 
     async def set_status(self, session_id: str, status: str) -> None:

@@ -149,7 +149,12 @@ async def _lifespan(app: FastAPI) -> t.AsyncIterator[None]:
     try:
         yield
     finally:
-        await db.close()
+        # Stop/await every turn and subprocess while persistence is still open;
+        # otherwise late task writes race a closed database on shutdown.
+        try:
+            await chat.cleanup_all()
+        finally:
+            await db.close()
 
 
 app = FastAPI(title="DreadGOAD Console", lifespan=_lifespan)
@@ -289,10 +294,24 @@ async def set_model(session_id: str, body: dict[str, t.Any]) -> dict[str, t.Any]
 @app.delete("/api/sessions/{session_id}")
 async def delete_session(session_id: str) -> dict[str, t.Any]:
     """Delete a session, its working dir, and its in-memory runtime state."""
-    ok = await _svc(app).delete_session(session_id)
-    if not ok:
+    if await _svc(app).get_session(session_id) is None:
         raise HTTPException(status_code=404, detail="session not found")
-    chat.cleanup_session(session_id)  # evict agent/lock, cancel in-flight (F4)
+
+    # Reservation and the active-turn check are synchronous, so a WebSocket
+    # dispatch cannot slip between them on this event loop.
+    if not chat.begin_cleanup(session_id):
+        raise HTTPException(
+            status_code=409,
+            detail="session has an active turn; cancel it and wait before deleting",
+        )
+    try:
+        await chat.cleanup_session(session_id)
+        ok = await _svc(app).delete_session(session_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="session not found")
+    except Exception:
+        chat.release_cleanup(session_id)
+        raise
     return {"deleted": session_id}
 
 
@@ -402,6 +421,26 @@ async def ws_chat(websocket: WebSocket) -> None:
                 chat.cancel_session(session_id)
                 continue
             content = msg["content"]
+            if chat.session_closing(session_id):
+                await chat.emit_event(
+                    app,
+                    session_id,
+                    "error",
+                    {"message": "session is being deleted"},
+                    persist=False,
+                )
+                continue
+            if await app.state.db.get_session(session_id) is None:
+                await websocket.send_text(
+                    json.dumps(
+                        {
+                            "session_id": session_id,
+                            "kind": "error",
+                            "message": "session not found",
+                        }
+                    )
+                )
+                continue
             # Non-blocking: run the turn in a per-session task so the recv
             # loop stays free for cancel/other sessions (§5.4, §7).
             task = chat.dispatch(app, session_id, content)

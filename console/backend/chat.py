@@ -16,9 +16,11 @@ import-verifiable without one.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import typing as t
 from copy import deepcopy
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
 from dreadnode.agent.events import (
@@ -54,65 +56,139 @@ CHAT_KINDS = [
     "exec_report",
 ]
 
-# Per-session agent runtime (isolated; §4.2). Keyed by session id.
-_agents: dict[str, t.Any] = {}
-
-# In-flight CLI commands, keyed by session id, for cancellation (§5.4).
-_running: dict[str, t.Any] = {}
-
-# Per-session coordination locks (turns and model swaps must not overlap, §6.4).
-_locks: dict[str, asyncio.Lock] = {}
-
 # Strong refs to in-flight turn tasks so they aren't GC'd and survive a client
 # disconnect (the op keeps running server-side, §5.4).
 _tasks: set[asyncio.Task[t.Any]] = set()
 
-# The current live WS for each session. Emits target this (not a socket captured
-# at dispatch time), so a reconnected client re-attaches to an in-flight op's
-# live stream + completion (§5.4). Updated on every message for the session.
-_conns: dict[str, t.Any] = {}
 
-# The in-flight turn per session: when it started and which command it's running.
-# A turn keeps executing across a client disconnect, so without this a reloaded
-# browser shows an idle pane while the range is mid-deploy. Held in memory on
-# purpose — if the server restarted, the turn really is gone, and reporting
-# nothing is the honest answer (matching the provisioning→interrupted reconcile).
-_turns: dict[str, dict[str, t.Any]] = {}
+@dataclass(slots=True)
+class TurnState:
+    """Typed ownership state for one admitted chat turn."""
+
+    started_at: str = field(
+        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+    )
+    command: str | None = None
+    cancelled: bool = False
+    started: bool = False
+    commands_starting: int = 0
+    task: asyncio.Task[t.Any] | None = None
+
+
+@dataclass(slots=True)
+class SessionRuntime:
+    """Every in-memory resource owned by one console session."""
+
+    agent: t.Any = None
+    lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    conn: t.Any = None
+    turn: TurnState | None = None
+    running: set[t.Any] = field(default_factory=set)
+    # Kept true after deletion so stale WebSockets cannot recreate orphan data.
+    closing: bool = False
+
+
+_runtimes: dict[str, SessionRuntime] = {}
+
+
+def _runtime(session_id: str) -> SessionRuntime:
+    runtime = _runtimes.get(session_id)
+    if runtime is None:
+        runtime = SessionRuntime()
+        _runtimes[session_id] = runtime
+    return runtime
+
+
+def _discard_idle_runtime(session_id: str, runtime: SessionRuntime) -> None:
+    """Drop lock-only shells while retaining agents and deletion tombstones."""
+    if (
+        runtime.agent is None
+        and runtime.conn is None
+        and runtime.turn is None
+        and not runtime.running
+        and not runtime.closing
+        and _runtimes.get(session_id) is runtime
+    ):
+        _runtimes.pop(session_id, None)
 
 TURN_BUSY_MESSAGE = "A turn is already running for this session; wait or cancel it first."
 
 
-def active_turn(session_id: str) -> dict[str, t.Any] | None:
+def active_turn(session_id: str) -> TurnState | None:
     """The running turn for a session, or None if it's idle."""
-    return _turns.get(session_id)
+    runtime = _runtimes.get(session_id)
+    return runtime.turn if runtime is not None else None
+
+
+def begin_cleanup(session_id: str) -> bool:
+    """Atomically reserve an idle session against new turn dispatch."""
+    runtime = _runtime(session_id)
+    if runtime.closing or runtime.turn is not None or runtime.running:
+        return False
+    runtime.closing = True
+    return True
+
+
+def release_cleanup(session_id: str) -> None:
+    """Release a failed deletion reservation so the session remains usable."""
+    runtime = _runtimes.get(session_id)
+    if runtime is not None:
+        runtime.closing = False
+        _discard_idle_runtime(session_id, runtime)
+
+
+def session_closing(session_id: str) -> bool:
+    runtime = _runtimes.get(session_id)
+    return runtime.closing if runtime is not None else False
 
 
 def register_conn(session_id: str, ws: t.Any) -> None:
     """Mark ``ws`` as the current socket for a session (called per message)."""
-    _conns[session_id] = ws
+    _runtime(session_id).conn = ws
 
 
 def unregister_conn(ws: t.Any) -> None:
     """Drop a closed socket from the registry (best-effort)."""
-    for sid in [s for s, w in _conns.items() if w is ws]:
-        del _conns[sid]
+    for session_id, runtime in list(_runtimes.items()):
+        if runtime.conn is ws:
+            runtime.conn = None
+            _discard_idle_runtime(session_id, runtime)
 
 
 def cancel_session(session_id: str) -> bool:
-    """Cancel the session's in-flight command (SIGINT). Returns True if one ran."""
-    rc = _running.get(session_id)
-    if rc is None:
+    """Cancel the whole in-flight turn and every CLI process it owns."""
+    runtime = _runtimes.get(session_id)
+    if runtime is None:
         return False
-    rc.cancel()
+    turn = runtime.turn
+    running = tuple(runtime.running)
+    if turn is None and not running:
+        return False
+
+    if turn is not None:
+        turn.cancelled = True
+    for rc in running:
+        rc.cancel()
+
+    # With no CLI to unwind, interrupt model generation immediately. A running
+    # CLI is allowed to handle SIGINT first; run_cli then aborts the owning turn
+    # before the agent can interpret the cancellation as a failure and retry.
+    if (
+        not running
+        and turn is not None
+        and not turn.commands_starting
+    ):
+        task = turn.task
+        if task is not None and not task.done():
+            if turn.started:
+                task.cancel()
+            # A task cancelled before its coroutine first runs cannot emit the
+            # terminal event. An unstarted _runner observes the flag itself.
     return True
 
 
 def _session_lock(session_id: str) -> asyncio.Lock:
-    lock = _locks.get(session_id)
-    if lock is None:
-        lock = asyncio.Lock()
-        _locks[session_id] = lock
-    return lock
+    return _runtime(session_id).lock
 
 
 def dispatch(
@@ -125,34 +201,46 @@ def dispatch(
     Admission is reserved synchronously, before the task can yield, so two rapid
     messages cannot both slip past the check and queue behind the session lock.
     Tasks are kept in ``_tasks`` so they survive the connection closing; emits
-    target the session's *current* socket (`_conns`).
+    target the session's *current* socket (`SessionRuntime.conn`).
     """
 
-    if session_id in _turns:
+    runtime = _runtime(session_id)
+    if runtime.turn is not None or runtime.closing:
         return None
 
-    turn: dict[str, t.Any] = {
-        "started_at": datetime.now(timezone.utc).isoformat(),
-        "command": None,
-    }
-    _turns[session_id] = turn
+    turn = TurnState()
+    runtime.turn = turn
 
     async def _runner() -> None:
         try:
-            async with _session_lock(session_id):
+            turn.started = True
+            if turn.cancelled:
+                raise asyncio.CancelledError
+            async with runtime.lock:
                 await handle_message(app, session_id, content)
+        except asyncio.CancelledError:
+            # One terminal event releases the UI's processing state whether the
+            # cancel landed during model generation or a CLI tool call.
+            await emit_event(
+                app,
+                session_id,
+                "agent_end",
+                {"failed": False, "cancelled": True},
+            )
+            raise
         finally:
             # Identity check protects a newer reservation if cleanup removed
             # this one while its task was still unwinding.
-            if _turns.get(session_id) is turn:
-                _turns.pop(session_id, None)
+            if runtime.turn is turn:
+                runtime.turn = None
 
     try:
         task = asyncio.create_task(_runner())
     except Exception:
-        if _turns.get(session_id) is turn:
-            _turns.pop(session_id, None)
+        if runtime.turn is turn:
+            runtime.turn = None
         raise
+    turn.task = task
     _tasks.add(task)
     task.add_done_callback(
         lambda finished: _turn_task_done(session_id, turn, finished)
@@ -161,7 +249,7 @@ def dispatch(
 
 
 def _turn_task_done(
-    session_id: str, turn: dict[str, t.Any], task: asyncio.Task[t.Any]
+    session_id: str, turn: TurnState, task: asyncio.Task[t.Any]
 ) -> None:
     """Release a finished turn and observe any exception it carried.
 
@@ -174,21 +262,60 @@ def _turn_task_done(
     _tasks.discard(task)
     # A task cancelled before its coroutine first runs never enters the
     # coroutine's ``finally`` block, so release its admission here as well.
-    if _turns.get(session_id) is turn:
-        _turns.pop(session_id, None)
+    runtime = _runtimes.get(session_id)
+    if runtime is not None and runtime.turn is turn:
+        runtime.turn = None
+    if runtime is not None:
+        _discard_idle_runtime(session_id, runtime)
     if not task.cancelled():
         task.exception()
 
 
-def cleanup_session(session_id: str) -> None:
-    """Drop per-session runtime state on delete (agent, lock, conn, command)."""
-    _agents.pop(session_id, None)
-    _locks.pop(session_id, None)
-    _conns.pop(session_id, None)
-    _turns.pop(session_id, None)
-    rc = _running.pop(session_id, None)
-    if rc is not None:
-        rc.cancel()
+async def cleanup_session(session_id: str, *, timeout: float = 15.0) -> None:
+    """Stop and await one session, then evict all of its runtime state."""
+    runtime = _runtimes.get(session_id)
+    if runtime is None:
+        return
+    turn = runtime.turn
+    running = tuple(runtime.running)
+    cancel_session(session_id)
+
+    task = turn.task if turn is not None else None
+    if task is not None and not task.done():
+        done, _ = await asyncio.wait({task}, timeout=timeout)
+        if not done:
+            for rc in tuple(runtime.running):
+                force_kill = getattr(rc, "force_kill", None)
+                if force_kill is not None:
+                    force_kill()
+                else:
+                    rc.cancel()
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+    elif running:
+        # No owner task can reap these handles; do not leave them detached.
+        for rc in running:
+            force_kill = getattr(rc, "force_kill", None)
+            if force_kill is not None:
+                force_kill()
+
+    runtime.agent = None
+    runtime.conn = None
+    runtime.turn = None
+    runtime.running.clear()
+    if not runtime.closing:
+        _runtimes.pop(session_id, None)
+
+
+async def cleanup_all(*, timeout: float = 15.0) -> None:
+    """Bounded shutdown cleanup for every in-memory session."""
+    session_ids = set(_runtimes)
+    for runtime in _runtimes.values():
+        runtime.closing = True
+    await asyncio.gather(
+        *(cleanup_session(session_id, timeout=timeout) for session_id in session_ids)
+    )
 
 
 def format_event(event: t.Any) -> dict[str, t.Any] | None:
@@ -225,8 +352,9 @@ def format_event(event: t.Any) -> dict[str, t.Any] | None:
 
 
 async def _get_agent(app: t.Any, session_id: str) -> t.Any | None:
-    if session_id in _agents:
-        return _agents[session_id]
+    runtime = _runtime(session_id)
+    if runtime.agent is not None:
+        return runtime.agent
     session = await app.state.db.get_session(session_id)
     if session is None:
         return None
@@ -237,7 +365,7 @@ async def _get_agent(app: t.Any, session_id: str) -> t.Any | None:
         session_id,
         run_cli,
     )
-    _agents[session_id] = agent
+    runtime.agent = agent
     return agent
 
 
@@ -258,12 +386,13 @@ async def swap_model(
         session["model"] = new_model
         await app.state.db.upsert_session(session)
 
-        old = _agents.get(session_id)
+        runtime = _runtime(session_id)
+        old = runtime.agent
         if old is not None:
             history = deepcopy(old.thread.messages)
             fresh = create_agent(new_model, session, app, session_id, run_cli)
             fresh.thread.messages = history
-            _agents[session_id] = fresh
+            runtime.agent = fresh
         # else: no live agent — _get_agent will build with the new model next turn.
 
     await emit_event(
@@ -283,7 +412,8 @@ async def emit_event(
     """Persist (optionally) + push an event to the session's current socket (§5.4)."""
     if persist:
         await app.state.db.append_event(session_id, kind, payload)
-    ws = _conns.get(session_id)
+    runtime = _runtimes.get(session_id)
+    ws = runtime.conn if runtime is not None else None
     if ws is None:
         return  # no live client; persisted events replay on reconnect
     try:
@@ -502,7 +632,8 @@ async def run_cli(
     """Run a dreadgoad command through the full pipeline; return (exit_code, output).
 
     Emits command_run/command_progress/check_run + overlays, sets lifecycle
-    status, registers ``_running`` for cancel. Shared by direct dispatch and the
+    status, registers the process on ``SessionRuntime`` for cancel. Shared by
+    direct dispatch and the
     agent's ``run_dreadgoad`` tool, so both paths behave identically (§5.1).
     """
     session = await app.state.db.get_session(session_id)
@@ -536,14 +667,17 @@ async def run_cli(
 
     # Name the command on the in-flight turn so a reconnecting client can still
     # warn before cancelling a destructive one.
-    turn = _turns.get(session_id)
+    runtime = _runtime(session_id)
+    turn = runtime.turn
     if turn is not None:
-        turn["command"] = name
+        turn.command = name
 
     cmd = commands.REGISTRY[name]
     if cmd.long_running:
         await app.state.sessions.set_status(session_id, "provisioning")
 
+    if turn is not None:
+        turn.commands_starting += 1
     try:
         rc = await start_command(argv, cwd=str(paths.repo_root()))
     except OSError as exc:
@@ -567,15 +701,20 @@ async def run_cli(
             },
         )
         return 1, message
+    finally:
+        if turn is not None:
+            turn.commands_starting = max(0, turn.commands_starting - 1)
     # SIGINT→SIGKILL grace: give terraform/ansible a long runway to unwind on
     # SIGINT (killing terraform mid-apply strands a state lock); reads/local ops
     # can be hard-killed quickly if they ignore SIGINT.
     rc._KILL_GRACE = 300.0 if name in _SLOW_CANCEL else 12.0
-    _running[session_id] = rc
+    if turn is not None and turn.cancelled:
+        rc.cancel()
+    runtime.running.add(rc)
     try:
         await _stream_output(app, session_id, name, rc)
     finally:
-        _running.pop(session_id, None)
+        runtime.running.discard(rc)
     exit_code, output = rc.returncode, rc.output
 
     if cmd.long_running:
@@ -597,6 +736,13 @@ async def run_cli(
             "tail": output[-2000:],
         },
     )
+
+    # Cancellation belongs to the whole turn, not just this process. Do not run
+    # post-command checks or hand a "failed" tool result back to the model: both
+    # let an agent continue working and potentially launch the command again.
+    turn = runtime.turn
+    if rc.cancelled or (turn is not None and turn.cancelled):
+        raise asyncio.CancelledError
 
     payload = await hook.run_check(app, session_id)
     await emit_event(app, session_id, "check_run", payload)
@@ -682,14 +828,15 @@ def _flatten(event: dict[str, t.Any]) -> dict[str, t.Any]:
 async def replay(app: t.Any, session_id: str) -> None:
     """Send chat-kind history for a session to its current socket on (re)connect."""
     events = await app.state.db.get_events(session_id, kinds=CHAT_KINDS)
-    ws = _conns.get(session_id)
+    runtime = _runtimes.get(session_id)
+    ws = runtime.conn if runtime is not None else None
     if ws is None:
         return
     # Resume is the reconnect handshake, so it also reports whether a turn is
     # still running server-side. Without this a reloaded browser shows an idle
     # pane while a deploy is mid-flight, with no working indicator and no way to
     # cancel — the failure mode that made a wedged /health hard to spot.
-    turn = _turns.get(session_id)
+    turn = runtime.turn if runtime is not None else None
     await ws.send_text(
         json.dumps(
             {
@@ -697,8 +844,8 @@ async def replay(app: t.Any, session_id: str) -> None:
                 "kind": "history",
                 "events": [_flatten(e) for e in events],
                 "active": turn is not None,
-                "started_at": turn.get("started_at") if turn else None,
-                "command": turn.get("command") if turn else None,
+                "started_at": turn.started_at if turn else None,
+                "command": turn.command if turn else None,
             }
         )
     )

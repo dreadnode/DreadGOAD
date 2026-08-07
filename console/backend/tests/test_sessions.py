@@ -91,6 +91,34 @@ async def test_delete_session_removes_dir_and_rows() -> None:
             await svc.db.close()
 
 
+async def test_delete_refuses_working_dir_outside_session_root() -> None:
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        cfg = tmp / "dreadgoad.yaml"
+        cfg.write_text(_YAML)
+        svc = await _svc(tmp)
+        try:
+            session = await svc.create_session(str(cfg), "staging")
+            outside = tmp / "must-not-delete"
+            outside.mkdir()
+            (outside / "sentinel").write_text("keep")
+            session["session_dir"] = str(outside)
+            await svc.db.upsert_session(session)
+
+            try:
+                await svc.delete_session(session["id"])
+            except ValueError:
+                pass
+            else:
+                raise AssertionError("unsafe session directory was accepted")
+
+            assert outside.exists() and (outside / "sentinel").exists()
+            assert await svc.get_session(session["id"]) is not None
+            print("PASS test_delete_refuses_working_dir_outside_session_root")
+        finally:
+            await svc.db.close()
+
+
 async def test_create_new_env_writes_yaml_and_backs_up() -> None:
     with tempfile.TemporaryDirectory() as d:
         tmp = pathlib.Path(d)
@@ -151,6 +179,7 @@ async def test_greenfield_seeds_infra_only() -> None:
 async def _main() -> None:
     await test_create_attach_session()
     await test_delete_session_removes_dir_and_rows()
+    await test_delete_refuses_working_dir_outside_session_root()
     await test_create_new_env_writes_yaml_and_backs_up()
     await test_greenfield_seeds_infra_only()
     print("ALL PASS")

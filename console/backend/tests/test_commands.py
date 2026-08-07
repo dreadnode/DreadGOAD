@@ -553,6 +553,7 @@ async def test_cancel_escalates_to_sigkill() -> None:
             pass
         assert rc.cancelled is True
         assert rc.returncode != 0, f"expected non-zero (killed), got {rc.returncode}"
+        assert rc._kill_task is None, "completed escalation timer was retained"
         print("PASS test_cancel_escalates_to_sigkill")
 
 

@@ -264,6 +264,11 @@ class Database:
     def _append_event(
         self, session_id: str, kind: str, payload: dict[str, t.Any]
     ) -> int:
+        exists = self._c.execute(
+            "SELECT 1 FROM sessions WHERE id=?", (session_id,)
+        ).fetchone()
+        if exists is None:
+            raise LookupError(f"session not found: {session_id}")
         row = self._c.execute(
             "SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM events WHERE session_id=?",
             (session_id,),
