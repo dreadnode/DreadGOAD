@@ -226,11 +226,17 @@ func (c *Client) WaitForInstanceStopped(ctx context.Context, id string) error {
 	}
 
 	deadline := time.Now().Add(5 * time.Minute)
-	for time.Now().Before(deadline) {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(10 * time.Second):
+	for first := true; time.Now().Before(deadline); first = false {
+		// Check before sleeping. The caller may already have waited for the
+		// deallocate to finish — StopInstances does exactly that on Azure — and
+		// sleeping first charged 10 seconds to confirm a state that was already
+		// true. Only wait between polls, not before the first one.
+		if !first {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(10 * time.Second):
+			}
 		}
 		resp, err := c.vmClient.InstanceView(ctx, rid.ResourceGroupName, rid.Name, nil)
 		if err != nil {

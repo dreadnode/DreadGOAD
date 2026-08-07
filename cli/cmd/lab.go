@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/dreadnode/dreadgoad/internal/provider"
@@ -213,34 +214,51 @@ func runLabAction(action string) func(*cobra.Command, []string) error {
 	}
 }
 
+// vmActionTimeout bounds a single-VM lifecycle action end to end.
+const vmActionTimeout = 15 * time.Minute
+
 func execVMAction(ctx context.Context, prov provider.Provider, inst *provider.Instance, action string) error {
 	ids := []string{inst.ID}
 	switch action {
 	case "start":
+		fmt.Printf("Starting %s...\n", inst.Name)
 		if err := prov.StartInstances(ctx, ids); err != nil {
 			return fmt.Errorf("start VM: %w", err)
 		}
-		fmt.Printf("Start initiated for %s\n", inst.Name)
+		fmt.Printf("%s is running\n", inst.Name)
 	case "stop":
+		fmt.Printf("Stopping %s (deallocating; this takes a few minutes)...\n", inst.Name)
 		if err := prov.StopInstances(ctx, ids); err != nil {
 			return fmt.Errorf("stop VM: %w", err)
 		}
-		fmt.Printf("Stop initiated for %s\n", inst.Name)
+		fmt.Printf("%s is stopped\n", inst.Name)
 	case "restart":
+		// StopInstances/StartInstances block until the Azure operation
+		// completes — they are not "initiate and return". Announce before the
+		// call, not after: printed afterwards these lines describe a state the
+		// operator never sees the command in, and a restart shows nothing at
+		// all for the minutes it actually takes.
 		if inst.State == "running" {
+			fmt.Printf("Stopping %s (deallocating; this takes a few minutes)...\n", inst.Name)
 			if err := prov.StopInstances(ctx, ids); err != nil {
 				return fmt.Errorf("stop VM: %w", err)
 			}
-			fmt.Printf("Stop initiated for %s, waiting for stopped state...\n", inst.Name)
+			// The wait is required and stays. Whether StopInstances blocks is
+			// per-provider: Azure polls the deallocate to completion, but AWS
+			// (internal/aws/ec2.go) just calls the EC2 API and returns, so
+			// without this the Start below would be issued against an instance
+			// still in "stopping" and rejected. Redundant on Azure, and cheap
+			// there now that the poll checks before it sleeps.
 			if err := prov.WaitForInstanceStopped(ctx, inst.ID); err != nil {
 				return fmt.Errorf("wait for stop: %w", err)
 			}
-			fmt.Printf("%s is now stopped\n", inst.Name)
+			fmt.Printf("%s is stopped\n", inst.Name)
 		}
+		fmt.Printf("Starting %s...\n", inst.Name)
 		if err := prov.StartInstances(ctx, ids); err != nil {
 			return fmt.Errorf("start VM: %w", err)
 		}
-		fmt.Printf("Start initiated for %s\n", inst.Name)
+		fmt.Printf("%s is running\n", inst.Name)
 	case "destroy":
 		return destroyVM(ctx, prov, inst)
 	}
@@ -265,7 +283,14 @@ func destroyVM(ctx context.Context, prov provider.Provider, inst *provider.Insta
 func runVMAction(action string) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
 		hostname := args[0]
-		ctx := context.Background()
+		// Bounded, because none of the calls below are. StopInstances and
+		// StartInstances poll an Azure long-running operation to completion,
+		// and with context.Background() a stalled operation hangs the command
+		// forever with no output — indistinguishable from one that is simply
+		// slow. 15 minutes is well above a real deallocate+start and well
+		// below the point where an operator has lost the afternoon.
+		ctx, cancel := context.WithTimeout(context.Background(), vmActionTimeout)
+		defer cancel()
 
 		prov, cfg, err := getProvider(ctx)
 		if err != nil {
