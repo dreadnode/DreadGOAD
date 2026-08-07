@@ -6,7 +6,7 @@ scp/SSM/Bastion in Python, this drives ``dreadgoad score fetch``, which reuses
 the CLI's own connection machinery:
 
   - **AWS**: SSM (no inbound ports). Pass the Kali instance id (learned by the
-    ingestion hook post-deploy, see ``hook.find_attack_box``).
+    inventory sync post-deploy, see ``inventory_sync.find_attack_box``).
   - **Azure**: over Azure Bastion. The CLI auto-discovers the Kali VM and its
     SSH key, so nothing extra is needed.
 

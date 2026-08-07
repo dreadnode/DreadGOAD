@@ -135,7 +135,11 @@ second tab is rejected with a 409 rather than overwriting the newer layout.
 
 | Module | Responsibility |
 |--------|---------------|
-| `server.py` | FastAPI app, REST endpoints, `/ws/chat` |
+| `server.py` | FastAPI assembly, lifecycle, router registration, frontend mount |
+| `config_routes.py` | Health, configuration, settings, and command-catalog routes |
+| `session_routes.py` | Session lifecycle and model-selection routes |
+| `range_routes.py` | Range reads and revision-protected layout routes |
+| `chat_socket.py` | Bounded WebSocket protocol and multiplexed chat transport |
 | `chat.py` | Thin chat facade: turn dispatch, agent routing, model switching |
 | `chat_runtime.py` | Per-session state, connection ownership, cancellation, cleanup |
 | `chat_events.py` | Event formatting, persistence, WebSocket delivery, replay |
@@ -144,7 +148,10 @@ second tab is rejected with a 409 rather than overwriting the newer layout.
 | `commands.py` | Slash-command registry, argv builder, prompt loader |
 | `summary.py` | Condenses CLI output into bounded tool results (structured, else clipped with a marker) |
 | `cli.py` | Subprocess runner (streaming + cancel; `capture` for JSON reads) |
-| `hook.py` | Ingestion hook: instance→host overlay, health overlay, attack-box sync |
+| `hook.py` | Compatibility facade for post-command synchronization |
+| `inventory_sync.py` | Instance→host overlay, cloud metadata, attack-box sync |
+| `health_sync.py` | Health-report parsing and per-host health overlays |
+| `topology_sync.py` | Range reseeding and extension-node discovery |
 | `labconfig.py` | Snapshot derivation + range topology seeding from lab config |
 | `sessions.py` | Session lifecycle service |
 | `db.py` | SQLite persistence (single-worker executor, WAL) |

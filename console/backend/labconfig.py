@@ -82,8 +82,9 @@ def derive_snapshot(config_path: str, env: str) -> dict[str, t.Any]:
     elif provider == "azure":
         # Where the range landed (subscription/resource group) is NOT here —
         # the ingestion hook learns it post-deploy and writes it to the
-        # snapshot's provider-neutral ``account``/``group`` (see hook.py), so
-        # the RangeView header reads one pair of keys for every provider.
+        # snapshot's provider-neutral ``account``/``group`` (see
+        # inventory_sync.py), so the RangeView header reads one pair of keys
+        # for every provider.
         snapshot["azure"] = {"ssh_key": None, "ssh_user": "kali"}
     return snapshot
 
@@ -113,7 +114,7 @@ def seed_topology(
       - **config** hosts from ``config.json`` (``type`` → role)
       - **infra** nodes not in the lab config: attack box always; bastion for
         Azure (SSM has no bastion node on AWS)
-    Extension machines are NOT produced here — ``hook.reseed`` augments this
+    Extension machines are NOT produced here — ``topology_sync.reseed`` augments this
     with enabled extensions' machines (from ``extension list --json``) when
     ``/extensions`` runs.
     Edges are deferred (v1 nodes-only), so ``edges`` is empty.

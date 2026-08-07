@@ -27,7 +27,7 @@ import re
 import signal
 import typing as t
 
-from .hook import parse_health_report
+from .health_sync import parse_health_report
 
 # ``validate`` writes its full results to a JSON file and prints the path. The
 # line itself is plain (the surrounding table is not), so match it directly.

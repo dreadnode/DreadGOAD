@@ -14,9 +14,13 @@ import types
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
-from console.backend import hook  # noqa: E402
+from console.backend import health_sync, inventory_sync, topology_sync  # noqa: E402
 from console.backend.db import Database  # noqa: E402
-from console.backend.hook import map_range_status, run_check, summarize_changes  # noqa: E402
+from console.backend.inventory_sync import (  # noqa: E402
+    map_range_status,
+    run_check,
+    summarize_changes,
+)
 
 
 def _range() -> dict:
@@ -132,7 +136,7 @@ def test_hostname_substring_collision_does_not_mismatch() -> None:
 
 def test_parse_cloud_account_from_arm_ids() -> None:
     """Subscription + resource group come free from the instance ids we already read."""
-    got = hook.parse_cloud_account(_VARIANT_INSTANCES)
+    got = inventory_sync.parse_cloud_account(_VARIANT_INSTANCES)
     assert got == {}, "fixture ids are opaque, so nothing should be claimed"
 
     arm = [
@@ -143,18 +147,23 @@ def test_parse_cloud_account_from_arm_ids() -> None:
             "name": "x",
         },
     ]
-    assert hook.parse_cloud_account(arm) == {
+    assert inventory_sync.parse_cloud_account(arm) == {
         "account": "70a9c8a4-6bc6-4a48-ae24-27996cea8c02",
         "group": "DREADINDEX-DREADGOAD-RG",
     }
     # Azure is case-inconsistent about the segment: both forms appear in real ids.
     lower = [{"id": "/subscriptions/S1/resourcegroups/RG1/providers/x"}]
-    assert hook.parse_cloud_account(lower) == {"account": "S1", "group": "RG1"}
+    assert inventory_sync.parse_cloud_account(lower) == {
+        "account": "S1",
+        "group": "RG1",
+    }
     # Nothing to claim → empty, never a partial or bogus result.
-    assert hook.parse_cloud_account([]) == {}
-    assert hook.parse_cloud_account([{"id": None}]) == {}
-    assert hook.parse_cloud_account([{"id": "i-0abc123"}]) == {}
-    assert hook.parse_cloud_account([{"id": "/subscriptions/only-a-sub"}]) == {}
+    assert inventory_sync.parse_cloud_account([]) == {}
+    assert inventory_sync.parse_cloud_account([{"id": None}]) == {}
+    assert inventory_sync.parse_cloud_account([{"id": "i-0abc123"}]) == {}
+    assert (
+        inventory_sync.parse_cloud_account([{"id": "/subscriptions/only-a-sub"}]) == {}
+    )
     print("PASS test_parse_cloud_account_from_arm_ids")
 
 
@@ -169,8 +178,10 @@ def test_parse_cloud_account_prefers_cli_fields() -> None:
     aws = [{"id": "i-0abc", "name": "x", "account": "123456789012"}]
     # Provider-neutral key: an AWS account must NOT be filed as an Azure
     # subscription. Reachable only since the CLI began reporting `account`.
-    assert hook.parse_cloud_account(aws) == {"account": "123456789012"}
-    assert "resource_group" not in hook.parse_cloud_account(aws), "AWS has no group"
+    assert inventory_sync.parse_cloud_account(aws) == {"account": "123456789012"}
+    assert "resource_group" not in inventory_sync.parse_cloud_account(aws), (
+        "AWS has no group"
+    )
 
     # Azure via the reported fields.
     azure = [
@@ -180,14 +191,17 @@ def test_parse_cloud_account_prefers_cli_fields() -> None:
             "group": "RG-FIELD",
         }
     ]
-    assert hook.parse_cloud_account(azure) == {
+    assert inventory_sync.parse_cloud_account(azure) == {
         "account": "SUB-FIELD",
         "group": "RG-FIELD",
     }, "reported fields must win over the id"
 
     # Older CLI: no fields at all → fall back to the id.
     legacy = [{"id": "/subscriptions/S1/resourceGroups/G1/providers/x"}]
-    assert hook.parse_cloud_account(legacy) == {"account": "S1", "group": "G1"}
+    assert inventory_sync.parse_cloud_account(legacy) == {
+        "account": "S1",
+        "group": "G1",
+    }
 
     # Blank/whitespace fields are not "reported" — fall through, don't claim "".
     blank = [
@@ -197,7 +211,7 @@ def test_parse_cloud_account_prefers_cli_fields() -> None:
             "group": "",
         }
     ]
-    assert hook.parse_cloud_account(blank) == {
+    assert inventory_sync.parse_cloud_account(blank) == {
         "account": "S2",
         "group": "G2",
     }, "whitespace must not shadow the id fallback"
@@ -214,7 +228,7 @@ def test_backfill_keys_adds_field_without_touching_node_set() -> None:
         ]
     }
     before = [h["id"] for h in rng["hosts"]]
-    assert hook.backfill_keys(rng, seeded) is True
+    assert inventory_sync.backfill_keys(rng, seeded) is True
     assert [h["id"] for h in rng["hosts"]] == before, "node set must not change"
     assert {h["id"]: h["key"] for h in rng["hosts"]} == {
         "kingslanding": "dc01",
@@ -222,13 +236,13 @@ def test_backfill_keys_adds_field_without_touching_node_set() -> None:
         "attackbox": "attackbox",
     }
     # Idempotent, and unknown ids fall back to the id itself.
-    assert hook.backfill_keys(rng, seeded) is False
+    assert inventory_sync.backfill_keys(rng, seeded) is False
     orphan = {"hosts": [{"id": "elk", "hostname": "elk"}]}
-    hook.backfill_keys(orphan, seeded)
+    inventory_sync.backfill_keys(orphan, seeded)
     assert orphan["hosts"][0]["key"] == "elk"
     # An empty seed (lab config absent) must not drop or blank anything.
     r2 = _range()
-    hook.backfill_keys(r2, {"hosts": []})
+    inventory_sync.backfill_keys(r2, {"hosts": []})
     assert [h["id"] for h in r2["hosts"]] == before
     assert r2["hosts"][0]["key"] == "kingslanding"
     print("PASS test_backfill_keys_adds_field_without_touching_node_set")
@@ -240,7 +254,7 @@ def test_health_overlay_matches_by_role_key() -> None:
         {"name": "AD DC", "host": "DC01", "status": "OK", "detail": ""},
         {"name": "AD DC", "host": "DC02", "status": "FAIL", "detail": "down"},
     ]
-    verdicts = hook.host_health_from_report(checks)
+    verdicts = health_sync.host_health_from_report(checks)
     rng = _variant_range()
     for h in rng["hosts"]:
         role = str(h.get("key") or "").upper()
@@ -412,7 +426,7 @@ class _App:
 
 async def test_run_check_success_updates_range() -> None:
     db = await _db_with_session()
-    orig = hook.capture
+    orig = inventory_sync.capture
 
     async def fake_capture(argv, cwd):  # noqa: ANN001
         payload = [
@@ -425,7 +439,7 @@ async def test_run_check_success_updates_range() -> None:
         ]
         return (0, json.dumps(payload), "")
 
-    hook.capture = fake_capture
+    inventory_sync.capture = fake_capture
     try:
         result = await run_check(_App(db), "s-1")
         assert "error" not in result, result
@@ -437,14 +451,14 @@ async def test_run_check_success_updates_range() -> None:
         assert rng["last_checked_at"] != "OLD", "success should advance last_checked_at"
         print("PASS test_run_check_success_updates_range")
     finally:
-        hook.capture = orig
+        inventory_sync.capture = orig
         await db.close()
 
 
 async def test_run_check_syncs_attack_box() -> None:
     """run_check learns the attack box id from the instances and persists it (§5.2)."""
     db = await _db_with_session()
-    orig = hook.capture
+    orig = inventory_sync.capture
 
     async def fake_capture(argv, cwd):  # noqa: ANN001
         payload = [
@@ -461,7 +475,7 @@ async def test_run_check_syncs_attack_box() -> None:
         ]
         return (0, json.dumps(payload), "")
 
-    hook.capture = fake_capture
+    inventory_sync.capture = fake_capture
     try:
         # precondition: attack_box unknown
         s0 = await db.get_session("s-1")
@@ -474,18 +488,18 @@ async def test_run_check_syncs_attack_box() -> None:
         assert s1["snapshot"]["attack_box"] == "i-kali", s1["snapshot"]
         print("PASS test_run_check_syncs_attack_box")
     finally:
-        hook.capture = orig
+        inventory_sync.capture = orig
         await db.close()
 
 
 async def test_run_check_failure_preserves_state() -> None:
     db = await _db_with_session()
-    orig = hook.capture
+    orig = inventory_sync.capture
 
     async def fake_capture(argv, cwd):  # noqa: ANN001
         return (1, "", "boom: creds expired")
 
-    hook.capture = fake_capture
+    inventory_sync.capture = fake_capture
     try:
         result = await run_check(_App(db), "s-1")
         assert "error" in result, "failed read should return an error payload"
@@ -503,7 +517,7 @@ async def test_run_check_failure_preserves_state() -> None:
         )
         print("PASS test_run_check_failure_preserves_state")
     finally:
-        hook.capture = orig
+        inventory_sync.capture = orig
         await db.close()
 
 
@@ -526,14 +540,14 @@ async def test_apply_health_targets_config_hosts() -> None:
         )
         # Fallback path: output isn't a JSON report → range-level verdict from
         # exit code, applied to config hosts only.
-        await hook.apply_health(_App(db), "s", "human-readable table", 0)
+        await health_sync.apply_health(_App(db), "s", "human-readable table", 0)
         rng = await db.get_range("s")
         assert rng is not None
         hosts = {h["id"]: h for h in rng["hosts"]}
         assert hosts["dc"]["health"] == "healthy", hosts
         assert hosts["attackbox"]["health"] == "unknown", "infra host must be untouched"
 
-        await hook.apply_health(_App(db), "s", "", 1)
+        await health_sync.apply_health(_App(db), "s", "", 1)
         rng = await db.get_range("s")
         assert rng is not None
         hosts = {h["id"]: h for h in rng["hosts"]}
@@ -564,18 +578,20 @@ def test_parse_health_report_noisy() -> None:
         ),
         "some trailing log",
     ]
-    parsed = hook.parse_health_report("\n".join(lines))
+    parsed = health_sync.parse_health_report("\n".join(lines))
     assert parsed is not None, "must find the report line among NDJSON + noise"
     assert parsed["passed"] == 1 and parsed["checks"][0]["host"] == "DC01", parsed
     # Fallback: an older single indented blob still parses.
     blob = "creds ok\n" + json.dumps(
         {"checks": [{"host": "DC1", "status": "OK"}]}, indent=2
     )
-    assert hook.parse_health_report(blob) is not None, "fallback for non-NDJSON output"
+    assert health_sync.parse_health_report(blob) is not None, (
+        "fallback for non-NDJSON output"
+    )
     # genuinely non-JSON → None
-    assert hook.parse_health_report("no json here") is None
+    assert health_sync.parse_health_report("no json here") is None
     # JSON lines that aren't a report (no 'checks') → None
-    assert hook.parse_health_report('{"foo": 1}\n{"status": "OK"}') is None
+    assert health_sync.parse_health_report('{"foo": 1}\n{"status": "OK"}') is None
     print("PASS test_parse_health_report_noisy")
 
 
@@ -588,9 +604,9 @@ def test_host_health_from_report() -> None:
         {"name": "DC02 Trust", "host": "DC02", "status": "FAIL"},
         {"name": "SRV01 MSSQL", "host": "SRV01", "status": "SKIP"},
     ]
-    v = hook.host_health_from_report(checks)
+    v = health_sync.host_health_from_report(checks)
     assert v == {"DC01": "healthy", "DC02": "unhealthy", "SRV01": "unknown"}, v
-    assert hook.host_health_from_report([]) == {}, "no checks → empty map"
+    assert health_sync.host_health_from_report([]) == {}, "no checks → empty map"
     print("PASS test_host_health_from_report")
 
 
@@ -635,7 +651,7 @@ async def test_apply_health_per_host_from_json() -> None:
             }
         )
         # exit_code=1 (a check failed) but the JSON drives per-host, not exit code
-        await hook.apply_health(_App(db), "s", report, 1)
+        await health_sync.apply_health(_App(db), "s", report, 1)
         rng = await db.get_range("s")
         assert rng is not None
         hosts = {h["id"]: h for h in rng["hosts"]}
@@ -684,7 +700,7 @@ async def test_reseed_adds_enabled_extension_nodes() -> None:
             "layout": {"attackbox": {"x": 1, "y": 2}},
         },
     )
-    orig = hook.capture
+    orig = topology_sync.capture
 
     async def fake_capture(argv, cwd):  # noqa: ANN001
         payload = [
@@ -693,9 +709,9 @@ async def test_reseed_adds_enabled_extension_nodes() -> None:
         ]
         return (0, json.dumps(payload), "")
 
-    hook.capture = fake_capture
+    topology_sync.capture = fake_capture
     try:
-        await hook.reseed(_App(db), "s")
+        await topology_sync.reseed(_App(db), "s")
         rng = await db.get_range("s")
         assert rng is not None
         hosts = {h["id"]: h for h in rng["hosts"]}
@@ -708,7 +724,7 @@ async def test_reseed_adds_enabled_extension_nodes() -> None:
         assert "attackbox" in rng["layout"], "layout must be preserved"
         print("PASS test_reseed_adds_enabled_extension_nodes")
     finally:
-        hook.capture = orig
+        topology_sync.capture = orig
         await db.close()
 
 
