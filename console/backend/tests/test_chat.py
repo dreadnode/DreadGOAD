@@ -15,6 +15,7 @@ import os
 import pathlib
 import sys
 import tempfile
+import time
 import types
 from contextlib import asynccontextmanager
 
@@ -922,6 +923,215 @@ async def test_cancelled_command_aborts_turn_before_agent_can_retry() -> None:
             await db.close()
 
 
+async def test_cancelling_a_cloud_command_says_so_and_rereads_state() -> None:
+    """Cancelling /restart must not claim the operation stopped.
+
+    Killing our subprocess ends the local wait; the Azure deallocate it already
+    asked for runs to completion. An operator cancelled a /restart, was told
+    "cancelled", and watched the DC reboot anyway — the range view meanwhile
+    still showed the state from before the command ran.
+
+    So for a command with cloud_ops the end event is flagged still_running, and
+    the range is re-read on the way out. Contrast with the /health case above,
+    which touches nothing and must still skip the hook.
+
+    Driven through /start rather than the /restart from the incident: both
+    carry cloud_ops, but /restart is dispatch="agent" and would need a live
+    model to reach run_cli at all. /start is the same path, directly.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        cfg = tmp / "dreadgoad.yaml"
+        cfg.write_text(_YAML)
+        db = await Database(str(tmp / "state.db")).connect()
+        svc = SessionService(db, repo_root=str(_REPO), sessions_root=tmp / "sessions")
+        app = types.SimpleNamespace(state=types.SimpleNamespace(db=db, sessions=svc))
+        session = await svc.create_session(str(cfg), "dev")
+        sid = session["id"]
+        ws = FakeWS()
+        chat.register_conn(sid, ws)
+
+        class SlowRC(FakeRC):
+            async def stream_lines(self):
+                for line in self._lines:
+                    if self.cancelled:
+                        return
+                    await asyncio.sleep(0.01)
+                    yield line
+
+        command = SlowRC(["waiting"] * 100)
+        refreshed = False
+
+        async def fake_start(argv, cwd):  # noqa: ANN001
+            return command
+
+        async def recording_hook(a, sid_, capture_command=None):  # noqa: ANN001
+            nonlocal refreshed
+            refreshed = True
+            # The turn-owned capture would raise CancelledError here; the
+            # refresh must use the plain one, so it is reached at all.
+            return {"hosts_updated": 1, "changes": []}
+
+        orig_start, orig_check = command_runner.start_command, hook.run_check
+        command_runner.start_command, hook.run_check = fake_start, recording_hook
+        try:
+            task = chat.dispatch(app, sid, "/start")
+            assert task is not None
+            for _ in range(20):
+                if chat_runtime.runtime(sid).running:
+                    break
+                await asyncio.sleep(0.01)
+            assert chat_runtime.runtime(sid).running, "command never became cancellable"
+
+            assert chat.cancel_session(sid) is True
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+            assert command.cancelled
+            assert refreshed, "range was not re-read after a cancelled cloud command"
+
+            ends = [
+                event
+                for event in ws.sent
+                if event["kind"] == "command_run" and event.get("phase") == "end"
+            ]
+            assert len(ends) == 1, ends
+            assert ends[0]["cancelled"] is True
+            assert ends[0]["still_running"] is True, (
+                "a cancelled cloud op must not read as fully stopped"
+            )
+            assert any(e["kind"] == "check_run" for e in ws.sent), (
+                "the refreshed range was never sent to the client"
+            )
+            print("PASS test_cancelling_a_cloud_command_says_so_and_rereads_state")
+        finally:
+            command_runner.start_command, hook.run_check = orig_start, orig_check
+            await chat.cleanup_session(sid)
+            await db.close()
+
+
+async def test_a_wedged_refresh_cannot_hold_the_cancel_open() -> None:
+    """The post-cancel refresh must never make cancelling slower.
+
+    It runs after the operator has asked for the command to stop, so an
+    unbounded refresh would mean pressing cancel is worse than not pressing it.
+    The first version of this bounded only the subprocess; anything else inside
+    run_check — a slow store, its own logic — still blocked forever. The
+    deadline is around the whole refresh for that reason.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        cfg = tmp / "dreadgoad.yaml"
+        cfg.write_text(_YAML)
+        db = await Database(str(tmp / "state.db")).connect()
+        svc = SessionService(db, repo_root=str(_REPO), sessions_root=tmp / "sessions")
+        app = types.SimpleNamespace(state=types.SimpleNamespace(db=db, sessions=svc))
+        session = await svc.create_session(str(cfg), "dev")
+        sid = session["id"]
+
+        class SlowRC(FakeRC):
+            async def stream_lines(self):
+                for line in self._lines:
+                    if self.cancelled:
+                        return
+                    await asyncio.sleep(0.01)
+                    yield line
+
+        async def fake_start(argv, cwd):  # noqa: ANN001
+            return SlowRC(["waiting"] * 100)
+
+        async def wedged_hook(a, sid_, capture_command=None):  # noqa: ANN001
+            await asyncio.sleep(3600)
+            return {}
+
+        orig_start, orig_check = command_runner.start_command, hook.run_check
+        orig_timeout = command_runner._REFRESH_TIMEOUT
+        command_runner.start_command, hook.run_check = fake_start, wedged_hook
+        # Shortened so the test is quick; production is _REFRESH_TIMEOUT.
+        command_runner._REFRESH_TIMEOUT = 0.5
+        try:
+            task = chat.dispatch(app, sid, "/start")
+            assert task is not None
+            for _ in range(50):
+                if chat_runtime.runtime(sid).running:
+                    break
+                await asyncio.sleep(0.01)
+
+            assert chat.cancel_session(sid) is True
+            began = time.monotonic()
+            with contextlib.suppress(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=20)
+            took = time.monotonic() - began
+            assert took < 10, f"a wedged refresh delayed the cancel by {took:.1f}s"
+            print("PASS test_a_wedged_refresh_cannot_hold_the_cancel_open")
+        finally:
+            command_runner._REFRESH_TIMEOUT = orig_timeout
+            command_runner.start_command, hook.run_check = orig_start, orig_check
+            await chat.cleanup_session(sid)
+            await db.close()
+
+
+async def test_cancelled_read_is_not_flagged_still_running() -> None:
+    """A read leaves nothing running, so it must not claim otherwise.
+
+    still_running is a promise about the world; on /health it would be false
+    and would teach the operator to ignore it where it is true.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        cfg = tmp / "dreadgoad.yaml"
+        cfg.write_text(_YAML)
+        db = await Database(str(tmp / "state.db")).connect()
+        svc = SessionService(db, repo_root=str(_REPO), sessions_root=tmp / "sessions")
+        app = types.SimpleNamespace(state=types.SimpleNamespace(db=db, sessions=svc))
+        session = await svc.create_session(str(cfg), "dev")
+        sid = session["id"]
+        ws = FakeWS()
+        chat.register_conn(sid, ws)
+
+        class SlowRC(FakeRC):
+            async def stream_lines(self):
+                for line in self._lines:
+                    if self.cancelled:
+                        return
+                    await asyncio.sleep(0.01)
+                    yield line
+
+        command = SlowRC(["waiting"] * 100)
+
+        async def fake_start(argv, cwd):  # noqa: ANN001
+            return command
+
+        async def forbidden_hook(a, sid_, capture_command=None):  # noqa: ANN001
+            raise AssertionError("a cancelled read must not re-read the range")
+
+        orig_start, orig_check = command_runner.start_command, hook.run_check
+        command_runner.start_command, hook.run_check = fake_start, forbidden_hook
+        try:
+            task = chat.dispatch(app, sid, "/health")
+            assert task is not None
+            for _ in range(20):
+                if chat_runtime.runtime(sid).running:
+                    break
+                await asyncio.sleep(0.01)
+            assert chat.cancel_session(sid) is True
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+            ends = [
+                event
+                for event in ws.sent
+                if event["kind"] == "command_run" and event.get("phase") == "end"
+            ]
+            assert len(ends) == 1, ends
+            assert ends[0]["still_running"] is False, ends[0]
+            print("PASS test_cancelled_read_is_not_flagged_still_running")
+        finally:
+            command_runner.start_command, hook.run_check = orig_start, orig_check
+            await chat.cleanup_session(sid)
+            await db.close()
+
+
 async def test_immediate_cancel_still_finishes_the_ui_turn() -> None:
     """Esc can arrive before a newly dispatched task gets its first timeslice."""
     with tempfile.TemporaryDirectory() as d:
@@ -1021,6 +1231,9 @@ async def _main() -> None:
     await test_cancel_session_cancels_every_parallel_command()
     await test_captured_helper_is_owned_and_cancelled_with_turn()
     await test_cancelled_command_aborts_turn_before_agent_can_retry()
+    await test_cancelling_a_cloud_command_says_so_and_rereads_state()
+    await test_a_wedged_refresh_cannot_hold_the_cancel_open()
+    await test_cancelled_read_is_not_flagged_still_running()
     await test_immediate_cancel_still_finishes_the_ui_turn()
     await test_cleanup_all_force_stops_and_awaits_stubborn_turn()
     await test_cleanup_session_evicts()

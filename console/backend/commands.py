@@ -42,6 +42,17 @@ class Command:
     dispatch: str = "direct"  # "direct" (deterministic) | "agent"
     long_running: bool = False  # streamed + guarded cancel (§5.4)
     takes_args: bool = False
+    # Whether the command asks the cloud (or a host) to change something.
+    #
+    # Cancelling one of these does NOT undo it. Killing our subprocess ends the
+    # local wait; an Azure deallocate, or an ansible run already underway,
+    # carries on to completion server-side. An operator who cancelled a
+    # /restart and was told "cancelled" watched the DC reboot anyway.
+    #
+    # Separate from long_running: /restart takes minutes but is not flagged
+    # long_running, and /score is neither. What matters here is whether
+    # something outside this process is still moving after we stop watching.
+    cloud_ops: bool = False
     description: str = ""  # what it does, one line, in the autocomplete menu
     # The consequence an operator needs *before* pressing enter: what it costs,
     # what it destroys, or what it depends on. Wording is taken from the CLI's
@@ -60,6 +71,7 @@ REGISTRY: dict[str, Command] = {
         ("up",),
         dispatch="agent",
         long_running=True,
+        cloud_ops=True,
         description="Deploy the range end-to-end: doctor → infra → provision → health",
         detail="creates cloud resources and starts billing; runs for tens of minutes",
     ),
@@ -68,6 +80,7 @@ REGISTRY: dict[str, Command] = {
         ("provision",),
         dispatch="agent",
         long_running=True,
+        cloud_ops=True,
         description="Re-run the Ansible provisioning playbooks, with retries",
         detail="safe to repeat; configures existing hosts, never recreates infra",
     ),
@@ -76,18 +89,21 @@ REGISTRY: dict[str, Command] = {
         ("lab", "reset"),
         dispatch="agent",
         long_running=True,
+        cloud_ops=True,
         description="Restore Active Directory to a known-clean baseline",
         detail="discards AD changes made since deploy; leaves the VMs in place",
     ),
     "/start": Command(
         "/start",
         ("lab", "start"),
+        cloud_ops=True,
         description="Power on the stopped lab instances",
         detail="resumes compute billing; takes a few minutes to become reachable",
     ),
     "/stop": Command(
         "/stop",
         ("lab", "stop"),
+        cloud_ops=True,
         description="Power off the running lab instances",
         detail="stops compute billing; disks and range state are preserved",
     ),
@@ -96,6 +112,7 @@ REGISTRY: dict[str, Command] = {
         ("lab", "restart-vm"),
         dispatch="agent",
         takes_args=True,
+        cloud_ops=True,
         description="Reboot one host by name, leaving the rest of the range up",
         detail="the fix for a host too wedged to answer; give it a hostname",
     ),
@@ -103,6 +120,7 @@ REGISTRY: dict[str, Command] = {
         "/destroy",
         ("infra", "destroy"),
         long_running=True,
+        cloud_ops=True,
         description="Tear down all infrastructure for this environment",
         detail="irreversible — deletes the VMs, disks and network",
     ),
@@ -132,6 +150,7 @@ REGISTRY: dict[str, Command] = {
         dispatch="agent",
         long_running=True,
         takes_args=True,
+        cloud_ops=True,
         description="Run a script on range hosts via the cloud control plane",
         detail="admin-level and no dry run; reaches hosts whose WinRM is down",
     ),
@@ -147,6 +166,7 @@ REGISTRY: dict[str, Command] = {
         "/scrub",
         ("score", "reset"),
         takes_args=True,
+        cloud_ops=True,
         description="Clean agent artifacts off the attack box and Windows hosts",
         detail="deletes for real; add 'dry' to preview instead. Leaves AD config alone",
     ),
@@ -163,6 +183,7 @@ REGISTRY: dict[str, Command] = {
         ("extension",),
         dispatch="agent",
         takes_args=True,
+        cloud_ops=True,
         description="List available extensions, or provision one by name",
         detail="listing is read-only; provisioning adds machines to the range",
     ),

@@ -128,6 +128,9 @@ export interface ChatEvent {
   command?: string
   exit_code?: number
   cancelled?: boolean
+  /** Cancelled, but the work it started is still finishing outside this
+   *  process (a cloud lifecycle op, a playbook already running on a host). */
+  still_running?: boolean
   line?: string
   hosts_updated?: number
   passed?: number

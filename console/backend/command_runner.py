@@ -107,6 +107,45 @@ def _capture_command(session_id: str) -> fetch.Capture:
     return partial(_capture_for_turn, session_id)
 
 
+# How long the post-cancel range refresh may take before it is abandoned. The
+# operator has just asked for this to stop; a refresh that outlives their
+# patience defeats the point of running it. A healthy `lab status` returns in
+# about three seconds.
+_REFRESH_TIMEOUT = 15.0
+
+
+async def _capture_for_refresh(
+    session_id: str, argv: list[str], cwd: str
+) -> tuple[int, str, str]:
+    """Capture for the post-cancel refresh: bounded, and never self-cancelling.
+
+    ``_capture_for_turn`` is wrong for this in both directions — it kills the
+    command when the turn is cancelled, and raises CancelledError on the way
+    out, so the refresh would abort before reading anything. This one runs
+    despite the cancellation.
+
+    Bounded because ``capture`` is not: it awaits ``communicate()`` with no
+    deadline, so a wedged read would hold the cancel open indefinitely — the
+    operator would press cancel and wait longer than if they hadn't. On timeout
+    the subprocess is killed rather than left behind.
+
+    The handle joins ``running`` so a shutdown, or a second cancel, can reap it.
+    """
+    command = await start_capture(argv, cwd)
+    current = chat_runtime.runtime(session_id)
+    current.running.add(command)
+    try:
+        return await asyncio.wait_for(command.communicate(), _REFRESH_TIMEOUT)
+    except BaseException:
+        # Any abnormal exit, not just the timeout: the caller bounds the whole
+        # refresh too, and that path cancels this one from outside. Either way
+        # the subprocess must die with it rather than outlive the turn.
+        command.cancel()
+        raise
+    finally:
+        current.running.discard(command)
+
+
 async def _prepare_extra(
     session: dict[str, t.Any],
     session_id: str,
@@ -355,6 +394,9 @@ async def run_cli(
             session_id, final_status(name, exit_code, command.cancelled)
         )
 
+    cancelled = command.cancelled or (
+        current.turn is not None and current.turn.cancelled
+    )
     await chat_events.emit_event(
         app,
         session_id,
@@ -364,12 +406,42 @@ async def run_cli(
             "command": name,
             "exit_code": exit_code,
             "cancelled": command.cancelled,
+            # Cancelling kills our subprocess; it does not reach into Azure or
+            # into a playbook already running on a host. Saying only "cancelled"
+            # let an operator watch a DC reboot they believed they had stopped.
+            "still_running": bool(cancelled and command_spec.cloud_ops),
             "tail": output[-2000:],
         },
     )
 
-    turn = current.turn
-    if command.cancelled or (turn is not None and turn.cancelled):
+    if cancelled:
+        # Re-read the range before unwinding. The command may have changed the
+        # world on its way out, and the view would otherwise keep showing the
+        # state from before it ran — the one moment the display is most likely
+        # to be wrong is the one we were skipping.
+        #
+        # Deliberately NOT the turn-owned capture: that raises CancelledError
+        # the moment it sees turn.cancelled, so the refresh would abort before
+        # doing anything. Failure here must not replace the cancellation, so
+        # everything is swallowed except the cancel itself.
+        if command_spec.cloud_ops:
+            # Bounded as a whole, not just at the subprocess: the operator has
+            # already asked for this to stop, so a refresh that outlives their
+            # patience makes cancelling slower than not cancelling. Anything
+            # inside run_check can block — a wedged read, a slow store — and
+            # only a deadline around all of it is actually a guarantee.
+            try:
+                payload = await asyncio.wait_for(
+                    hook.run_check(
+                        app, session_id, partial(_capture_for_refresh, session_id)
+                    ),
+                    _REFRESH_TIMEOUT,
+                )
+                await chat_events.emit_event(app, session_id, "check_run", payload)
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - a stale view beats a lost cancel
+                pass
         raise asyncio.CancelledError
 
     payload = await hook.run_check(app, session_id, _capture_command(session_id))

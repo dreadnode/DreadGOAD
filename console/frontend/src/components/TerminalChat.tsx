@@ -315,9 +315,15 @@ function Message({ ev }: { ev: ChatEvent }) {
         return <div style={{ marginBottom: 6 }}><Badge text="CMD" color="var(--dg-brand)" /><span style={{ color: 'var(--dn-text-muted)', fontSize: 12 }}>{ev.command}</span></div>
       }
       // A cancel is not a failure, and "exit -2" tells an operator nothing.
+      // For anything that had already reached the cloud, "cancelled" alone was
+      // a false claim: we stop watching, the deallocate or playbook finishes
+      // anyway. Say which of the two happened.
       return ev.cancelled
         ? <div style={{ marginBottom: 6, fontSize: 12, color: 'var(--dn-warning)' }}>
-            cancelled — stopped early, output is incomplete
+            {ev.still_running
+              ? 'stopped watching — the operation was already sent and will finish '
+                + 'on its own; range state re-read below'
+              : 'cancelled — stopped early, output is incomplete'}
           </div>
         : <div style={{ marginBottom: 6, fontSize: 12, color: ev.exit_code ? 'var(--dn-error)' : 'var(--dn-success)' }}>exit {String(ev.exit_code)}</div>
     case 'command_progress':
