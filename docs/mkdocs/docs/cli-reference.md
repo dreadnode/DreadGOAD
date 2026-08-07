@@ -127,6 +127,7 @@ Manage DreadGOAD infrastructure via Terragrunt. Operates on the `infra/` directo
 | Flag | Description |
 |------|-------------|
 | `-d, --deployment string` | Deployment name |
+| `--with-kali` | Include the optional Kali attack box (AWS or Azure; plan/apply/destroy) |
 
 #### `infra init`
 

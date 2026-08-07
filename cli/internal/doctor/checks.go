@@ -67,6 +67,9 @@ func RunChecks(opts Options) []CheckResult {
 		// AWS is the historical default; proxmox currently uses the same
 		// terraform/terragrunt toolchain so it falls through here too.
 		results = append(results, checkCommand("aws", "AWS CLI"))
+		if opts.Provider == "" || opts.Provider == "aws" {
+			results = append(results, checkCommand("session-manager-plugin", "AWS Session Manager plugin"))
+		}
 		results = append(results, checkAWSCredentials())
 		results = append(results, checkTerragrunt())
 		results = append(results, checkTerraformOrTofu())

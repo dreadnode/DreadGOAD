@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -11,6 +12,18 @@ type Instance struct {
 	Name      string
 	PrivateIP string
 	State     string // "running", "stopped", etc.
+	Tags      map[string]string
+}
+
+// FindInstanceByRole returns the first instance whose Role tag matches role.
+// Providers that do not expose resource tags simply leave Instance.Tags nil.
+func FindInstanceByRole(instances []Instance, role string) *Instance {
+	for i := range instances {
+		if strings.EqualFold(instances[i].Tags["Role"], role) {
+			return &instances[i]
+		}
+	}
+	return nil
 }
 
 // CommandResult holds the output of a remote command execution.

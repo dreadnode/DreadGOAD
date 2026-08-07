@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -174,23 +175,50 @@ func runSSMConnect(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("provider %s does not support interactive shells", prov.Name())
 	}
 
-	inv, err := inventory.Parse(cfg.InventoryPath())
+	// The optional attack box is intentionally absent from the Ansible
+	// inventory. Prefer inventory for the Windows hosts, then fall back to
+	// provider discovery for tagged or otherwise out-of-inventory instances.
+	inv, _ := inventory.Parse(cfg.InventoryPath())
+	target, err := resolveSSMHost(ctx, prov, cfg.Env, inv, args[0])
 	if err != nil {
-		return fmt.Errorf("parse inventory: %w", err)
+		return err
 	}
-
-	host := inv.HostByName(args[0])
-	if host == nil || host.InstanceID == "" {
-		return fmt.Errorf("host %q not found in inventory", args[0])
+	if _, err := exec.LookPath("session-manager-plugin"); err != nil {
+		return fmt.Errorf("AWS Session Manager plugin not found in PATH; install it before running ssm connect")
 	}
 
 	region, err := cfg.ResolveRegionWithInventory(inv)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Starting SSM session to %s (%s) in %s...\n", host.Name, host.InstanceID, region)
+	fmt.Printf("Starting SSM session to %s (%s) in %s...\n", target.Name, target.ID, region)
 
-	return shell.StartInteractiveShell(ctx, host.InstanceID, region)
+	return shell.StartInteractiveShell(ctx, target.ID, region)
+}
+
+func resolveSSMHost(ctx context.Context, prov provider.Provider, env string, inv *inventory.Inventory, hostName string) (*provider.Instance, error) {
+	if inv != nil {
+		if host := inv.HostByName(hostName); host != nil && host.InstanceID != "" {
+			return &provider.Instance{ID: host.InstanceID, Name: host.Name}, nil
+		}
+	}
+
+	if inst, err := prov.FindInstanceByHostname(ctx, env, hostName); err == nil && inst.ID != "" {
+		return inst, nil
+	}
+
+	// Also accept the stable role name so callers do not need to know whether
+	// the attack box resource is named "kali", "attacker", or something else.
+	if strings.EqualFold(hostName, "attack-box") || strings.EqualFold(hostName, "attackbox") {
+		instances, err := prov.DiscoverInstances(ctx, env)
+		if err == nil {
+			if inst := provider.FindInstanceByRole(instances, "AttackBox"); inst != nil {
+				return inst, nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("host %q not found via AWS discovery or inventory", hostName)
 }
 
 func runSSMRun(cmd *cobra.Command, args []string) error {
@@ -248,6 +276,12 @@ func filterProviderInstances(instances []provider.Instance, hostsFlag string) ([
 	var ids, names []string
 	if hostsFlag == "all" {
 		for _, inst := range instances {
+			// The run verb executes PowerShell and is intended for the Windows
+			// lab hosts. A tagged Linux attack box is managed separately through
+			// score/SSM shell commands.
+			if strings.EqualFold(inst.Tags["Role"], "AttackBox") {
+				continue
+			}
 			ids = append(ids, inst.ID)
 			names = append(names, inst.Name)
 		}
