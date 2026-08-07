@@ -15,6 +15,7 @@ import { api } from '../api'
 import type { RangeDoc, RangeHost, RangeLayout, Session } from '../types'
 import { LatestLayoutSaver } from '../layoutSaveQueue'
 import ConnectModal from './ConnectModal'
+import Tooltip from './Tooltip'
 
 // How a node asks for the connect modal. A context rather than a prop on the
 // node's `data`: buildNodes is pure and exported for verification, and threading
@@ -324,8 +325,13 @@ interface HeaderField {
 function Field({ label, value, title }: HeaderField) {
   return (
     // Hover reveals the untruncated pair — the value ellipsizes when a field is
-    // wider than the header (a 90-char Azure resource group is legal).
-    <span title={title ?? `${label}: ${value}`} style={{
+    // wider than the header (a 90-char Azure resource group is legal). Themed
+    // rather than a native `title`: this is the only way to read the full
+    // value, so it belongs to the interface rather than being a browser aside.
+    // copy is the bare value, not the labelled line: these get pasted into a
+    // terminal or an az command, where "group: " would have to be deleted.
+    <Tooltip label={title ?? `${label}: ${value}`} copy={value}>
+    <span style={{
       display: 'flex', flexDirection: 'column', flexShrink: 0,
       // Both lines share this, so the two-line block stays compact and the
       // label sits tight under nothing and directly over its value.
@@ -344,6 +350,7 @@ function Field({ label, value, title }: HeaderField) {
         fontVariantNumeric: 'tabular-nums',
       }}>{value}</span>
     </span>
+    </Tooltip>
   )
 }
 
@@ -536,8 +543,8 @@ export default function RangeView(
           flexShrink: 0, minHeight: 26,
         }}>
           {checked && (
+            <Tooltip label={`Range state last refreshed: ${checked.exact}`}>
             <span
-              title={`Range state last refreshed: ${checked.exact}`}
               style={{
                 fontSize: 11, whiteSpace: 'nowrap',
                 // Amber once stale — the view updates only after a command, so
@@ -545,6 +552,7 @@ export default function RangeView(
                 color: checked.stale ? 'var(--dn-warning)' : 'var(--dn-text-muted)',
               }}
             >{checked.label}</span>
+            </Tooltip>
           )}
           <span style={{ color: 'var(--dg-node-label)', fontSize: 11 }}>{header}</span>
         </div>

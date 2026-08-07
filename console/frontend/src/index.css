@@ -130,7 +130,10 @@ html, body, #root {
   /* Chrome/Safari paint -webkit-text-fill-color over `color`, so the glyphs
      stay opaque and hide the gradient unless this is cleared too. */
   -webkit-text-fill-color: transparent;
-  animation: agent-shine 2.2s linear infinite;
+  /* 3.2s, not 2.2: the sweep sits next to a 0.8s spinner, and at the faster
+     rate the two read as one busy flicker. Slower makes the shimmer the
+     background signal and the spinner the beat. */
+  animation: agent-shine 3.2s linear infinite;
 }
 @keyframes agent-shine {
   from { background-position: 100% 0; }
@@ -180,6 +183,22 @@ html, body, #root {
 .dg-copy:focus-visible {
   outline: 1px solid var(--dn-electric);
   outline-offset: -2px;
+}
+
+/* Copy-on-click header fields (see Tooltip.tsx). This class is applied to the
+   tooltip's *child* — the wrapper is display:contents and generates no box, so
+   it can be neither focused nor outlined. :focus-visible so clicking a field
+   does not leave a ring behind after the pointer moves on. */
+.dg-tip-copy {
+  cursor: pointer;
+}
+.dg-tip-copy:focus {
+  outline: none;
+}
+.dg-tip-copy:focus-visible {
+  outline: 1px solid var(--dn-electric);
+  outline-offset: 3px;
+  border-radius: 2px;
 }
 
 /* Respect a reduced-motion preference: keep the glyph and the label, drop both

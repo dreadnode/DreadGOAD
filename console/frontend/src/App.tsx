@@ -368,7 +368,13 @@ function NewSessionModal({ cfg, onClose, onCreate }: {
 
         {mode === 'attach' ? (
           <div style={{ marginBottom: 12 }}>
-            <label style={{ display: 'block', marginBottom: 4, color: 'var(--dn-text-dim)' }}>
+            {/* Matches Field's label above — this one is written out because it
+                carries the "(loading…)" suffix, so it must be kept in step by
+                hand if that styling changes. */}
+            <label style={{
+              display: 'block', marginBottom: 4,
+              color: 'var(--dn-text-bright)', fontWeight: 700,
+            }}>
               Environment{loading ? ' (loading…)' : ''}
             </label>
             <select
@@ -487,7 +493,14 @@ function SettingsModal({ cfg, model, onModelChange, onClose, onSaved }: {
 function Field({ label, value, onChange, placeholder, type, onBlur }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string; onBlur?: () => void }) {
   return (
     <div style={{ marginBottom: 12 }}>
-      <label style={{ display: 'block', marginBottom: 4, color: 'var(--dn-text-dim)' }}>{label}</label>
+      {/* Bright and bold: --dn-text-dim measured 1.94:1 against the modal
+          surface, far under the 4.5:1 floor, which left the field labels
+          barely visible. These name what you are about to type into a form
+          that creates a range — the last thing that should be guessed at. */}
+      <label style={{
+        display: 'block', marginBottom: 4,
+        color: 'var(--dn-text-bright)', fontWeight: 700,
+      }}>{label}</label>
       <input type={type} value={value} placeholder={placeholder} onChange={e => onChange(e.target.value)} onBlur={onBlur} style={{
         width: '100%', boxSizing: 'border-box', padding: '6px 8px', background: 'var(--dn-bg)',
         border: '1px solid var(--dn-border)', borderRadius: 3, color: 'var(--dn-text)',
