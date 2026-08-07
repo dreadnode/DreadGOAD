@@ -16,8 +16,7 @@ Deploy and configure ADCS certificate templates
 ### main.yml
 
 - **Refresh** (ansible.windows.win_command)
-- **Copy ADCSTemplate zip to remote** (ansible.windows.win_copy)
-- **Extract ADCSTemplate module** (ansible.windows.win_shell)
+- **Copy ADCSTemplate module to remote** (ansible.windows.win_copy)
 - **Create a template directory** (ansible.windows.win_file)
 - **Copy templates json** (ansible.windows.win_copy)
 - **Install templates** (ansible.windows.win_shell)

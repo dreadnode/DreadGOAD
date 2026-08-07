@@ -55,7 +55,6 @@ func RunChecks(opts Options) []CheckResult {
 	results = append(results, checkAnsibleVersion(opts.Provider))
 	results = append(results, checkCommand("python3", "Python 3"))
 	results = append(results, checkCommand("jq", "jq"))
-	results = append(results, checkCommand("zip", "zip"))
 	results = append(results, checkInventoryFile(opts.InventoryPath, opts.Provider))
 	results = append(results, checkAnsibleCollections(opts.Provider)...)
 
