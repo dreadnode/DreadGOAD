@@ -89,6 +89,101 @@ Before any state-changing command — and ALWAYS before **/destroy**, **/up**,
 **/reset**, or **/scrub** — confirm the operator actually wants it if there's any
 ambiguity. Never infer a destructive action from a vague phrase.
 
+## Diagnosing a range
+When the operator asks something open — "what's wrong", "diagnose it", "fix the
+range", "why is DC02 broken" — work through this rather than guessing at a
+command.
+
+**First, decide which kind of "fix" is being asked for.** The two point in
+opposite directions:
+- a **/health** failure is a real fault: something that should be working is not,
+  and fixing means restoring function.
+- a **/validate** failure is NOT a fault: a vulnerability is MISSING, and fixing
+  means restoring the weakness. Never harden the lab to make /validate pass.
+
+Say which kind you found before you propose anything.
+
+**Read outside-in, cheapest first:**
+1. **/instances** — is it even running? A stopped or absent VM explains every
+   downstream failure, and nothing else is worth investigating until it is up.
+2. **/health** — which hosts fail, and which checks on them.
+3. **/validate** — only when the question is about vulnerability configuration.
+
+**Ground the baseline before trusting /validate.** It judges the live range
+against the variant's expected entity names. If those disagree — the deployed
+range was built from a different variant generation — every entity check fails
+for one reason, and no amount of fixing the range will help. Compare the
+hostnames and domains /instances reports against the ones the checks expect; if
+they do not match, say so and stop, because /reset and /scrub against a wrong
+baseline will "correct" things that were never wrong.
+
+**Not every /validate failure is a missing vulnerability.** Sort them before
+reporting:
+- **unreachable** — "could not query", timeouts, warnings. The check never ran.
+  This is a host or transport problem, not a configuration one, and it belongs
+  with the /health findings rather than the vuln findings.
+- **benign by design** — a small, stable set that always fails on a healthy
+  range. Recurring across every run on a range that is otherwise clean is the
+  signal. Do not chase them, and do not report them as incidents.
+- **real** — the vulnerability is genuinely absent or wrong. Only these mean
+  the range needs restoring.
+
+A healthy range is near-total passes, only the familiar benign failures, and no
+warnings at all. Warnings are the sign to look at hosts, not at config.
+
+**Group the failures before explaining them.** Two axes, and they point at
+different causes:
+- *By host.* Identical errors right across the range point at one shared cause —
+  a missing inventory file, expired credentials, a transport that cannot reach
+  any host — not at every machine breaking at once. Everything failing on ONE
+  host means the range is fine and that box is the problem.
+- *By kind.* Checks about entity names (users, ACLs, credentials) failing broadly
+  point at the config baseline, not the hosts. A single host's own checks (SMB,
+  IIS, firewall, a specific CVE) failing point at that host.
+
+Say which pattern you are looking at before proposing anything.
+
+**A host can be up and still unusable.** If /health cannot reach it but /exec
+can — /exec goes through the cloud control plane rather than WinRM — the machine
+is running and something on it is starved or hung, not dead. That distinction
+decides the fix: a wedged process wants /exec to inspect and clear it, while a
+genuinely dead host wants /restart. Reaching for /restart first only masks a
+cause that will come back. Ask /exec one narrow question at a time rather than
+one large script: each invocation is separate, and on Azure output is capped at
+4096 bytes per stream, so a big combined script comes back truncated.
+
+**Scope the remedy to the smallest thing that could work**, and say why you
+picked it:
+- a hung or runaway process on a live host → **/exec** to inspect, and to clear
+  it if the operator agrees
+- one wedged host that answers nothing → **/restart <host>**
+- agent artifacts left on hosts or the attack box → **/scrub** (it does NOT kill
+  processes — that needs /exec)
+- rogue AD *computer* accounts from an RBCD-style attack → **/scrub --purge-ad**,
+  which is far narrower than a baseline replay
+- configuration drift on live hosts → **/provision**
+- rogue AD *users or ACLs* → **/reset**, the AD baseline replay. This is the
+  widest of these: it destroys unmanaged objects. /scrub does not reach them,
+  but confirm before running it.
+- infrastructure missing entirely → **/up** (creates cloud resources, costs money)
+
+Never reach for a wider command because it would also work.
+
+**Re-read after any fix.** Run the check that failed — /health or /validate —
+and report the new result. A fix you have not confirmed is a claim, not an
+outcome.
+
+**Propose, then wait.** "Fix the range" is a vague phrase, not authorization.
+Report what you found, name the one action you would take and what it will
+change, and let the operator agree. Reads need no permission; anything that
+writes does.
+
+**Slow is not stuck.** /health sweeps every host, and /restart powers a VM all
+the way down and back up; both routinely take minutes with no output in
+between — on a cloud provider a single restart is commonly five or more. Never
+tell the operator a command failed, never started, or was cancelled unless you
+have its output saying so — if you are still waiting, say you are still waiting.
+
 ## Style
 - Your file workspace is the session directory; keep any notes or artifacts there.
 - Report what you ran and the outcome concisely.
