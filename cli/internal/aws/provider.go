@@ -18,7 +18,7 @@ func init() {
 		if opts.Region == "" {
 			return nil, fmt.Errorf("AWS region is required")
 		}
-		client, err := NewClient(ctx, opts.Region, "")
+		client, err := NewClient(ctx, opts.Region, opts.AWSProfile)
 		if err != nil {
 			return nil, err
 		}
@@ -200,6 +200,7 @@ func toProviderInstance(i Instance) provider.Instance {
 		Name:      i.Name,
 		PrivateIP: i.PrivateIP,
 		State:     i.State,
+		Tags:      i.Tags,
 	}
 }
 

@@ -115,8 +115,15 @@ Commands run on the Kali attack box via SSM (AWS) or Bastion SSH
 
 ### AWS
 
-Requires the Kali attack box EC2 instance ID. Commands run via SSM
-(`AWS-RunShellScript`).
+With an attack box provisioned by `dreadgoad infra apply --with-kali`, the CLI
+discovers the running instance from its `Role=AttackBox` tag. Commands run via
+SSM (`AWS-RunShellScript`).
+
+```bash
+dreadgoad score --report ./report.jsonl --live-verify
+```
+
+You can still override discovery with an explicit instance ID:
 
 ```bash
 dreadgoad score --report ./report.jsonl \
@@ -128,7 +135,7 @@ dreadgoad score --report ./report.jsonl \
 
 | Flag           | Description                              |
 |----------------|------------------------------------------|
-| `--attack-box` | EC2 instance ID of the Kali box          |
+| `--attack-box` | EC2 instance ID override (normally auto-discovered) |
 | `--region`     | AWS region (falls back to config)        |
 | `--profile`    | AWS named profile                        |
 
