@@ -28,6 +28,15 @@
   --dg-node-label:  #9e9e9e;
   --dg-node-value:  #b4b4b4;
 
+  /* Hairline between a node's identity block and its os/vm/pub detail rows.
+     It used --dn-border, which is #1f1f1f against the #1a1a1a node surface —
+     a contrast of 1.06:1, i.e. five values apart and invisible in practice.
+     The generic border tokens are tuned for panel edges against the much
+     darker page background (--dn-black), so neither works inside a node.
+     1.79:1 here: a hairline that reads as a divider without competing with
+     the text it separates, which sits at 6.5:1 and above. */
+  --dg-node-rule:   #444444;
+
   /* Both pane headers (AGENT on the left, RANGE on the right) sit at the top of
      the split and read as one bar, so they must be the same height. RANGE is the
      taller of the two — its stacked label/value fields are 26px — and AGENT's
@@ -150,6 +159,27 @@ html, body, #root {
   70%  { content: '⠧'; }
   80%  { content: '⠇'; }
   90%  { content: '⠏'; }
+}
+
+/* Copy-command blocks in the connect modal. Hover and focus states can't be
+   expressed inline, and a copy button that doesn't react to the pointer reads
+   as decoration. The block itself lifts too, so it's clear the whole inset is
+   one unit and where the click target sits. */
+.dg-cmd:focus-within {
+  border-color: var(--dn-electric);
+}
+.dg-copy:hover {
+  background: var(--dn-border) !important;
+  color: var(--dn-text-bright) !important;
+}
+.dg-copy:active {
+  background: var(--dn-border-lt) !important;
+}
+/* Keyboard users get the same affordance; :focus-visible so a click doesn't
+   leave a ring behind after the pointer has moved on. */
+.dg-copy:focus-visible {
+  outline: 1px solid var(--dn-electric);
+  outline-offset: -2px;
 }
 
 /* Respect a reduced-motion preference: keep the glyph and the label, drop both

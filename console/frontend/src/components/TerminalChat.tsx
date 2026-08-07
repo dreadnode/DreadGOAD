@@ -384,6 +384,45 @@ function HelpPanel({ commands }: { commands: CommandDef[] }) {
   )
 }
 
+/** A command typed but never sent, tagged with where in the transcript it fell. */
+export interface ClientOnlyEntry { text: string; after: number }
+
+/**
+ * Recall history, oldest first: everything the operator submitted, in the order
+ * they submitted it.
+ *
+ * Sent messages come back from the server as transcript events, so the
+ * transcript is the record — history then survives a reload and switches with
+ * the session for free. Client-only commands leave no event, so they are
+ * spliced back in at the transcript length they were typed at. Exported so the
+ * ordering can be tested without a DOM.
+ */
+export function mergeHistory(
+  messages: ChatEvent[], clientOnly: ClientOnlyEntry[],
+): string[] {
+  const out: string[] = []
+  for (let i = 0; i <= messages.length; i++) {
+    // Everything typed while the transcript was this long comes first...
+    for (const c of clientOnly) {
+      if (c.after === i) out.push(c.text)
+    }
+    // ...then the message at this position, if it is one the operator sent.
+    // The loop runs one past the end so trailing entries (`after` === length)
+    // are emitted; guard the read rather than duplicating the inner loop.
+    const m = messages[i]
+    if (m?.kind === 'user_message') {
+      const text = (m.content ?? '').trim()
+      if (text) out.push(text)
+    }
+  }
+  // `after` can exceed the length if the transcript was later trimmed or
+  // replaced by a shorter replay; those still belong at the end.
+  for (const c of clientOnly) {
+    if (c.after > messages.length) out.push(c.text)
+  }
+  return out
+}
+
 export default function TerminalChat({ sessionId, messages, status, onSend, processing, turnStartedAt, onCancel, model, onOpenSettings }: Props) {
   const [input, setInput] = useState('')
   // Transcript position the guide was last requested at; null = never asked.
@@ -391,6 +430,17 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
   const [helpAfter, setHelpAfter] = useState<number | null>(null)
   const [commands, setCommands] = useState<CommandDef[]>([])
   const [cmdHighlight, setCmdHighlight] = useState(0)
+  // Shell-style recall. `histIndex` counts back from the newest entry; null
+  // means "not browsing", and `draft` holds whatever was half-typed when
+  // browsing started so Down can put it back.
+  const [histIndex, setHistIndex] = useState<number | null>(null)
+  const [draft, setDraft] = useState('')
+  // Commands that never reach the server, so never come back as transcript
+  // events. Only /help qualifies today, but it is still something the operator
+  // typed and expects to find behind Up. `after` is the transcript length when
+  // it was typed, which is what puts it back in chronological order — appending
+  // them all to the end made a /help typed first surface as the newest entry.
+  const [clientOnly, setClientOnly] = useState<{ text: string; after: number }[]>([])
   const endRef = useRef<HTMLDivElement>(null)
   // The scrolling transcript container — needed to pin it to the TOP for the
   // guide, which endRef (an anchor at the bottom) can't express.
@@ -423,11 +473,39 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
   // (the menu is a fixed-height scroll box; arrow-nav can move past the fold).
   useEffect(() => { activeCmdRef.current?.scrollIntoView({ block: 'nearest' }) }, [cmdHighlight])
 
+  // Park the caret at the end of a recalled entry. React restores the caret to
+  // its previous offset when a controlled value changes, so recalling a long
+  // command from a short one drops the caret into the middle of it — and the
+  // next Up then reads the caret as off the first line and moves it instead of
+  // stepping further back, stalling the recall.
+  useEffect(() => {
+    if (histIndex === null) return
+    const el = inputRef.current
+    if (!el) return
+    el.setSelectionRange(el.value.length, el.value.length)
+  }, [histIndex, input])
+
   // The guide is per-session. This component is never remounted when tabs
   // change (App renders one instance and swaps its props), so without this the
   // index would carry into the next session — showing the panel where /help was
   // never typed, and at an offset that means nothing in that transcript.
   useEffect(() => { setHelpAfter(null) }, [sessionId])
+
+  // Recall history, oldest first. Derived from the transcript rather than kept
+  // as its own list: the transcript is the server's record, so history survives
+  // a reload and switches with the session for free. Client-only commands are
+  // appended because they leave no transcript event to derive from.
+  const history = useMemo(
+    () => mergeHistory(messages, clientOnly),
+    [messages, clientOnly],
+  )
+
+  // Browsing state is meaningless against another session's history.
+  useEffect(() => {
+    setHistIndex(null)
+    setDraft('')
+    setClientOnly([])
+  }, [sessionId])
 
   // Load the slash-command registry once for the autocomplete menu (§5.1).
   // Sorted by name: the registry is grouped by lifecycle, but in a menu you
@@ -449,7 +527,13 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
     () => (input.startsWith('/') ? commands.filter(c => c.name.startsWith(firstToken)) : []),
     [commands, input, firstToken],
   )
-  const showCmdMenu = filteredCommands.length > 0 && !input.includes(' ')
+  // Hidden while browsing history: recalling a slash command refills the input
+  // with something the menu matches, the menu opens, and from then on it owns
+  // Up/Down — so recall dead-ended after exactly one step, on the commands you
+  // most want to recall. Typing anything clears histIndex and brings it back.
+  const showCmdMenu = filteredCommands.length > 0
+    && !input.includes(' ')
+    && histIndex === null
 
   // Stopwatch for the current turn. Counts from the supplied start rather than
   // from mount, so a reload mid-turn shows the true elapsed time instead of
@@ -488,14 +572,27 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
       // Remember where in the transcript it was asked for, so it renders
       // inline at that point rather than pinned above or below everything.
       setHelpAfter(messages.length)
+      // No transcript event will carry this one, so record it for recall here,
+      // tagged with the transcript position that keeps it in chronological order.
+      setClientOnly(prev => (
+        prev[prev.length - 1]?.text === t && prev[prev.length - 1]?.after === messages.length
+          ? prev
+          : [...prev, { text: t, after: messages.length }]
+      ))
       setInput('')
       setCmdHighlight(0)
+      setHistIndex(null)
       return
     }
     if (!sessionId || status !== 'connected' || processing) return
     onSend(t)
     setInput('')
     setCmdHighlight(0)
+    // Leave browsing mode: the sent message becomes the newest entry (via the
+    // transcript), so a following Up should start from it, not from wherever
+    // the operator had scrolled back to.
+    setHistIndex(null)
+    setDraft('')
   }
 
   const selectCommand = (cmd: CommandDef) => {
@@ -503,6 +600,42 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
     setInput(cmd.name + ' ')
     setCmdHighlight(0)
     inputRef.current?.focus()
+  }
+
+  // The input is a textarea (Shift+Enter makes a new line), so Up/Down still
+  // have to move the caret inside a multi-line draft. Recall only takes over on
+  // the edge lines — the same rule a shell uses — and only with no selection,
+  // so Shift+Up extends a selection rather than swapping the text underneath it.
+  const caretOnFirstLine = (el: HTMLTextAreaElement) =>
+    el.selectionStart === el.selectionEnd
+    && !el.value.slice(0, el.selectionStart).includes('\n')
+  const caretOnLastLine = (el: HTMLTextAreaElement) =>
+    el.selectionStart === el.selectionEnd
+    && !el.value.slice(el.selectionEnd).includes('\n')
+
+  /** Step one entry further back. Returns false when there is nowhere to go. */
+  const recallOlder = (): boolean => {
+    if (history.length === 0) return false
+    if (histIndex === null) setDraft(input)
+    const next = histIndex === null ? 0 : histIndex + 1
+    if (next >= history.length) return true  // already oldest; swallow the key
+    setHistIndex(next)
+    setInput(history[history.length - 1 - next])
+    return true
+  }
+
+  /** Step forward; past the newest entry, restore the half-typed draft. */
+  const recallNewer = (): boolean => {
+    if (histIndex === null) return false
+    if (histIndex === 0) {
+      setHistIndex(null)
+      setInput(draft)
+      return true
+    }
+    const next = histIndex - 1
+    setHistIndex(next)
+    setInput(history[history.length - 1 - next])
+    return true
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -530,6 +663,16 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
         setInput('')
         return
       }
+    }
+    // Below the menu block on purpose: while the menu is open Up/Down belong to
+    // it. The menu only opens on a leading "/", so an empty prompt — where
+    // recall is most wanted — always reaches this.
+    const el = e.currentTarget as HTMLTextAreaElement
+    if (e.key === 'ArrowUp' && !e.shiftKey && caretOnFirstLine(el)) {
+      if (recallOlder()) { e.preventDefault(); return }
+    }
+    if (e.key === 'ArrowDown' && !e.shiftKey && caretOnLastLine(el)) {
+      if (recallNewer()) { e.preventDefault(); return }
     }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() }
   }
@@ -668,7 +811,14 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
             value={input}
             rows={1}
             disabled={!sessionId || status !== 'connected' || processing}
-            onChange={e => { setInput(e.target.value); setCmdHighlight(0) }}
+            // Editing a recalled entry ends browsing: the box now holds the
+            // operator's text, so Down must not overwrite it with a draft they
+            // have already moved on from.
+            onChange={e => {
+              setInput(e.target.value)
+              setCmdHighlight(0)
+              setHistIndex(null)
+            }}
             onKeyDown={handleKeyDown}
             placeholder={
               status !== 'connected'

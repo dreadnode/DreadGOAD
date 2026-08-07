@@ -126,7 +126,7 @@ export function buildHelpLines(catalog: CommandDef[]): HelpLine[] {
     lines.push({ text: '', kind: 'blank' })
   }
 
-  lines.push({ text: 'ASK IN PLAIN ENGLISH', kind: 'title' })
+  lines.push({ text: 'ASK IN NATURAL LANGUAGE', kind: 'title' })
   lines.push({ text: '', kind: 'blank' })
   for (const ex of NATURAL_LANGUAGE_EXAMPLES) {
     lines.push({ text: `  ${ex}`, kind: 'command' })

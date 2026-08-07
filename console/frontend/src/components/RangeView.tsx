@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
+} from 'react'
 import {
   ReactFlow,
   Background,
@@ -12,6 +14,20 @@ import '@xyflow/react/dist/style.css'
 import { api } from '../api'
 import type { RangeDoc, RangeHost, RangeLayout, Session } from '../types'
 import { LatestLayoutSaver } from '../layoutSaveQueue'
+import ConnectModal from './ConnectModal'
+
+// How a node asks for the connect modal. A context rather than a prop on the
+// node's `data`: buildNodes is pure and exported for verification, and threading
+// a callback through it would put a function in the data React Flow diffs.
+//
+// Exported for verification: with no provider the button does not render at all,
+// so a size check that cannot supply one silently measures the button-less node
+// and reports a bound that does not hold in the app.
+export const ConnectRequest = createContext<((host: RangeHost) => void) | null>(null)
+
+// Only the attack box gets a connect button. The Windows hosts run no SSH
+// server, and the bastion is a managed service with nothing to log into.
+const isConnectable = (h: RangeHost) => h.role === 'attackbox'
 
 const ROLE_ICON: Record<string, string> = {
   dc: '🌐', member: '🖥️', workstation: '💻', bastion: '🛡️',
@@ -44,15 +60,24 @@ const INGRESS_ROLES = new Set(['bastion', 'attackbox'])
 //
 // Measured in a browser against the tallest possible content: an INGRESS badge
 // plus all three detail rows. Every variable-length line in HostNode is clamped
-// to one line (hostname, role/domain, and the detail rows all ellipsize), which
-// is what makes this a real bound rather than a sample — an unclamped hostname
-// wrapped to two lines measured 180px and broke the guarantee.
+// to one line (hostname, role/domain, the health word, and the detail rows all
+// ellipsize), which is what makes this a real bound rather than a sample — an
+// unclamped hostname wrapped to two lines measured 180px and broke the
+// guarantee.
+//
+// The height was 176 and did not hold. Re-measuring the REAL component against
+// the REAL hosts found the attack box at 179 and a fully-populated one at 197,
+// both over — the INGRESS badge and the detail block had been costed
+// separately but never together on one node. Since the tier pitch derives from
+// this number, the nodes that overlapped on load were the ingress row, every
+// time. 200 covers the worst case measured: INGRESS + domain + status +
+// health + private IP + all three detail rows + the connect button.
 //
 // Re-measure if HostNode gains a row, or if any line is allowed to wrap.
 // Exported for verification: a layout test can assert no two nodes overlap
 // without re-deriving these, and will fail if a future edit shrinks them.
 export const NODE_MAX_W = 236
-export const NODE_MAX_H = 176
+export const NODE_MAX_H = 200
 // Guaranteed clear space between adjacent nodes on both axes.
 export const NODE_GUTTER = 28
 const COL_W = NODE_MAX_W + NODE_GUTTER
@@ -79,7 +104,19 @@ const ROLE_OS: Record<string, string> = {
 function NodeRow({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
     <div style={{ display: 'flex', gap: 6, fontSize: 10, marginTop: 2 }}>
-      <span style={{ color: 'var(--dn-text-muted)', flexShrink: 0 }}>{label}</span>
+      {/* The key ("os", "vm", "pub") is bright and bold, not the dim tier it
+          used to be: at 10px, --dn-text-muted measured 3.03:1 against the node
+          surface, under the 4.5:1 floor and hard to read at this size.
+
+          That inverts the usual hierarchy — at 17.4:1 the key is now brighter
+          than its own value (8.39:1), a 2.07:1 separation the other way. It
+          holds because the key is a fixed two or three characters from a set of
+          three, so it is recognised by shape rather than read, while the value
+          beside it is long and variable. Weight and length keep them distinct;
+          brightness is no longer what separates them. */}
+      <span style={{
+        color: 'var(--dn-text-bright)', fontWeight: 700, flexShrink: 0,
+      }}>{label}</span>
       <span
         title={title ?? value}
         style={{
@@ -91,10 +128,13 @@ function NodeRow({ label, value, title }: { label: string; value: string; title?
   )
 }
 
-function HostNode({ data }: NodeProps) {
+// Exported for verification: NODE_MAX_W/H are measured against this component,
+// and that measurement is only trustworthy if it can render the real thing.
+export function HostNode({ data }: NodeProps) {
   const h = data as unknown as RangeHost
   const ingress = INGRESS_ROLES.has(h.role)
   const service = isManagedService(h)
+  const onConnect = useContext(ConnectRequest)
   const color = service ? 'var(--dn-electric)' : (STATUS_COLOR[h.status] ?? STATUS_COLOR.unknown)
   return (
     <div style={{
@@ -138,11 +178,51 @@ function HostNode({ data }: NodeProps) {
       >
         {h.role}{h.domain ? ` · ${h.domain}` : ''}
       </div>
-      <div style={{ display: 'flex', gap: 8, marginTop: 6, fontSize: 11 }}>
+      {/* The connect button shares the status row rather than taking one of its
+          own: NODE_MAX_H is measured from the tallest node, and the tier spacing
+          is derived from it, so a new row here would reintroduce the overlap the
+          layout exists to prevent.
+
+          nowrap is what makes that true. Left to wrap, "running" + "degraded" +
+          the button overflow 210px of content and the status drops to a second
+          line — measured 215px against a 176px bound. The health word gives way
+          first (it ellipsizes) so the button and the power state always fit. */}
+      <div style={{
+        display: 'flex', gap: 8, marginTop: 6, fontSize: 11,
+        alignItems: 'center', flexWrap: 'nowrap', minWidth: 0,
+      }}>
         {service
-          ? <span style={{ color }} title="Azure Bastion is a managed service, not a VM — it never shows in lab status">managed service</span>
-          : <span style={{ color }}>● {h.status}</span>}
-        {!service && h.health !== 'unknown' && <span style={{ color: 'var(--dg-node-label)' }}>{h.health}</span>}
+          ? <span style={{ color, whiteSpace: 'nowrap' }} title="Azure Bastion is a managed service, not a VM — it never shows in lab status">managed service</span>
+          : <span style={{ color, whiteSpace: 'nowrap', flexShrink: 0 }}>● {h.status}</span>}
+        {!service && h.health !== 'unknown' && (
+          <span
+            title={h.health}
+            style={{
+              color: 'var(--dg-node-label)', minWidth: 0,
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }}
+          >{h.health}</span>
+        )}
+        {onConnect && isConnectable(h) && (
+          <button
+            // nodrag: React Flow starts a drag on pointerdown anywhere in the
+            // node, which would swallow the click.
+            className="nodrag"
+            onClick={() => onConnect(h)}
+            title="Show the Bastion tunnel + ssh commands for this host"
+            style={{
+              // Border matches the label rather than using the generic border
+              // token: --dn-border-lt is 1.21:1 against the node surface, so the
+              // outline was invisible and the word read as loose text sitting in
+              // the status row instead of a control you can press.
+              marginLeft: 'auto', flexShrink: 0, padding: '1px 7px',
+              borderRadius: 3, border: '1px solid var(--dg-interactive)',
+              background: 'transparent', color: 'var(--dg-interactive)',
+              cursor: 'pointer', whiteSpace: 'nowrap',
+              fontFamily: 'var(--font-mono)', fontSize: 10, lineHeight: 1.6,
+            }}
+          >connect</button>
+        )}
       </div>
       {h.ip_private && (
         // Read digit-by-digit, so the highest-contrast tier; tabular figures
@@ -157,7 +237,7 @@ function HostNode({ data }: NodeProps) {
           that hasn't been discovered yet stays compact rather than showing a
           column of dashes. */}
       {!service && (ROLE_OS[h.role] || h.cloud_name || h.ip_public) && (
-        <div style={{ marginTop: 6, paddingTop: 5, borderTop: '1px solid var(--dn-border)' }}>
+        <div style={{ marginTop: 6, paddingTop: 5, borderTop: '1px solid var(--dg-node-rule)' }}>
           {ROLE_OS[h.role] && (
             <NodeRow
               label="os"
@@ -302,6 +382,7 @@ export default function RangeView(
   const [range, setRange] = useState<RangeDoc | null>(null)
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [error, setError] = useState<string | null>(null)
+  const [connectHost, setConnectHost] = useState<RangeHost | null>(null)
   const loadRef = useRef<() => void>(() => {})
   const activeSessionRef = useRef(sessionId)
   activeSessionRef.current = sessionId
@@ -338,6 +419,13 @@ export default function RangeView(
   const handleChange = useCallback((changes: NodeChange<Node>[]) => {
     onNodesChange(changes)
   }, [onNodesChange])
+
+  // Stable identity: it goes into a context every node consumes, so a new
+  // function each render would re-render the whole topology.
+  const requestConnect = useCallback((host: RangeHost) => setConnectHost(host), [])
+
+  // A session switch must not leave the previous range's commands on screen.
+  useEffect(() => { setConnectHost(null) }, [sessionId])
 
   const persistLayout = useCallback((draggedNode: Node) => {
     if (!layoutSaver) return
@@ -465,20 +553,29 @@ export default function RangeView(
         {error ? (
           <div style={emptyStyle}>{error}</div>
         ) : (
-          <ReactFlow
-            nodes={nodes}
-            edges={[]}
-            nodeTypes={nodeTypes}
-            onNodesChange={handleChange}
-            onNodeDragStop={(_, node) => persistLayout(node)}
-            fitView
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background color="var(--dn-border)" gap={20} />
-            <Controls position="bottom-right" />
-          </ReactFlow>
+          <ConnectRequest.Provider value={requestConnect}>
+            <ReactFlow
+              nodes={nodes}
+              edges={[]}
+              nodeTypes={nodeTypes}
+              onNodesChange={handleChange}
+              onNodeDragStop={(_, node) => persistLayout(node)}
+              fitView
+              proOptions={{ hideAttribution: true }}
+            >
+              <Background color="var(--dn-border)" gap={20} />
+              <Controls position="bottom-right" />
+            </ReactFlow>
+          </ConnectRequest.Provider>
         )}
       </div>
+      {connectHost && (
+        <ConnectModal
+          session={session}
+          host={connectHost}
+          onClose={() => setConnectHost(null)}
+        />
+      )}
     </div>
   )
 }
