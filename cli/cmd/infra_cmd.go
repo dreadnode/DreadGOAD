@@ -87,13 +87,13 @@ func init() {
 	infraApplyCmd.Flags().Bool("individual", false, "Apply each subdirectory individually (for module groups like goad/)")
 	infraDestroyCmd.Flags().Bool("auto-approve", false, "Skip confirmation prompt")
 
-	// Azure-only opt-in flags. The matching DREADGOAD_ENABLE_* env vars are
-	// what the terragrunt exclude{} blocks check; these flags just set them
-	// for the child process so users don't have to.
+	// Optional-module flags. The matching DREADGOAD_ENABLE_* env vars are what
+	// the Terragrunt exclude{} blocks check; these flags set them for the child
+	// process so users don't have to.
 	for _, cmd := range []*cobra.Command{infraApplyCmd, infraDestroyCmd, infraPlanCmd} {
 		cmd.Flags().Bool("with-bastion", false, "(Azure) Include the optional Azure Bastion module")
 		cmd.Flags().Bool("with-controller", false, "(Azure) Include the optional in-VNet Ansible controller module")
-		cmd.Flags().Bool("with-kali", false, "(Azure) Include the optional Kali Linux attack box")
+		cmd.Flags().Bool("with-kali", false, "Include the optional Kali Linux attack box")
 	}
 
 	infraCmd.PersistentFlags().StringP("deployment", "d", "", "Deployment name (default: from config)")
@@ -278,6 +278,19 @@ func runInfraActionAWS(cmd *cobra.Command, cfg *config.Config, action string) er
 		NonInteractive:   true,
 		ExcludeDirs:      exclude,
 		Debug:            cfg.Debug,
+	}
+
+	withKali, _ := cmd.Flags().GetBool("with-kali")
+	// On destroy, always include the optional unit so an existing attack box
+	// is not orphaned when the user omits --with-kali.
+	if !withKali && action == "destroy" {
+		kaliDir := filepath.Join(cfg.ProjectRoot, "infra", deployment, cfg.Env, region, "kali")
+		if _, err := os.Stat(kaliDir); err == nil {
+			withKali = true
+		}
+	}
+	if withKali {
+		opts.ExtraEnv = append(opts.ExtraEnv, "DREADGOAD_ENABLE_AWS_KALI=true")
 	}
 
 	if action == "apply" || action == "destroy" {

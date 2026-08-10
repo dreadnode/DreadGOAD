@@ -148,9 +148,6 @@ func preflightChecks(ctx context.Context, cfg *config.Config) error {
 	if err := ansible.BuildCollection(cfg.ProjectRoot); err != nil {
 		return fmt.Errorf("collection build failed: %w", err)
 	}
-	if err := ansible.PrepareADCSZips(cfg.ProjectRoot); err != nil {
-		slog.Warn("ADCS zip preparation failed", "error", err)
-	}
 	if err := ensureVariant(cfg); err != nil {
 		return err
 	}

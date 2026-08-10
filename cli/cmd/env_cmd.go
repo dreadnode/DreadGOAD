@@ -315,6 +315,9 @@ locals {
   aws_account_id  = get_aws_account_id()
   env             = %q
   vpc_cidr        = %q
+
+  # Optional Kali attack box. Enable with --with-kali on infra commands.
+  kali_instance_type = "t3.medium"
 }
 `, envName, vpcCIDR)
 	return os.WriteFile(filepath.Join(envDir, "env.hcl"), []byte(content), 0o644)
