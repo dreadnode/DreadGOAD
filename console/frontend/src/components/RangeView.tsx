@@ -156,6 +156,13 @@ export function HostNode({ data }: NodeProps) {
   const ingress = INGRESS_ROLES.has(h.role)
   const service = isManagedService(h)
   const onConnect = useContext(ConnectRequest)
+  // Shown only when it differs from the displayed name. On a variant they
+  // always do (dc01 vs "solar"), but the attack box and bastion are named after
+  // their role in every range, and "attackbox ATTACKBOX" is noise. Compared
+  // case-insensitively because the store holds it lower-case while reports and
+  // playbooks use upper.
+  const moniker = (h.key ?? '').toUpperCase()
+  const showMoniker = moniker !== '' && moniker !== (h.hostname ?? '').toUpperCase()
   const color = service ? 'var(--dn-electric)' : (STATUS_COLOR[h.status] ?? STATUS_COLOR.unknown)
   return (
     <div style={{
@@ -179,8 +186,8 @@ export function HostNode({ data }: NodeProps) {
           reintroduced the overlap this layout exists to prevent. A name with no
           break opportunity (no dots or dashes) overflowed the box sideways
           instead. Ellipsis + tooltip keeps the full value reachable. */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-        <span style={{ fontSize: 18, flexShrink: 0 }}>{ROLE_ICON[h.role] ?? ROLE_ICON.other}</span>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, minWidth: 0 }}>
+        <span style={{ fontSize: 18, flexShrink: 0, alignSelf: 'center' }}>{ROLE_ICON[h.role] ?? ROLE_ICON.other}</span>
         <span
           title={h.hostname}
           style={{
@@ -189,6 +196,24 @@ export function HostNode({ data }: NodeProps) {
             whiteSpace: 'nowrap',
           }}
         >{h.hostname}</span>
+        {showMoniker && (
+          // The lab-definition name for this host. A variant renames every
+          // machine, so the box says "solar" while every answer key, playbook
+          // and /health report says DC01 — this is the only place the two are
+          // shown together.
+          //
+          // flexShrink 0 with the hostname free to shrink: the moniker is
+          // short and fixed, the hostname is long and variable, so the
+          // ellipsis belongs on the hostname. gap 6 rather than the row's 8 —
+          // these two name one machine and should read as a pair.
+          <span
+            title={`Lab definition name: ${moniker} (this range renames it to ${h.hostname})`}
+            style={{
+              fontSize: 10, fontWeight: 700, letterSpacing: 0.3,
+              color: 'var(--dg-node-label)', flexShrink: 0, marginLeft: -2,
+            }}
+          >{moniker}</span>
+        )}
       </div>
       <div
         title={h.domain ? `${h.role} · ${h.domain}` : h.role}
