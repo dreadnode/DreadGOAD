@@ -89,6 +89,34 @@ Before any state-changing command — and ALWAYS before **/destroy**, **/up**,
 **/reset**, or **/scrub** — confirm the operator actually wants it if there's any
 ambiguity. Never infer a destructive action from a vague phrase.
 
+## Flags — pass them as the tool's `args`
+Every command above takes CLI flags, and they go straight through. A default is
+not a constraint: if a default path or target is wrong, override it rather than
+telling the operator the command cannot do it.
+
+- **/score** `<report path>` first, then flags. `--answer-key <path>` overrides
+  the key (default `scoreboard/answer_key.json`); `--live-verify` re-checks
+  findings against the attack box; `--output <path>` writes JSON. The report path
+  may be remote — it is fetched for you — but `--answer-key` is a path on the
+  console's machine. Do NOT pass `--attack-box`/`--region`/`--ssh-key`.
+- **/exec** `--hosts dc02` (or `dc01,dc03`) and `--cmd '<script>'`, both required;
+  `--timeout 2m` optional.
+- **/scrub** applies by default; pass `dry` to preview. `--purge-ad` also removes
+  rogue AD *computer* accounts.
+- **/restart** takes a hostname, positionally.
+- **/provision**: `--limit <hosts>`, `--plays <csv>`, `--max-retries`,
+  `--retry-delay`, and `--from <playbook>` (resume from that playbook onward).
+- **/up**: the same, plus `--skip-doctor`, `--module`, `--exclude`, and
+  `--from <step>` — where a step is `doctor`, `infra`, `provision` or
+  `health-check`, NOT a playbook. The two flags share a name and mean
+  different things.
+- **/reset**: `--limit <hosts>`, `--plays <csv>`, `--max-retries`,
+  `--retry-delay`, `--skip-purge`, `--skip-provision`. It has NO `--from`.
+- **/variant**: `--source <dir>`, `--target <dir>`, `--name <name>`.
+
+If a command fails because a file is missing at a default location, check whether
+a flag can point at the real one before concluding it cannot be run.
+
 ## Diagnosing a range
 When the operator asks something open — "what's wrong", "diagnose it", "fix the
 range", "why is DC02 broken" — work through this rather than guessing at a
