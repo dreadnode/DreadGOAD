@@ -144,17 +144,43 @@ func TestUpResumeCommandNamesFailedPlaybook(t *testing.T) {
 		Err:      cause,
 	}
 
-	got := upResumeCommand("provision", fmt.Errorf("wrapped: %w", failure))
-	want := "dreadgoad up --from provision --from-playbook ad-data.yml"
+	got := upResumeCommand("provision", fmt.Errorf("wrapped: %w", failure), "")
+	want := "dreadgoad up --from provision --from-playbook 'ad-data.yml'"
 	if got != want {
 		t.Errorf("resume command = %q, want %q", got, want)
 	}
 
-	if got := upResumeCommand("provision", cause); got != "dreadgoad up --from provision" {
+	if got := upResumeCommand("provision", cause, ""); got != "dreadgoad up --from provision" {
 		t.Errorf("generic provision resume command = %q", got)
 	}
-	if got := upResumeCommand("infra", failure); got != "dreadgoad up --from infra" {
+	if got := upResumeCommand("infra", failure, ""); got != "dreadgoad up --from infra" {
 		t.Errorf("infra resume command = %q", got)
+	}
+}
+
+func TestUpResumeCommandPreservesRemainingCustomPlaybooks(t *testing.T) {
+	failure := &provisionFailure{
+		Playbook: "custom-data.yml",
+		LogFile:  "/tmp/provision.log",
+		Err:      errors.New("ansible failed"),
+	}
+
+	got := upResumeCommand(
+		"provision",
+		failure,
+		"bootstrap.yml,custom-data.yml,custom vulnerabilities.yml",
+	)
+	want := "dreadgoad up --from provision --plays 'custom-data.yml,custom vulnerabilities.yml'"
+	if got != want {
+		t.Errorf("resume command = %q, want %q", got, want)
+	}
+}
+
+func TestShellQuoteResumeArg(t *testing.T) {
+	got := shellQuoteResumeArg("first.yml,operator's.yml")
+	want := `'first.yml,operator'"'"'s.yml'`
+	if got != want {
+		t.Errorf("shellQuoteResumeArg() = %q, want %q", got, want)
 	}
 }
 

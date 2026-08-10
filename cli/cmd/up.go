@@ -106,7 +106,7 @@ func runUp(cmd *cobra.Command, args []string) error {
 		if err := step.run(cmd, args); err != nil {
 			fmt.Println()
 			color.Red("✗ %s failed: %v", step.name, err)
-			color.Yellow("  Resume with: %s", upResumeCommand(step.id, err))
+			color.Yellow("  Resume with: %s", upResumeCommand(step.id, err, upPlays))
 			return err
 		}
 	}
@@ -132,7 +132,7 @@ func validateUpProvisionResume(steps []upStep, plays, fromPlaybook string) error
 	return fmt.Errorf("--from-playbook cannot be used when the provision step is skipped")
 }
 
-func upResumeCommand(stepID string, err error) string {
+func upResumeCommand(stepID string, err error, selectedPlays string) string {
 	command := fmt.Sprintf("dreadgoad up --from %s", stepID)
 	if stepID != "provision" {
 		return command
@@ -140,9 +140,27 @@ func upResumeCommand(stepID string, err error) string {
 
 	var failure *provisionFailure
 	if errors.As(err, &failure) && failure.Playbook != "" {
-		command += " --from-playbook " + failure.Playbook
+		if selectedPlays != "" {
+			command += " --plays " + shellQuoteResumeArg(remainingPlaybookSelection(selectedPlays, failure.Playbook))
+		} else {
+			command += " --from-playbook " + shellQuoteResumeArg(failure.Playbook)
+		}
 	}
 	return command
+}
+
+func remainingPlaybookSelection(selected, failed string) string {
+	playbooks := strings.Split(selected, ",")
+	for i, playbook := range playbooks {
+		if playbook == failed {
+			return strings.Join(playbooks[i:], ",")
+		}
+	}
+	return selected
+}
+
+func shellQuoteResumeArg(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
 }
 
 func printUpHeader(step, total int, name string) {

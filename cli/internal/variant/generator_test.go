@@ -246,6 +246,50 @@ func TestGeneratorValidationFailureLeavesNoCompletionMarker(t *testing.T) {
 	}
 }
 
+func TestGeneratorDocumentationFailureLeavesNoCompletionMarker(t *testing.T) {
+	sourceDir, targetDir := setupTestSource(t)
+	if err := os.MkdirAll(filepath.Join(targetDir, "README.md"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	err := NewGenerator(sourceDir, targetDir, "test-documentation-failure").Run()
+	if err == nil || !strings.Contains(err.Error(), "create documentation") {
+		t.Fatalf("Run() error = %v, want documentation failure", err)
+	}
+	complete, checkErr := IsComplete(targetDir)
+	if checkErr != nil {
+		t.Fatalf("check completion marker: %v", checkErr)
+	}
+	if complete {
+		t.Fatal("documentation failure left a completion marker")
+	}
+}
+
+func TestValidateRejectsScanFailure(t *testing.T) {
+	missingTarget := filepath.Join(t.TempDir(), "missing")
+	gen := NewGenerator(t.TempDir(), missingTarget, "test-scan-failure")
+
+	err := gen.validate()
+	if err == nil || !strings.Contains(err.Error(), "scan generated files") {
+		t.Fatalf("validate() error = %v, want scan failure", err)
+	}
+}
+
+func TestValidateRejectsStructureMismatch(t *testing.T) {
+	sourceDir, targetDir := setupTestSource(t)
+	if err := os.MkdirAll(filepath.Join(targetDir, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(targetDir, "data", "config.json"), []byte(`{"lab":{"hosts":{},"domains":{}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := NewGenerator(sourceDir, targetDir, "test-structure-mismatch").validate()
+	if err == nil || !strings.Contains(err.Error(), "structure count mismatch") {
+		t.Fatalf("validate() error = %v, want structure mismatch", err)
+	}
+}
+
 func TestIsCompleteRejectsInvalidMarker(t *testing.T) {
 	target := t.TempDir()
 	if err := os.WriteFile(filepath.Join(target, CompletionMarkerName), []byte("partial"), 0o644); err != nil {
