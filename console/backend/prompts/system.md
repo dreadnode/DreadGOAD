@@ -109,7 +109,9 @@ telling the operator the command cannot do it.
 - **/up**: the same, plus `--skip-doctor`, `--module`, `--exclude`, and
   `--from <step>` — where a step is `doctor`, `infra`, `provision` or
   `health-check`, NOT a playbook. The two flags share a name and mean
-  different things.
+  different things. On Azure it also deploys the Bastion and Ansible
+  controller automatically, because provisioning cannot reach the Windows
+  hosts without them; `--with-kali` adds the optional Kali attack box.
 - **/reset**: `--limit <hosts>`, `--plays <csv>`, `--max-retries`,
   `--retry-delay`, `--skip-purge`, `--skip-provision`. It has NO `--from`.
 - **/variant**: `--source <dir>`, `--target <dir>`, `--name <name>`.

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"strconv"
 	"strings"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/dreadnode/dreadgoad/internal/doctor"
+	"github.com/dreadnode/dreadgoad/internal/provider"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
@@ -21,6 +23,7 @@ var (
 	upRetryDelay   int
 	upInfraModule  string
 	upInfraExclude string
+	upWithKali     bool
 )
 
 var upCmd = &cobra.Command{
@@ -36,11 +39,18 @@ var upCmd = &cobra.Command{
 Stops on the first failing step and prints a resume hint. Use --from <step>
 to restart from a specific point. The recommended new-user flow is:
 
-  dreadgoad init && dreadgoad up`,
+  dreadgoad init && dreadgoad up
+
+On Azure, step 2 also deploys the Bastion and the in-VNet Ansible controller.
+Step 3 reaches the Windows hosts only through them, so they are prerequisites
+of this pipeline rather than options -- note that Bastion is a billed,
+always-on resource. To build the range without them, use 'infra apply'
+directly; provisioning will then need another route to the hosts.`,
 	Example: `  dreadgoad up
   dreadgoad up --skip-doctor
   dreadgoad up --from provision
-  dreadgoad up --limit dc01`,
+  dreadgoad up --limit dc01
+  dreadgoad up --with-kali        # Azure: add the Kali attack box`,
 	RunE: runUp,
 }
 
@@ -55,6 +65,7 @@ func init() {
 	upCmd.Flags().IntVar(&upRetryDelay, "retry-delay", 0, "Delay between retries in seconds")
 	upCmd.Flags().StringVar(&upInfraModule, "module", "", "Target a specific infra module (default: all)")
 	upCmd.Flags().StringVar(&upInfraExclude, "exclude", "", "Exclude infra modules (comma-separated)")
+	upCmd.Flags().BoolVar(&upWithKali, "with-kali", false, "(Azure) Also deploy the optional Kali Linux attack box")
 }
 
 type upStep struct {
@@ -146,19 +157,48 @@ func runUpDoctor(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// runUpInfraApply invokes `infra apply` with auto-approve. We build a
-// synthetic cobra.Command so the inner action sees only the flags we want
+// newUpInfraCommand builds the synthetic cobra.Command that `up` drives
+// `infra apply` through, so the inner action sees only the flags we want
 // (auto-approve=true, module/exclude pass-through) without conflating with
 // the up command's own flag set.
+//
+// EVERY flag runInfraAction* reads must be registered here. A flag that is
+// absent reads back as its zero value and the lookup error is discarded, so
+// omitting one fails silently — see TestUpInfraCommandForwardsEveryFlag,
+// which is what keeps this set in sync with the real command.
+//
+// On Azure the Bastion and controller modules are excluded from terragrunt
+// unless DREADGOAD_ENABLE_AZURE_* is set, and step 3 (provision) reaches the
+// Windows hosts only over Bastion → controller → SOCKS5 (see
+// startAzureSOCKSTunnel). They are prerequisites of this pipeline rather than
+// options, so `up` opts in on the operator's behalf; without them the run
+// deploys every VM and then cannot reach any of them. Kali is a genuine extra
+// and stays behind --with-kali.
+func newUpInfraCommand(ctx context.Context, providerName string) *cobra.Command {
+	needsTunnel := providerName == provider.NameAzure
+
+	// Named `synth`, not `infraCmd`: the latter is the real `infra` command at
+	// package scope, and shadowing it here made the two easy to confuse.
+	synth := &cobra.Command{}
+	synth.Flags().String("module", upInfraModule, "")
+	synth.Flags().String("exclude", upInfraExclude, "")
+	synth.Flags().Bool("auto-approve", true, "")
+	synth.Flags().Bool("individual", false, "")
+	synth.Flags().String("deployment", "", "")
+	synth.Flags().Bool("with-bastion", needsTunnel, "")
+	synth.Flags().Bool("with-controller", needsTunnel, "")
+	synth.Flags().Bool("with-kali", upWithKali, "")
+	synth.SetContext(ctx)
+	return synth
+}
+
+// runUpInfraApply invokes `infra apply` with auto-approve.
 func runUpInfraApply(cmd *cobra.Command, args []string) error {
-	infraCmd := &cobra.Command{}
-	infraCmd.Flags().String("module", upInfraModule, "")
-	infraCmd.Flags().String("exclude", upInfraExclude, "")
-	infraCmd.Flags().Bool("auto-approve", true, "")
-	infraCmd.Flags().Bool("individual", false, "")
-	infraCmd.Flags().String("deployment", "", "")
-	infraCmd.SetContext(cmd.Context())
-	return runInfraAction("apply")(infraCmd, args)
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
+	return runInfraAction("apply")(newUpInfraCommand(cmd.Context(), cfg.ResolvedProvider()), args)
 }
 
 // runUpProvision calls runProvision via a synthetic command so up's --from

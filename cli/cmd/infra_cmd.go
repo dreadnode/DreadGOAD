@@ -144,6 +144,46 @@ func runInfraAction(action string) func(*cobra.Command, []string) error {
 	}
 }
 
+// azureOptionalModules are the Azure modules that terragrunt excludes unless
+// their env var is set. Each exclude{} block uses actions = ["all"], so the
+// var governs destroy exactly as it governs apply.
+var azureOptionalModules = []struct{ flag, dir, env string }{
+	{"with-bastion", "bastion", "DREADGOAD_ENABLE_AZURE_BASTION"},
+	{"with-controller", "controller", "DREADGOAD_ENABLE_AZURE_CONTROLLER"},
+	{"with-kali", "kali", "DREADGOAD_ENABLE_AZURE_KALI"},
+}
+
+// azureModuleEnv translates the --with-* opt-in flags into the
+// DREADGOAD_ENABLE_AZURE_* variables that the terragrunt exclude{} blocks
+// read. A flag the caller never registered reads back as false here, so this
+// is the point where a caller that forgot to forward one silently loses the
+// module — see newUpInfraCommand.
+//
+// moduleRoot is the directory holding the module subdirectories, used for the
+// destroy-time fallback below.
+func azureModuleEnv(cmd *cobra.Command, action, moduleRoot string) []string {
+	var env []string
+
+	for _, m := range azureOptionalModules {
+		on, _ := cmd.Flags().GetBool(m.flag)
+		// On destroy, include every module present in the layout even when the
+		// operator did not repeat its --with-* flag. Excluding one leaves its
+		// resources standing and still billing — `up` deploys bastion and
+		// controller by default on Azure, and `infra destroy` carries no flags.
+		// Destroying a module that was never applied is a no-op against empty
+		// state, so the fallback is safe in the other direction.
+		if !on && action == "destroy" {
+			if _, err := os.Stat(filepath.Join(moduleRoot, m.dir)); err == nil {
+				on = true
+			}
+		}
+		if on {
+			env = append(env, m.env+"=true")
+		}
+	}
+	return env
+}
+
 // runInfraActionAzure handles infra commands for Azure via Terragrunt.
 // Mirrors the AWS path but skips AWS-specific config materialization and
 // region resolution (Azure regions are passed through verbatim).
@@ -174,30 +214,6 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 		Debug:            cfg.Debug,
 	}
 
-	if withBastion, _ := cmd.Flags().GetBool("with-bastion"); withBastion {
-		opts.ExtraEnv = append(opts.ExtraEnv, "DREADGOAD_ENABLE_AZURE_BASTION=true")
-	}
-	if withController, _ := cmd.Flags().GetBool("with-controller"); withController {
-		opts.ExtraEnv = append(opts.ExtraEnv, "DREADGOAD_ENABLE_AZURE_CONTROLLER=true")
-	}
-	withKali, _ := cmd.Flags().GetBool("with-kali")
-	// On destroy, always include the kali module so orphaned VMs are cleaned up
-	// even if the user forgets --with-kali.
-	if !withKali && action == "destroy" {
-		kaliDir := filepath.Join(cfg.ProjectRoot, "infra", "azure", deployment, cfg.Env, region, "kali")
-		if _, err := os.Stat(kaliDir); err == nil {
-			withKali = true
-		}
-	}
-	if withKali {
-		opts.ExtraEnv = append(opts.ExtraEnv, "DREADGOAD_ENABLE_AZURE_KALI=true")
-	}
-
-	if action == "apply" || action == "destroy" {
-		autoApprove, _ := cmd.Flags().GetBool("auto-approve")
-		opts.AutoApprove = autoApprove
-	}
-
 	workDir := filepath.Join(cfg.ProjectRoot, "infra", "azure", deployment, cfg.Env, region)
 	if _, err := os.Stat(workDir); os.IsNotExist(err) {
 		// Backward-compat: the auth-validation POC layout is
@@ -207,6 +223,16 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 		if _, lerr := os.Stat(legacy); lerr == nil {
 			workDir = legacy
 		}
+	}
+
+	// Resolved after the legacy fallback: the destroy-time module sweep looks
+	// for module directories, so pointing it at the deployment-shaped path on
+	// a legacy layout would find none and silently orphan them.
+	opts.ExtraEnv = append(opts.ExtraEnv, azureModuleEnv(cmd, action, workDir)...)
+
+	if action == "apply" || action == "destroy" {
+		autoApprove, _ := cmd.Flags().GetBool("auto-approve")
+		opts.AutoApprove = autoApprove
 	}
 	// Checked after the fallback so the legacy layout is still accepted, and
 	// state-aware so a destroy with nothing to destroy says why (see
