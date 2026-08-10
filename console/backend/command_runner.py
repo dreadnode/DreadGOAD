@@ -414,6 +414,12 @@ async def run_cli(
         },
     )
 
+    # Re-check after the emit, not before. emit_event awaits a store write and a
+    # socket send, so a cancel can land inside it; deciding from the pre-emit
+    # value would let that turn carry on as if nothing had happened. The payload
+    # above keeps the value that was true when it was sent.
+    cancelled = cancelled or (current.turn is not None and current.turn.cancelled)
+
     if cancelled:
         # Re-read the range before unwinding. The command may have changed the
         # world on its way out, and the view would otherwise keep showing the

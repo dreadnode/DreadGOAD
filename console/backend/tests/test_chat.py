@@ -1010,6 +1010,60 @@ async def test_cancelling_a_cloud_command_says_so_and_rereads_state() -> None:
             await db.close()
 
 
+async def test_cancel_landing_during_the_end_emit_still_aborts() -> None:
+    """A cancel that arrives while the end event is being sent must still abort.
+
+    emit_event awaits a store write and a socket send, so there is a real window
+    between "the command finished" and "we decide whether it was cancelled".
+    Deciding from a value read before the emit let a cancel in that window be
+    dropped, and the turn carried on as though nothing had happened.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        cfg = tmp / "dreadgoad.yaml"
+        cfg.write_text(_YAML)
+        db = await Database(str(tmp / "state.db")).connect()
+        svc = SessionService(db, repo_root=str(_REPO), sessions_root=tmp / "sessions")
+        app = types.SimpleNamespace(state=types.SimpleNamespace(db=db, sessions=svc))
+        session = await svc.create_session(str(cfg), "dev")
+        sid = session["id"]
+
+        async def fake_start(argv, cwd):  # noqa: ANN001
+            return FakeRC(["done"])
+
+        async def fake_check(a, sid_, capture_command=None):  # noqa: ANN001
+            return {"hosts_updated": 0}
+
+        orig_start, orig_check = command_runner.start_command, hook.run_check
+        orig_emit = command_runner.chat_events.emit_event
+        command_runner.start_command, hook.run_check = fake_start, fake_check
+
+        async def emit_then_cancel(app_, sid_, kind, payload, **kw):  # noqa: ANN001
+            # Cancel *inside* the end emit — the window under test.
+            if kind == "command_run" and payload.get("phase") == "end":
+                turn = chat_runtime.runtime(sid_).turn
+                if turn is not None:
+                    turn.cancelled = True
+            return await orig_emit(app_, sid_, kind, payload, **kw)
+
+        command_runner.chat_events.emit_event = emit_then_cancel
+        try:
+            task = chat.dispatch(app, sid, "/instances")
+            assert task is not None
+            raised = False
+            try:
+                await task
+            except asyncio.CancelledError:
+                raised = True
+            assert raised, "a cancel during the end emit was dropped"
+            print("PASS test_cancel_landing_during_the_end_emit_still_aborts")
+        finally:
+            command_runner.chat_events.emit_event = orig_emit
+            command_runner.start_command, hook.run_check = orig_start, orig_check
+            await chat.cleanup_session(sid)
+            await db.close()
+
+
 async def test_a_wedged_refresh_cannot_hold_the_cancel_open() -> None:
     """The post-cancel refresh must never make cancelling slower.
 
@@ -1232,6 +1286,7 @@ async def _main() -> None:
     await test_captured_helper_is_owned_and_cancelled_with_turn()
     await test_cancelled_command_aborts_turn_before_agent_can_retry()
     await test_cancelling_a_cloud_command_says_so_and_rereads_state()
+    await test_cancel_landing_during_the_end_emit_still_aborts()
     await test_a_wedged_refresh_cannot_hold_the_cancel_open()
     await test_cancelled_read_is_not_flagged_still_running()
     await test_immediate_cancel_still_finishes_the_ui_turn()
