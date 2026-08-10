@@ -49,8 +49,8 @@ func init() {
 	extensionListCmd.Flags().String("lab", "", "Filter by lab compatibility (e.g. GOAD, GOAD-Light)")
 
 	extensionProvisionCmd.Flags().String("limit", "", "Limit execution to specific hosts")
-	extensionProvisionCmd.Flags().Int("max-retries", 0, "Max retry attempts (default: from config)")
-	extensionProvisionCmd.Flags().Int("retry-delay", 0, "Delay between retries in seconds")
+	extensionProvisionCmd.Flags().Int("max-retries", 0, "Max retry attempts (default: from config; 0 disables retries)")
+	extensionProvisionCmd.Flags().Int("retry-delay", 0, "Delay between retries in seconds (default: from config; 0 disables delay)")
 }
 
 func runExtensionList(cmd *cobra.Command, args []string) error {
@@ -111,10 +111,12 @@ func runExtensionProvision(cmd *cobra.Command, args []string) error {
 	}
 
 	limit, _ := cmd.Flags().GetString("limit")
-	maxRetries, _ := cmd.Flags().GetInt("max-retries")
-	retryDelay, _ := cmd.Flags().GetInt("retry-delay")
+	retry, err := retryOverridesFromFlags(cmd)
+	if err != nil {
+		return err
+	}
 
-	return provisionExtension(cfg, name, ext, limit, maxRetries, retryDelay)
+	return provisionExtension(cfg, name, ext, limit, retry)
 }
 
 func runExtensionProvisionAll(cmd *cobra.Command, args []string) error {
@@ -141,7 +143,7 @@ func runExtensionProvisionAll(cmd *cobra.Command, args []string) error {
 		if !ok {
 			return fmt.Errorf("enabled extension %q not found in config", name)
 		}
-		if err := provisionExtension(cfg, name, ext, "", 0, 0); err != nil {
+		if err := provisionExtension(cfg, name, ext, "", retryOverrides{}); err != nil {
 			return fmt.Errorf("extension %s failed: %w", name, err)
 		}
 	}
@@ -150,7 +152,7 @@ func runExtensionProvisionAll(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func provisionExtension(cfg *config.Config, name string, ext config.ExtensionConfig, limit string, maxRetries, retryDelay int) error {
+func provisionExtension(cfg *config.Config, name string, ext config.ExtensionConfig, limit string, retry retryOverrides) error {
 	ctx := context.Background()
 
 	_ = os.MkdirAll(cfg.LogDir, 0o755)
@@ -198,12 +200,7 @@ func provisionExtension(cfg *config.Config, name string, ext config.ExtensionCon
 		Debug:       cfg.Debug,
 		LogFile:     logFile,
 	}
-	if maxRetries > 0 {
-		opts.MaxRetries = maxRetries
-	}
-	if retryDelay > 0 {
-		opts.RetryDelay = time.Duration(retryDelay) * time.Second
-	}
+	retry.apply(&opts)
 
 	if err := ansible.RunPlaybookWithRetry(ctx, opts); err != nil {
 		return err

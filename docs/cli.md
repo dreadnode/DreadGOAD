@@ -175,7 +175,9 @@ that preserve all structural relationships and vulnerabilities.
 
 - **`dreadgoad provision`**: When the active environment has `variant: true`,
   provisioning automatically generates the variant if the target directory
-  doesn't exist yet. Subsequent runs skip generation.
+  doesn't exist yet. The generator writes `.dreadgoad-variant-complete` only
+  after all required files are produced. Subsequent runs skip generation only
+  when that marker is valid; an unmarked directory is rejected as incomplete.
 
 - **`dreadgoad variant generate`**: Reads defaults from the active
   environment's config. Explicit flags (`--source`, `--target`, `--name`)

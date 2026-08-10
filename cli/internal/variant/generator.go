@@ -3,6 +3,7 @@ package variant
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -12,6 +13,43 @@ import (
 	"strings"
 	"unicode/utf8"
 )
+
+// CompletionMarkerName is written only after a variant generation run reaches
+// the end successfully. Its absence means an existing target may be partial.
+const CompletionMarkerName = ".dreadgoad-variant-complete"
+
+const completionMarkerContent = "complete\n"
+
+// IsComplete reports whether target contains a valid completion marker.
+func IsComplete(target string) (bool, error) {
+	marker := filepath.Join(target, CompletionMarkerName)
+	data, err := os.ReadFile(marker)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect completion marker: %w", err)
+	}
+	if string(data) != completionMarkerContent {
+		return false, fmt.Errorf("completion marker has invalid contents: %s", marker)
+	}
+	return true, nil
+}
+
+func writeCompletionMarker(target string) error {
+	marker := filepath.Join(target, CompletionMarkerName)
+	tmp := marker + ".tmp"
+	if err := os.WriteFile(tmp, []byte(completionMarkerContent), 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, marker); err != nil {
+		if removeErr := os.Remove(tmp); removeErr != nil {
+			return fmt.Errorf("rename marker: %w; cleanup: %v", err, removeErr)
+		}
+		return fmt.Errorf("rename marker: %w", err)
+	}
+	return nil
+}
 
 // LabConfig is the top-level structure of a GOAD config.json.
 // All known fields are modeled; if a config adds new top-level keys they
@@ -236,6 +274,11 @@ func (g *Generator) Run() error {
 	fmt.Printf("Target: %s\n", g.TargetPath)
 	fmt.Printf("%s\n\n", strings.Repeat("=", 60))
 
+	markerPath := filepath.Join(g.TargetPath, CompletionMarkerName)
+	if err := os.Remove(markerPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove stale completion marker: %w", err)
+	}
+
 	config, err := g.loadConfig()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
@@ -254,13 +297,15 @@ func (g *Generator) Run() error {
 
 	valid := g.validate()
 	g.createDocumentation()
+	if !valid {
+		return errors.New("variant validation failed")
+	}
+	if err := writeCompletionMarker(g.TargetPath); err != nil {
+		return fmt.Errorf("write completion marker: %w", err)
+	}
 
 	fmt.Printf("\n%s\n", strings.Repeat("=", 60))
-	if valid {
-		fmt.Println("Variant generation complete and validated!")
-	} else {
-		fmt.Println("Variant generated but validation found issues")
-	}
+	fmt.Println("Variant generation complete and validated!")
 	fmt.Printf("%s\n\n", strings.Repeat("=", 60))
 
 	return nil
@@ -956,7 +1001,7 @@ var textFilenames = map[string]bool{
 }
 
 // transformFile transforms a single file with replacements and writes to target.
-func (g *Generator) transformFile(srcPath, relPath string) (transformed bool) {
+func (g *Generator) transformFile(srcPath, relPath string) (transformed bool, err error) {
 	// Rename file paths based on entity mappings (e.g., arya.txt -> thomas.txt).
 	newRelPath := g.applyReplacements(relPath)
 	ext := filepath.Ext(srcPath)
@@ -964,25 +1009,23 @@ func (g *Generator) transformFile(srcPath, relPath string) (transformed bool) {
 	targetFile := filepath.Join(g.TargetPath, newRelPath)
 
 	if err := os.MkdirAll(filepath.Dir(targetFile), 0o755); err != nil {
-		fmt.Printf("Warning: mkdir failed for %s: %v\n", relPath, err)
-		return false
+		return false, fmt.Errorf("create target directory for %s: %w", relPath, err)
 	}
 
 	isText := textExtensions[ext] || textFilenames[base] || (ext == "" && g.isTextFile(srcPath))
 	if !isText {
 		if err := copyFile(srcPath, targetFile); err != nil {
-			fmt.Printf("Warning: Could not copy %s: %v\n", relPath, err)
+			return false, err
 		}
-		return false
+		return false, nil
 	}
 
 	content, err := os.ReadFile(srcPath)
 	if err != nil {
-		fmt.Printf("Warning: Could not read %s: %v\n", relPath, err)
 		if cpErr := copyFile(srcPath, targetFile); cpErr != nil {
-			fmt.Printf("Warning: fallback copy also failed: %v\n", cpErr)
+			return false, fmt.Errorf("read %s: %v; fallback copy: %w", srcPath, err, cpErr)
 		}
-		return false
+		return false, nil
 	}
 
 	newContent := g.applyReplacements(string(content))
@@ -992,10 +1035,9 @@ func (g *Generator) transformFile(srcPath, relPath string) (transformed bool) {
 	newContent = g.transformConfigJSON(base, newContent)
 
 	if err := os.WriteFile(targetFile, []byte(newContent), 0o644); err != nil {
-		fmt.Printf("Warning: Could not write %s: %v\n", relPath, err)
-		return false
+		return false, fmt.Errorf("write %s: %w", targetFile, err)
 	}
-	return true
+	return true, nil
 }
 
 // copyAndTransform copies the source directory, transforming text files.
@@ -1042,14 +1084,24 @@ func (g *Generator) copyAndTransform() error {
 			return nil
 		}
 
-		// Skip .git files
-		rel, _ := filepath.Rel(g.SourcePath, path)
+		// Skip .git files and completion markers inherited from a variant source.
+		rel, err := filepath.Rel(g.SourcePath, path)
+		if err != nil {
+			return fmt.Errorf("resolve relative path for %s: %w", path, err)
+		}
 		if strings.Contains(rel, ".git") {
+			return nil
+		}
+		if d.Name() == CompletionMarkerName || d.Name() == CompletionMarkerName+".tmp" {
 			return nil
 		}
 
 		total++
-		if g.transformFile(path, rel) {
+		didTransform, err := g.transformFile(path, rel)
+		if err != nil {
+			return fmt.Errorf("process %s: %w", rel, err)
+		}
+		if didTransform {
 			transformed++
 		} else {
 			copied++

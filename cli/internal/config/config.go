@@ -121,6 +121,12 @@ var (
 	regionOverride string
 )
 
+// ErrLabConfigNotFound indicates that no base, overlay, or legacy lab config
+// exists. Callers may treat this as optional for infrastructure modules that do
+// not consume the GOAD lab config, while still surfacing other resolution
+// failures such as malformed overlays or cache write errors.
+var ErrLabConfigNotFound = errors.New("lab config not found")
+
 // SetRegionOverride records a region supplied explicitly via --region, so it
 // takes precedence over the active environment's configured region. Call it
 // before Get(); the root command does this from PersistentPreRunE.
@@ -242,7 +248,12 @@ func (c *Config) ResolvedLabConfigPath() (string, error) {
 	overlayPath := filepath.Join(dataDir, c.Env+"-overlay.json")
 	basePath := filepath.Join(dataDir, "config.json")
 
-	if fileExists(overlayPath) && fileExists(basePath) {
+	overlayExists := fileExists(overlayPath)
+	baseExists := fileExists(basePath)
+	if overlayExists && !baseExists {
+		return "", fmt.Errorf("lab config overlay %s requires base config %s", overlayPath, basePath)
+	}
+	if overlayExists {
 		return c.mergedConfigPath(basePath, overlayPath)
 	}
 
@@ -253,11 +264,11 @@ func (c *Config) ResolvedLabConfigPath() (string, error) {
 	}
 
 	// Fallback: base config.json.
-	if fileExists(basePath) {
+	if baseExists {
 		return basePath, nil
 	}
 
-	return "", fmt.Errorf("no lab config found in %s", dataDir)
+	return "", fmt.Errorf("%w in %s", ErrLabConfigNotFound, dataDir)
 }
 
 // labConfigDataDir returns the data directory for the active environment's

@@ -188,6 +188,74 @@ func TestGeneratorEndToEnd(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(targetDir, "README.md")); err != nil {
 		t.Fatal("README.md not created")
 	}
+	complete, err := IsComplete(targetDir)
+	if err != nil {
+		t.Fatalf("check completion marker: %v", err)
+	}
+	if !complete {
+		t.Fatal("completion marker not created")
+	}
+}
+
+func TestGeneratorFailureLeavesNoCompletionMarker(t *testing.T) {
+	sourceDir, targetDir := setupTestSource(t)
+	if err := os.MkdirAll(filepath.Join(targetDir, "scripts", "test.ps1"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(targetDir, CompletionMarkerName)
+	if err := os.WriteFile(marker, []byte("stale\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := NewGenerator(sourceDir, targetDir, "test-failure").Run()
+	if err == nil || !strings.Contains(err.Error(), "process scripts/test.ps1") {
+		t.Fatalf("Run() error = %v, want target write failure", err)
+	}
+	complete, checkErr := IsComplete(targetDir)
+	if checkErr != nil {
+		t.Fatalf("check completion marker: %v", checkErr)
+	}
+	if complete {
+		t.Fatal("failed generation retained a stale completion marker")
+	}
+}
+
+func TestGeneratorValidationFailureLeavesNoCompletionMarker(t *testing.T) {
+	sourceDir, targetDir := setupTestSource(t)
+	if err := os.WriteFile(filepath.Join(sourceDir, "scripts", "unmapped.txt"), []byte("tywin\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(targetDir, CompletionMarkerName)
+	if err := os.WriteFile(marker, []byte("complete\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := NewGenerator(sourceDir, targetDir, "test-validation-failure").Run()
+	if err == nil || !strings.Contains(err.Error(), "variant validation failed") {
+		t.Fatalf("Run() error = %v, want validation failure", err)
+	}
+	complete, checkErr := IsComplete(targetDir)
+	if checkErr != nil {
+		t.Fatalf("check completion marker: %v", checkErr)
+	}
+	if complete {
+		t.Fatal("failed validation retained a completion marker")
+	}
+}
+
+func TestIsCompleteRejectsInvalidMarker(t *testing.T) {
+	target := t.TempDir()
+	if err := os.WriteFile(filepath.Join(target, CompletionMarkerName), []byte("partial"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	complete, err := IsComplete(target)
+	if err == nil || !strings.Contains(err.Error(), "invalid contents") {
+		t.Fatalf("IsComplete() = %v, %v; want invalid marker error", complete, err)
+	}
 }
 
 func TestPasswordInDescriptionPreserved(t *testing.T) {
