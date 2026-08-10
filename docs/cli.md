@@ -181,7 +181,8 @@ that preserve all structural relationships and vulnerabilities.
 
 - **`dreadgoad variant generate`**: Reads defaults from the active
   environment's config. Explicit flags (`--source`, `--target`, `--name`)
-  override the config values.
+  override the config values. Generation refuses an existing target so files
+  from different randomized runs cannot be mixed.
 
 - **Regenerating**: Delete the variant target directory and re-run
   `dreadgoad provision` or `dreadgoad variant generate` to get fresh

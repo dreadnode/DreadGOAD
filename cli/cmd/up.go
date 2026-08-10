@@ -98,6 +98,7 @@ func runUp(cmd *cobra.Command, args []string) error {
 	if err := validateUpProvisionResume(steps, upPlays, upFromPlaybook); err != nil {
 		return err
 	}
+	resumeOptions := currentUpResumeOptions(cmd)
 
 	total := len(steps)
 	start := time.Now()
@@ -106,7 +107,7 @@ func runUp(cmd *cobra.Command, args []string) error {
 		if err := step.run(cmd, args); err != nil {
 			fmt.Println()
 			color.Red("✗ %s failed: %v", step.name, err)
-			color.Yellow("  Resume with: %s", upResumeCommand(step.id, err, upPlays))
+			color.Yellow("  Resume with: %s", upResumeCommand(step.id, err, resumeOptions))
 			return err
 		}
 	}
@@ -132,19 +133,69 @@ func validateUpProvisionResume(steps []upStep, plays, fromPlaybook string) error
 	return fmt.Errorf("--from-playbook cannot be used when the provision step is skipped")
 }
 
-func upResumeCommand(stepID string, err error, selectedPlays string) string {
+type upResumeOptions struct {
+	plays        string
+	fromPlaybook string
+	limit        string
+	infraModule  string
+	infraExclude string
+	retry        retryOverrides
+}
+
+func currentUpResumeOptions(cmd *cobra.Command) upResumeOptions {
+	opts := upResumeOptions{
+		plays:        upPlays,
+		fromPlaybook: upFromPlaybook,
+		limit:        upLimit,
+		infraModule:  upInfraModule,
+		infraExclude: upInfraExclude,
+	}
+	if cmd.Flags().Changed("max-retries") {
+		value := upMaxRetries
+		opts.retry.maxRetries = &value
+	}
+	if cmd.Flags().Changed("retry-delay") {
+		value := upRetryDelay
+		opts.retry.retryDelay = &value
+	}
+	return opts
+}
+
+func upResumeCommand(stepID string, err error, opts upResumeOptions) string {
 	command := fmt.Sprintf("dreadgoad up --from %s", stepID)
-	if stepID != "provision" {
+	if stepID == "health-check" {
 		return command
 	}
 
+	if stepID == "doctor" || stepID == "infra" {
+		if opts.infraModule != "" {
+			command += " --module " + shellQuoteResumeArg(opts.infraModule)
+		}
+		if opts.infraExclude != "" {
+			command += " --exclude " + shellQuoteResumeArg(opts.infraExclude)
+		}
+	}
+
 	var failure *provisionFailure
-	if errors.As(err, &failure) && failure.Playbook != "" {
-		if selectedPlays != "" {
-			command += " --plays " + shellQuoteResumeArg(remainingPlaybookSelection(selectedPlays, failure.Playbook))
+	if stepID == "provision" && errors.As(err, &failure) && failure.Playbook != "" {
+		if opts.plays != "" {
+			command += " --plays " + shellQuoteResumeArg(remainingPlaybookSelection(opts.plays, failure.Playbook))
 		} else {
 			command += " --from-playbook " + shellQuoteResumeArg(failure.Playbook)
 		}
+	} else if opts.plays != "" {
+		command += " --plays " + shellQuoteResumeArg(opts.plays)
+	} else if opts.fromPlaybook != "" {
+		command += " --from-playbook " + shellQuoteResumeArg(opts.fromPlaybook)
+	}
+	if opts.limit != "" {
+		command += " --limit " + shellQuoteResumeArg(opts.limit)
+	}
+	if opts.retry.maxRetries != nil {
+		command += " --max-retries " + strconv.Itoa(*opts.retry.maxRetries)
+	}
+	if opts.retry.retryDelay != nil {
+		command += " --retry-delay " + strconv.Itoa(*opts.retry.retryDelay)
 	}
 	return command
 }

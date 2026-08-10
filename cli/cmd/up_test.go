@@ -144,16 +144,16 @@ func TestUpResumeCommandNamesFailedPlaybook(t *testing.T) {
 		Err:      cause,
 	}
 
-	got := upResumeCommand("provision", fmt.Errorf("wrapped: %w", failure), "")
+	got := upResumeCommand("provision", fmt.Errorf("wrapped: %w", failure), upResumeOptions{})
 	want := "dreadgoad up --from provision --from-playbook 'ad-data.yml'"
 	if got != want {
 		t.Errorf("resume command = %q, want %q", got, want)
 	}
 
-	if got := upResumeCommand("provision", cause, ""); got != "dreadgoad up --from provision" {
+	if got := upResumeCommand("provision", cause, upResumeOptions{}); got != "dreadgoad up --from provision" {
 		t.Errorf("generic provision resume command = %q", got)
 	}
-	if got := upResumeCommand("infra", failure, ""); got != "dreadgoad up --from infra" {
+	if got := upResumeCommand("infra", failure, upResumeOptions{}); got != "dreadgoad up --from infra" {
 		t.Errorf("infra resume command = %q", got)
 	}
 }
@@ -168,11 +168,55 @@ func TestUpResumeCommandPreservesRemainingCustomPlaybooks(t *testing.T) {
 	got := upResumeCommand(
 		"provision",
 		failure,
-		"bootstrap.yml,custom-data.yml,custom vulnerabilities.yml",
+		upResumeOptions{plays: "bootstrap.yml,custom-data.yml,custom vulnerabilities.yml"},
 	)
 	want := "dreadgoad up --from provision --plays 'custom-data.yml,custom vulnerabilities.yml'"
 	if got != want {
 		t.Errorf("resume command = %q, want %q", got, want)
+	}
+}
+
+func TestUpResumeCommandPreservesExecutionOverrides(t *testing.T) {
+	zero, delay := 0, 12
+	failure := &provisionFailure{
+		Playbook: "ad-data.yml",
+		LogFile:  "/tmp/provision.log",
+		Err:      errors.New("ansible failed"),
+	}
+	opts := upResumeOptions{
+		limit: "dc01,DC 02",
+		retry: retryOverrides{
+			maxRetries: &zero,
+			retryDelay: &delay,
+		},
+	}
+
+	got := upResumeCommand("provision", failure, opts)
+	want := "dreadgoad up --from provision --from-playbook 'ad-data.yml' --limit 'dc01,DC 02' --max-retries 0 --retry-delay 12"
+	if got != want {
+		t.Errorf("resume command = %q, want %q", got, want)
+	}
+}
+
+func TestUpResumeCommandPreservesOverridesBeforeProvisioning(t *testing.T) {
+	zero := 0
+	opts := upResumeOptions{
+		plays:        "build.yml,ad-data.yml",
+		limit:        "dc01",
+		infraModule:  "network",
+		infraExclude: "bastion,monitoring",
+		retry:        retryOverrides{maxRetries: &zero},
+	}
+
+	got := upResumeCommand("infra", errors.New("terraform failed"), opts)
+	want := "dreadgoad up --from infra --module 'network' --exclude 'bastion,monitoring' --plays 'build.yml,ad-data.yml' --limit 'dc01' --max-retries 0"
+	if got != want {
+		t.Errorf("resume command = %q, want %q", got, want)
+	}
+
+	got = upResumeCommand("health-check", errors.New("check failed"), opts)
+	if want := "dreadgoad up --from health-check"; got != want {
+		t.Errorf("health-check resume command = %q, want %q", got, want)
 	}
 }
 

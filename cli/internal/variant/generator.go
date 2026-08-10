@@ -274,11 +274,6 @@ func (g *Generator) Run() error {
 	fmt.Printf("Target: %s\n", g.TargetPath)
 	fmt.Printf("%s\n\n", strings.Repeat("=", 60))
 
-	markerPath := filepath.Join(g.TargetPath, CompletionMarkerName)
-	if err := os.Remove(markerPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("remove stale completion marker: %w", err)
-	}
-
 	config, err := g.loadConfig()
 	if err != nil {
 		return fmt.Errorf("load config: %w", err)
@@ -286,6 +281,9 @@ func (g *Generator) Run() error {
 
 	g.generateMappings(config)
 	g.buildOrderedReplacements()
+	if err := createFreshTarget(g.TargetPath); err != nil {
+		return err
+	}
 
 	if err := g.copyAndTransform(); err != nil {
 		return fmt.Errorf("transform: %w", err)
@@ -309,6 +307,19 @@ func (g *Generator) Run() error {
 	fmt.Println("Variant generation complete and validated!")
 	fmt.Printf("%s\n\n", strings.Repeat("=", 60))
 
+	return nil
+}
+
+func createFreshTarget(target string) error {
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return fmt.Errorf("create variant target parent: %w", err)
+	}
+	if err := os.Mkdir(target, 0o755); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("variant target already exists: %s; move or remove it before generating", target)
+		}
+		return fmt.Errorf("create variant target: %w", err)
+	}
 	return nil
 }
 
@@ -1067,10 +1078,6 @@ func (g *Generator) transformConfigJSON(base, content string) string {
 
 func (g *Generator) copyAndTransform() error {
 	fmt.Println("\n=== Copying and Transforming Files ===")
-
-	if err := os.MkdirAll(g.TargetPath, 0o755); err != nil {
-		return err
-	}
 
 	var total, transformed, copied int
 
