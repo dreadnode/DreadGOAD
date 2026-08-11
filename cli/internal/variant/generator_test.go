@@ -188,6 +188,139 @@ func TestGeneratorEndToEnd(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(targetDir, "README.md")); err != nil {
 		t.Fatal("README.md not created")
 	}
+	complete, err := IsComplete(targetDir)
+	if err != nil {
+		t.Fatalf("check completion marker: %v", err)
+	}
+	if !complete {
+		t.Fatal("completion marker not created")
+	}
+}
+
+func TestGeneratorFailureLeavesNoCompletionMarker(t *testing.T) {
+	sourceDir, targetDir := setupTestSource(t)
+	if err := os.Symlink(filepath.Join(sourceDir, "missing.bin"), filepath.Join(sourceDir, "broken.bin")); err != nil {
+		t.Skipf("create broken symlink fixture: %v", err)
+	}
+
+	err := NewGenerator(sourceDir, targetDir, "test-failure").Run()
+	if err == nil || !strings.Contains(err.Error(), "process broken.bin") {
+		t.Fatalf("Run() error = %v, want target write failure", err)
+	}
+	complete, checkErr := IsComplete(targetDir)
+	if checkErr != nil {
+		t.Fatalf("check completion marker: %v", checkErr)
+	}
+	if complete {
+		t.Fatal("failed generation retained a stale completion marker")
+	}
+}
+
+func TestGeneratorValidationFailureLeavesNoCompletionMarker(t *testing.T) {
+	sourceDir, targetDir := setupTestSource(t)
+	if err := os.WriteFile(filepath.Join(sourceDir, "scripts", "unmapped.txt"), []byte("tywin\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := NewGenerator(sourceDir, targetDir, "test-validation-failure").Run()
+	if err == nil || !strings.Contains(err.Error(), "variant validation failed") {
+		t.Fatalf("Run() error = %v, want validation failure", err)
+	}
+	complete, checkErr := IsComplete(targetDir)
+	if checkErr != nil {
+		t.Fatalf("check completion marker: %v", checkErr)
+	}
+	if complete {
+		t.Fatal("failed validation retained a completion marker")
+	}
+}
+
+func TestGeneratorDocumentationFailureLeavesNoCompletionMarker(t *testing.T) {
+	sourceDir, targetDir := setupTestSource(t)
+	readmeDir := filepath.Join(sourceDir, "README.md")
+	if err := os.MkdirAll(readmeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(readmeDir, "blocker"), []byte("block README creation"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := NewGenerator(sourceDir, targetDir, "test-documentation-failure").Run()
+	if err == nil || !strings.Contains(err.Error(), "create documentation") {
+		t.Fatalf("Run() error = %v, want documentation failure", err)
+	}
+	complete, checkErr := IsComplete(targetDir)
+	if checkErr != nil {
+		t.Fatalf("check completion marker: %v", checkErr)
+	}
+	if complete {
+		t.Fatal("documentation failure left a completion marker")
+	}
+}
+
+func TestGeneratorRejectsExistingTargetWithoutModification(t *testing.T) {
+	sourceDir, targetDir := setupTestSource(t)
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(targetDir, CompletionMarkerName)
+	if err := os.WriteFile(marker, []byte("complete\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(targetDir, "keep.txt")
+	if err := os.WriteFile(sentinel, []byte("unchanged"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := NewGenerator(sourceDir, targetDir, "test-existing-target").Run()
+	if err == nil || !strings.Contains(err.Error(), "variant target already exists") {
+		t.Fatalf("Run() error = %v, want existing-target rejection", err)
+	}
+	data, readErr := os.ReadFile(sentinel)
+	if readErr != nil || string(data) != "unchanged" {
+		t.Fatalf("existing target was modified: data=%q error=%v", data, readErr)
+	}
+	complete, checkErr := IsComplete(targetDir)
+	if checkErr != nil || !complete {
+		t.Fatalf("existing completion marker changed: complete=%v error=%v", complete, checkErr)
+	}
+}
+
+func TestValidateRejectsScanFailure(t *testing.T) {
+	missingTarget := filepath.Join(t.TempDir(), "missing")
+	gen := NewGenerator(t.TempDir(), missingTarget, "test-scan-failure")
+
+	err := gen.validate()
+	if err == nil || !strings.Contains(err.Error(), "scan generated files") {
+		t.Fatalf("validate() error = %v, want scan failure", err)
+	}
+}
+
+func TestValidateRejectsStructureMismatch(t *testing.T) {
+	sourceDir, targetDir := setupTestSource(t)
+	if err := os.MkdirAll(filepath.Join(targetDir, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(targetDir, "data", "config.json"), []byte(`{"lab":{"hosts":{},"domains":{}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := NewGenerator(sourceDir, targetDir, "test-structure-mismatch").validate()
+	if err == nil || !strings.Contains(err.Error(), "structure count mismatch") {
+		t.Fatalf("validate() error = %v, want structure mismatch", err)
+	}
+}
+
+func TestIsCompleteRejectsInvalidMarker(t *testing.T) {
+	target := t.TempDir()
+	if err := os.WriteFile(filepath.Join(target, CompletionMarkerName), []byte("partial"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	complete, err := IsComplete(target)
+	if err == nil || !strings.Contains(err.Error(), "invalid contents") {
+		t.Fatalf("IsComplete() = %v, %v; want invalid marker error", complete, err)
+	}
 }
 
 func TestPasswordInDescriptionPreserved(t *testing.T) {

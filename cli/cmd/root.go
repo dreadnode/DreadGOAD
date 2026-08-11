@@ -1,8 +1,11 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/dreadnode/dreadgoad/internal/logging"
@@ -23,6 +26,17 @@ and operational tasks like SSM session management.`,
 		if err := config.Init(); err != nil {
 			return err
 		}
+		// A --region given on the command line outranks the region the active
+		// environment declares; one merely present in dreadgoad.yaml does not.
+		// Viper collapses both into the same key, so pass the explicit case
+		// through separately.
+		if cmd.Flags().Changed("region") {
+			region, err := cmd.Flags().GetString("region")
+			if err != nil {
+				return err
+			}
+			config.SetRegionOverride(region)
+		}
 		cfg, err := config.Get()
 		if err != nil {
 			return err
@@ -41,8 +55,30 @@ func SetVersionInfo(version, commit, date string) {
 
 // Execute runs the root cobra command and returns any error encountered.
 // It is the entry point called from main.
+//
+// The command runs under a signal-aware context: Ctrl+C (SIGINT) or SIGTERM
+// cancels ctx instead of hard-killing the process, so ctx-aware commands unwind
+// and run their deferred cleanup (e.g. tearing down Bastion tunnels) rather than
+// leaking child processes. A second signal force-quits.
 func Execute() error {
-	if err := rootCmd.Execute(); err != nil {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	// NotifyContext only cancels ctx; it leaves the handler installed and drops
+	// every later signal on the floor, so a teardown that hangs would trap the
+	// user with no way out but SIGKILL. Watch the signals separately and hard
+	// exit on the second one.
+	forceQuit := make(chan os.Signal, 2)
+	signal.Notify(forceQuit, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(forceQuit)
+	go func() {
+		<-forceQuit // first: ctx cancellation above drives the graceful unwind
+		<-forceQuit // second: caller is done waiting for cleanup
+		fmt.Fprintln(os.Stderr, "\ninterrupted again — exiting now; Bastion tunnels may be left running")
+		os.Exit(130)
+	}()
+
+	if err := rootCmd.ExecuteContext(ctx); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return err
 	}

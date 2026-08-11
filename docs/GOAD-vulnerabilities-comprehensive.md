@@ -318,6 +318,39 @@ These scheduled tasks and configurations are provisioned by Ansible roles to ena
 
 ## ADCS Vulnerabilities
 
+### KDC binding is a hard gate
+
+Every route that authenticates with a *weakly mapped* certificate is decided by
+one registry value on one host: `StrongCertificateBindingEnforcement` under
+`HKLM:\SYSTEM\CurrentControlSet\Services\Kdc`, on the DC of the domain the
+certificate is issued in. Not the CA host, and not whichever DC in the lab
+happens to be permissive.
+
+| Value | Mode | Certificate with a *mismatched* SID (ESC6) | Certificate with *no* SID (ESC9) |
+| --- | --- | --- | --- |
+| 0 | Disabled | accepted | accepted |
+| 1 | Compatibility | rejected | accepted |
+| 2 | Full Enforcement | rejected | rejected |
+
+Two things make this easy to get wrong:
+
+- **The default moved.** The February 2025 hardening rollout (KB5014754) made
+  Full Enforcement the built-in default, so an unset value is the strict mode,
+  not a permissive one. A lab that never pinned the value had ESC2, ESC6 and
+  ESC9 quietly close while every CA-side and template-side probe stayed green.
+- **Event 39's level is the discriminator, not its presence.** Compatibility
+  permits the logon and logs 39 as a *Warning*; Full Enforcement refuses and
+  logs it as an *Error*. Reading only "an event 39 appeared" gets the mode
+  backwards.
+
+ESC1 is unaffected because `ENROLLEE_SUPPLIES_SUBJECT` plus a matching `-sid`
+produces a *strong* mapping, not a bypassed one, which is why it converts
+against the very same KDC that refuses ESC9.
+
+GOAD pins the value with the `adcs_esc10_case1` vuln on the DC of the domain
+that owns the CA and the vulnerable templates. `dreadgoad validate` reads it
+there and fails ESC6 and ESC9 if it is missing or enforcing.
+
 ### ESC1 - Enrollee Supplies Subject
 
 **Vulnerability:** Certificate templates allow requesters to specify Subject Alternative Name
@@ -407,6 +440,11 @@ These scheduled tasks and configurations are provisioned by Ansible roles to ena
 - **Impact:** Any template can be used to request certificates with arbitrary SANs
 - **Detection:** `certipy find -vulnerable`
 - **Exploitation:** Request certificate with `-upn` flag for any template
+- **Also requires `StrongCertificateBindingEnforcement=0`** on the KDC of the
+  domain the certificate is issued in. The SAN rides alongside a security
+  extension holding the *requester's* SID, so Compatibility mode (1) validates
+  that extension and rejects the mismatch just as Full Enforcement (2) does.
+  See [KDC binding is a hard gate](#kdc-binding-is-a-hard-gate).
 
 ### ESC7 - ManageCA/ManageCertificate Abuse
 
@@ -478,7 +516,11 @@ These scheduled tasks and configurations are provisioned by Ansible roles to ena
 - **Prerequisites:**
   - GenericWrite on target account
   - `msPKI-EnrollmentFlag` contains `CT_FLAG_NO_SECURITY_EXTENSION`
-  - `StrongCertificateBindingEnforcement=1` or `CertificateMappingMethods=0x04`
+  - `StrongCertificateBindingEnforcement` of 0 or 1 on the KDC of the domain the
+    certificate is issued in, or `CertificateMappingMethods=0x04`. Stripping the
+    security extension is what makes the weak UPN mapping reachable, so Full
+    Enforcement (2) turns the template's defining feature into a disqualifier.
+    See [KDC binding is a hard gate](#kdc-binding-is-a-hard-gate).
 - **Attack Chain:**
   1. Add shadow credentials to target to obtain their hash:
 

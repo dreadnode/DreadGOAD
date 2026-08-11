@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -62,15 +63,21 @@ func init() {
 	provisionCmd.Flags().String("plays", "", "Comma-separated playbooks to run (default: all)")
 	provisionCmd.Flags().String("from", "", "Resume provisioning from this playbook onward")
 	provisionCmd.Flags().String("limit", "", "Limit execution to specific hosts")
-	provisionCmd.Flags().Int("max-retries", 0, "Max retry attempts (default: from config)")
-	provisionCmd.Flags().Int("retry-delay", 0, "Delay between retries in seconds (default: from config)")
+	provisionCmd.Flags().Int("max-retries", 0, "Max retry attempts (default: from config; 0 disables retries)")
+	provisionCmd.Flags().Int("retry-delay", 0, "Delay between retries in seconds (default: from config; 0 disables delay)")
+	provisionCmd.Flags().StringArrayP("extra-vars", "E", nil, extraVarsUsage)
 	provisionCmd.MarkFlagsMutuallyExclusive("plays", "from")
 
 	adUsersCmd.Flags().String("plays", "ad-data.yml", "Playbooks to run")
 	adUsersCmd.Flags().String("limit", "", "Limit execution to specific hosts")
-	adUsersCmd.Flags().Int("max-retries", 0, "Max retry attempts")
-	adUsersCmd.Flags().Int("retry-delay", 0, "Delay between retries in seconds")
+	adUsersCmd.Flags().Int("max-retries", 0, "Max retry attempts (0 disables retries)")
+	adUsersCmd.Flags().Int("retry-delay", 0, "Delay between retries in seconds (0 disables delay)")
+	adUsersCmd.Flags().StringArrayP("extra-vars", "E", nil, extraVarsUsage)
 }
+
+// extraVarsUsage is shared so the flag reads identically everywhere it appears.
+const extraVarsUsage = "Ansible variable as key=value, repeatable " +
+	"(e.g. -E ad_reconcile_check_only=true to report drift instead of correcting it)"
 
 func resolvePlaybooks(cfg *config.Config, playsFlag, fromFlag string) ([]string, error) {
 	if playsFlag != "" && fromFlag != "" {
@@ -106,9 +113,23 @@ func ensureVariant(cfg *config.Config) error {
 	if variantName == "" {
 		variantName = "variant-1"
 	}
-	if _, err := os.Stat(target); !os.IsNotExist(err) {
+	info, err := os.Stat(target)
+	if err == nil {
+		if !info.IsDir() {
+			return fmt.Errorf("variant target exists but is not a directory: %s", target)
+		}
+		complete, err := variant.IsComplete(target)
+		if err != nil {
+			return fmt.Errorf("inspect variant target %s: %w", target, err)
+		}
+		if !complete {
+			return fmt.Errorf("variant directory is incomplete (missing %s): %s; move or remove it, then rerun provisioning", variant.CompletionMarkerName, target)
+		}
 		slog.Info("Variant directory already exists, skipping generation", "target", target)
 		return nil
+	}
+	if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect variant target %s: %w", target, err)
 	}
 	fmt.Printf("Environment %q has variant=true, generating variant...\n", cfg.Env)
 	gen := variant.NewGenerator(source, target, variantName)
@@ -141,9 +162,6 @@ func preflightChecks(ctx context.Context, cfg *config.Config) error {
 	}
 	if err := ansible.BuildCollection(cfg.ProjectRoot); err != nil {
 		return fmt.Errorf("collection build failed: %w", err)
-	}
-	if err := ansible.PrepareADCSZips(cfg.ProjectRoot); err != nil {
-		slog.Warn("ADCS zip preparation failed", "error", err)
 	}
 	if err := ensureVariant(cfg); err != nil {
 		return err
@@ -321,7 +339,10 @@ func runProvision(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	ctx := context.Background()
+	// Signal-aware context from the root: Ctrl+C/SIGTERM cancels ctx so
+	// provisionPlaybooks unwinds and its deferred socksTunnel.Close() runs,
+	// instead of the process dying with the Bastion tunnel orphaned.
+	ctx := cmd.Context()
 
 	playsFlag, _ := cmd.Flags().GetString("plays")
 	fromFlag, _ := cmd.Flags().GetString("from")
@@ -331,15 +352,130 @@ func runProvision(cmd *cobra.Command, args []string) error {
 	}
 
 	limit, _ := cmd.Flags().GetString("limit")
-	maxRetries, _ := cmd.Flags().GetInt("max-retries")
-	retryDelay, _ := cmd.Flags().GetInt("retry-delay")
+	retry, err := retryOverridesFromFlags(cmd)
+	if err != nil {
+		return err
+	}
+	extraVars, err := parseExtraVars(cmd)
+	if err != nil {
+		return err
+	}
 
-	return provisionPlaybooks(ctx, cfg, playbooks, limit, maxRetries, retryDelay)
+	return provisionPlaybooks(ctx, cfg, playbooks, limit, retry, extraVars)
+}
+
+type retryOverrides struct {
+	maxRetries *int
+	retryDelay *int
+}
+
+func retryOverridesFromFlags(cmd *cobra.Command) (retryOverrides, error) {
+	maxRetries, err := optionalNonNegativeIntFlag(cmd, "max-retries")
+	if err != nil {
+		return retryOverrides{}, err
+	}
+	retryDelay, err := optionalNonNegativeIntFlag(cmd, "retry-delay")
+	if err != nil {
+		return retryOverrides{}, err
+	}
+	return retryOverrides{maxRetries: maxRetries, retryDelay: retryDelay}, nil
+}
+
+func optionalNonNegativeIntFlag(cmd *cobra.Command, name string) (*int, error) {
+	if !cmd.Flags().Changed(name) {
+		return nil, nil
+	}
+	value, err := cmd.Flags().GetInt(name)
+	if err != nil {
+		return nil, fmt.Errorf("read --%s: %w", name, err)
+	}
+	if value < 0 {
+		return nil, fmt.Errorf("--%s must be zero or greater", name)
+	}
+	return &value, nil
+}
+
+func (r retryOverrides) apply(opts *ansible.RetryOptions) {
+	if r.maxRetries != nil {
+		opts.MaxRetries = *r.maxRetries
+		opts.MaxRetriesSet = true
+	}
+	if r.retryDelay != nil {
+		opts.RetryDelay = time.Duration(*r.retryDelay) * time.Second
+		opts.RetryDelaySet = true
+	}
+}
+
+// parseExtraVars reads the repeatable --extra-vars flag into the map the
+// Ansible runner passes through as `-e key=value`.
+//
+// This is the only way to reach a role default from the command line, which
+// matters most for the ones that are destructive by design: the `ad` role
+// reconciles passwords and group membership on every ad-data.yml run, and
+// `ad_reconcile_check_only=true` is what turns that into a report instead of a
+// write. Without a flag, rehearsing a reset meant editing defaults/main.yml.
+func parseExtraVars(cmd *cobra.Command) (map[string]string, error) {
+	pairs, _ := cmd.Flags().GetStringArray("extra-vars")
+	if len(pairs) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(pairs))
+	for _, p := range pairs {
+		k, v, ok := strings.Cut(p, "=")
+		if !ok || k == "" {
+			return nil, fmt.Errorf("--extra-vars %q is not key=value", p)
+		}
+		out[k] = v
+	}
+	return out, nil
+}
+
+// applyExtraVars layers user-supplied vars over the SOCKS tunnel's, so an
+// explicit -e always wins; the tunnel only sets connection plumbing, which
+// nobody overrides by accident. It also echoes what it applied, because a var
+// that silently failed to take effect is indistinguishable from one that did.
+func applyExtraVars(socksVars, extraVars map[string]string) map[string]string {
+	if len(extraVars) == 0 {
+		return socksVars
+	}
+	out := make(map[string]string, len(socksVars)+len(extraVars))
+	for k, v := range socksVars {
+		out[k] = v
+	}
+	for k, v := range extraVars {
+		out[k] = v
+	}
+	fmt.Printf("Extra vars: %s\n", strings.Join(sortedPairs(extraVars), " "))
+	return out
+}
+
+// sortedPairs renders a var map as stable "k=v" strings for display.
+func sortedPairs(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k, v := range m {
+		out = append(out, k+"="+v)
+	}
+	slices.Sort(out)
+	return out
+}
+
+type provisionFailure struct {
+	Playbook string
+	LogFile  string
+	Err      error
+}
+
+func (e *provisionFailure) Error() string {
+	return fmt.Sprintf("provisioning failed at %s: %v\n  see full log: %s", e.Playbook, e.Err, e.LogFile)
+}
+
+func (e *provisionFailure) Unwrap() error {
+	return e.Err
 }
 
 // provisionPlaybooks runs preflight checks then executes the given playbooks
 // with retry logic. Shared between `provision` and `lab reset`.
-func provisionPlaybooks(ctx context.Context, cfg *config.Config, playbooks []string, limit string, maxRetries, retryDelay int) error {
+func provisionPlaybooks(ctx context.Context, cfg *config.Config, playbooks []string, limit string, retry retryOverrides, extraVars map[string]string) error {
 	_ = os.MkdirAll(cfg.LogDir, 0o755)
 	logFile := filepath.Join(cfg.LogDir, fmt.Sprintf("%s-dreadgoad-%s.log",
 		cfg.Env, time.Now().Format("20060102_150405")))
@@ -377,6 +513,8 @@ func provisionPlaybooks(ctx context.Context, cfg *config.Config, playbooks []str
 		defer socksTunnel.Close()
 	}
 
+	runVars := applyExtraVars(socksVars, extraVars)
+
 	log := slog.Default()
 	useSSM := isSSMInventory(cfg)
 
@@ -394,17 +532,13 @@ func provisionPlaybooks(ctx context.Context, cfg *config.Config, playbooks []str
 			Limit:     limit,
 			Debug:     cfg.Debug,
 			LogFile:   logFile,
-			ExtraVars: socksVars,
+			ExtraVars: runVars,
 		}
-		if maxRetries > 0 {
-			opts.MaxRetries = maxRetries
-		}
-		if retryDelay > 0 {
-			opts.RetryDelay = time.Duration(retryDelay) * time.Second
-		}
+		retry.apply(&opts)
 
 		if err := ansible.RunPlaybookWithRetry(ctx, opts); err != nil {
-			return fmt.Errorf("provisioning failed at %s: %w\n  see full log: %s", playbook, err, logFile)
+			log.Error("provisioning failed", "playbook", playbook, "log_file", logFile, "error", err)
+			return &provisionFailure{Playbook: playbook, LogFile: logFile, Err: err}
 		}
 
 		// Between playbooks: clean up accumulated SSM sessions and wait
@@ -421,6 +555,7 @@ func provisionPlaybooks(ctx context.Context, cfg *config.Config, playbooks []str
 		}
 	}
 
+	log.Info("provisioning complete", "playbooks", len(playbooks), "log_file", logFile)
 	fmt.Println("===============================================")
 	fmt.Printf("All playbooks completed successfully at %s\n", time.Now().Format(time.RFC3339))
 	fmt.Printf("Full log: %s\n", logFile)

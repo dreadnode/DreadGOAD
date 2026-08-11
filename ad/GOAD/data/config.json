@@ -185,7 +185,7 @@
                 ]
             },
             "scripts" : ["asrep_roasting2.ps1"],
-            "vulns" : ["ntlmdowngrade", "disable_firewall",  "adcs_esc7", "adcs_esc13", "adcs_esc15"],
+            "vulns" : ["ntlmdowngrade", "disable_firewall",  "adcs_esc10_case1", "adcs_esc7", "adcs_esc13", "adcs_esc15"],
             "vulns_adcs_templates": ["ESC1", "ESC2", "ESC3", "ESC3-CRA", "ESC4", "ESC9"],
             "vulns_vars" : {
                 "adcs_esc7": {
@@ -271,16 +271,16 @@
                         "path" : "CN=Users,DC=essos,DC=local"
                     },
                     "Dragons":{
-                        "managed_by" : "goadmin",
+                        "managed_by" : "Administrator",
                         "path" : "CN=Users,DC=essos,DC=local"
                     },
                     "QueenProtector":{
-                        "managed_by" : "goadmin",
+                        "managed_by" : "Administrator",
                         "path" : "CN=Users,DC=essos,DC=local",
                         "members" : ["ESSOS\\Dragons"]
                     },
                     "Domain Admins":{
-                        "managed_by" : "goadmin",
+                        "managed_by" : "Administrator",
                         "path" : "CN=Users,DC=essos,DC=local",
                         "members" : ["ESSOS\\QueenProtector"]
                     }

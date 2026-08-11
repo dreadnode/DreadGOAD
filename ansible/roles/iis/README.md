@@ -21,7 +21,9 @@ Install and configure Internet Information Services web server
 - **Add SYSTEM allow rights to machine keys** (ansible.windows.win_acl)
 - **Create IIS directories** (ansible.windows.win_file)
 - **Deploy default website index** (ansible.windows.win_copy)
-- **Reboot if required** (ansible.windows.win_reboot) - Conditional
+- **Record pre-reboot boot time baseline (IIS install)** (ansible.windows.win_powershell) - Conditional
+- **Reboot if required** (block) - Conditional
+- **Trigger reboot via win_reboot** (ansible.windows.win_reboot)
 
 ## Example Playbook
 

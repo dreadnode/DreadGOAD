@@ -204,6 +204,7 @@ func toProviderInstance(i Instance) provider.Instance {
 		State:     i.State,
 		Account:   i.SubscriptionID,
 		Group:     i.ResourceGroup,
+		Tags:      i.Tags,
 	}
 }
 

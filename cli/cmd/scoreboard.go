@@ -50,10 +50,10 @@ func init() {
 	scoreboardCmd.AddCommand(scoreboardRunCmd)
 	scoreboardCmd.AddCommand(scoreboardDemoCmd)
 
-	scoreboardGenerateKeyAlias.Flags().String("config", "", "Path to GOAD config.json (default: ad/GOAD/data/config.json)")
+	scoreboardGenerateKeyAlias.Flags().String("config", "", "Path to GOAD config.json (default: the active environment's resolved lab config)")
 	scoreboardGenerateKeyAlias.Flags().String("output", "", "Output path for answer_key.json (default: scoreboard/answer_key.json)")
 
-	scoreboardDemoCmd.Flags().String("config", "", "Path to GOAD config.json (default: ad/GOAD/data/config.json)")
+	scoreboardDemoCmd.Flags().String("config", "", "Path to GOAD config.json (default: the active environment's resolved lab config)")
 
 	scoreboardRunCmd.Flags().String("transport", "local", "Transport: local, ssm, or ares")
 	scoreboardRunCmd.Flags().String("report", "./report.jsonl", "Path to the agent's report file (on the target, for local/ssm)")
@@ -196,7 +196,13 @@ func runScoreboardDemo(cmd *cobra.Command, _ []string) error {
 	}
 	configPath, _ := cmd.Flags().GetString("config")
 	if configPath == "" {
-		configPath = filepath.Join(cfg.ProjectRoot, "ad", "GOAD", "data", "config.json")
+		// Resolve through the active environment so overlays and variant labs
+		// are honored. Hardcoding ad/GOAD/data/config.json scores the base lab
+		// no matter which --env is selected.
+		configPath, err = cfg.ResolvedLabConfigPath()
+		if err != nil {
+			return err
+		}
 	}
 	ak, err := scoreboard.GenerateAnswerKey(configPath)
 	if err != nil {

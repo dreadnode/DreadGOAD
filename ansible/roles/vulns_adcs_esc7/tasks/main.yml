@@ -32,9 +32,17 @@
   ansible.windows.win_powershell:
     script: |
       [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-      Install-Module PSPKI -Force -ErrorAction Stop
-      if (-not (Get-Module -ListAvailable -Name PSPKI)) {
-        throw "PSPKI module installation failed"
+      # Guard the install the same way the NuGet task above does: -Force means a
+      # re-install would not error, but it still reaches out to PSGallery, so on
+      # a lab that already has PSPKI any egress hiccup becomes a fatal.
+      if (Get-Module -ListAvailable -Name PSPKI) {
+        $Ansible.Changed = $false
+      } else {
+        Install-Module PSPKI -Force -ErrorAction Stop
+        if (-not (Get-Module -ListAvailable -Name PSPKI)) {
+          throw "PSPKI module installation failed"
+        }
+        $Ansible.Changed = $true
       }
     error_action: stop
 

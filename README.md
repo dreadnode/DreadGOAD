@@ -16,7 +16,7 @@ DreadGOAD extends the upstream GOAD project with:
 - **AWS infrastructure automation** -- Terragrunt/Terraform modules for deploying labs in AWS with SSM-based management (no open ports)
 - **Modular extension system** -- plug-in extensions for ELK, Exchange, Wazuh, Guacamole, and more
 - **Variant generator** -- create graph-isomorphic lab copies with randomized entity names while preserving all attack paths
-- **Ansible collection (`dreadnode.goad`)** -- 80+ roles packaged as a reusable collection
+- **Ansible collection (`dreadnode.goad`)** -- 120+ roles packaged as a reusable collection
 - **Multi-provider support** -- VirtualBox, VMware, Proxmox, AWS, Azure, and Ludus
 
 ## Lab Environments
@@ -26,22 +26,28 @@ DreadGOAD extends the upstream GOAD project with:
 | [GOAD](ad/GOAD/) | 5 | 2 | 3 | Full lab -- the complete Game of Active Directory experience |
 | [GOAD-Light](ad/GOAD-Light/) | 3 | 1 | 2 | Lighter variant for resource-constrained setups |
 | [GOAD-Mini](ad/GOAD-Mini/) | 1 | 1 | 1 | Minimal single-DC lab |
+| [GOAD-variant-1](ad/GOAD-variant-1/) | 5 | 2 | 3 | Graph-isomorphic copy of GOAD with randomized entity names |
 | [MINILAB](ad/MINILAB/) | 2 | 1 | 1 | One DC + one workstation |
 | [SCCM](ad/SCCM/) | 4 | 1 | 1 | MECM/SCCM attack scenarios |
-| [NHA](ad/NHA/) | 5 | 2 | 3 | Ninja Hacker Academy -- challenge mode |
-| [DRACARYS](ad/DRACARYS/) | 4 | 1 | 2 | Training challenge variant |
+| [NHA](ad/NHA/) | 5 | 2 | 2 | Ninja Hacker Academy -- challenge mode |
+| [DRACARYS](ad/DRACARYS/) | 3 | 1 | 1 | Training challenge variant |
+| [TEMPLATE](ad/TEMPLATE/) | 2 | 1 | 1 | Scaffold for authoring your own lab |
 
-All labs feature 50+ intentional vulnerabilities including Kerberoasting, AS-REP
-roasting, ACL abuse chains, ADCS misconfigurations (ESC1-8), MSSQL attacks,
-delegation abuse, and more. See [docs/GOAD-vulnerabilities-comprehensive.md](docs/GOAD-vulnerabilities-comprehensive.md)
-for the full catalog.
+Vulnerability coverage varies by lab. The full GOAD lab is the richest, planting
+50+ intentional misconfigurations spanning Kerberoasting, AS-REP roasting, ACL
+abuse chains, ADCS misconfigurations (ESC1-4, ESC6-11, ESC13, ESC15), MSSQL
+linked-server abuse, and delegation abuse. The smaller labs deliberately carry a
+narrow subset: GOAD-Mini, MINILAB, DRACARYS, and TEMPLATE have no Kerberoastable
+accounts or MSSQL instances at all, and SCCM concentrates on MECM/SCCM attack
+paths. See [docs/GOAD-vulnerabilities-comprehensive.md](docs/GOAD-vulnerabilities-comprehensive.md)
+for the full catalog, which is scoped to the full GOAD lab.
 
 ## Quick Start
 
 ### Prerequisites
 
-- Ansible >= 2.15
-- Go 1.21+ (for building the CLI)
+- ansible-core >= 2.15, < 2.19 (the upper bound matters: 2.19 changed pipelining in ways that break the Windows modules over AWS SSM)
+- Go 1.26+ (for building the CLI)
 - A supported infrastructure provider (VirtualBox, VMware, Proxmox, AWS, Azure, or Ludus)
 
 ### Install
@@ -86,7 +92,8 @@ Create a randomized copy of any lab with unique names but identical attack paths
 
 - [CLI reference](docs/cli.md) -- command index plus Viper-based config, environment variables, and per-environment settings
 - [Domains and users](docs/domains-and-users.md) -- full network topology, credentials, and attack paths
-- [Vulnerability catalog](docs/GOAD-vulnerabilities-comprehensive.md) -- all 50+ vulnerabilities with exploitation techniques
+- [Vulnerability catalog](docs/GOAD-vulnerabilities-comprehensive.md) -- 50+ vulnerabilities in the full GOAD lab, with exploitation techniques
+- [Domain compromise paths](docs/domain-compromise-paths.md) -- every provisioned way to reach Domain Admin / golden ticket (29 distinct paths, ~133 permutations)
 - [Validation guide](docs/validation.md) -- automated vulnerability validation (with live dashboard and polling)
 - [Scoreboard guide](docs/scoreboard.md) -- live engagement status board (answer key + agent report verification)
 - [Provider guides](docs/mkdocs/docs/providers/) -- VirtualBox, VMware, Proxmox, AWS, Azure, Ludus
@@ -100,14 +107,13 @@ Create a randomized copy of any lab with unique names but identical attack paths
 ```text
 DreadGOAD/
 ├── ad/                    # Lab definitions (GOAD, GOAD-Light, MINILAB, SCCM, NHA, ...)
-├── ansible/               # Ansible collection with 80+ roles and custom modules
-├── cli/                   # Go CLI source (dreadgoad)
+├── ansible/               # Ansible collection with 120+ roles and custom modules
+├── cli/                   # Go CLI source (dreadgoad), including the variant generator
 ├── docs/                  # Documentation and architecture diagrams
 ├── extensions/            # Pluggable lab extensions (ELK, Exchange, Wazuh, ...)
 ├── infra/                 # Terragrunt configurations for AWS deployments
 ├── modules/               # Terraform modules (AWS networking, instance factory)
 ├── packer/                # VM templating (Vagrant, Proxmox)
-├── tools/                 # Variant generator and utilities
 ├── warpgate-templates/    # Golden AMI build templates (warpgate)
 └── template/              # Provider templates
 ```

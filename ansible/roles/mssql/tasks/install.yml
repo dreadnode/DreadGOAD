@@ -34,9 +34,29 @@
   failed_when: false
   changed_when: false
 
-- name: Reboot before install if pending (long timeout in case of update)
-  ansible.windows.win_reboot:
-    reboot_timeout: 1200
+- name: Record pre-reboot boot time baseline (pre-MSSQL install)
+  ansible.windows.win_powershell:
+    script: |
+      (Get-CimInstance -ClassName Win32_OperatingSystem -Property LastBootUpTime).LastBootUpTime.ToFileTime()
+  register: reboot_baseline
+  when: reboot_check.rc == 1
+
+- name: Reboot before install if pending
+  block:
+    - name: Trigger reboot via win_reboot
+      ansible.windows.win_reboot:
+        reboot_timeout: 300
+        post_reboot_delay: 60
+  rescue:
+    - name: Verify reboot completed (aws_ssm reconnect timeout is expected)
+      ansible.windows.win_powershell:
+        script: |
+          $current = (Get-CimInstance -ClassName Win32_OperatingSystem -Property LastBootUpTime).LastBootUpTime.ToFileTime()
+          if ($current -le {{ reboot_baseline.output[0] }}) { throw "host has not rebooted yet" }
+      register: reboot_verify
+      until: reboot_verify is succeeded
+      retries: 60
+      delay: 10
   when: reboot_check.rc == 1
 
 - name: Create SQL Server installation directories
@@ -156,8 +176,29 @@
   register: win_reg
   when: sql_version == "MSSQL_2019"
 
+- name: Record pre-reboot boot time baseline (post-registry change)
+  ansible.windows.win_powershell:
+    script: |
+      (Get-CimInstance -ClassName Win32_OperatingSystem -Property LastBootUpTime).LastBootUpTime.ToFileTime()
+  register: reboot_baseline
+  when: win_reg.changed
+
 - name: Reboot if registry was changed
-  ansible.windows.win_reboot:
+  block:
+    - name: Trigger reboot via win_reboot
+      ansible.windows.win_reboot:
+        reboot_timeout: 300
+        post_reboot_delay: 60
+  rescue:
+    - name: Verify reboot completed (aws_ssm reconnect timeout is expected)
+      ansible.windows.win_powershell:
+        script: |
+          $current = (Get-CimInstance -ClassName Win32_OperatingSystem -Property LastBootUpTime).LastBootUpTime.ToFileTime()
+          if ($current -le {{ reboot_baseline.output[0] }}) { throw "host has not rebooted yet" }
+      register: reboot_verify
+      until: reboot_verify is succeeded
+      retries: 30
+      delay: 10
   when: win_reg.changed
 
 - name: Firewall | Allow MSSQL through Firewall

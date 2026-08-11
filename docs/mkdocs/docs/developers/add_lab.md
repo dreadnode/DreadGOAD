@@ -78,6 +78,18 @@ overlay files (`{env}-overlay.json`) that contain only the fields that
 differ from the base `config.json`. The CLI merges them at runtime using
 RFC 7386 JSON Merge Patch. See `docs/cli.md` in the repository for the overlay format and resolution order.
 
+Arrays replace, they do not merge. If an overlay redeclares a host's `vulns`,
+that list becomes the complete set for the environment and the base list is
+discarded, so adding a vuln to `config.json` alone does nothing wherever an
+overlay names that host. The failure is silent in both directions: nothing
+dangles, so a referential check sees a valid document, and `vulnerabilities.yml`
+just never includes the missing role, leaving `PLAY RECAP` reporting `failed=0`.
+
+After adding a vuln to any `config.json`, add it to every `{env}-overlay.json`
+that redeclares that host. `TestLabConfigIntegrity` enforces this via
+`CheckOverlayDrops`; a deliberate removal goes in
+`cli/internal/labconfig/testdata/known_findings.txt` with a reason.
+
 ## Inventory files
 
 The `data/inventory` file is an Ansible inventory that defines host groups and connection variables (WinRM settings, credentials). Each provider also has its own `inventory` file under `providers/<provider>/` that overrides connection-specific values (IP addresses, ports) for that provider.

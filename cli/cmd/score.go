@@ -11,6 +11,7 @@ import (
 
 	"github.com/dreadnode/dreadgoad/internal/azure"
 	"github.com/dreadnode/dreadgoad/internal/config"
+	"github.com/dreadnode/dreadgoad/internal/provider"
 	"github.com/dreadnode/dreadgoad/internal/scoreboard"
 	"github.com/spf13/cobra"
 )
@@ -49,7 +50,7 @@ func init() {
 	scoreCmd.Flags().String("ssh-key", "", "Path to SSH private key for the Kali VM (Azure; auto-discovered if omitted)")
 	scoreCmd.Flags().String("ssh-user", "kali", "SSH username for the Kali VM (Azure)")
 
-	scoreGenerateKeyCmd.Flags().String("config", "", "Path to GOAD config.json (default: ad/GOAD/data/config.json)")
+	scoreGenerateKeyCmd.Flags().String("config", "", "Path to GOAD config.json (default: the active environment's resolved lab config)")
 	scoreGenerateKeyCmd.Flags().String("output", "", "Output path for answer_key.json (default: scoreboard/answer_key.json)")
 }
 
@@ -147,20 +148,54 @@ func buildShellRunner(ctx context.Context, cmd *cobra.Command, cfg *config.Confi
 		return buildAWSRunner(ctx, cmd, cfg, attackBox)
 	}
 
-	// No --attack-box: auto-detect provider.
-	if cfg.Provider == "azure" {
+	// No --attack-box: auto-detect provider and locate the tagged attack box.
+	if cfg.ResolvedProvider() == provider.NameAzure {
 		return buildAzureRunner(ctx, cmd, cfg, "")
 	}
-	return nil, fmt.Errorf("--attack-box is required with --live-verify (or set -p azure for auto-discovery)")
+	if cfg.ResolvedProvider() == provider.NameAWS {
+		region, profile, err := resolveAWSConnectionConfig(cmd, cfg)
+		if err != nil {
+			return nil, err
+		}
+		prov, err := provider.New(ctx, provider.NameAWS, provider.ConstructorOpts{
+			Region:     region,
+			AWSProfile: profile,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("create AWS provider: %w", err)
+		}
+		instances, err := prov.DiscoverInstances(ctx, cfg.Env)
+		if err != nil {
+			return nil, fmt.Errorf("discover AWS instances: %w", err)
+		}
+		kali := provider.FindInstanceByRole(instances, "AttackBox")
+		if kali == nil {
+			return nil, fmt.Errorf("no running Kali attack box (Role=AttackBox) found for env=%s; pass --attack-box to override", cfg.Env)
+		}
+		return scoreboard.NewSSMShellRunner(ctx, kali.ID, region, profile)
+	}
+	return nil, fmt.Errorf("--attack-box is required with --live-verify for provider %s", cfg.ResolvedProvider())
 }
 
 func buildAWSRunner(ctx context.Context, cmd *cobra.Command, cfg *config.Config, instanceID string) (scoreboard.ShellRunner, error) {
+	region, profile, err := resolveAWSConnectionConfig(cmd, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return scoreboard.NewSSMShellRunner(ctx, instanceID, region, profile)
+}
+
+func resolveAWSConnectionConfig(cmd *cobra.Command, cfg *config.Config) (string, string, error) {
 	region, _ := cmd.Flags().GetString("region")
 	if region == "" {
-		region = cfg.Region
+		var err error
+		region, err = cfg.ResolveRegion()
+		if err != nil {
+			return "", "", err
+		}
 	}
 	profile, _ := cmd.Flags().GetString("profile")
-	return scoreboard.NewSSMShellRunner(ctx, instanceID, region, profile)
+	return region, profile, nil
 }
 
 func buildAzureRunner(ctx context.Context, cmd *cobra.Command, cfg *config.Config, vmResourceID string) (scoreboard.ShellRunner, error) {
@@ -238,7 +273,13 @@ func runScoreGenerateKey(cmd *cobra.Command, _ []string) error {
 	}
 	configPath, _ := cmd.Flags().GetString("config")
 	if configPath == "" {
-		configPath = filepath.Join(cfg.ProjectRoot, "ad", "GOAD", "data", "config.json")
+		// Resolve through the active environment so overlays and variant labs
+		// are honored. Hardcoding ad/GOAD/data/config.json scores the base lab
+		// no matter which --env is selected.
+		configPath, err = cfg.ResolvedLabConfigPath()
+		if err != nil {
+			return err
+		}
 	}
 	outputPath, _ := cmd.Flags().GetString("output")
 	if outputPath == "" {

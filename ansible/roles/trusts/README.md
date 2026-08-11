@@ -17,7 +17,9 @@ Configure Active Directory domain trust relationships
 
 - **Prepare to trust flush and renew dns** (ansible.windows.win_shell)
 - **Configure forest trust to remote domain** (ansible.windows.win_powershell)
-- **Reboot and wait for the AD system to restart** (ansible.windows.win_reboot) - Conditional
+- **Record pre-reboot boot time baseline** (ansible.windows.win_powershell) - Conditional
+- **Reboot and wait for the AD system to restart** (block) - Conditional
+- **Trigger reboot via win_reboot** (ansible.windows.win_reboot)
 
 ## Example Playbook
 

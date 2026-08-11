@@ -1,0 +1,151 @@
+---
+# Group membership is add-only everywhere in this collection, so a group an
+# agent added itself to during an attack run survives the reset. Diff each
+# lab-managed group against the config and remove what should not be there.
+#
+# Must run after every add-member task in this role, otherwise it reconciles
+# against a half-built baseline and removes members that are about to be added.
+
+- name: Reconcile group membership against the lab config
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()]
+      param (
+        [string]$UsersB64,
+        [string]$GroupsB64,
+        [string]$MultiDomainB64,
+        [string]$AdminUser,
+        [string[]]$ProtectedAccounts,
+        [bool]$CheckOnly
+      )
+
+      $ProgressPreference = 'SilentlyContinue'
+
+      $users  = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($UsersB64))  | ConvertFrom-Json
+      $groups = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($GroupsB64)) | ConvertFrom-Json
+      $multi  = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($MultiDomainB64)) | ConvertFrom-Json
+
+      $domain    = Get-ADDomain
+      $domainSid = $domain.DomainSID.Value
+
+      $neverRemove = @{}
+      foreach ($n in @($ProtectedAccounts)) {
+        if ($n) { $neverRemove[$n.ToLower()] = $true }
+      }
+
+      # expected[group] = set of sAMAccountNames the config says belong to it.
+      # Only groups that appear here are reconciled at all, so a group the lab
+      # has no opinion about is never touched.
+      $expected = @{}
+      # A null Member registers the group for reconciliation with no expected
+      # members, which is how declared-but-empty groups get cleaned.
+      function Add-Expected {
+        param([string]$Group, [string]$Member)
+        if (-not $Group) { return }
+        $g = $Group.ToLower()
+        if (-not $expected.ContainsKey($g)) { $expected[$g] = @{} }
+        if (-not $Member) { return }
+        # Config writes members as NETBIOS\Name or fqdn\Name; AD compares on
+        # the bare sAMAccountName. Foreign principals are filtered by SID
+        # below, so a stripped foreign name can only ever over-permit a
+        # same-domain account that shares its sAMAccountName.
+        $m = ($Member -replace '^.*\\', '').ToLower()
+        $expected[$g][$m] = $true
+      }
+
+      foreach ($u in $users.PSObject.Properties) {
+        foreach ($g in @($u.Value.groups)) { Add-Expected -Group $g -Member $u.Name }
+      }
+      foreach ($scope in $groups.PSObject.Properties) {
+        foreach ($grp in $scope.Value.PSObject.Properties) {
+          # Seed every declared group even when it has no declared members, so
+          # a group whose membership is entirely cross-domain still gets
+          # reconciled instead of silently accepting anything added to it.
+          Add-Expected -Group $grp.Name -Member $null
+          foreach ($m in @($grp.Value.members)) { Add-Expected -Group $grp.Name -Member $m }
+        }
+      }
+      # multi_domain_groups_member is applied by the groups_domains role in a
+      # later play and can name principals in this domain as well as foreign
+      # ones. Without it those same-domain members look unmanaged and get
+      # stripped whenever ad-data runs without ad-relations.
+      foreach ($grp in $multi.PSObject.Properties) {
+        foreach ($m in @($grp.Value)) { Add-Expected -Group $grp.Name -Member $m }
+      }
+      Add-Expected -Group 'Domain Admins' -Member $AdminUser
+
+      $drift  = @()
+      $errors = @()
+      $kept   = 0
+
+      foreach ($gname in $expected.Keys) {
+        try {
+          $grp = Get-ADGroup -Identity $gname -Properties member -ErrorAction Stop
+        } catch {
+          $errors += ("group " + $gname + " not found: " + $_.Exception.Message)
+          continue
+        }
+
+        foreach ($dn in @($grp.member)) {
+          try {
+            $obj = Get-ADObject -Identity $dn -Properties objectSid, sAMAccountName, objectClass -ErrorAction Stop
+          } catch {
+            $errors += ("resolve " + $dn + ": " + $_.Exception.Message)
+            continue
+          }
+
+          # Machine accounts join groups through domain join, not lab config.
+          if ($obj.objectClass -eq 'computer') { continue }
+          if (-not $obj.objectSid) { continue }
+          $sidStr = $obj.objectSid.Value
+
+          # Cross-domain members come from multi_domain_groups_member and are
+          # applied by the groups_domains role in a later play. Removing them
+          # here would strip them whenever ad-data runs without ad-relations.
+          if (-not $sidStr.StartsWith($domainSid + "-")) { continue }
+
+          # RIDs below 1000 are built-ins the lab does not enumerate:
+          # Administrator (500), krbtgt (502), Enterprise Admins (519), and
+          # the default nesting between the admin groups.
+          $rid = [int](($sidStr -split '-')[-1])
+          if ($rid -lt 1000) { continue }
+
+          $sam = $obj.sAMAccountName
+          if (-not $sam) { continue }
+          $samLower = $sam.ToLower()
+          if ($neverRemove.ContainsKey($samLower)) { continue }
+
+          if ($expected[$gname].ContainsKey($samLower)) {
+            $kept++
+            continue
+          }
+
+          $drift += ($gname + " <- " + $sam)
+          if (-not $CheckOnly) {
+            try {
+              Remove-ADGroupMember -Identity $grp -Members $obj.DistinguishedName -Confirm:$false -ErrorAction Stop
+            } catch {
+              $errors += ("remove " + $sam + " from " + $gname + ": " + $_.Exception.Message)
+            }
+          }
+        }
+      }
+
+      foreach ($d in $drift) {
+        if ($CheckOnly) { Write-Output ("DRIFT " + $d) } else { Write-Output ("REMOVED " + $d) }
+      }
+      foreach ($e in $errors) { Write-Warning $e }
+
+      if ($drift.Count -eq 0) {
+        Write-Output ("group membership clean (" + $kept + " expected members verified across " + $expected.Count + " groups)")
+      }
+
+      $Ansible.Changed = ($drift.Count -gt 0) -and (-not $CheckOnly)
+    parameters:
+      UsersB64: "{{ ad_users | to_json | b64encode }}"
+      GroupsB64: "{{ ad_groups | to_json | b64encode }}"
+      MultiDomainB64: "{{ ad_multi_domain_groups_member | to_json | b64encode }}"
+      AdminUser: "{{ admin_user }}"
+      ProtectedAccounts: "{{ ad_reconcile_protected_accounts }}"
+      CheckOnly: "{{ ad_reconcile_check_only }}"
+  register: group_membership_reconcile

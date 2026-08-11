@@ -3,6 +3,7 @@ package variant
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -12,6 +13,43 @@ import (
 	"strings"
 	"unicode/utf8"
 )
+
+// CompletionMarkerName is written only after a variant generation run reaches
+// the end successfully. Its absence means an existing target may be partial.
+const CompletionMarkerName = ".dreadgoad-variant-complete"
+
+const completionMarkerContent = "complete\n"
+
+// IsComplete reports whether target contains a valid completion marker.
+func IsComplete(target string) (bool, error) {
+	marker := filepath.Join(target, CompletionMarkerName)
+	data, err := os.ReadFile(marker)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect completion marker: %w", err)
+	}
+	if string(data) != completionMarkerContent {
+		return false, fmt.Errorf("completion marker has invalid contents: %s", marker)
+	}
+	return true, nil
+}
+
+func writeCompletionMarker(target string) error {
+	marker := filepath.Join(target, CompletionMarkerName)
+	tmp := marker + ".tmp"
+	if err := os.WriteFile(tmp, []byte(completionMarkerContent), 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, marker); err != nil {
+		if removeErr := os.Remove(tmp); removeErr != nil {
+			return fmt.Errorf("rename marker: %w; cleanup: %v", err, removeErr)
+		}
+		return fmt.Errorf("rename marker: %w", err)
+	}
+	return nil
+}
 
 // LabConfig is the top-level structure of a GOAD config.json.
 // All known fields are modeled; if a config adds new top-level keys they
@@ -40,6 +78,12 @@ type HostConfig struct {
 	MSSQL              *MSSQLConfig        `json:"mssql,omitempty"`
 	// RemoteDesktopUsers appears at host top-level in some upstream GOAD configs.
 	RemoteDesktopUsers []string `json:"Remote Desktop Users,omitempty"`
+	// OS marks non-Windows hosts (DRACARYS uses "linux" for lx01).
+	OS string `json:"os,omitempty"`
+	// VulnsADCSTemplates lists the certificate templates published for this
+	// host; read by cli/internal/ansible/prepare.go to drive the
+	// vulns_adcs_templates role.
+	VulnsADCSTemplates []string `json:"vulns_adcs_templates,omitempty"`
 }
 
 // MSSQLConfig holds MSSQL server configuration for a host.
@@ -87,6 +131,14 @@ type DomainConfig struct {
 	GMSA                    map[string]GMSAConfig  `json:"gmsa,omitempty"`
 	ACLs                    map[string]ACLConfig   `json:"acls"`
 	Users                   map[string]*UserConfig `json:"users"`
+	// CAWebEnrollment is a pointer so an explicit false survives the round-trip.
+	// ansible/playbooks/adcs.yml treats absent as true, so dropping a false here
+	// silently turns CA web enrollment back on in the generated variant.
+	CAWebEnrollment *bool `json:"ca_web_enrollment,omitempty"`
+	// SCCM holds the MECM/SCCM site configuration (SCCM lab only). Kept as a raw
+	// map because the generator has no reason to reshape it; entity names inside
+	// are still randomized by the text-level replacement pass.
+	SCCM map[string]any `json:"sccm,omitempty"`
 }
 
 // OUConfig represents an organisational unit.
@@ -229,6 +281,9 @@ func (g *Generator) Run() error {
 
 	g.generateMappings(config)
 	g.buildOrderedReplacements()
+	if err := createFreshTarget(g.TargetPath); err != nil {
+		return err
+	}
 
 	if err := g.copyAndTransform(); err != nil {
 		return fmt.Errorf("transform: %w", err)
@@ -238,17 +293,33 @@ func (g *Generator) Run() error {
 		return fmt.Errorf("save mappings: %w", err)
 	}
 
-	valid := g.validate()
-	g.createDocumentation()
+	if err := g.validate(); err != nil {
+		return fmt.Errorf("variant validation failed: %w", err)
+	}
+	if err := g.createDocumentation(); err != nil {
+		return fmt.Errorf("create documentation: %w", err)
+	}
+	if err := writeCompletionMarker(g.TargetPath); err != nil {
+		return fmt.Errorf("write completion marker: %w", err)
+	}
 
 	fmt.Printf("\n%s\n", strings.Repeat("=", 60))
-	if valid {
-		fmt.Println("Variant generation complete and validated!")
-	} else {
-		fmt.Println("Variant generated but validation found issues")
-	}
+	fmt.Println("Variant generation complete and validated!")
 	fmt.Printf("%s\n\n", strings.Repeat("=", 60))
 
+	return nil
+}
+
+func createFreshTarget(target string) error {
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return fmt.Errorf("create variant target parent: %w", err)
+	}
+	if err := os.Mkdir(target, 0o755); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("variant target already exists: %s; move or remove it before generating", target)
+		}
+		return fmt.Errorf("create variant target: %w", err)
+	}
 	return nil
 }
 
@@ -942,7 +1013,7 @@ var textFilenames = map[string]bool{
 }
 
 // transformFile transforms a single file with replacements and writes to target.
-func (g *Generator) transformFile(srcPath, relPath string) (transformed bool) {
+func (g *Generator) transformFile(srcPath, relPath string) (transformed bool, err error) {
 	// Rename file paths based on entity mappings (e.g., arya.txt -> thomas.txt).
 	newRelPath := g.applyReplacements(relPath)
 	ext := filepath.Ext(srcPath)
@@ -950,25 +1021,23 @@ func (g *Generator) transformFile(srcPath, relPath string) (transformed bool) {
 	targetFile := filepath.Join(g.TargetPath, newRelPath)
 
 	if err := os.MkdirAll(filepath.Dir(targetFile), 0o755); err != nil {
-		fmt.Printf("Warning: mkdir failed for %s: %v\n", relPath, err)
-		return false
+		return false, fmt.Errorf("create target directory for %s: %w", relPath, err)
 	}
 
 	isText := textExtensions[ext] || textFilenames[base] || (ext == "" && g.isTextFile(srcPath))
 	if !isText {
 		if err := copyFile(srcPath, targetFile); err != nil {
-			fmt.Printf("Warning: Could not copy %s: %v\n", relPath, err)
+			return false, err
 		}
-		return false
+		return false, nil
 	}
 
 	content, err := os.ReadFile(srcPath)
 	if err != nil {
-		fmt.Printf("Warning: Could not read %s: %v\n", relPath, err)
 		if cpErr := copyFile(srcPath, targetFile); cpErr != nil {
-			fmt.Printf("Warning: fallback copy also failed: %v\n", cpErr)
+			return false, fmt.Errorf("read %s: %v; fallback copy: %w", srcPath, err, cpErr)
 		}
-		return false
+		return false, nil
 	}
 
 	newContent := g.applyReplacements(string(content))
@@ -978,10 +1047,9 @@ func (g *Generator) transformFile(srcPath, relPath string) (transformed bool) {
 	newContent = g.transformConfigJSON(base, newContent)
 
 	if err := os.WriteFile(targetFile, []byte(newContent), 0o644); err != nil {
-		fmt.Printf("Warning: Could not write %s: %v\n", relPath, err)
-		return false
+		return false, fmt.Errorf("write %s: %w", targetFile, err)
 	}
-	return true
+	return true, nil
 }
 
 // copyAndTransform copies the source directory, transforming text files.
@@ -1011,10 +1079,6 @@ func (g *Generator) transformConfigJSON(base, content string) string {
 func (g *Generator) copyAndTransform() error {
 	fmt.Println("\n=== Copying and Transforming Files ===")
 
-	if err := os.MkdirAll(g.TargetPath, 0o755); err != nil {
-		return err
-	}
-
 	var total, transformed, copied int
 
 	err := filepath.WalkDir(g.SourcePath, func(path string, d fs.DirEntry, err error) error {
@@ -1028,14 +1092,24 @@ func (g *Generator) copyAndTransform() error {
 			return nil
 		}
 
-		// Skip .git files
-		rel, _ := filepath.Rel(g.SourcePath, path)
+		// Skip .git files and completion markers inherited from a variant source.
+		rel, err := filepath.Rel(g.SourcePath, path)
+		if err != nil {
+			return fmt.Errorf("resolve relative path for %s: %w", path, err)
+		}
 		if strings.Contains(rel, ".git") {
+			return nil
+		}
+		if d.Name() == CompletionMarkerName || d.Name() == CompletionMarkerName+".tmp" {
 			return nil
 		}
 
 		total++
-		if g.transformFile(path, rel) {
+		didTransform, err := g.transformFile(path, rel)
+		if err != nil {
+			return fmt.Errorf("process %s: %w", rel, err)
+		}
+		if didTransform {
 			transformed++
 		} else {
 			copied++
@@ -1081,25 +1155,29 @@ type violation struct {
 }
 
 // validate checks that no original GOAD names appear in variant files.
-func (g *Generator) validate() bool {
+func (g *Generator) validate() error {
 	fmt.Println("\n=== Validating Variant ===")
 
-	violations, filesChecked := g.findNameViolations()
+	violations, filesChecked, err := g.findNameViolations()
+	if err != nil {
+		return fmt.Errorf("scan generated files: %w", err)
+	}
 	fmt.Printf("Checked %d text files\n", filesChecked)
 	printViolations(violations)
+	if len(violations) > 0 {
+		return fmt.Errorf("found %d original-name violations", len(violations))
+	}
 
 	fmt.Println("\nValidating structure...")
-	g.validateStructureCounts()
-
-	return len(violations) == 0
+	return g.validateStructureCounts()
 }
 
-func (g *Generator) findNameViolations() ([]violation, int) {
+func (g *Generator) findNameViolations() ([]violation, int, error) {
 	var violations []violation
 	filesChecked := 0
 	skipFiles := map[string]bool{"mapping.json": true, "README.md": true}
 
-	if err := filepath.WalkDir(g.TargetPath, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(g.TargetPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
@@ -1113,10 +1191,13 @@ func (g *Generator) findNameViolations() ([]violation, int) {
 		filesChecked++
 		content, err := os.ReadFile(path)
 		if err != nil {
-			return nil
+			return fmt.Errorf("read %s: %w", path, err)
 		}
 		lower := strings.ToLower(string(content))
-		rel, _ := filepath.Rel(g.TargetPath, path)
+		rel, err := filepath.Rel(g.TargetPath, path)
+		if err != nil {
+			return fmt.Errorf("resolve relative path for %s: %w", path, err)
+		}
 		for _, name := range originalNames {
 			if strings.Contains(lower, name) {
 				re, err := regexp.Compile(`\b` + regexp.QuoteMeta(name) + `\b`)
@@ -1126,10 +1207,8 @@ func (g *Generator) findNameViolations() ([]violation, int) {
 			}
 		}
 		return nil
-	}); err != nil {
-		fmt.Printf("Warning: error walking variant directory: %v\n", err)
-	}
-	return violations, filesChecked
+	})
+	return violations, filesChecked, err
 }
 
 func printViolations(violations []violation) {
@@ -1150,18 +1229,18 @@ func printViolations(violations []violation) {
 	}
 }
 
-func (g *Generator) validateStructureCounts() {
+func (g *Generator) validateStructureCounts() error {
 	origConfig, err := g.loadConfig()
 	if err != nil {
-		return
+		return fmt.Errorf("load source structure: %w", err)
 	}
 	varData, err := os.ReadFile(filepath.Join(g.TargetPath, "data", "config.json"))
 	if err != nil {
-		return
+		return fmt.Errorf("read generated structure: %w", err)
 	}
 	var varConfig LabConfig
-	if json.Unmarshal(varData, &varConfig) != nil {
-		return
+	if err := json.Unmarshal(varData, &varConfig); err != nil {
+		return fmt.Errorf("parse generated structure: %w", err)
 	}
 	origHosts := len(origConfig.Lab.Hosts)
 	varHosts := len(varConfig.Lab.Hosts)
@@ -1176,10 +1255,14 @@ func (g *Generator) validateStructureCounts() {
 	}
 	fmt.Printf("  Hosts: %d -> %d %s\n", origHosts, varHosts, checkMark(origHosts, varHosts))
 	fmt.Printf("  Domains: %d -> %d %s\n", origDomains, varDomains, checkMark(origDomains, varDomains))
+	if origHosts != varHosts || origDomains != varDomains {
+		return fmt.Errorf("structure count mismatch: hosts %d -> %d, domains %d -> %d", origHosts, varHosts, origDomains, varDomains)
+	}
+	return nil
 }
 
 // createDocumentation generates a README for the variant.
-func (g *Generator) createDocumentation() {
+func (g *Generator) createDocumentation() error {
 	readme := fmt.Sprintf(`# GOAD %s
 
 This is a graph-isomorphic variant of the GOAD (Game of Active Directory) lab environment.
@@ -1227,10 +1310,10 @@ Generated by GOAD Variant Generator
 
 	readmePath := filepath.Join(g.TargetPath, "README.md")
 	if err := os.WriteFile(readmePath, []byte(readme), 0o644); err != nil {
-		fmt.Printf("Warning: failed to write documentation %s: %v\n", readmePath, err)
-		return
+		return fmt.Errorf("write %s: %w", readmePath, err)
 	}
 	fmt.Printf("Documentation created at %s\n", readmePath)
+	return nil
 }
 
 func copyFile(src, dst string) error {

@@ -18,7 +18,7 @@ func init() {
 		if opts.Region == "" {
 			return nil, fmt.Errorf("AWS region is required")
 		}
-		client, err := NewClient(ctx, opts.Region, "")
+		client, err := NewClient(ctx, opts.Region, opts.AWSProfile)
 		if err != nil {
 			return nil, err
 		}
@@ -212,6 +212,7 @@ func toProviderInstance(i Instance) provider.Instance {
 		PrivateIP: i.PrivateIP,
 		State:     i.State,
 		Account:   i.Account,
+		Tags:      i.Tags,
 		// Group stays empty: AWS has no resource-group equivalent. A range is
 		// identified by tag convention (see DiscoverInstances), not containment.
 	}
