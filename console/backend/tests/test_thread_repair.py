@@ -62,7 +62,13 @@ def _assert_well_formed(messages: list[Message]) -> None:
         index += 1
         answered: list[str] = []
         while index < len(messages) and messages[index].role == "tool":
-            answered.append(messages[index].tool_call_id)
+            call_id = messages[index].tool_call_id
+            # A tool message carrying no id answers nothing, which is the very
+            # thing this helper exists to catch. Without the assert it would
+            # compare as None against a real id and surface as a confusing
+            # mismatch rather than the malformed message it is.
+            assert call_id is not None, f"tool result at {index} has no tool_call_id"
+            answered.append(call_id)
             index += 1
         assert answered == expected, (
             f"at message {index}: calls {expected} answered by {answered}"
