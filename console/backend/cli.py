@@ -73,9 +73,7 @@ class RunningCommand:
         except RuntimeError:
             return  # no loop → best-effort SIGINT only
         if self._kill_task is None or self._kill_task.done():
-            self._kill_task = loop.create_task(
-                self._force_kill_after(self._KILL_GRACE)
-            )
+            self._kill_task = loop.create_task(self._force_kill_after(self._KILL_GRACE))
 
     def force_kill(self) -> None:
         """Immediately stop the owned process group during bounded teardown."""

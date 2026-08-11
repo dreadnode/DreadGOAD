@@ -47,6 +47,11 @@ runtimes: dict[str, SessionRuntime] = {}
 
 
 def runtime(session_id: str) -> SessionRuntime:
+    """Return the session's runtime state, creating it on first use.
+
+    Every other accessor here goes through this, so a caller never has to
+    decide whether a session has been seen before.
+    """
     current = runtimes.get(session_id)
     if current is None:
         current = SessionRuntime()
@@ -91,6 +96,11 @@ def release_cleanup(session_id: str) -> None:
 
 
 def session_closing(session_id: str) -> bool:
+    """Whether the session is mid-teardown and should refuse new work.
+
+    Reads ``runtimes`` directly rather than via :func:`runtime` so merely
+    asking the question cannot resurrect state for a session being evicted.
+    """
     current = runtimes.get(session_id)
     return current.closing if current is not None else False
 
@@ -134,6 +144,7 @@ def cancel_session(session_id: str) -> bool:
 
 
 def session_lock(session_id: str) -> asyncio.Lock:
+    """The per-session lock serialising turns, so one session runs one at a time."""
     return runtime(session_id).lock
 
 

@@ -116,7 +116,9 @@ class SessionService:
             root = self.sessions_root.resolve()
             target = Path(sdir).resolve()
             if target == root or root not in target.parents:
-                raise ValueError("refusing to delete a session dir outside sessions root")
+                raise ValueError(
+                    "refusing to delete a session dir outside sessions root"
+                )
             if target.exists():
                 await asyncio.to_thread(shutil.rmtree, target)
         await self.db.delete_session(session_id)
