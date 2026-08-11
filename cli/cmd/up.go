@@ -177,15 +177,16 @@ func upResumeCommand(stepID string, err error, opts upResumeOptions) string {
 	}
 
 	var failure *provisionFailure
-	if stepID == "provision" && errors.As(err, &failure) && failure.Playbook != "" {
+	switch {
+	case stepID == "provision" && errors.As(err, &failure) && failure.Playbook != "":
 		if opts.plays != "" {
 			command += " --plays " + shellQuoteResumeArg(remainingPlaybookSelection(opts.plays, failure.Playbook))
 		} else {
 			command += " --from-playbook " + shellQuoteResumeArg(failure.Playbook)
 		}
-	} else if opts.plays != "" {
+	case opts.plays != "":
 		command += " --plays " + shellQuoteResumeArg(opts.plays)
-	} else if opts.fromPlaybook != "" {
+	case opts.fromPlaybook != "":
 		command += " --from-playbook " + shellQuoteResumeArg(opts.fromPlaybook)
 	}
 	if opts.limit != "" {
