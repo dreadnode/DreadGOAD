@@ -11,6 +11,7 @@ import json
 import pathlib
 import sys
 import tempfile
+from collections.abc import Iterator
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
@@ -20,6 +21,7 @@ import os  # noqa: E402
 
 os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = _TMP
 
+import pytest  # noqa: E402
 from fastapi import WebSocketDisconnect  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -43,6 +45,19 @@ environments:
     variant_source: ad/GOAD
     vpc_cidr: "10.0.0.0/16"
 """
+
+
+@pytest.fixture
+def client() -> Iterator[TestClient]:
+    """A started app for the websocket tests below.
+
+    Entering TestClient runs the lifespan, which is what creates
+    ``app.state.db`` — several of these tests patch it. This module doubles as
+    a standalone script (see ``main``), where that setup is inline instead;
+    the pytest functions had no such fixture and so never ran.
+    """
+    with TestClient(app) as started:
+        yield started
 
 
 def main() -> None:
