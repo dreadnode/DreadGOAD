@@ -36,6 +36,7 @@ Deploy the lab end-to-end: doctor → infra apply → provision → health-check
 ```bash
 dreadgoad up                       # full pipeline
 dreadgoad up --from provision      # resume from a step
+dreadgoad up --from provision --from-playbook ad-data.yml
 dreadgoad up --skip-doctor         # bypass pre-flight checks
 dreadgoad up --limit dc01          # narrow provisioning to one host
 ```
@@ -43,11 +44,12 @@ dreadgoad up --limit dc01          # narrow provisioning to one host
 | Flag | Description |
 |------|-------------|
 | `--from string` | Resume from this step (`doctor`, `infra`, `provision`, `health-check`) |
+| `--from-playbook string` | Resume provisioning from this playbook onward |
 | `--skip-doctor` | Skip the doctor pre-flight checks |
 | `--limit string` | Limit provisioning to specific hosts |
 | `--plays string` | Comma-separated playbooks to run (default: all) |
-| `--max-retries int` | Max retry attempts for provisioning |
-| `--retry-delay int` | Delay between retries in seconds |
+| `--max-retries int` | Max retry attempts for provisioning (`0` disables retries) |
+| `--retry-delay int` | Delay between retries in seconds (`0` disables delay) |
 | `--module string` | Target a specific infra module |
 | `--exclude string` | Exclude infra modules (comma-separated) |
 
@@ -235,9 +237,9 @@ Runs Ansible playbooks to provision Active Directory infrastructure with error-s
 |------|-------------|
 | `--from string` | Resume provisioning from this playbook onward |
 | `--limit string` | Limit execution to specific hosts |
-| `--max-retries int` | Max retry attempts |
+| `--max-retries int` | Max retry attempts (`0` disables retries) |
 | `--plays string` | Comma-separated playbooks to run (default: all) |
-| `--retry-delay int` | Delay between retries in seconds |
+| `--retry-delay int` | Delay between retries in seconds (`0` disables delay) |
 
 ```bash
 # Run all provisioning playbooks
@@ -251,6 +253,9 @@ dreadgoad provision --plays "ad-groups.yml,ad-acl.yml"
 
 # Limit to specific hosts with retries
 dreadgoad provision --limit dc01 --max-retries 5
+
+# Run once with no automatic retry
+dreadgoad provision --max-retries 0
 ```
 
 ### ad-users
@@ -262,9 +267,9 @@ Shortcut for `provision --plays ad-data.yml`.
 | Flag | Description |
 |------|-------------|
 | `--limit string` | Limit execution to specific hosts |
-| `--max-retries int` | Max retry attempts |
+| `--max-retries int` | Max retry attempts (`0` disables retries) |
 | `--plays string` | Comma-separated playbooks to run |
-| `--retry-delay int` | Delay between retries in seconds |
+| `--retry-delay int` | Delay between retries in seconds (`0` disables delay) |
 
 ```bash
 dreadgoad ad-users

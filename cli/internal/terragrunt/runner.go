@@ -8,8 +8,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
+)
+
+const outputTailLimit = 64 * 1024
+
+var (
+	ansiEscapeRE     = regexp.MustCompile(`\x1b\[[0-?]*[ -/]*[@-~]`)
+	stateLockErrorRE = regexp.MustCompile(`(?i)(error acquiring the state lock|failed to acquire state lock)`)
+	stateLockIDRE    = regexp.MustCompile(`(?im)\bID:\s*([A-Za-z0-9][A-Za-z0-9._:/-]*)(?:\s|$|│)`)
+	shellSafeArgRE   = regexp.MustCompile(`^[A-Za-z0-9_./:-]+$`)
 )
 
 type Options struct {
@@ -54,11 +64,12 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	defer cleanup()
 
-	cmd.Stdout = writer
-	cmd.Stderr = writer
+	tail := newTailBuffer(outputTailLimit)
+	cmd.Stdout = io.MultiWriter(writer, tail)
+	cmd.Stderr = cmd.Stdout
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("terragrunt %s failed: %w", opts.Action, err)
+		return commandError(fmt.Sprintf("terragrunt %s failed", opts.Action), err, tail.String(), opts.TerragruntBinary)
 	}
 	return nil
 }
@@ -98,11 +109,12 @@ func RunAll(ctx context.Context, opts Options) error {
 	}
 	defer cleanup()
 
-	cmd.Stdout = writer
-	cmd.Stderr = writer
+	tail := newTailBuffer(outputTailLimit)
+	cmd.Stdout = io.MultiWriter(writer, tail)
+	cmd.Stderr = cmd.Stdout
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("terragrunt run --all %s failed: %w", opts.Action, err)
+		return commandError(fmt.Sprintf("terragrunt run --all %s failed", opts.Action), err, tail.String(), opts.TerragruntBinary)
 	}
 	return nil
 }
@@ -206,6 +218,75 @@ func buildEnv(opts Options) []string {
 		env = append(env, opts.ExtraEnv...)
 	}
 	return env
+}
+
+type tailBuffer struct {
+	limit int
+	buf   []byte
+}
+
+func newTailBuffer(limit int) *tailBuffer {
+	return &tailBuffer{limit: limit}
+}
+
+func (b *tailBuffer) Write(p []byte) (int, error) {
+	written := len(p)
+	if b.limit <= 0 {
+		return written, nil
+	}
+	if len(p) >= b.limit {
+		b.buf = append(b.buf[:0], p[len(p)-b.limit:]...)
+		return written, nil
+	}
+
+	overflow := len(b.buf) + len(p) - b.limit
+	if overflow > 0 {
+		copy(b.buf, b.buf[overflow:])
+		b.buf = b.buf[:len(b.buf)-overflow]
+	}
+	b.buf = append(b.buf, p...)
+	return written, nil
+}
+
+func (b *tailBuffer) String() string {
+	return string(b.buf)
+}
+
+func commandError(message string, runErr error, output, terragruntBinary string) error {
+	lockID := stateLockID(output)
+	if lockID == "" {
+		return fmt.Errorf("%s: %w", message, runErr)
+	}
+	if terragruntBinary == "" {
+		terragruntBinary = "terragrunt"
+	}
+	return fmt.Errorf("%s: %w\nTerraform state lock detected (ID: %s). "+
+		"After confirming no other operation is running, run this from the locked module directory:\n  %s force-unlock %s",
+		message, runErr, lockID, shellQuote(terragruntBinary), lockID)
+}
+
+func shellQuote(value string) string {
+	if shellSafeArgRE.MatchString(value) {
+		return value
+	}
+	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
+}
+
+func stateLockID(output string) string {
+	clean := ansiEscapeRE.ReplaceAllString(output, "")
+	lockAt := stateLockErrorRE.FindStringIndex(clean)
+	if lockAt == nil {
+		return ""
+	}
+	lockOutput := clean[lockAt[0]:]
+	if infoAt := strings.Index(strings.ToLower(lockOutput), "lock info:"); infoAt >= 0 {
+		lockOutput = lockOutput[infoAt:]
+	}
+	match := stateLockIDRE.FindStringSubmatch(lockOutput)
+	if len(match) != 2 {
+		return ""
+	}
+	return match[1]
 }
 
 func outputWriter(logFile string) (io.Writer, func(), error) {

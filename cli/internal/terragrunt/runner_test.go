@@ -1,7 +1,11 @@
 package terragrunt
 
 import (
+	"context"
+	"errors"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -150,5 +154,137 @@ func TestOutputWriter_InvalidDir(t *testing.T) {
 	_, _, err := outputWriter(blockingFile + "/sub/test.log")
 	if err == nil {
 		t.Fatal("expected error for invalid log path, got nil")
+	}
+}
+
+func TestStateLockID(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   string
+	}{
+		{
+			name: "Terraform lock info",
+			output: `Error: Error acquiring the state lock
+
+Lock Info:
+  ID:        2f9a3fa7-14a9-4e74-a2ef-235a43f1bf00
+  Path:      state/prod.tfstate`,
+			want: "2f9a3fa7-14a9-4e74-a2ef-235a43f1bf00",
+		},
+		{
+			name: "OpenTofu output with Terragrunt prefix and ANSI",
+			output: "\x1b[31mERROR\x1b[0m [goad/dc01] Failed to acquire state lock\n" +
+				"[goad/dc01] Lock Info:\n[goad/dc01] │   ID: azure-lease-123 │\n",
+			want: "azure-lease-123",
+		},
+		{
+			name:   "unrelated ID is ignored without lock error",
+			output: "request failed\nID: request-123\n",
+		},
+		{
+			name:   "lock error without ID",
+			output: "Error acquiring the state lock: backend unavailable",
+		},
+		{
+			name:   "unsafe partial ID is rejected",
+			output: "Error acquiring the state lock\nLock Info:\n  ID: abc;rm",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := stateLockID(tc.output); got != tc.want {
+				t.Errorf("stateLockID() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTailBufferRetainsBoundedSuffix(t *testing.T) {
+	tail := newTailBuffer(5)
+	for _, chunk := range []string{"abc", "def", "gh"} {
+		if n, err := tail.Write([]byte(chunk)); err != nil || n != len(chunk) {
+			t.Fatalf("Write(%q) = (%d, %v)", chunk, n, err)
+		}
+	}
+	if got := tail.String(); got != "defgh" {
+		t.Errorf("tail = %q, want %q", got, "defgh")
+	}
+
+	if _, err := tail.Write([]byte("0123456789")); err != nil {
+		t.Fatalf("large Write() error: %v", err)
+	}
+	if got := tail.String(); got != "56789" {
+		t.Errorf("tail after large write = %q, want %q", got, "56789")
+	}
+}
+
+func TestCommandErrorAddsSafeUnlockHint(t *testing.T) {
+	cause := errors.New("exit status 1")
+	output := "Error acquiring the state lock\nLock Info:\n  ID: lock-123\n"
+	err := commandError("terragrunt apply failed", cause, output, "/opt/terragrunt tools/terragrunt")
+
+	if !errors.Is(err, cause) {
+		t.Error("command error does not unwrap to process failure")
+	}
+	for _, want := range []string{
+		"Terraform state lock detected (ID: lock-123)",
+		"confirming no other operation is running",
+		"'/opt/terragrunt tools/terragrunt' force-unlock lock-123",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not contain %q", err, want)
+		}
+	}
+
+	plain := commandError("terragrunt apply failed", cause, "ordinary failure", "terragrunt")
+	if plain.Error() != "terragrunt apply failed: exit status 1" {
+		t.Errorf("ordinary error changed: %q", plain)
+	}
+}
+
+func TestShellQuote(t *testing.T) {
+	tests := map[string]string{
+		"/opt/homebrew/bin/terragrunt": "/opt/homebrew/bin/terragrunt",
+		"/opt/terragrunt tools/tg":     "'/opt/terragrunt tools/tg'",
+		"/tmp/operator's/tg":           `'/tmp/operator'"'"'s/tg'`,
+	}
+	for input, want := range tests {
+		if got := shellQuote(input); got != want {
+			t.Errorf("shellQuote(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestRunnersSurfaceStateLockHint(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a POSIX shell fixture")
+	}
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "fake-terragrunt")
+	script := "#!/bin/sh\n" +
+		"printf '%s\\n' 'Error acquiring the state lock' >&2\n" +
+		"printf '%s\\n' 'Lock Info:' '  ID: integration-lock-456' >&2\n" +
+		"exit 1\n"
+	if err := os.WriteFile(binary, []byte(script), 0o755); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	opts := Options{Action: "apply", WorkDir: dir, TerragruntBinary: binary}
+	for _, tc := range []struct {
+		name string
+		run  func(context.Context, Options) error
+	}{
+		{name: "single module", run: Run},
+		{name: "run all", run: RunAll},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.run(context.Background(), opts)
+			want := binary + " force-unlock integration-lock-456"
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("runner error = %v, want state-lock recovery hint", err)
+			}
+		})
 	}
 }
