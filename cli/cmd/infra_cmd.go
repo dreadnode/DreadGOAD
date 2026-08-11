@@ -2,7 +2,9 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -106,7 +108,11 @@ func init() {
 func materializeLabConfig(cfg *config.Config) error {
 	resolved, err := cfg.ResolvedLabConfigPath()
 	if err != nil {
-		return nil // no config to materialize -- let terragrunt surface the error
+		if errors.Is(err, config.ErrLabConfigNotFound) {
+			slog.Debug("no lab config to materialize; continuing for standalone infrastructure", "error", err)
+			return nil
+		}
+		return fmt.Errorf("resolve lab config: %w", err)
 	}
 
 	dataDir := filepath.Join(cfg.ProjectRoot, "ad", "GOAD", "data")
@@ -121,7 +127,13 @@ func materializeLabConfig(cfg *config.Config) error {
 	if err != nil {
 		return fmt.Errorf("read resolved config: %w", err)
 	}
-	return os.WriteFile(expected, data, 0o644)
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		return fmt.Errorf("create lab config directory: %w", err)
+	}
+	if err := os.WriteFile(expected, data, 0o644); err != nil {
+		return fmt.Errorf("write lab config: %w", err)
+	}
+	return nil
 }
 
 func runInfraAction(action string) func(*cobra.Command, []string) error {

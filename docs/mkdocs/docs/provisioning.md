@@ -168,6 +168,9 @@ Configure retry behavior with:
 
 ```bash
 dreadgoad provision --max-retries 5 --retry-delay 60
+
+# Run the playbook once without automatic retries
+dreadgoad provision --max-retries 0
 ```
 
 ### When to stop and fix manually

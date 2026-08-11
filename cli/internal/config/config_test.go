@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -281,6 +282,15 @@ func TestLabConfigPath(t *testing.T) {
 			t.Errorf("LabConfigPath() = %q, want %q", got, want)
 		}
 	})
+}
+
+func TestResolvedLabConfigPathMarksMissingConfig(t *testing.T) {
+	c := &Config{ProjectRoot: resolveSymlinks(t, t.TempDir()), Env: "dev"}
+
+	_, err := c.ResolvedLabConfigPath()
+	if !errors.Is(err, ErrLabConfigNotFound) {
+		t.Fatalf("ResolvedLabConfigPath() error = %v, want ErrLabConfigNotFound", err)
+	}
 }
 
 func TestConfigInstanceProfile(t *testing.T) {

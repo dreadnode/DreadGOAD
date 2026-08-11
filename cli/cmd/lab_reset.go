@@ -249,8 +249,8 @@ func init() {
 	labResetCmd.Flags().Bool("skip-provision", false, "Skip the AD-state playbook stage")
 	labResetCmd.Flags().String("plays", "", "Comma-separated playbooks (default: AD-state set)")
 	labResetCmd.Flags().String("limit", "", "Limit playbook execution to specific hosts")
-	labResetCmd.Flags().Int("max-retries", 0, "Max retry attempts (default: from config)")
-	labResetCmd.Flags().Int("retry-delay", 0, "Delay between retries in seconds (default: from config)")
+	labResetCmd.Flags().Int("max-retries", 0, "Max retry attempts (default: from config; 0 disables retries)")
+	labResetCmd.Flags().Int("retry-delay", 0, "Delay between retries in seconds (default: from config; 0 disables delay)")
 	labResetCmd.Flags().Bool("skip-creator-check", false, "Skip the admin creator-SID safety belt during purge")
 	labResetCmd.Flags().StringArrayP("extra-vars", "E", nil, extraVarsUsage)
 }
@@ -496,8 +496,10 @@ func runLabReset(cmd *cobra.Command, args []string) error {
 	skipProvision, _ := cmd.Flags().GetBool("skip-provision")
 	playsFlag, _ := cmd.Flags().GetString("plays")
 	limit, _ := cmd.Flags().GetString("limit")
-	maxRetries, _ := cmd.Flags().GetInt("max-retries")
-	retryDelay, _ := cmd.Flags().GetInt("retry-delay")
+	retry, err := retryOverridesFromFlags(cmd)
+	if err != nil {
+		return err
+	}
 	skipCreator, _ := cmd.Flags().GetBool("skip-creator-check")
 	extraVars, err := parseExtraVars(cmd)
 	if err != nil {
@@ -524,7 +526,7 @@ func runLabReset(cmd *cobra.Command, args []string) error {
 
 	if !skipProvision {
 		fmt.Println("--- Stage 2: restore AD baseline state ---")
-		if err := provisionPlaybooks(ctx, cfg, playbooks, limit, maxRetries, retryDelay, extraVars); err != nil {
+		if err := provisionPlaybooks(ctx, cfg, playbooks, limit, retry, extraVars); err != nil {
 			return err
 		}
 	}

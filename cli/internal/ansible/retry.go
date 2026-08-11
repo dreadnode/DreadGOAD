@@ -16,18 +16,21 @@ import (
 
 // RetryOptions configures the retry behavior for a [RunPlaybookWithRetry] call.
 // MaxRetries and RetryDelay default to the values from the global [config.Config]
-// when left as zero.
+// when left as zero and their corresponding Set field is false. MaxRetries=0
+// with MaxRetriesSet=true means run once without retrying.
 type RetryOptions struct {
-	Playbook    string
-	Env         string
-	Inventories []string          // additional inventory paths
-	ExtraVars   map[string]string // extra variables passed to ansible-playbook
-	Limit       string
-	Debug       bool
-	MaxRetries  int
-	RetryDelay  time.Duration
-	LogFile     string
-	Log         *slog.Logger // optional; falls back to slog.Default()
+	Playbook      string
+	Env           string
+	Inventories   []string          // additional inventory paths
+	ExtraVars     map[string]string // extra variables passed to ansible-playbook
+	Limit         string
+	Debug         bool
+	MaxRetries    int
+	MaxRetriesSet bool
+	RetryDelay    time.Duration
+	RetryDelaySet bool
+	LogFile       string
+	Log           *slog.Logger // optional; falls back to slog.Default()
 }
 
 func (o *RetryOptions) logger() *slog.Logger {
@@ -36,6 +39,8 @@ func (o *RetryOptions) logger() *slog.Logger {
 	}
 	return slog.Default()
 }
+
+var runPlaybookAttempt = RunPlaybook
 
 // RunPlaybookWithRetry runs an Ansible playbook with error-specific retry logic.
 // On each failure it classifies the error via [DetectErrorType] and applies a
@@ -49,12 +54,10 @@ func RunPlaybookWithRetry(ctx context.Context, opts RetryOptions) error {
 	}
 	log := opts.logger()
 
-	if opts.MaxRetries == 0 {
-		opts.MaxRetries = cfg.MaxRetries
-	}
-	if opts.RetryDelay == 0 {
-		opts.RetryDelay = time.Duration(cfg.RetryDelay) * time.Second
-	}
+	var retriesDisabled bool
+	opts.MaxRetries, opts.RetryDelay, retriesDisabled = resolveRetrySettings(
+		opts, cfg.MaxRetries, time.Duration(cfg.RetryDelay)*time.Second,
+	)
 
 	retryForks := 2 // limit SSM concurrency to avoid session saturation
 	for attempt := range opts.MaxRetries {
@@ -78,7 +81,7 @@ func RunPlaybookWithRetry(ctx context.Context, opts RetryOptions) error {
 
 		log.Info("starting playbook", "playbook", opts.Playbook, "attempt", attempt+1, "max", opts.MaxRetries)
 
-		result := RunPlaybook(ctx, RunOptions{
+		result := runPlaybookAttempt(ctx, RunOptions{
 			Playbook:    opts.Playbook,
 			Env:         opts.Env,
 			Inventories: opts.Inventories,
@@ -104,6 +107,9 @@ func RunPlaybookWithRetry(ctx context.Context, opts RetryOptions) error {
 		log.Warn("playbook failed", "playbook", opts.Playbook,
 			"error_type", result.ErrorType, "detail", result.ErrorDetail,
 			"failed_hosts", result.FailedHosts)
+		if retriesDisabled {
+			continue
+		}
 
 		retryResult := retryWithErrorStrategy(ctx, opts, result, log)
 		if retryResult != nil && retryResult.Success {
@@ -113,6 +119,25 @@ func RunPlaybookWithRetry(ctx context.Context, opts RetryOptions) error {
 	}
 
 	return fmt.Errorf("playbook %s failed after %d attempts", opts.Playbook, opts.MaxRetries)
+}
+
+func resolveRetrySettings(opts RetryOptions, configuredMaxRetries int, configuredRetryDelay time.Duration) (int, time.Duration, bool) {
+	maxAttempts := opts.MaxRetries
+	if !opts.MaxRetriesSet && maxAttempts == 0 {
+		maxAttempts = configuredMaxRetries
+	}
+	retriesDisabled := maxAttempts <= 0
+	// Zero retries still means one initial playbook attempt. Treat a negative
+	// configured value the same way; CLI negatives are rejected before here.
+	if retriesDisabled {
+		maxAttempts = 1
+	}
+
+	retryDelay := opts.RetryDelay
+	if !opts.RetryDelaySet && retryDelay == 0 {
+		retryDelay = configuredRetryDelay
+	}
+	return maxAttempts, retryDelay, retriesDisabled
 }
 
 func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *RunResult, log *slog.Logger) *RunResult {
@@ -140,7 +165,7 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 		baseOpts.ExtraEnv = map[string]string{
 			"ANSIBLE_GATHERING": "explicit",
 		}
-		return RunPlaybook(ctx, baseOpts)
+		return runPlaybookAttempt(ctx, baseOpts)
 
 	case ErrNetworkAdapter:
 		log.Info("retrying with network adapter fix")
@@ -148,7 +173,7 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 			"skip_network_adapter_config": "true",
 			"bypass_ethernet3_check":      "true",
 		})
-		return RunPlaybook(ctx, baseOpts)
+		return runPlaybookAttempt(ctx, baseOpts)
 
 	case ErrSSMTransfer:
 		log.Info("SSM transfer error - fixing ssm-user accounts")
@@ -166,7 +191,7 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 			"ansible_aws_ssm_timeout":     "300",
 		})
 		baseOpts.ExtraEnv = map[string]string{"ANSIBLE_TIMEOUT": "300"}
-		return RunPlaybook(ctx, baseOpts)
+		return runPlaybookAttempt(ctx, baseOpts)
 
 	case ErrSSMReconnection:
 		log.Info("SSM reconnection needed - waiting for systems to reboot")
@@ -184,7 +209,7 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 			"ansible_facts_gathering_timeout": "60",
 		})
 		baseOpts.ExtraEnv = map[string]string{"ANSIBLE_TIMEOUT": "180"}
-		return RunPlaybook(ctx, baseOpts)
+		return runPlaybookAttempt(ctx, baseOpts)
 
 	case ErrPowerShell:
 		log.Info("retrying with PowerShell interactive mode fix")
@@ -193,7 +218,7 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 			"force_ps_module":    "true",
 			"ansible_ps_version": "5.1",
 		})
-		return RunPlaybook(ctx, baseOpts)
+		return runPlaybookAttempt(ctx, baseOpts)
 
 	case ErrSSMUserAccount:
 		log.Info("SSM user account issue - recreating as domain account")
@@ -208,7 +233,7 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 			"ansible_aws_ssm_timeout":    "300",
 		})
 		baseOpts.ExtraEnv = map[string]string{"ANSIBLE_TIMEOUT": "180"}
-		return RunPlaybook(ctx, baseOpts)
+		return runPlaybookAttempt(ctx, baseOpts)
 
 	case ErrMSIInstaller:
 		log.Info("MSI installer error - rebooting failed hosts before retry")
@@ -216,7 +241,7 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 		time.Sleep(30 * time.Second)
 
 		baseOpts.Forks = 1
-		return RunPlaybook(ctx, baseOpts)
+		return runPlaybookAttempt(ctx, baseOpts)
 
 	case ErrWUACOM:
 		log.Info("WUA COM corruption - rebooting to clear pending registry deletions")
@@ -224,7 +249,7 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 		time.Sleep(30 * time.Second)
 
 		baseOpts.Forks = 1
-		return RunPlaybook(ctx, baseOpts)
+		return runPlaybookAttempt(ctx, baseOpts)
 
 	default:
 		log.Info("retrying with general robust settings")
@@ -233,7 +258,7 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 			"ANSIBLE_SSH_RETRIES": "5",
 			"ANSIBLE_TIMEOUT":     "120",
 		}
-		return RunPlaybook(ctx, baseOpts)
+		return runPlaybookAttempt(ctx, baseOpts)
 	}
 }
 
