@@ -75,6 +75,79 @@ func setupTestSource(t *testing.T) (sourceDir, targetDir string) {
 	return sourceDir, targetDir
 }
 
+func TestTransformFileRepointsInventoryDomainName(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{
+			name:    "replaces existing value",
+			content: "[all:vars]\n  domain_name = GOAD\nadmin_user=administrator\n",
+			want:    "[all:vars]\n  domain_name = review-variant\nadmin_user=administrator\n",
+		},
+		{
+			name:    "inserts missing value",
+			content: "[all:vars]\nadmin_user=administrator\n",
+			want:    "[all:vars]\ndomain_name=review-variant\nadmin_user=administrator\n",
+		},
+		{
+			name:    "adds missing all vars section",
+			content: "[default]\ndc01 ansible_host=10.0.0.10\n",
+			want:    "[default]\ndc01 ansible_host=10.0.0.10\n\n[all:vars]\ndomain_name=review-variant\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sourceDir := t.TempDir()
+			targetDir := filepath.Join(t.TempDir(), "review-variant")
+			sourcePath := filepath.Join(sourceDir, "inventory_disable_vagrant")
+			if err := os.WriteFile(sourcePath, []byte(tt.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			gen := NewGenerator(sourceDir, targetDir, "test")
+			transformed, err := gen.transformFile(sourcePath, filepath.Join("data", "inventory_disable_vagrant"))
+			if err != nil {
+				t.Fatalf("transformFile() error: %v", err)
+			}
+			if !transformed {
+				t.Fatal("transformFile() reported inventory was copied without transformation")
+			}
+
+			got, err := os.ReadFile(filepath.Join(targetDir, "data", "inventory_disable_vagrant"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tt.want {
+				t.Fatalf("transformed inventory = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCopyAndTransformPreservesGitkeep(t *testing.T) {
+	sourceDir := t.TempDir()
+	targetDir := filepath.Join(t.TempDir(), "target")
+	relPath := filepath.Join("files", "srv02", "wwwroot", "upload", ".gitkeep")
+	sourcePath := filepath.Join(sourceDir, relPath)
+	if err := os.MkdirAll(filepath.Dir(sourcePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sourcePath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gen := NewGenerator(sourceDir, targetDir, "test")
+	if err := gen.copyAndTransform(); err != nil {
+		t.Fatalf("copyAndTransform() error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(targetDir, relPath)); err != nil {
+		t.Fatalf(".gitkeep was not preserved: %v", err)
+	}
+}
+
 func testConfig() *LabConfig {
 	config := &LabConfig{}
 	config.Lab.Hosts = map[string]*HostConfig{

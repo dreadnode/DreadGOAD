@@ -144,3 +144,45 @@ func TestBootstrapInventory(t *testing.T) {
 		}
 	})
 }
+
+func TestBootstrapFromProviderTemplateUsesDefaultVariantTarget(t *testing.T) {
+	dir := t.TempDir()
+	templatePath := filepath.Join(
+		dir,
+		"ad",
+		"GOAD-variant-1",
+		"providers",
+		"proxmox",
+		"inventory",
+	)
+	if err := os.MkdirAll(filepath.Dir(templatePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	template := "[default]\ndc01 ansible_host={{ip_range}}.10\n\n[all:vars]\ndomain_name=GOAD-variant-1\n"
+	if err := os.WriteFile(templatePath, []byte(template), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{
+		Env:         "dev",
+		Provider:    "proxmox",
+		ProjectRoot: dir,
+		Environments: map[string]config.EnvironmentConfig{
+			"dev": {Variant: true},
+		},
+		Proxmox: config.ProxmoxConfig{IPRange: "10.20.30"},
+	}
+	invPath := filepath.Join(dir, "dev-inventory")
+	if err := bootstrapFromProviderTemplate(invPath, cfg); err != nil {
+		t.Fatalf("bootstrapFromProviderTemplate() error: %v", err)
+	}
+
+	got, err := os.ReadFile(invPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "[default]\ndc01 ansible_host=10.20.30.10\n\n[all:vars]\ndomain_name=GOAD-variant-1\n"
+	if string(got) != want {
+		t.Fatalf("bootstrapped inventory = %q, want %q", got, want)
+	}
+}
