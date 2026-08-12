@@ -3,7 +3,7 @@ collections:
   - name: ansible.windows
     version: ">=2.5.0"
   - name: community.general
-    version: ">=13.2.0,<13.3.0"
+    version: ">=13.3.0,<13.4.0"
   - name: community.windows
     version: ">=2.3.0"
   - name: chocolatey.chocolatey
