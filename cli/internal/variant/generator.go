@@ -1045,11 +1045,69 @@ func (g *Generator) transformFile(srcPath, relPath string) (transformed bool, er
 		newContent = g.fixSecureStrings(newContent)
 	}
 	newContent = g.transformConfigJSON(base, newContent)
+	if strings.HasPrefix(base, "inventory") {
+		newContent = g.repointDomainName(newContent)
+	}
 
 	if err := os.WriteFile(targetFile, []byte(newContent), 0o644); err != nil {
 		return false, fmt.Errorf("write %s: %w", targetFile, err)
 	}
 	return true, nil
+}
+
+// repointDomainName rewrites the Ansible `domain_name` inventory variable to
+// the variant target folder basename. Playbooks resolve vuln scripts/files as
+// ad/{{ domain_name }}/..., so for a variant this must point at the variant's
+// own ad/<target>/ tree rather than the stock ad/GOAD/ tree. Existing values
+// are replaced in place; missing values are inserted under [all:vars], with
+// the section appended when the provider template does not define it.
+func (g *Generator) repointDomainName(content string) string {
+	target := filepath.Base(g.TargetPath)
+	re := regexp.MustCompile(`(?m)^(\s*domain_name\s*=\s*).*$`)
+	if re.MatchString(content) {
+		return re.ReplaceAllStringFunc(content, func(line string) string {
+			if idx := strings.Index(line, "="); idx >= 0 {
+				valueStart := idx + 1
+				for valueStart < len(line) && (line[valueStart] == ' ' || line[valueStart] == '\t') {
+					valueStart++
+				}
+				return line[:valueStart] + target
+			}
+			return line
+		})
+	}
+
+	header := regexp.MustCompile(`(?m)^\[all:vars\][ \t]*`)
+	loc := header.FindStringIndex(content)
+	lineEnding := "\n"
+	if strings.Contains(content, "\r\n") {
+		lineEnding = "\r\n"
+	}
+	if loc == nil {
+		separator := ""
+		if content != "" {
+			separator = lineEnding + lineEnding
+			if strings.HasSuffix(content, lineEnding) {
+				separator = lineEnding
+			}
+			if strings.HasSuffix(content, lineEnding+lineEnding) {
+				separator = ""
+			}
+		}
+		return content + separator + "[all:vars]" + lineEnding + "domain_name=" + target + lineEnding
+	}
+
+	insertAt := loc[1]
+	switch {
+	case strings.HasPrefix(content[insertAt:], "\r\n"):
+		insertAt += 2
+	case strings.HasPrefix(content[insertAt:], "\n"):
+		insertAt++
+	default:
+		return content[:insertAt] + lineEnding + "domain_name=" + target + content[insertAt:]
+	}
+
+	return content[:insertAt] + "domain_name=" + target + lineEnding + content[insertAt:]
 }
 
 // copyAndTransform copies the source directory, transforming text files.
@@ -1092,12 +1150,13 @@ func (g *Generator) copyAndTransform() error {
 			return nil
 		}
 
-		// Skip .git files and completion markers inherited from a variant source.
+		// Skip git metadata and inherited completion markers, but preserve
+		// .gitkeep placeholders required to retain otherwise-empty directories.
 		rel, err := filepath.Rel(g.SourcePath, path)
 		if err != nil {
 			return fmt.Errorf("resolve relative path for %s: %w", path, err)
 		}
-		if strings.Contains(rel, ".git") {
+		if strings.Contains(rel, ".git") && d.Name() != ".gitkeep" {
 			return nil
 		}
 		if d.Name() == CompletionMarkerName || d.Name() == CompletionMarkerName+".tmp" {

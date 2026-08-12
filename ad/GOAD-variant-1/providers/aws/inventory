@@ -17,4 +17,5 @@ dc03 ansible_host={{ip_range}}.12 dns_domain=dc03 dict_key=dc03 ansible_user=ans
 srv03 ansible_host={{ip_range}}.23 dns_domain=dc03 dict_key=srv03 ansible_user=ansible ansible_password=978i2pF43UJ-
 
 [all:vars]
+domain_name=GOAD-variant-1
 admin_user=goadmin
