@@ -25,6 +25,7 @@ type NameGenerator struct {
 	animals          []string
 	subdomainWords   []string
 	cityNames        []string
+	shareNames       []string
 }
 
 // NewNameGenerator creates a new NameGenerator with default word lists.
@@ -41,13 +42,13 @@ func NewNameGenerator() *NameGenerator {
 			"ventures", "enterprises", "group", "labs", "dynamics", "works",
 		},
 		firstNames: []string{
-			"James", "Michael", "Robert", "John", "David", "William",
+			"James", "Michael", "John", "David", "William",
 			"Richard", "Joseph", "Thomas", "Charles", "Christopher", "Daniel",
 			"Matthew", "Anthony", "Mark", "Donald", "Steven", "Paul",
 			"Andrew", "Joshua", "Kenneth", "Kevin", "Brian", "George",
 			"Timothy", "Ronald", "Edward", "Jason", "Jeffrey", "Ryan",
 			"Jacob", "Gary", "Nicholas", "Eric", "Jonathan", "Stephen",
-			"Larry", "Justin", "Scott", "Brandon", "Benjamin", "Samuel",
+			"Larry", "Justin", "Scott", "Benjamin", "Samuel",
 			"Raymond", "Gregory", "Alexander", "Patrick", "Frank", "Dennis",
 			"Mary", "Patricia", "Jennifer", "Linda", "Barbara", "Elizabeth",
 			"Susan", "Jessica", "Sarah", "Karen", "Nancy", "Lisa",
@@ -117,6 +118,12 @@ func NewNameGenerator() *NameGenerator {
 			"Phoenix", "Seattle", "Portland", "Austin", "Atlanta",
 			"Miami", "Philadelphia", "San Diego", "San Francisco", "New York",
 		},
+		shareNames: []string{
+			"fileshare", "teamdata", "xferdata", "dropzone", "hotfolder",
+			"netdrive", "workdocs", "collab", "pubfiles", "sharebox",
+			"fileserv", "datashare", "teamdrop", "filevault", "deptfiles",
+			"sharedocs", "groupdata", "netfiles", "batchdrop", "datapool",
+		},
 	}
 }
 
@@ -134,16 +141,24 @@ func (ng *NameGenerator) ensureUnique(name string) string {
 	return name
 }
 
+// mustRandInt returns a cryptographically random *big.Int in [0, max).
+// Panics if crypto/rand is unavailable (system is fatally broken).
+func mustRandInt(max *big.Int) *big.Int {
+	n, err := rand.Int(rand.Reader, max)
+	if err != nil {
+		panic("crypto/rand failed: " + err.Error())
+	}
+	return n
+}
+
 // secureChoice returns a cryptographically random element from a slice.
 func secureChoice(items []string) string {
-	n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(items))))
-	return items[n.Int64()]
+	return items[mustRandInt(big.NewInt(int64(len(items)))).Int64()]
 }
 
 // secureBool returns true with the given probability (0.0-1.0).
 func secureBool(probability float64) bool {
-	n, _ := rand.Int(rand.Reader, big.NewInt(1000))
-	return float64(n.Int64()) < probability*1000
+	return float64(mustRandInt(big.NewInt(1000)).Int64()) < probability*1000
 }
 
 // GenerateDomainName generates a corporate-style domain name fitting NetBIOS limits.
@@ -220,11 +235,16 @@ func (ng *NameGenerator) GenerateGMSAName() string {
 	return ng.ensureUnique("gmsa" + secureChoice(ng.animals))
 }
 
+// GenerateShareName generates a realistic network share name.
+func (ng *NameGenerator) GenerateShareName() string {
+	return ng.ensureUnique(secureChoice(ng.shareNames))
+}
+
 const (
 	lowerChars   = "abcdefghijklmnopqrstuvwxyz"
 	upperChars   = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 	digitChars   = "0123456789"
-	specialChars = "!@#$%^&*()-_=+[]{}|;:,.<>?"
+	specialChars = "!@#$%^&*()-_=+|;:,.<>?"
 )
 
 type charClasses struct {
@@ -280,7 +300,7 @@ func (cc charClasses) seedRequired() []byte {
 		seed = append(seed, secureChoiceByte(digitChars))
 	}
 	if cc.special {
-		seed = append(seed, secureChoiceByte("!@#$%^&*()-_=+"))
+		seed = append(seed, secureChoiceByte(specialChars))
 	}
 	return seed
 }
@@ -310,14 +330,12 @@ func (ng *NameGenerator) GenerateCityName() string {
 }
 
 func secureChoiceByte(s string) byte {
-	n, _ := rand.Int(rand.Reader, big.NewInt(int64(len(s))))
-	return s[n.Int64()]
+	return s[mustRandInt(big.NewInt(int64(len(s)))).Int64()]
 }
 
 func secureShuffle(b []byte) {
 	for i := len(b) - 1; i > 0; i-- {
-		n, _ := rand.Int(rand.Reader, big.NewInt(int64(i+1)))
-		j := n.Int64()
+		j := mustRandInt(big.NewInt(int64(i + 1))).Int64()
 		b[i], b[j] = b[j], b[i]
 	}
 }

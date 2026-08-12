@@ -68,8 +68,7 @@
           "autologon",
           "files",
           "enable_llmnr",
-          "enable_nbt_ns",
-          "shares"
+          "enable_nbt_ns"
         ],
         "vulns_vars": {
           "directory": {
@@ -290,18 +289,18 @@
               "path": "CN=Users,DC=vortexindustries,DC=local"
             },
             "AdministrationGroup": {
-              "managed_by": "goadmin",
+              "managed_by": "Administrator",
               "path": "CN=Users,DC=vortexindustries,DC=local"
             },
             "Services": {
-              "managed_by": "goadmin",
+              "managed_by": "Administrator",
               "path": "CN=Users,DC=vortexindustries,DC=local",
               "members": [
                 "VORTEXIND\\AdministrationGroup"
               ]
             },
             "Domain Admins": {
-              "managed_by": "goadmin",
+              "managed_by": "Administrator",
               "path": "CN=Users,DC=vortexindustries,DC=local",
               "members": [
                 "VORTEXIND\\Services"

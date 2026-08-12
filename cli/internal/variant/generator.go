@@ -1,7 +1,9 @@
 package variant
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -9,7 +11,45 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
+
+// CompletionMarkerName is written only after a variant generation run reaches
+// the end successfully. Its absence means an existing target may be partial.
+const CompletionMarkerName = ".dreadgoad-variant-complete"
+
+const completionMarkerContent = "complete\n"
+
+// IsComplete reports whether target contains a valid completion marker.
+func IsComplete(target string) (bool, error) {
+	marker := filepath.Join(target, CompletionMarkerName)
+	data, err := os.ReadFile(marker)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("inspect completion marker: %w", err)
+	}
+	if string(data) != completionMarkerContent {
+		return false, fmt.Errorf("completion marker has invalid contents: %s", marker)
+	}
+	return true, nil
+}
+
+func writeCompletionMarker(target string) error {
+	marker := filepath.Join(target, CompletionMarkerName)
+	tmp := marker + ".tmp"
+	if err := os.WriteFile(tmp, []byte(completionMarkerContent), 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, marker); err != nil {
+		if removeErr := os.Remove(tmp); removeErr != nil {
+			return fmt.Errorf("rename marker: %w; cleanup: %v", err, removeErr)
+		}
+		return fmt.Errorf("rename marker: %w", err)
+	}
+	return nil
+}
 
 // LabConfig is the top-level structure of a GOAD config.json.
 // All known fields are modeled; if a config adds new top-level keys they
@@ -38,6 +78,12 @@ type HostConfig struct {
 	MSSQL              *MSSQLConfig        `json:"mssql,omitempty"`
 	// RemoteDesktopUsers appears at host top-level in some upstream GOAD configs.
 	RemoteDesktopUsers []string `json:"Remote Desktop Users,omitempty"`
+	// OS marks non-Windows hosts (DRACARYS uses "linux" for lx01).
+	OS string `json:"os,omitempty"`
+	// VulnsADCSTemplates lists the certificate templates published for this
+	// host; read by cli/internal/ansible/prepare.go to drive the
+	// vulns_adcs_templates role.
+	VulnsADCSTemplates []string `json:"vulns_adcs_templates,omitempty"`
 }
 
 // MSSQLConfig holds MSSQL server configuration for a host.
@@ -85,6 +131,14 @@ type DomainConfig struct {
 	GMSA                    map[string]GMSAConfig  `json:"gmsa,omitempty"`
 	ACLs                    map[string]ACLConfig   `json:"acls"`
 	Users                   map[string]*UserConfig `json:"users"`
+	// CAWebEnrollment is a pointer so an explicit false survives the round-trip.
+	// ansible/playbooks/adcs.yml treats absent as true, so dropping a false here
+	// silently turns CA web enrollment back on in the generated variant.
+	CAWebEnrollment *bool `json:"ca_web_enrollment,omitempty"`
+	// SCCM holds the MECM/SCCM site configuration (SCCM lab only). Kept as a raw
+	// map because the generator has no reason to reshape it; entity names inside
+	// are still randomized by the text-level replacement pass.
+	SCCM map[string]any `json:"sccm,omitempty"`
 }
 
 // OUConfig represents an organisational unit.
@@ -159,8 +213,10 @@ type HostMapping struct {
 
 // replacement is an ordered old->new string replacement.
 type replacement struct {
-	Old string
-	New string
+	Old          string
+	New          string
+	WordBoundary bool           // use word-boundary regex instead of plain replacement
+	re           *regexp.Regexp // precompiled word-boundary pattern (nil for plain replacements)
 }
 
 // Generator creates GOAD variants with randomized entity names.
@@ -175,6 +231,7 @@ type Generator struct {
 	userPasswordMap map[string]string // new_username -> new_password
 	preservedUsers  map[string]bool
 	pwdInDescUsers  map[string]bool // new_username -> has password in description
+	nameComponents  map[string]bool // Misc keys that are firstname/surname components
 }
 
 // hostnameAliases maps canonical hostnames to known typos/aliases in upstream GOAD.
@@ -204,6 +261,7 @@ func NewGenerator(source, target, name string) *Generator {
 		userPasswordMap: make(map[string]string),
 		preservedUsers:  map[string]bool{"sql_svc": true},
 		pwdInDescUsers:  make(map[string]bool),
+		nameComponents:  make(map[string]bool),
 	}
 }
 
@@ -223,6 +281,9 @@ func (g *Generator) Run() error {
 
 	g.generateMappings(config)
 	g.buildOrderedReplacements()
+	if err := createFreshTarget(g.TargetPath); err != nil {
+		return err
+	}
 
 	if err := g.copyAndTransform(); err != nil {
 		return fmt.Errorf("transform: %w", err)
@@ -232,17 +293,33 @@ func (g *Generator) Run() error {
 		return fmt.Errorf("save mappings: %w", err)
 	}
 
-	valid := g.validate()
-	g.createDocumentation()
+	if err := g.validate(); err != nil {
+		return fmt.Errorf("variant validation failed: %w", err)
+	}
+	if err := g.createDocumentation(); err != nil {
+		return fmt.Errorf("create documentation: %w", err)
+	}
+	if err := writeCompletionMarker(g.TargetPath); err != nil {
+		return fmt.Errorf("write completion marker: %w", err)
+	}
 
 	fmt.Printf("\n%s\n", strings.Repeat("=", 60))
-	if valid {
-		fmt.Println("Variant generation complete and validated!")
-	} else {
-		fmt.Println("Variant generated but validation found issues")
-	}
+	fmt.Println("Variant generation complete and validated!")
 	fmt.Printf("%s\n\n", strings.Repeat("=", 60))
 
+	return nil
+}
+
+func createFreshTarget(target string) error {
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return fmt.Errorf("create variant target parent: %w", err)
+	}
+	if err := os.Mkdir(target, 0o755); err != nil {
+		if errors.Is(err, os.ErrExist) {
+			return fmt.Errorf("variant target already exists: %s; move or remove it before generating", target)
+		}
+		return fmt.Errorf("create variant target: %w", err)
+	}
 	return nil
 }
 
@@ -286,6 +363,22 @@ func (g *Generator) generateMappings(config *LabConfig) {
 
 	fmt.Println("\nMapping cities...")
 	g.mapCities(config)
+
+	fmt.Println("\nMapping shares...")
+	g.mapShares(config)
+
+	// Reconcile name-component Misc entries that conflict with Groups.
+	// Group names are explicit AD entities and take precedence over
+	// capitalized-surname convenience entries (e.g., "Targaryen" is both
+	// a group and a surname). Only remove entries that are name components
+	// (firstname/surname) — other Misc entries like hostnames, gMSA names,
+	// and cities must be preserved.
+	for groupName := range g.mappings.Groups {
+		if g.nameComponents[groupName] {
+			delete(g.mappings.Misc, groupName)
+			delete(g.nameComponents, groupName)
+		}
+	}
 
 	fmt.Println("\n=== Mapping Generation Complete ===")
 }
@@ -363,6 +456,12 @@ func (g *Generator) mapUsers(config *LabConfig) {
 			}
 
 			newUsername := g.nameGen.GenerateUsername()
+			// Preserve single-name pattern: if original has no ".", use only firstname.
+			// Pass through EnsureUnique to avoid collisions when multiple dotless
+			// usernames truncate to the same firstname.
+			if !strings.Contains(username, ".") {
+				newUsername = g.nameGen.ensureUnique(strings.Split(newUsername, ".")[0])
+			}
 			g.mappings.Users[username] = newUsername
 
 			if user != nil && user.Password != "" && user.Description != "" &&
@@ -381,28 +480,40 @@ func (g *Generator) mapUserNameComponents(user *UserConfig, newUsername string) 
 	if user == nil {
 		return
 	}
-	if user.Firstname != "" {
-		firstname := user.Firstname
+	if user.Firstname != "" && user.Firstname != "sql" {
 		newFirst := strings.Split(newUsername, ".")[0]
-		g.mappings.Misc[firstname] = newFirst
-		if !isAllLower(firstname) && firstname != "sql" {
-			g.mappings.Misc[strings.ToLower(firstname)] = strings.ToLower(newFirst)
-		}
-		if isAllLower(firstname) && firstname != "sql" {
-			g.mappings.Misc[capitalize(firstname)] = capitalize(newFirst)
-		}
+		g.setNameComponent(user.Firstname, newFirst)
 	}
 
 	if user.Surname != "" && user.Surname != "-" {
-		surname := user.Surname
 		parts := strings.SplitN(newUsername, ".", 2)
 		newSurname := parts[0]
 		if len(parts) > 1 {
 			newSurname = parts[1]
 		}
-		g.mappings.Misc[surname] = newSurname
-		if isAllLower(surname) {
-			g.mappings.Misc[capitalize(surname)] = capitalize(newSurname)
+		g.setNameComponent(user.Surname, newSurname)
+	}
+}
+
+// setNameComponent adds a name mapping (and its case variant) to Misc,
+// skipping entries that already exist to prevent collisions.
+func (g *Generator) setNameComponent(original, replacement string) {
+	if _, exists := g.mappings.Misc[original]; !exists {
+		g.mappings.Misc[original] = replacement
+		g.nameComponents[original] = true
+	}
+	// Add the opposite case variant (lowercase ↔ capitalized).
+	if isAllLower(original) {
+		cap := capitalize(original)
+		if _, exists := g.mappings.Misc[cap]; !exists {
+			g.mappings.Misc[cap] = capitalize(replacement)
+			g.nameComponents[cap] = true
+		}
+	} else {
+		lower := strings.ToLower(original)
+		if _, exists := g.mappings.Misc[lower]; !exists {
+			g.mappings.Misc[lower] = strings.ToLower(replacement)
+			g.nameComponents[lower] = true
 		}
 	}
 }
@@ -584,6 +695,56 @@ func (g *Generator) mapCities(config *LabConfig) {
 	}
 }
 
+// mapShares extracts share names from VulnsVars and generates new names.
+// Share names like "thewall" are GOAD-themed and must be randomized to
+// prevent agents from recognizing the original lab structure.
+func (g *Generator) mapShares(config *LabConfig) {
+	seen := make(map[string]bool)
+	for _, host := range config.Lab.Hosts {
+		shares, ok := host.VulnsVars["shares"]
+		if !ok {
+			continue
+		}
+		sharesMap, ok := shares.(map[string]any)
+		if !ok {
+			continue
+		}
+		for shareName := range sharesMap {
+			if seen[shareName] {
+				continue
+			}
+			seen[shareName] = true
+			newName := g.nameGen.GenerateShareName()
+			g.mappings.Misc[shareName] = newName
+			fmt.Printf("  share %s -> %s\n", shareName, newName)
+		}
+	}
+}
+
+// rebuildShareKeys renames share map keys in VulnsVars after text
+// replacement has updated the share values but not the JSON map keys.
+func (g *Generator) rebuildShareKeys(config *LabConfig) {
+	for _, host := range config.Lab.Hosts {
+		shares, ok := host.VulnsVars["shares"]
+		if !ok {
+			continue
+		}
+		sharesMap, ok := shares.(map[string]any)
+		if !ok {
+			continue
+		}
+		newShares := make(map[string]any)
+		for oldKey, val := range sharesMap {
+			newKey := oldKey
+			if mapped, ok := g.mappings.Misc[oldKey]; ok {
+				newKey = mapped
+			}
+			newShares[newKey] = val
+		}
+		host.VulnsVars["shares"] = newShares
+	}
+}
+
 // buildOrderedReplacements builds the ordered replacement list (longest first).
 func (g *Generator) buildOrderedReplacements() {
 	fmt.Println("\n=== Building Ordered Replacements ===")
@@ -602,6 +763,18 @@ func (g *Generator) buildOrderedReplacements() {
 	repls = appendMapReplacements(repls, g.mappings.NetBIOS, nil)
 	repls = appendMapReplacements(repls, g.mappings.Misc, withoutSuffix("$"))
 
+	// Tag name-component replacements for word-boundary matching.
+	// Skip word-boundary for entries that also exist as group names —
+	// group names need plain string replacement to catch compound strings
+	// like "StarkWallpaper".
+	for i := range repls {
+		if _, isGroup := g.mappings.Groups[repls[i].Old]; isGroup {
+			repls[i].WordBoundary = false
+		} else {
+			repls[i].WordBoundary = g.isNameComponent(repls[i].Old)
+		}
+	}
+
 	sort.Slice(repls, func(i, j int) bool {
 		return len(repls[i].Old) > len(repls[j].Old)
 	})
@@ -613,6 +786,15 @@ func (g *Generator) buildOrderedReplacements() {
 		if !seen[key] {
 			seen[key] = true
 			unique = append(unique, r)
+		}
+	}
+
+	// Precompile word-boundary regexes so applyReplacements doesn't
+	// recompile on every file.
+	for i := range unique {
+		if unique[i].WordBoundary {
+			pattern := `\b` + regexp.QuoteMeta(unique[i].Old) + `\b`
+			unique[i].re, _ = regexp.Compile(pattern)
 		}
 	}
 
@@ -633,17 +815,17 @@ func appendMapReplacements(repls []replacement, m map[string]string, filter func
 		if filter != nil && !filter(old) {
 			continue
 		}
-		repls = append(repls, replacement{old, new})
+		repls = append(repls, replacement{Old: old, New: new})
 	}
 	return repls
 }
 
 func (g *Generator) appendHostReplacements(repls []replacement) []replacement {
 	for _, hm := range g.mappings.Hosts {
-		repls = append(repls, replacement{hm.OldFQDN, hm.NewFQDN})
+		repls = append(repls, replacement{Old: hm.OldFQDN, New: hm.NewFQDN})
 	}
 	for _, hm := range g.mappings.Hosts {
-		repls = append(repls, replacement{hm.OldHostname, hm.NewHostname})
+		repls = append(repls, replacement{Old: hm.OldHostname, New: hm.NewHostname})
 	}
 	return repls
 }
@@ -664,8 +846,8 @@ func (g *Generator) appendQualifiedUserReplacements(repls []replacement) []repla
 		}
 		for oldUser, newUser := range g.mappings.Users {
 			repls = append(repls,
-				replacement{oldNB + "\\\\" + oldUser, newNB + "\\\\" + newUser},
-				replacement{oldDomain + "\\\\" + oldUser, newDomain + "\\\\" + newUser},
+				replacement{Old: oldNB + "\\\\" + oldUser, New: newNB + "\\\\" + newUser},
+				replacement{Old: oldDomain + "\\\\" + oldUser, New: newDomain + "\\\\" + newUser},
 			)
 		}
 	}
@@ -685,8 +867,8 @@ func (g *Generator) appendDNReplacements(repls []replacement) []replacement {
 			newDCs = append(newDCs, "DC="+p)
 		}
 		repls = append(repls, replacement{
-			strings.Join(oldDCs, ",") + ",DC=local",
-			strings.Join(newDCs, ",") + ",DC=local",
+			Old: strings.Join(oldDCs, ",") + ",DC=local",
+			New: strings.Join(newDCs, ",") + ",DC=local",
 		})
 	}
 	return repls
@@ -702,7 +884,7 @@ func (g *Generator) appendDomainReplacements(repls []replacement) []replacement 
 		return len(pairs[i].old) > len(pairs[j].old)
 	})
 	for _, dp := range pairs {
-		repls = append(repls, replacement{dp.old, dp.new})
+		repls = append(repls, replacement{Old: dp.old, New: dp.new})
 	}
 	return repls
 }
@@ -714,8 +896,16 @@ func (g *Generator) applyReplacements(content string) string {
 			continue
 		}
 
-		if g.isNameComponent(r.Old) {
-			content = replaceNameComponent(content, r.Old, r.New)
+		if r.WordBoundary && r.re != nil {
+			// Match name at boundaries, treating underscore as a word
+			// separator. Go's \b considers _ a word character, but GOAD
+			// uses underscore-delimited keys (e.g., "GenericWrite_missandei_viserys").
+			// We pre-process underscores to temporary placeholders so \b works,
+			// then restore them.
+			const placeholder = "\x00USCORE\x00"
+			temp := strings.ReplaceAll(content, "_", placeholder)
+			temp = r.re.ReplaceAllString(temp, r.New)
+			content = strings.ReplaceAll(temp, placeholder, "_")
 		} else {
 			content = strings.ReplaceAll(content, r.Old, r.New)
 		}
@@ -723,74 +913,9 @@ func (g *Generator) applyReplacements(content string) string {
 	return content
 }
 
-// replaceNameComponent replaces every occurrence of a name-component token
-// (a firstname/surname fragment) with its replacement, honoring both normal
-// word boundaries AND CamelCase boundaries. Go's regexp (RE2) has no
-// lookahead, so we match a leading word boundary plus the token, then accept a
-// match only when the character immediately after it is:
-//
-//	(a) absent (end of string),
-//	(b) a non-word character (normal word boundary), or
-//	(c) an uppercase ASCII letter (CamelCase boundary, e.g. "StarkWallpaper").
-//
-// A trailing lowercase letter, digit, or underscore is rejected so that
-// "starky"/"starkey" are left intact.
-func replaceNameComponent(content, old, replacement string) string {
-	re, err := regexp.Compile(`\b` + regexp.QuoteMeta(old))
-	if err != nil {
-		return content
-	}
-
-	var b strings.Builder
-	last := 0
-	for _, loc := range re.FindAllStringIndex(content, -1) {
-		start, end := loc[0], loc[1]
-
-		accept := true
-		if end < len(content) {
-			c := content[end]
-			isWord := c == '_' ||
-				('0' <= c && c <= '9') ||
-				('a' <= c && c <= 'z') ||
-				('A' <= c && c <= 'Z')
-			isUpper := 'A' <= c && c <= 'Z'
-			// Reject only when the following char is a word char that is NOT
-			// an uppercase letter (i.e. lowercase letter, digit, or underscore).
-			if isWord && !isUpper {
-				accept = false
-			}
-		}
-
-		b.WriteString(content[last:start])
-		if accept {
-			b.WriteString(replacement)
-		} else {
-			b.WriteString(content[start:end])
-		}
-		last = end
-	}
-	b.WriteString(content[last:])
-	return b.String()
-}
-
 // isNameComponent returns true if old is a firstname/surname component needing word-boundary protection.
 func (g *Generator) isNameComponent(old string) bool {
-	if _, ok := g.mappings.Misc[old]; !ok {
-		return false
-	}
-	if strings.HasSuffix(old, "$") || strings.Contains(old, ".") || strings.Contains(old, "\\") {
-		return false
-	}
-	if len(old) >= 50 {
-		return false
-	}
-	cleaned := strings.ReplaceAll(strings.ReplaceAll(old, "-", ""), "'", "")
-	for _, c := range cleaned {
-		if ('a' > c || c > 'z') && ('A' > c || c > 'Z') {
-			return false
-		}
-	}
-	return true
+	return g.nameComponents[old]
 }
 
 // fixUserFirstnameSurname corrects firstname/surname fields to match generated usernames.
@@ -888,62 +1013,46 @@ var textFilenames = map[string]bool{
 }
 
 // transformFile transforms a single file with replacements and writes to target.
-func (g *Generator) transformFile(srcPath, relPath string) (transformed bool) {
+func (g *Generator) transformFile(srcPath, relPath string) (transformed bool, err error) {
+	// Rename file paths based on entity mappings (e.g., arya.txt -> thomas.txt).
+	newRelPath := g.applyReplacements(relPath)
 	ext := filepath.Ext(srcPath)
 	base := filepath.Base(srcPath)
-
-	// Rename the output basename so a file named after an identity
-	// (e.g. files/srv02/all/arya.txt) is written under the same rewritten
-	// name that config.json now references (kathleen.txt). Only the final
-	// path element is transformed; the directory portion of relPath is left
-	// untouched. Uses the same replacement machinery as file content.
-	relDir := filepath.Dir(relPath)
-	newBase := g.applyReplacements(base)
-	targetFile := filepath.Join(g.TargetPath, relDir, newBase)
+	targetFile := filepath.Join(g.TargetPath, newRelPath)
 
 	if err := os.MkdirAll(filepath.Dir(targetFile), 0o755); err != nil {
-		fmt.Printf("Warning: mkdir failed for %s: %v\n", relPath, err)
-		return false
+		return false, fmt.Errorf("create target directory for %s: %w", relPath, err)
 	}
 
-	isInventory := strings.HasPrefix(base, "inventory")
-	if textExtensions[ext] || textFilenames[base] || isInventory {
-		content, err := os.ReadFile(srcPath)
-		if err != nil {
-			fmt.Printf("Warning: Could not read %s: %v\n", relPath, err)
-			copyFile(srcPath, targetFile)
-			return false
+	isText := textExtensions[ext] || textFilenames[base] || (ext == "" && g.isTextFile(srcPath))
+	if !isText {
+		if err := copyFile(srcPath, targetFile); err != nil {
+			return false, err
 		}
-
-		newContent := g.applyReplacements(string(content))
-
-		isFullConfig := (base == "config.json" || strings.HasSuffix(base, "-config.json")) &&
-			!strings.HasSuffix(base, "-overlay.json")
-		if isFullConfig {
-			var configData LabConfig
-			if err := json.Unmarshal([]byte(newContent), &configData); err == nil {
-				g.fixUserFirstnameSurname(&configData)
-				g.fixPasswords(&configData)
-				g.rebuildACLKeys(&configData)
-				if pretty, err := json.MarshalIndent(configData, "", "  "); err == nil {
-					newContent = string(pretty)
-				}
-			}
-		}
-
-		if isInventory {
-			newContent = g.repointDomainName(newContent)
-		}
-
-		if err := os.WriteFile(targetFile, []byte(newContent), 0o644); err != nil {
-			fmt.Printf("Warning: Could not write %s: %v\n", relPath, err)
-			return false
-		}
-		return true
+		return false, nil
 	}
 
-	copyFile(srcPath, targetFile)
-	return false
+	content, err := os.ReadFile(srcPath)
+	if err != nil {
+		if cpErr := copyFile(srcPath, targetFile); cpErr != nil {
+			return false, fmt.Errorf("read %s: %v; fallback copy: %w", srcPath, err, cpErr)
+		}
+		return false, nil
+	}
+
+	newContent := g.applyReplacements(string(content))
+	if ext == ".ps1" {
+		newContent = g.fixSecureStrings(newContent)
+	}
+	newContent = g.transformConfigJSON(base, newContent)
+	if strings.HasPrefix(base, "inventory") {
+		newContent = g.repointDomainName(newContent)
+	}
+
+	if err := os.WriteFile(targetFile, []byte(newContent), 0o644); err != nil {
+		return false, fmt.Errorf("write %s: %w", targetFile, err)
+	}
+	return true, nil
 }
 
 // repointDomainName rewrites the Ansible `domain_name` inventory variable to
@@ -953,22 +1062,45 @@ func (g *Generator) transformFile(srcPath, relPath string) (transformed bool) {
 // changed; the key, indentation, and surrounding lines are preserved.
 func (g *Generator) repointDomainName(content string) string {
 	target := filepath.Base(g.TargetPath)
-	re := regexp.MustCompile(`(?m)^(\s*domain_name\s*=).*$`)
+	re := regexp.MustCompile(`(?m)^(\s*domain_name\s*=\s*).*$`)
 	return re.ReplaceAllStringFunc(content, func(line string) string {
 		if idx := strings.Index(line, "="); idx >= 0 {
-			return line[:idx+1] + target
+			valueStart := idx + 1
+			for valueStart < len(line) && (line[valueStart] == ' ' || line[valueStart] == '\t') {
+				valueStart++
+			}
+			return line[:valueStart] + target
 		}
 		return line
 	})
 }
 
 // copyAndTransform copies the source directory, transforming text files.
+// transformConfigJSON applies structural transformations to GOAD config JSON
+// files (firstname/surname fixup, password remapping, ACL/share key rebuilds).
+// Returns content unchanged if the file is not a full config JSON.
+func (g *Generator) transformConfigJSON(base, content string) string {
+	isFullConfig := (base == "config.json" || strings.HasSuffix(base, "-config.json")) &&
+		!strings.HasSuffix(base, "-overlay.json")
+	if !isFullConfig {
+		return content
+	}
+	var configData LabConfig
+	if err := json.Unmarshal([]byte(content), &configData); err != nil {
+		return content
+	}
+	g.fixUserFirstnameSurname(&configData)
+	g.fixPasswords(&configData)
+	g.rebuildACLKeys(&configData)
+	g.rebuildShareKeys(&configData)
+	if pretty, err := json.MarshalIndent(configData, "", "  "); err == nil {
+		return string(pretty)
+	}
+	return content
+}
+
 func (g *Generator) copyAndTransform() error {
 	fmt.Println("\n=== Copying and Transforming Files ===")
-
-	if err := os.MkdirAll(g.TargetPath, 0o755); err != nil {
-		return err
-	}
 
 	var total, transformed, copied int
 
@@ -983,17 +1115,25 @@ func (g *Generator) copyAndTransform() error {
 			return nil
 		}
 
-		// Skip git metadata (the .git directory itself is skipped above), but KEEP
-		// .gitkeep placeholders: they preserve otherwise-empty directories the lab
-		// relies on (e.g. files/srv02/wwwroot/upload/), which would silently vanish
-		// from the variant if dropped.
-		rel, _ := filepath.Rel(g.SourcePath, path)
+		// Skip git metadata and inherited completion markers, but preserve
+		// .gitkeep placeholders required to retain otherwise-empty directories.
+		rel, err := filepath.Rel(g.SourcePath, path)
+		if err != nil {
+			return fmt.Errorf("resolve relative path for %s: %w", path, err)
+		}
 		if strings.Contains(rel, ".git") && d.Name() != ".gitkeep" {
+			return nil
+		}
+		if d.Name() == CompletionMarkerName || d.Name() == CompletionMarkerName+".tmp" {
 			return nil
 		}
 
 		total++
-		if g.transformFile(path, rel) {
+		didTransform, err := g.transformFile(path, rel)
+		if err != nil {
+			return fmt.Errorf("process %s: %w", rel, err)
+		}
+		if didTransform {
 			transformed++
 		} else {
 			copied++
@@ -1039,25 +1179,29 @@ type violation struct {
 }
 
 // validate checks that no original GOAD names appear in variant files.
-func (g *Generator) validate() bool {
+func (g *Generator) validate() error {
 	fmt.Println("\n=== Validating Variant ===")
 
-	violations, filesChecked := g.findNameViolations()
+	violations, filesChecked, err := g.findNameViolations()
+	if err != nil {
+		return fmt.Errorf("scan generated files: %w", err)
+	}
 	fmt.Printf("Checked %d text files\n", filesChecked)
 	printViolations(violations)
+	if len(violations) > 0 {
+		return fmt.Errorf("found %d original-name violations", len(violations))
+	}
 
 	fmt.Println("\nValidating structure...")
-	g.validateStructureCounts()
-
-	return len(violations) == 0
+	return g.validateStructureCounts()
 }
 
-func (g *Generator) findNameViolations() ([]violation, int) {
+func (g *Generator) findNameViolations() ([]violation, int, error) {
 	var violations []violation
 	filesChecked := 0
 	skipFiles := map[string]bool{"mapping.json": true, "README.md": true}
 
-	if err := filepath.WalkDir(g.TargetPath, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(g.TargetPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}
@@ -1065,16 +1209,19 @@ func (g *Generator) findNameViolations() ([]violation, int) {
 			return nil
 		}
 		ext := filepath.Ext(path)
-		if !textExtensions[ext] && !textFilenames[d.Name()] {
+		if !textExtensions[ext] && !textFilenames[d.Name()] && (ext != "" || !g.isTextFile(path)) {
 			return nil
 		}
 		filesChecked++
 		content, err := os.ReadFile(path)
 		if err != nil {
-			return nil
+			return fmt.Errorf("read %s: %w", path, err)
 		}
 		lower := strings.ToLower(string(content))
-		rel, _ := filepath.Rel(g.TargetPath, path)
+		rel, err := filepath.Rel(g.TargetPath, path)
+		if err != nil {
+			return fmt.Errorf("resolve relative path for %s: %w", path, err)
+		}
 		for _, name := range originalNames {
 			if strings.Contains(lower, name) {
 				re, err := regexp.Compile(`\b` + regexp.QuoteMeta(name) + `\b`)
@@ -1084,10 +1231,8 @@ func (g *Generator) findNameViolations() ([]violation, int) {
 			}
 		}
 		return nil
-	}); err != nil {
-		fmt.Printf("Warning: error walking variant directory: %v\n", err)
-	}
-	return violations, filesChecked
+	})
+	return violations, filesChecked, err
 }
 
 func printViolations(violations []violation) {
@@ -1108,18 +1253,18 @@ func printViolations(violations []violation) {
 	}
 }
 
-func (g *Generator) validateStructureCounts() {
+func (g *Generator) validateStructureCounts() error {
 	origConfig, err := g.loadConfig()
 	if err != nil {
-		return
+		return fmt.Errorf("load source structure: %w", err)
 	}
 	varData, err := os.ReadFile(filepath.Join(g.TargetPath, "data", "config.json"))
 	if err != nil {
-		return
+		return fmt.Errorf("read generated structure: %w", err)
 	}
 	var varConfig LabConfig
-	if json.Unmarshal(varData, &varConfig) != nil {
-		return
+	if err := json.Unmarshal(varData, &varConfig); err != nil {
+		return fmt.Errorf("parse generated structure: %w", err)
 	}
 	origHosts := len(origConfig.Lab.Hosts)
 	varHosts := len(varConfig.Lab.Hosts)
@@ -1134,10 +1279,14 @@ func (g *Generator) validateStructureCounts() {
 	}
 	fmt.Printf("  Hosts: %d -> %d %s\n", origHosts, varHosts, checkMark(origHosts, varHosts))
 	fmt.Printf("  Domains: %d -> %d %s\n", origDomains, varDomains, checkMark(origDomains, varDomains))
+	if origHosts != varHosts || origDomains != varDomains {
+		return fmt.Errorf("structure count mismatch: hosts %d -> %d, domains %d -> %d", origHosts, varHosts, origDomains, varDomains)
+	}
+	return nil
 }
 
 // createDocumentation generates a README for the variant.
-func (g *Generator) createDocumentation() {
+func (g *Generator) createDocumentation() error {
 	readme := fmt.Sprintf(`# GOAD %s
 
 This is a graph-isomorphic variant of the GOAD (Game of Active Directory) lab environment.
@@ -1185,21 +1334,43 @@ Generated by GOAD Variant Generator
 
 	readmePath := filepath.Join(g.TargetPath, "README.md")
 	if err := os.WriteFile(readmePath, []byte(readme), 0o644); err != nil {
-		fmt.Printf("Warning: failed to write documentation %s: %v\n", readmePath, err)
-		return
+		return fmt.Errorf("write %s: %w", readmePath, err)
 	}
 	fmt.Printf("Documentation created at %s\n", readmePath)
+	return nil
 }
 
-func copyFile(src, dst string) {
+func copyFile(src, dst string) error {
 	data, err := os.ReadFile(src)
 	if err != nil {
-		fmt.Printf("Warning: Could not read %s: %v\n", src, err)
-		return
+		return fmt.Errorf("read %s: %w", src, err)
 	}
 	if err := os.WriteFile(dst, data, 0o644); err != nil {
-		fmt.Printf("Warning: Could not write %s: %v\n", dst, err)
+		return fmt.Errorf("write %s: %w", dst, err)
 	}
+	return nil
+}
+
+// isTextFile returns true if the file appears to contain text (valid UTF-8 with
+// no NUL bytes). Used as a fallback for extensionless files like "inventory_disable_vagrant".
+func (g *Generator) isTextFile(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+
+	// Only read the first 8 KiB — enough to detect binary content.
+	buf := make([]byte, 8192)
+	n, _ := f.Read(buf)
+	if n == 0 {
+		return false
+	}
+	check := buf[:n]
+	if bytes.ContainsRune(check, 0) {
+		return false
+	}
+	return utf8.Valid(check)
 }
 
 func capitalize(s string) string {

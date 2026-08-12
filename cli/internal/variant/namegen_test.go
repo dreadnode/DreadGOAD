@@ -93,6 +93,20 @@ func TestGeneratePassword(t *testing.T) {
 	}
 }
 
+func TestGeneratePasswordNoJinjaSequences(t *testing.T) {
+	ng := NewNameGenerator()
+	forbidden := []string{"{", "}", "[", "]"}
+
+	for i := 0; i < 1000; i++ {
+		pw := ng.GeneratePassword("Password1!")
+		for _, seq := range forbidden {
+			if strings.Contains(pw, seq) {
+				t.Fatalf("password %q contains forbidden sequence %q (iteration %d)", pw, seq, i)
+			}
+		}
+	}
+}
+
 func TestGenerateGroupName(t *testing.T) {
 	ng := NewNameGenerator()
 	name := ng.GenerateGroupName()

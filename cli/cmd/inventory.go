@@ -84,6 +84,16 @@ func runInventorySync(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Discovering nothing means the query looked in the wrong place — usually
+	// the wrong region. Falling through would write the inventory back
+	// unchanged and report "all values are current", a false success.
+	if len(instances) == 0 {
+		if region, rerr := cfg.ResolveRegion(); rerr == nil && cfg.IsAWS() {
+			return fmt.Errorf("no instances found for env=%s in %s: nothing to sync", cfg.Env, region)
+		}
+		return fmt.Errorf("no instances found for env=%s: nothing to sync", cfg.Env)
+	}
+
 	return applyInstanceUpdates(invPath, instances)
 }
 

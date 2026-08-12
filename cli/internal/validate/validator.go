@@ -198,6 +198,7 @@ func (v *Validator) RunAllChecks(ctx context.Context) {
 		v.checkConfiguredUsers,
 		// Section 3 — Configured Groups
 		v.checkConfiguredGroups,
+		v.checkCrossDomainGroupMemberships,
 		// Section 5 — Credential Discovery
 		v.checkCredentialDiscovery,
 		v.checkUsernamePasswordEqual,

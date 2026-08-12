@@ -42,6 +42,7 @@ func TestGOADVulns(t *testing.T) {
 	assertNonEmpty(t, "asrep_roasting hosts", len(lab.HostsWithScript("asrep_roasting")))
 	assertNonEmpty(t, "constrained_delegation hosts", len(lab.HostsWithScript("constrained_delegation")))
 	assertNonEmpty(t, "ACLs", len(lab.AllACLs()))
+	assertLen(t, "cross-domain group memberships", len(lab.CrossDomainGroupMemberships()), 3)
 }
 
 func TestGOADPasswordInDescription(t *testing.T) {

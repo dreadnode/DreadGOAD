@@ -16,8 +16,7 @@ Deploy vulnerable ADCS certificate templates for attack simulation
 ### main.yml
 
 - **Refresh** (ansible.windows.win_command)
-- **Copy ADCSTemplate zip to remote** (ansible.windows.win_copy)
-- **Extract ADCSTemplate module** (ansible.windows.win_shell)
+- **Copy ADCSTemplate module to remote** (ansible.windows.win_copy)
 - **Create a directory for templates** (ansible.windows.win_file)
 - **Install templates** (ansible.windows.win_shell)
 

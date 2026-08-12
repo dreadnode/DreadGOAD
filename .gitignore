@@ -16,8 +16,6 @@ __pycache__/
 dreadgoad
 .dreadgoad/
 coverage.out
-ansible/roles/adcs_templates/files/ADCSTemplate.zip
-ansible/roles/vulns_adcs_templates/files/ADCSTemplate.zip
 
 # Root environment inventories are local runtime state.
 /*-inventory

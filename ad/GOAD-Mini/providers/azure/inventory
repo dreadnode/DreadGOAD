@@ -1,10 +1,61 @@
+[all:vars]
+domain_name=GOAD-Mini
+admin_user=administrator
+force_dns_server=no
+dns_server=1.1.1.1
+dns_server_forwarder=1.1.1.1
+enable_http_proxy=no
+ad_http_proxy=http://x.x.x.x:xxxx
+ad_https_proxy=http://x.x.x.x:xxxx
+
 [default]
-; Note: ansible_host *MUST* be an IPv4 address or setting things like DNS
-; servers will break.
 ; ------------------------------------------------
-; sevenkingdoms.local
+; yourcompany.local
 ; ------------------------------------------------
 dc01 ansible_host={{ip_range}}.10 dns_domain=dc01 dict_key=dc01 ansible_user=ansible ansible_password=8dCT-DJjgScp
 
-[all:vars]
-admin_user=goadmin
+[domain]
+dc01
+
+[dc]
+dc01
+
+[server]
+
+[workstation]
+
+[parent_dc]
+dc01
+
+[child_dc]
+
+[trust]
+
+[adcs]
+dc01
+
+[adcs_customtemplates]
+
+[iis]
+
+[mssql]
+
+[mssql_ssms]
+
+[webdav]
+
+[laps_dc]
+[laps_server]
+[laps_workstation]
+
+[update]
+
+[no_update]
+dc01
+
+[defender_on]
+dc01
+
+[defender_off]
+
+[extensions]

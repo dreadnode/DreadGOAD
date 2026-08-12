@@ -1,0 +1,30 @@
+---
+# Drift reconciliation.
+#
+# Creating users and adding group members is not enough to make `lab reset`
+# converge on the baseline: both operations are add-only, so a password an
+# attack run changed and a group an agent added itself to both survive the
+# reset. The lab ends up at a superset of baseline, which is exactly the
+# noise a reproducible benchmark cannot tolerate.
+#
+# These two passes close that gap by reconciling the observed state back down
+# to what the lab config declares.
+ad_reconcile_passwords: true
+ad_reconcile_group_membership: true
+
+# Report drift without correcting it. Useful for measuring how much an attack
+# run actually moved the lab before you reset it.
+ad_reconcile_check_only: false
+
+# Accounts that are never removed from a group even when the lab config does
+# not list them. These are management-plane accounts that exist on the hosts
+# but are deliberately absent from the lab topology.
+ad_reconcile_protected_accounts:
+  - ssm-user
+  - ansible
+  - vagrant
+
+# Cross-domain group membership, applied by the groups_domains role in a later
+# play. The membership reconciler needs it because these entries can name
+# principals in this domain, which would otherwise look unmanaged.
+ad_multi_domain_groups_member: {}

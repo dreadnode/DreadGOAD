@@ -108,13 +108,13 @@ module "network" {
 | Name | Version |
 | ---- | ------- |
 | <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.7 |
-| <a name="requirement_azurerm"></a> [azurerm](#requirement\_azurerm) | ~> 4.0 |
+| <a name="requirement_azurerm"></a> [azurerm](#requirement\_azurerm) | ~> 5.0 |
 
 ## Providers
 
 | Name | Version |
 | ---- | ------- |
-| <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | 4.80.0 |
+| <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | 5.0.1 |
 
 ## Modules
 
@@ -144,8 +144,8 @@ No modules.
 | <a name="input_deployment_name"></a> [deployment\_name](#input\_deployment\_name) | Name of the deployment (e.g. "goad"). | `string` | n/a | yes |
 | <a name="input_env"></a> [env](#input\_env) | Environment name (e.g. test, staging). | `string` | n/a | yes |
 | <a name="input_location"></a> [location](#input\_location) | Azure region. | `string` | n/a | yes |
-| <a name="input_private_subnet_cidr"></a> [private\_subnet\_cidr](#input\_private\_subnet\_cidr) | CIDR for the private subnet where lab VMs run. | `string` | `"10.8.1.0/24"` | no |
-| <a name="input_public_subnet_cidr"></a> [public\_subnet\_cidr](#input\_public\_subnet\_cidr) | CIDR for the public subnet (jumpbox/bastion). | `string` | `"10.8.0.0/24"` | no |
+| <a name="input_private_subnet_cidr"></a> [private\_subnet\_cidr](#input\_private\_subnet\_cidr) | CIDR for the private subnet where lab VMs run. Auto-derived from vnet\_cidr when empty. | `string` | `""` | no |
+| <a name="input_public_subnet_cidr"></a> [public\_subnet\_cidr](#input\_public\_subnet\_cidr) | CIDR for the public subnet (jumpbox/bastion). Auto-derived from vnet\_cidr when empty. | `string` | `""` | no |
 | <a name="input_vnet_cidr"></a> [vnet\_cidr](#input\_vnet\_cidr) | CIDR block for the VNet. | `string` | `"10.8.0.0/16"` | no |
 
 ## Outputs

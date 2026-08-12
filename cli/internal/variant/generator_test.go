@@ -8,6 +8,44 @@ import (
 	"testing"
 )
 
+// setupTestSourceFull creates a test source with extensionless files, user files,
+// and compound group name scripts to exercise all known edge cases.
+func setupTestSourceFull(t *testing.T) (sourceDir, targetDir string) {
+	t.Helper()
+	sourceDir, targetDir = setupTestSource(t)
+
+	// Extensionless inventory file (Bug 1)
+	inventoryContent := `[all:vars]
+; sevenkingdoms.local
+ansible_user=administrator@sevenkingdoms.local
+`
+	if err := os.WriteFile(filepath.Join(sourceDir, "data", "inventory_disable_vagrant"), []byte(inventoryContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// File named after a user (Bug 2)
+	if err := os.MkdirAll(filepath.Join(sourceDir, "files", "srv02", "all"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(sourceDir, "files", "srv02", "all", "arya.txt"),
+		[]byte("Hey arya, here is your sword."),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	// Script with compound group name (Bug 3)
+	gpoScript := `$gpo = "StarkWallpaper"
+Set-GPO -Name "StarkWallpaper" -Target "DC=north,DC=sevenkingdoms,DC=local"
+`
+	if err := os.WriteFile(filepath.Join(sourceDir, "scripts", "gpo_abuse.ps1"), []byte(gpoScript), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	return sourceDir, targetDir
+}
+
 func setupTestSource(t *testing.T) (sourceDir, targetDir string) {
 	t.Helper()
 	tmpDir := t.TempDir()
@@ -35,6 +73,55 @@ func setupTestSource(t *testing.T) (sourceDir, targetDir string) {
 		t.Fatal(err)
 	}
 	return sourceDir, targetDir
+}
+
+func TestTransformFileRepointsInventoryDomainName(t *testing.T) {
+	sourceDir := t.TempDir()
+	targetDir := filepath.Join(t.TempDir(), "review-variant")
+	sourcePath := filepath.Join(sourceDir, "inventory_disable_vagrant")
+	content := "[all:vars]\n  domain_name = GOAD\nadmin_user=administrator\n"
+	if err := os.WriteFile(sourcePath, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gen := NewGenerator(sourceDir, targetDir, "test")
+	transformed, err := gen.transformFile(sourcePath, filepath.Join("data", "inventory_disable_vagrant"))
+	if err != nil {
+		t.Fatalf("transformFile() error: %v", err)
+	}
+	if !transformed {
+		t.Fatal("transformFile() reported inventory was copied without transformation")
+	}
+
+	got, err := os.ReadFile(filepath.Join(targetDir, "data", "inventory_disable_vagrant"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "[all:vars]\n  domain_name = review-variant\nadmin_user=administrator\n"
+	if string(got) != want {
+		t.Fatalf("transformed inventory = %q, want %q", got, want)
+	}
+}
+
+func TestCopyAndTransformPreservesGitkeep(t *testing.T) {
+	sourceDir := t.TempDir()
+	targetDir := filepath.Join(t.TempDir(), "target")
+	relPath := filepath.Join("files", "srv02", "wwwroot", "upload", ".gitkeep")
+	sourcePath := filepath.Join(sourceDir, relPath)
+	if err := os.MkdirAll(filepath.Dir(sourcePath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(sourcePath, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gen := NewGenerator(sourceDir, targetDir, "test")
+	if err := gen.copyAndTransform(); err != nil {
+		t.Fatalf("copyAndTransform() error: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(targetDir, relPath)); err != nil {
+		t.Fatalf(".gitkeep was not preserved: %v", err)
+	}
 }
 
 func testConfig() *LabConfig {
@@ -150,6 +237,139 @@ func TestGeneratorEndToEnd(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(targetDir, "README.md")); err != nil {
 		t.Fatal("README.md not created")
 	}
+	complete, err := IsComplete(targetDir)
+	if err != nil {
+		t.Fatalf("check completion marker: %v", err)
+	}
+	if !complete {
+		t.Fatal("completion marker not created")
+	}
+}
+
+func TestGeneratorFailureLeavesNoCompletionMarker(t *testing.T) {
+	sourceDir, targetDir := setupTestSource(t)
+	if err := os.Symlink(filepath.Join(sourceDir, "missing.bin"), filepath.Join(sourceDir, "broken.bin")); err != nil {
+		t.Skipf("create broken symlink fixture: %v", err)
+	}
+
+	err := NewGenerator(sourceDir, targetDir, "test-failure").Run()
+	if err == nil || !strings.Contains(err.Error(), "process broken.bin") {
+		t.Fatalf("Run() error = %v, want target write failure", err)
+	}
+	complete, checkErr := IsComplete(targetDir)
+	if checkErr != nil {
+		t.Fatalf("check completion marker: %v", checkErr)
+	}
+	if complete {
+		t.Fatal("failed generation retained a stale completion marker")
+	}
+}
+
+func TestGeneratorValidationFailureLeavesNoCompletionMarker(t *testing.T) {
+	sourceDir, targetDir := setupTestSource(t)
+	if err := os.WriteFile(filepath.Join(sourceDir, "scripts", "unmapped.txt"), []byte("tywin\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := NewGenerator(sourceDir, targetDir, "test-validation-failure").Run()
+	if err == nil || !strings.Contains(err.Error(), "variant validation failed") {
+		t.Fatalf("Run() error = %v, want validation failure", err)
+	}
+	complete, checkErr := IsComplete(targetDir)
+	if checkErr != nil {
+		t.Fatalf("check completion marker: %v", checkErr)
+	}
+	if complete {
+		t.Fatal("failed validation retained a completion marker")
+	}
+}
+
+func TestGeneratorDocumentationFailureLeavesNoCompletionMarker(t *testing.T) {
+	sourceDir, targetDir := setupTestSource(t)
+	readmeDir := filepath.Join(sourceDir, "README.md")
+	if err := os.MkdirAll(readmeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(readmeDir, "blocker"), []byte("block README creation"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := NewGenerator(sourceDir, targetDir, "test-documentation-failure").Run()
+	if err == nil || !strings.Contains(err.Error(), "create documentation") {
+		t.Fatalf("Run() error = %v, want documentation failure", err)
+	}
+	complete, checkErr := IsComplete(targetDir)
+	if checkErr != nil {
+		t.Fatalf("check completion marker: %v", checkErr)
+	}
+	if complete {
+		t.Fatal("documentation failure left a completion marker")
+	}
+}
+
+func TestGeneratorRejectsExistingTargetWithoutModification(t *testing.T) {
+	sourceDir, targetDir := setupTestSource(t)
+	if err := os.MkdirAll(targetDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(targetDir, CompletionMarkerName)
+	if err := os.WriteFile(marker, []byte("complete\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(targetDir, "keep.txt")
+	if err := os.WriteFile(sentinel, []byte("unchanged"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := NewGenerator(sourceDir, targetDir, "test-existing-target").Run()
+	if err == nil || !strings.Contains(err.Error(), "variant target already exists") {
+		t.Fatalf("Run() error = %v, want existing-target rejection", err)
+	}
+	data, readErr := os.ReadFile(sentinel)
+	if readErr != nil || string(data) != "unchanged" {
+		t.Fatalf("existing target was modified: data=%q error=%v", data, readErr)
+	}
+	complete, checkErr := IsComplete(targetDir)
+	if checkErr != nil || !complete {
+		t.Fatalf("existing completion marker changed: complete=%v error=%v", complete, checkErr)
+	}
+}
+
+func TestValidateRejectsScanFailure(t *testing.T) {
+	missingTarget := filepath.Join(t.TempDir(), "missing")
+	gen := NewGenerator(t.TempDir(), missingTarget, "test-scan-failure")
+
+	err := gen.validate()
+	if err == nil || !strings.Contains(err.Error(), "scan generated files") {
+		t.Fatalf("validate() error = %v, want scan failure", err)
+	}
+}
+
+func TestValidateRejectsStructureMismatch(t *testing.T) {
+	sourceDir, targetDir := setupTestSource(t)
+	if err := os.MkdirAll(filepath.Join(targetDir, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(targetDir, "data", "config.json"), []byte(`{"lab":{"hosts":{},"domains":{}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := NewGenerator(sourceDir, targetDir, "test-structure-mismatch").validate()
+	if err == nil || !strings.Contains(err.Error(), "structure count mismatch") {
+		t.Fatalf("validate() error = %v, want structure mismatch", err)
+	}
+}
+
+func TestIsCompleteRejectsInvalidMarker(t *testing.T) {
+	target := t.TempDir()
+	if err := os.WriteFile(filepath.Join(target, CompletionMarkerName), []byte("partial"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	complete, err := IsComplete(target)
+	if err == nil || !strings.Contains(err.Error(), "invalid contents") {
+		t.Fatalf("IsComplete() = %v, %v; want invalid marker error", complete, err)
+	}
 }
 
 func TestPasswordInDescriptionPreserved(t *testing.T) {
@@ -194,8 +414,8 @@ func TestApplyReplacements(t *testing.T) {
 	gen := NewGenerator("", "", "test")
 	gen.mappings.Misc["robert"] = "james"
 	gen.replacements = []replacement{
-		{"sevenkingdoms.local", "deltasystems.local"},
-		{"robert", "james"},
+		{Old: "sevenkingdoms.local", New: "deltasystems.local"},
+		{Old: "robert", New: "james", WordBoundary: true},
 	}
 
 	content := "domain: sevenkingdoms.local, user: robert"
@@ -209,11 +429,37 @@ func TestApplyReplacements(t *testing.T) {
 	}
 }
 
+func TestApplyReplacementsUnderscoreDelimited(t *testing.T) {
+	gen := NewGenerator("", "", "test")
+	gen.replacements = []replacement{
+		{Old: "missandei", New: "donna", WordBoundary: true},
+		{Old: "viserys", New: "alexander", WordBoundary: true},
+	}
+
+	content := `"GenericWrite_missandei_viserys": null`
+	result := gen.applyReplacements(content)
+
+	if strings.Contains(result, "missandei") {
+		t.Errorf("missandei not replaced in underscore-delimited key: %s", result)
+	}
+	if strings.Contains(result, "viserys") {
+		t.Errorf("viserys not replaced in underscore-delimited key: %s", result)
+	}
+	expected := `"GenericWrite_donna_alexander": null`
+	if result != expected {
+		t.Errorf("unexpected result:\n  got:  %s\n  want: %s", result, expected)
+	}
+}
+
 func TestIsNameComponent(t *testing.T) {
 	gen := NewGenerator("", "", "test")
 	gen.mappings.Misc["robert"] = "james"
+	gen.nameComponents["robert"] = true
 	gen.mappings.Misc["meereen$"] = "beacon$"
 	gen.mappings.Misc["winterfell.domain"] = "cascade.domain"
+	// Group name that happens to also be a surname — should NOT be a name component
+	// unless explicitly registered via mapUserNameComponents.
+	gen.mappings.Misc["Stark"] = "OperationsGroup"
 
 	tests := []struct {
 		name string
@@ -223,6 +469,7 @@ func TestIsNameComponent(t *testing.T) {
 		{"meereen$", false},
 		{"winterfell.domain", false},
 		{"notinmisc", false},
+		{"Stark", false}, // group name, not registered as name component
 	}
 
 	for _, tt := range tests {
@@ -265,6 +512,166 @@ func TestSimplifyEntity(t *testing.T) {
 		got := simplifyEntity(tt.input)
 		if got != tt.want {
 			t.Errorf("simplifyEntity(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestTransformEdgeCases(t *testing.T) {
+	sourceDir, targetDir := setupTestSourceFull(t)
+
+	gen := NewGenerator(sourceDir, targetDir, "test-edges")
+	if err := gen.Run(); err != nil {
+		t.Fatalf("generator failed: %v", err)
+	}
+
+	// Bug 1: extensionless files should be detected as text and transformed.
+	t.Run("extensionless_file", func(t *testing.T) {
+		data, err := os.ReadFile(filepath.Join(targetDir, "data", "inventory_disable_vagrant"))
+		if err != nil {
+			t.Fatal("inventory_disable_vagrant not created in target")
+		}
+		if strings.Contains(strings.ToLower(string(data)), "sevenkingdoms") {
+			t.Error("original domain 'sevenkingdoms' still found in extensionless inventory file")
+		}
+	})
+
+	// Bug 2: files named after entities should be renamed on disk.
+	t.Run("file_renamed", func(t *testing.T) {
+		oldPath := filepath.Join(targetDir, "files", "srv02", "all", "arya.txt")
+		if _, err := os.Stat(oldPath); err == nil {
+			t.Error("arya.txt still exists at original path — file was not renamed")
+		}
+		newFirstname := gen.mappings.Misc["arya"]
+		if newFirstname == "" {
+			t.Fatal("no mapping found for 'arya' in Misc")
+		}
+		newPath := filepath.Join(targetDir, "files", "srv02", "all", newFirstname+".txt")
+		if _, err := os.Stat(newPath); err != nil {
+			t.Errorf("renamed file %s.txt not found at expected path", newFirstname)
+		}
+	})
+
+	// Bug 3: group names in compound strings (e.g., "StarkWallpaper") should be replaced.
+	t.Run("compound_group_name", func(t *testing.T) {
+		data, err := os.ReadFile(filepath.Join(targetDir, "scripts", "gpo_abuse.ps1"))
+		if err != nil {
+			t.Fatal("gpo_abuse.ps1 not created in target")
+		}
+		if strings.Contains(string(data), "Stark") {
+			t.Errorf("original group name 'Stark' still found in gpo_abuse.ps1: %s", string(data))
+		}
+	})
+}
+
+func TestGroupSurnameMappingConsistency(t *testing.T) {
+	sourceDir, targetDir := setupTestSourceFull(t)
+
+	gen := NewGenerator(sourceDir, targetDir, "test-group-surname")
+	if err := gen.Run(); err != nil {
+		t.Fatalf("generator failed: %v", err)
+	}
+
+	// "Stark" is both a group name and a capitalized surname (from arya.stark).
+	// The group mapping should win — Misc should not have a conflicting entry.
+	groupNew := gen.mappings.Groups["Stark"]
+	if groupNew == "" {
+		t.Fatal("group 'Stark' not found in mappings")
+	}
+	if miscNew, exists := gen.mappings.Misc["Stark"]; exists {
+		t.Errorf("Misc still has 'Stark' -> %q, should have been removed in favor of group mapping %q", miscNew, groupNew)
+	}
+
+	// Verify the config.json actually uses the group name, not the surname.
+	varData, err := os.ReadFile(filepath.Join(targetDir, "data", "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(varData), groupNew) {
+		t.Errorf("group name %q not found in variant config.json", groupNew)
+	}
+}
+
+func TestFirstnameCollisionNoOverwrite(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "source")
+	targetDir := filepath.Join(tmpDir, "target")
+
+	if err := os.MkdirAll(filepath.Join(sourceDir, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Two users with the same firstname in the same domain.
+	config := &LabConfig{}
+	config.Lab.Hosts = map[string]*HostConfig{
+		"dc01": {
+			Hostname:           "kingslanding",
+			Type:               "dc",
+			Domain:             "sevenkingdoms.local",
+			LocalAdminPassword: "TestPass123!",
+		},
+	}
+	config.Lab.Domains = map[string]*DomainConfig{
+		"sevenkingdoms.local": {
+			DomainPassword: "DomainPass1!",
+			Users: map[string]*UserConfig{
+				"brandon.stark": {
+					Firstname: "brandon",
+					Surname:   "stark",
+					Password:  "BranPass1!",
+				},
+				"brandon.lannister": {
+					Firstname: "brandon",
+					Surname:   "lannister",
+					Password:  "BranPass2!",
+				},
+			},
+			Groups: GroupsConfig{},
+		},
+	}
+	configData, _ := json.MarshalIndent(config, "", "  ")
+	if err := os.WriteFile(filepath.Join(sourceDir, "data", "config.json"), configData, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	gen := NewGenerator(sourceDir, targetDir, "test-collision")
+	if err := gen.Run(); err != nil {
+		t.Fatalf("generator failed: %v", err)
+	}
+
+	// Both users should have distinct mappings.
+	user1 := gen.mappings.Users["brandon.stark"]
+	user2 := gen.mappings.Users["brandon.lannister"]
+	if user1 == "" || user2 == "" {
+		t.Fatal("one or both users not mapped")
+	}
+	if user1 == user2 {
+		t.Errorf("both users mapped to same username: %s", user1)
+	}
+
+	// The Misc entry for "brandon" should exist and not be empty.
+	miscBrandon := gen.mappings.Misc["brandon"]
+	if miscBrandon == "" {
+		t.Error("Misc mapping for 'brandon' is empty")
+	}
+
+	// Verify both users exist in the output config with correct firstname/surname.
+	varData, err := os.ReadFile(filepath.Join(targetDir, "data", "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var varConfig LabConfig
+	if err := json.Unmarshal(varData, &varConfig); err != nil {
+		t.Fatal(err)
+	}
+	for domainName, domain := range varConfig.Lab.Domains {
+		for username, user := range domain.Users {
+			if strings.Contains(username, ".") {
+				parts := strings.SplitN(username, ".", 2)
+				if user.Firstname != parts[0] {
+					t.Errorf("domain %s user %s: firstname=%q doesn't match username prefix %q",
+						domainName, username, user.Firstname, parts[0])
+				}
+			}
 		}
 	}
 }
