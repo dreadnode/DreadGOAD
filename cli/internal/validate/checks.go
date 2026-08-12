@@ -3341,12 +3341,16 @@ func (v *Validator) reportCrossDomainMembershipResult(
 	result crossDomainMembershipProbeResult,
 ) {
 	switch {
+	case len(result.missing) > 0:
+		message := fmt.Sprintf("Group '%s' missing configured members in %s: %s", gf.Group, gf.Domain, strings.Join(result.missing, ", "))
+		if len(result.unresolved) > 0 {
+			message += fmt.Sprintf("; could not resolve: %s", strings.Join(result.unresolved, ", "))
+		}
+		v.addResult(w, "FAIL", "Groups",
+			message, "")
 	case len(result.unresolved) > 0:
 		v.addResult(w, "WARN", "Groups",
 			fmt.Sprintf("Could not resolve configured members of '%s' in %s: %s", gf.Group, gf.Domain, strings.Join(result.unresolved, ", ")), "")
-	case len(result.missing) > 0:
-		v.addResult(w, "FAIL", "Groups",
-			fmt.Sprintf("Group '%s' missing configured members in %s: %s", gf.Group, gf.Domain, strings.Join(result.missing, ", ")), "")
 	case result.okCount != len(gf.Members):
 		v.addResult(w, "WARN", "Groups",
 			fmt.Sprintf("Could not confirm all configured members of '%s' in %s: got %d/%d proofs", gf.Group, gf.Domain, result.okCount, len(gf.Members)), "")

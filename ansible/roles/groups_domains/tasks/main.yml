@@ -78,9 +78,15 @@
       $result = Invoke-Command -ScriptBlock $scriptBlock -Credential $adminCred -ComputerName localhost
 
       return $result
-    error_action: continue
+    error_action: stop
   register: sync_result
-  failed_when: sync_result.output is defined and sync_result.output | length > 0 and (sync_result.output | last) == false
+  failed_when: >-
+    (sync_result.error | default([]) | length > 0) or
+    (sync_result.output | default([]) | length == 0) or
+    (
+      sync_result.output | default([]) | length > 0 and
+      (sync_result.output | last) == false
+    )
   until: sync_result is succeeded
   retries: 3
   delay: 30
