@@ -1098,11 +1098,12 @@ func (g *Generator) repointDomainName(content string) string {
 	}
 
 	insertAt := loc[1]
-	if strings.HasPrefix(content[insertAt:], "\r\n") {
+	switch {
+	case strings.HasPrefix(content[insertAt:], "\r\n"):
 		insertAt += 2
-	} else if strings.HasPrefix(content[insertAt:], "\n") {
+	case strings.HasPrefix(content[insertAt:], "\n"):
 		insertAt++
-	} else {
+	default:
 		return content[:insertAt] + lineEnding + "domain_name=" + target + content[insertAt:]
 	}
 
