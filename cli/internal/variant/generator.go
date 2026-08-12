@@ -1058,21 +1058,55 @@ func (g *Generator) transformFile(srcPath, relPath string) (transformed bool, er
 // repointDomainName rewrites the Ansible `domain_name` inventory variable to
 // the variant target folder basename. Playbooks resolve vuln scripts/files as
 // ad/{{ domain_name }}/..., so for a variant this must point at the variant's
-// own ad/<target>/ tree rather than the stock ad/GOAD/ tree. Only the value is
-// changed; the key, indentation, and surrounding lines are preserved.
+// own ad/<target>/ tree rather than the stock ad/GOAD/ tree. Existing values
+// are replaced in place; missing values are inserted under [all:vars], with
+// the section appended when the provider template does not define it.
 func (g *Generator) repointDomainName(content string) string {
 	target := filepath.Base(g.TargetPath)
 	re := regexp.MustCompile(`(?m)^(\s*domain_name\s*=\s*).*$`)
-	return re.ReplaceAllStringFunc(content, func(line string) string {
-		if idx := strings.Index(line, "="); idx >= 0 {
-			valueStart := idx + 1
-			for valueStart < len(line) && (line[valueStart] == ' ' || line[valueStart] == '\t') {
-				valueStart++
+	if re.MatchString(content) {
+		return re.ReplaceAllStringFunc(content, func(line string) string {
+			if idx := strings.Index(line, "="); idx >= 0 {
+				valueStart := idx + 1
+				for valueStart < len(line) && (line[valueStart] == ' ' || line[valueStart] == '\t') {
+					valueStart++
+				}
+				return line[:valueStart] + target
 			}
-			return line[:valueStart] + target
+			return line
+		})
+	}
+
+	header := regexp.MustCompile(`(?m)^\[all:vars\][ \t]*`)
+	loc := header.FindStringIndex(content)
+	lineEnding := "\n"
+	if strings.Contains(content, "\r\n") {
+		lineEnding = "\r\n"
+	}
+	if loc == nil {
+		separator := ""
+		if content != "" {
+			separator = lineEnding + lineEnding
+			if strings.HasSuffix(content, lineEnding) {
+				separator = lineEnding
+			}
+			if strings.HasSuffix(content, lineEnding+lineEnding) {
+				separator = ""
+			}
 		}
-		return line
-	})
+		return content + separator + "[all:vars]" + lineEnding + "domain_name=" + target + lineEnding
+	}
+
+	insertAt := loc[1]
+	if strings.HasPrefix(content[insertAt:], "\r\n") {
+		insertAt += 2
+	} else if strings.HasPrefix(content[insertAt:], "\n") {
+		insertAt++
+	} else {
+		return content[:insertAt] + lineEnding + "domain_name=" + target + content[insertAt:]
+	}
+
+	return content[:insertAt] + "domain_name=" + target + lineEnding + content[insertAt:]
 }
 
 // copyAndTransform copies the source directory, transforming text files.

@@ -158,7 +158,7 @@ func TestBootstrapFromProviderTemplateUsesDefaultVariantTarget(t *testing.T) {
 	if err := os.MkdirAll(filepath.Dir(templatePath), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	template := "[default]\ndc01 ansible_host={{ip_range}}.10\n"
+	template := "[default]\ndc01 ansible_host={{ip_range}}.10\n\n[all:vars]\ndomain_name=GOAD-variant-1\n"
 	if err := os.WriteFile(templatePath, []byte(template), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestBootstrapFromProviderTemplateUsesDefaultVariantTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "[default]\ndc01 ansible_host=10.20.30.10\n"
+	want := "[default]\ndc01 ansible_host=10.20.30.10\n\n[all:vars]\ndomain_name=GOAD-variant-1\n"
 	if string(got) != want {
 		t.Fatalf("bootstrapped inventory = %q, want %q", got, want)
 	}
