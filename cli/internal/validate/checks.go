@@ -3312,6 +3312,50 @@ func (v *Validator) checkConfiguredGroups(ctx context.Context, w io.Writer) {
 	}
 }
 
+type crossDomainMembershipProbeResult struct {
+	okCount    int
+	missing    []string
+	unresolved []string
+}
+
+func parseCrossDomainMembershipOutput(output string) crossDomainMembershipProbeResult {
+	var result crossDomainMembershipProbeResult
+	for _, line := range parseOutputLines(output) {
+		switch {
+		case strings.HasPrefix(line, "MEMBER_OK="):
+			result.okCount++
+		case strings.HasPrefix(line, "MEMBER_MISSING="):
+			result.missing = append(result.missing, strings.TrimPrefix(line, "MEMBER_MISSING="))
+		case strings.HasPrefix(line, "MEMBER_LOOKUP_ERROR="):
+			result.unresolved = append(result.unresolved, strings.TrimPrefix(line, "MEMBER_LOOKUP_ERROR="))
+		case strings.HasPrefix(line, "MEMBER_INVALID="):
+			result.unresolved = append(result.unresolved, strings.TrimPrefix(line, "MEMBER_INVALID="))
+		}
+	}
+	return result
+}
+
+func (v *Validator) reportCrossDomainMembershipResult(
+	w io.Writer,
+	gf labmap.CrossDomainGroupFact,
+	result crossDomainMembershipProbeResult,
+) {
+	switch {
+	case len(result.unresolved) > 0:
+		v.addResult(w, "WARN", "Groups",
+			fmt.Sprintf("Could not resolve configured members of '%s' in %s: %s", gf.Group, gf.Domain, strings.Join(result.unresolved, ", ")), "")
+	case len(result.missing) > 0:
+		v.addResult(w, "FAIL", "Groups",
+			fmt.Sprintf("Group '%s' missing configured members in %s: %s", gf.Group, gf.Domain, strings.Join(result.missing, ", ")), "")
+	case result.okCount != len(gf.Members):
+		v.addResult(w, "WARN", "Groups",
+			fmt.Sprintf("Could not confirm all configured members of '%s' in %s: got %d/%d proofs", gf.Group, gf.Domain, result.okCount, len(gf.Members)), "")
+	default:
+		v.addResult(w, "PASS", "Groups",
+			fmt.Sprintf("Group '%s' has %d/%d configured cross-domain members in %s", gf.Group, result.okCount, len(gf.Members), gf.Domain), "")
+	}
+}
+
 // checkCrossDomainGroupMemberships verifies every configured
 // multi_domain_groups_member relation. Foreign members are represented in the
 // local domain as ForeignSecurityPrincipal objects, so the probe resolves each
@@ -3384,35 +3428,8 @@ func (v *Validator) checkCrossDomainGroupMemberships(ctx context.Context, w io.W
 			continue
 		}
 
-		var missing, unresolved []string
-		okCount := 0
-		for _, line := range parseOutputLines(output) {
-			switch {
-			case strings.HasPrefix(line, "MEMBER_OK="):
-				okCount++
-			case strings.HasPrefix(line, "MEMBER_MISSING="):
-				missing = append(missing, strings.TrimPrefix(line, "MEMBER_MISSING="))
-			case strings.HasPrefix(line, "MEMBER_LOOKUP_ERROR="):
-				unresolved = append(unresolved, strings.TrimPrefix(line, "MEMBER_LOOKUP_ERROR="))
-			case strings.HasPrefix(line, "MEMBER_INVALID="):
-				unresolved = append(unresolved, strings.TrimPrefix(line, "MEMBER_INVALID="))
-			}
-		}
-
-		switch {
-		case len(unresolved) > 0:
-			v.addResult(w, "WARN", "Groups",
-				fmt.Sprintf("Could not resolve configured members of '%s' in %s: %s", gf.Group, gf.Domain, strings.Join(unresolved, ", ")), "")
-		case len(missing) > 0:
-			v.addResult(w, "FAIL", "Groups",
-				fmt.Sprintf("Group '%s' missing configured members in %s: %s", gf.Group, gf.Domain, strings.Join(missing, ", ")), "")
-		case okCount != len(gf.Members):
-			v.addResult(w, "WARN", "Groups",
-				fmt.Sprintf("Could not confirm all configured members of '%s' in %s: got %d/%d proofs", gf.Group, gf.Domain, okCount, len(gf.Members)), "")
-		default:
-			v.addResult(w, "PASS", "Groups",
-				fmt.Sprintf("Group '%s' has %d/%d configured cross-domain members in %s", gf.Group, okCount, len(gf.Members), gf.Domain), "")
-		}
+		result := parseCrossDomainMembershipOutput(output)
+		v.reportCrossDomainMembershipResult(w, gf, result)
 	}
 }
 
