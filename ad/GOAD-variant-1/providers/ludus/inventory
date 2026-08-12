@@ -17,6 +17,7 @@ dc03 ansible_host={{ip_range}}.12 dns_domain=dc03 dict_key=dc03
 srv03 ansible_host={{ip_range}}.23 dns_domain=dc03 dict_key=srv03
 
 [all:vars]
+domain_name=GOAD-variant-1
 force_dns_server=no
 dns_server={{ip_range}}.254
 
