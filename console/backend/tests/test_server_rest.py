@@ -252,6 +252,17 @@ def main() -> None:
         )
         assert listing["providers"] == ["aws", "azure"], listing["providers"]
         assert set(listing["credential_hints"]) == {"aws", "azure"}, listing
+        # Region suggestions for the create form. Sent by the backend so the
+        # frontend has no list of its own to drift from.
+        assert set(listing["regions"]) == {"aws", "azure"}, listing["regions"]
+        for provider, regions in listing["regions"].items():
+            assert regions, f"{provider} has no region suggestions"
+            assert len(set(regions)) == len(regions), f"{provider} has duplicates"
+            assert all(r == r.strip() and r for r in regions), regions
+        # The regions this repo already deploys into come first, since those are
+        # the ones known to work here.
+        assert listing["regions"]["azure"][0] == "centralus", listing["regions"]
+        assert listing["regions"]["aws"][0] == "us-west-1", listing["regions"]
         print("PASS config listing")
 
         # list
@@ -349,6 +360,63 @@ def main() -> None:
 
     asyncio.run(test_reconcile_interrupted())
     print("ALL PASS")
+
+
+def test_range_read_repairs_missing_config_hosts(client: TestClient) -> None:
+    """The GET route must invoke the repair, not just contain the function.
+
+    Without this, deleting the repair call from get_range leaves every other
+    test passing: the four topology tests call repair_missing_config_hosts
+    directly and never exercise the wiring.
+
+    Reproduces the real failure — a session whose lab config does not exist at
+    seed time comes up infra-only, and inventory_sync can never add the hosts
+    later — then makes the lab appear and asserts the next read heals it.
+    """
+    tree = tempfile.mkdtemp()
+    cfg = pathlib.Path(tree) / "dreadgoad.yaml"
+    cfg.write_text(
+        "provider: azure\nregion: centralus\nenvironments:\n"
+        "  rt:\n    variant: true\n    variant_target: ad/GOAD-rt\n"
+    )
+
+    created = client.post("/api/sessions", json={"config_path": str(cfg), "env": "rt"})
+    assert created.status_code == 200, created.text
+    sid = created.json()["id"]
+
+    # Seeded before any lab exists in this tree: infra nodes only.
+    before = client.get(f"/api/ranges/{sid}").json()
+    sources = {h["source"] for h in before["hosts"]}
+    assert sources == {"infra"}, before["hosts"]
+
+    # The scaffold/variant generator would produce this after session creation.
+    data = pathlib.Path(tree) / "ad" / "GOAD-rt" / "data"
+    data.mkdir(parents=True)
+    (data / "config.json").write_text(
+        json.dumps(
+            {
+                "lab": {
+                    "hosts": {
+                        "dc01": {"hostname": "nova", "type": "dc"},
+                        "srv02": {"hostname": "vertex", "type": "server"},
+                    }
+                }
+            }
+        )
+    )
+
+    after = client.get(f"/api/ranges/{sid}").json()
+    hosts = {h["id"]: h for h in after["hosts"]}
+    assert "nova" in hosts and "vertex" in hosts, hosts.keys()
+    assert hosts["nova"]["key"] == "dc01", hosts["nova"]
+    # Infra nodes survive the repair.
+    assert "attackbox" in hosts and "bastion" in hosts, hosts.keys()
+
+    # Persisted, so a later read does not have to repair again.
+    repeat = client.get(f"/api/ranges/{sid}").json()
+    assert [h["id"] for h in repeat["hosts"]] == [h["id"] for h in after["hosts"]]
+
+    client.delete(f"/api/sessions/{sid}")
 
 
 def test_ws_origin_allowed() -> None:

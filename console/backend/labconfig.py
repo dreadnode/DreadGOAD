@@ -19,6 +19,8 @@ import typing as t
 import ruamel.yaml
 import yaml
 
+from . import projectroot
+
 # config.json host `type` → RangeView role (§6.3).
 _ROLE_BY_TYPE = {
     "dc": "dc",
@@ -306,6 +308,29 @@ def merge_reseed(
     out["edges"] = seeded.get("edges", [])
     out["layout"] = layout
     return out
+
+
+def session_lab_config_path(
+    session: dict[str, t.Any], fallback_root: str
+) -> str | None:
+    """Where a session's lab config lives, resolved in the config's own tree.
+
+    ``lab`` is repo-relative (``ad/GOAD-redteam``), so it only means anything
+    against the right root. Both seeders previously resolved it against the
+    *console's* repo — which is correct only while every config lives there.
+    A config in another checkout has its ``ad/`` in that checkout, so the lookup
+    missed, ``seed_topology`` took its greenfield path, and the range came up
+    with infra nodes and no hosts. Identical symptom to seeding before the
+    variant exists, and reached by a completely different route.
+
+    Mirrors what the CLI itself will do for this session (projectroot.run_cwd).
+    """
+    anchor = session.get("anchor") or {}
+    config_path = anchor.get("config_path")
+    root = (
+        str(projectroot.resolve_root(config_path)[0]) if config_path else fallback_root
+    )
+    return lab_config_path(root, (session.get("snapshot") or {}).get("lab"))
 
 
 def lab_config_path(repo_root: str, lab: str | None) -> str | None:

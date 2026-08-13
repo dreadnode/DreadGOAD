@@ -32,7 +32,24 @@ environments:
 """
 
 
+def _project_root(tmp: pathlib.Path) -> None:
+    """Make ``tmp`` a tree the lab lookup will accept.
+
+    The lab config is resolved from the *config's own* project root, matching
+    where the CLI will look for it (projectroot.resolve_root). A config dropped
+    in a bare temp directory therefore has no lab, which is correct — the CLI
+    would not find one either. These tests want a config that does, so give the
+    directory the ``ansible/`` marker and the repo's ``ad/`` tree.
+    """
+    (tmp / "ansible").mkdir(exist_ok=True)
+    link = tmp / "ad"
+    if not link.exists():
+        # Symlinked rather than copied: ad/ is ~19MB and read-only here.
+        link.symlink_to(_REPO / "ad")
+
+
 async def _svc(tmp: pathlib.Path) -> SessionService:
+    _project_root(tmp)
     db = await Database(str(tmp / "state.db")).connect()
     return SessionService(db, repo_root=str(_REPO), sessions_root=tmp / "sessions")
 

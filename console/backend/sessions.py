@@ -98,7 +98,7 @@ class SessionService:
         }
         await self.db.upsert_session(session)
 
-        topo = self._seed_topology(snap)
+        topo = self._seed_topology(session)
         topo["session_id"] = sid
         await self.db.upsert_range(sid, topo)
 
@@ -174,6 +174,10 @@ class SessionService:
                 )
             },
         )
+        if ok:
+            # The variant only exists now, so the topology seeded during
+            # create_session above saw no lab config and holds infra nodes only.
+            await self._reseed_topology(session)
 
     async def create_config_session(
         self,
@@ -212,9 +216,31 @@ class SessionService:
         await self._scaffold_for(session, env_fields)
         return session
 
-    def _seed_topology(self, snapshot: dict[str, t.Any]) -> dict[str, t.Any]:
-        cfg = labconfig.lab_config_path(self.repo_root, snapshot.get("lab"))
-        return labconfig.seed_topology(cfg, snapshot.get("provider"))
+    def _seed_topology(self, session: dict[str, t.Any]) -> dict[str, t.Any]:
+        cfg = labconfig.session_lab_config_path(session, self.repo_root)
+        return labconfig.seed_topology(
+            cfg, (session.get("snapshot") or {}).get("provider")
+        )
+
+    async def _reseed_topology(self, session: dict[str, t.Any]) -> None:
+        """Re-read the lab config into the topology, keeping live state.
+
+        Seeding happens inside create_session, which runs BEFORE the scaffold
+        that generates the variant — so a newly created environment is seeded
+        from a lab config that does not exist yet and comes up with infra nodes
+        only. Nothing else re-reads it: inventory_sync overlays cloud state onto
+        hosts already in the topology and never adds one ("Overlay cloud state
+        without adding instances absent from the topology"), so a host missing
+        from the seed stays invisible no matter how many times the hook runs.
+
+        merge_reseed keeps status/ip/layout for surviving nodes, so this is safe
+        to run over a topology the operator has already arranged.
+        """
+        rng = await self.db.get_range(session["id"])
+        if rng is None:
+            return
+        seeded = self._seed_topology(session)
+        await self.db.upsert_range(session["id"], labconfig.merge_reseed(rng, seeded))
 
     async def list_sessions(self) -> list[dict[str, t.Any]]:
         """Return every known session."""

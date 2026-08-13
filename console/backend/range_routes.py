@@ -7,6 +7,8 @@ import typing as t
 
 from fastapi import APIRouter, HTTPException, Request
 
+from . import topology_sync
+
 router = APIRouter()
 
 LAYOUT_MAX_NODES = 1_000
@@ -16,11 +18,19 @@ LAYOUT_MAX_ABS_COORDINATE = 1_000_000
 
 @router.get("/api/ranges/{session_id}")
 async def get_range(request: Request, session_id: str) -> dict[str, t.Any]:
-    """Return the topology rendered by the RangeView."""
+    """Return the topology rendered by the RangeView.
+
+    A read can repair the topology before returning it — see
+    topology_sync.repair_missing_config_hosts for what and why. Writing during a
+    GET is not free of concerns, but the alternative is a range that is
+    permanently missing its hosts unless the operator knows to press something,
+    and the repair is self-limiting: it fires only while the topology has no
+    config hosts and the lab config exists, which one pass makes false.
+    """
     rng = await request.app.state.db.get_range(session_id)
     if rng is None:
         raise HTTPException(status_code=404, detail="range not found")
-    return rng
+    return await topology_sync.repair_missing_config_hosts(request.app, session_id, rng)
 
 
 def _normalize_layout(body: dict[str, t.Any]) -> tuple[dict[str, dict[str, int]], int]:

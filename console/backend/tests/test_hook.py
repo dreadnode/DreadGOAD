@@ -749,7 +749,206 @@ def main() -> None:
     asyncio.run(test_apply_health_targets_config_hosts())
     asyncio.run(test_apply_health_per_host_from_json())
     asyncio.run(test_reseed_adds_enabled_extension_nodes())
+    asyncio.run(test_repair_seeds_hosts_missing_from_the_original_topology())
+    asyncio.run(test_repair_leaves_a_genuine_greenfield_range_alone())
+    asyncio.run(test_repair_never_removes_nodes_it_did_not_seed())
     print("ALL PASS")
+
+
+async def test_repair_seeds_hosts_missing_from_the_original_topology() -> None:
+    """A range seeded before its lab config existed must be repairable.
+
+    create_session seeds the topology BEFORE the scaffold generates the variant,
+    so a console-created environment comes up with infra nodes only — and
+    inventory_sync never adds hosts, so a deployed VM can never appear. Observed
+    live: a range with DC01 running showed an empty graph and three consecutive
+    `hosts_updated: 0`.
+    """
+    import json as _json
+    import os as _os
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()
+    lab_root = tempfile.mkdtemp()
+    # A project root the CLI's walk accepts, with the lab config in ITS tree.
+    _os.makedirs(_os.path.join(lab_root, "ansible"), exist_ok=True)
+    data_dir = _os.path.join(lab_root, "ad", "GOAD-rt", "data")
+    _os.makedirs(data_dir, exist_ok=True)
+    with open(_os.path.join(data_dir, "config.json"), "w") as f:
+        _json.dump(
+            {
+                "lab": {
+                    "hosts": {
+                        "dc01": {"hostname": "nova", "type": "dc"},
+                        "srv02": {"hostname": "vertex", "type": "server"},
+                    }
+                }
+            },
+            f,
+        )
+    cfg_path = _os.path.join(lab_root, "dreadgoad.yaml")
+    with open(cfg_path, "w") as f:
+        f.write("provider: azure\n")
+
+    db = await Database(tmp.name).connect()
+    await db.upsert_session(
+        {
+            "id": "s",
+            "anchor": {"config_path": cfg_path, "env": "rt"},
+            "snapshot": {"provider": "azure", "lab": "ad/GOAD-rt"},
+        }
+    )
+    infra_only = {
+        "session_id": "s",
+        "hosts": [
+            {
+                "id": "attackbox",
+                "hostname": "attackbox",
+                "role": "attackbox",
+                "source": "infra",
+                "status": "running",
+                "ip_private": "10.0.0.9",
+            },
+            {
+                "id": "bastion",
+                "hostname": "bastion",
+                "role": "bastion",
+                "source": "infra",
+                "status": "unknown",
+            },
+        ],
+        "edges": [],
+        "layout": {"attackbox": {"x": 42, "y": 7}},
+    }
+    await db.upsert_range("s", infra_only)
+    try:
+        repaired = await topology_sync.repair_missing_config_hosts(
+            _App(db), "s", infra_only
+        )
+        hosts = {h["id"]: h for h in repaired["hosts"]}
+        assert {"nova", "vertex"} <= set(hosts), hosts.keys()
+        assert hosts["nova"]["key"] == "dc01", hosts["nova"]
+        assert hosts["nova"]["role"] == "dc", hosts["nova"]
+        # Live state and layout of surviving nodes must not be lost.
+        assert hosts["attackbox"]["status"] == "running", hosts["attackbox"]
+        assert hosts["attackbox"]["ip_private"] == "10.0.0.9", hosts["attackbox"]
+        assert repaired["layout"]["attackbox"] == {"x": 42, "y": 7}, repaired["layout"]
+        # Persisted, not just returned.
+        stored = await db.get_range("s")
+        assert stored is not None and len(stored["hosts"]) == len(repaired["hosts"])
+
+        # Self-limiting: a second pass is a no-op.
+        again = await topology_sync.repair_missing_config_hosts(_App(db), "s", repaired)
+        assert again is repaired, "repair must not re-run once config hosts exist"
+        print("PASS test_repair_seeds_hosts_missing_from_the_original_topology")
+    finally:
+        await db.close()
+
+
+async def test_repair_leaves_a_genuine_greenfield_range_alone() -> None:
+    """No lab config on disk yet is a legitimate state, not something to fix."""
+    import os as _os
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()
+    lab_root = tempfile.mkdtemp()
+    _os.makedirs(_os.path.join(lab_root, "ansible"), exist_ok=True)
+    cfg_path = _os.path.join(lab_root, "dreadgoad.yaml")
+    with open(cfg_path, "w") as f:
+        f.write("provider: aws\n")
+
+    db = await Database(tmp.name).connect()
+    await db.upsert_session(
+        {
+            "id": "s",
+            "anchor": {"config_path": cfg_path, "env": "rt"},
+            "snapshot": {"provider": "aws", "lab": "ad/NOT-GENERATED-YET"},
+        }
+    )
+    rng = {
+        "session_id": "s",
+        "hosts": [
+            {
+                "id": "attackbox",
+                "role": "attackbox",
+                "source": "infra",
+                "status": "absent",
+            },
+        ],
+        "edges": [],
+        "layout": {},
+    }
+    await db.upsert_range("s", rng)
+    try:
+        out = await topology_sync.repair_missing_config_hosts(_App(db), "s", rng)
+        assert out is rng, "must not touch a range whose lab config does not exist"
+        print("PASS test_repair_leaves_a_genuine_greenfield_range_alone")
+    finally:
+        await db.close()
+
+
+async def test_repair_never_removes_nodes_it_did_not_seed() -> None:
+    """A repair must only ADD. merge_reseed makes the seed authoritative.
+
+    `/extensions` on a greenfield range leaves nodes seed_topology knows nothing
+    about. Letting merge_reseed drop them meant the extension node and its saved
+    position vanished the moment the variant appeared.
+    """
+    import json as _json
+    import os as _os
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()
+    root = tempfile.mkdtemp()
+    _os.makedirs(_os.path.join(root, "ansible"), exist_ok=True)
+    data = _os.path.join(root, "ad", "GOAD-rt", "data")
+    _os.makedirs(data, exist_ok=True)
+    with open(_os.path.join(data, "config.json"), "w") as f:
+        _json.dump({"lab": {"hosts": {"dc01": {"hostname": "nova", "type": "dc"}}}}, f)
+    cfg = _os.path.join(root, "dreadgoad.yaml")
+    with open(cfg, "w") as f:
+        f.write("provider: aws\n")
+
+    db = await Database(tmp.name).connect()
+    await db.upsert_session(
+        {
+            "id": "s",
+            "anchor": {"config_path": cfg, "env": "rt"},
+            "snapshot": {"provider": "aws", "lab": "ad/GOAD-rt"},
+        }
+    )
+    rng = {
+        "session_id": "s",
+        "hosts": [
+            {
+                "id": "attackbox",
+                "role": "attackbox",
+                "source": "infra",
+                "status": "running",
+            },
+            {
+                "id": "elk",
+                "role": "linux",
+                "source": "extension",
+                "status": "running",
+                "ip_private": "10.0.0.5",
+            },
+        ],
+        "edges": [],
+        "layout": {"elk": {"x": 10, "y": 20}},
+    }
+    await db.upsert_range("s", rng)
+    try:
+        out = await topology_sync.repair_missing_config_hosts(_App(db), "s", rng)
+        hosts = {h["id"]: h for h in out["hosts"]}
+        assert "nova" in hosts, hosts.keys()  # the repair did its job
+        assert "elk" in hosts, "extension node was dropped by the repair"
+        assert hosts["elk"]["status"] == "running", hosts["elk"]
+        assert hosts["elk"]["ip_private"] == "10.0.0.5", hosts["elk"]
+        assert out["layout"].get("elk") == {"x": 10, "y": 20}, out["layout"]
+        print("PASS test_repair_never_removes_nodes_it_did_not_seed")
+    finally:
+        await db.close()
 
 
 if __name__ == "__main__":
