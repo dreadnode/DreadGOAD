@@ -138,7 +138,7 @@
         # Try using the built-in LAPS cmdlet first
         try {
           # Try to use the Set-AdmPwdReadPasswordPermission cmdlet
-          Set-AdmPwdReadPasswordPermission -OrgUnit $lapsOU.DistinguishedName -Identity $adObject.SID
+          Set-AdmPwdReadPasswordPermission -OrgUnit $lapsOU.DistinguishedName -AllowedPrincipals $principal
           Write-Output "Successfully granted LAPS read permission to $principal on $($lapsOU.DistinguishedName) using Set-AdmPwdReadPasswordPermission"
           return $true
         } catch {
