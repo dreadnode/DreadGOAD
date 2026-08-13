@@ -47,6 +47,27 @@ env: test
 !!! warning "Subscription capacity"
     The Dreadnode MSFT Startup subscription has tight quota limits in `eastus`. Default to `centralus` unless you know the target region has capacity.
 
+### GOAD VM sizes
+
+Azure environment configuration supports a `goad_instance_sizes` map in `env.hcl`.
+DC02 defaults to `Standard_D4s_v3` because it runs the recurring attack-simulation
+tasks; the other GOAD hosts default to `Standard_D2s_v3`.
+
+```hcl
+goad_instance_sizes = {
+  dc01  = "Standard_D2s_v3"
+  dc02  = "Standard_D4s_v3"
+  dc03  = "Standard_D2s_v3"
+  srv02 = "Standard_D2s_v3"
+  srv03 = "Standard_D2s_v3"
+}
+```
+
+New environments include and consume these defaults automatically. Environments
+created before this setting was introduced still have a hard-coded size in each host
+configuration. Before the next apply, set `instance_size = "Standard_D4s_v3"` in the
+existing environment's `dc02/terragrunt.hcl` so Terraform retains the larger VM size.
+
 
 ## Installation
 
