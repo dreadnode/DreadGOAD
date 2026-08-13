@@ -13,8 +13,9 @@ import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
+from console.backend import configstore, paths  # noqa: E402
 from console.backend.db import Database  # noqa: E402
-from console.backend.sessions import SessionService  # noqa: E402
+from console.backend.sessions import SessionService, default_label  # noqa: E402
 
 _REPO = pathlib.Path(__file__).resolve().parents[3]
 
@@ -176,12 +177,163 @@ async def test_greenfield_seeds_infra_only() -> None:
             await svc.db.close()
 
 
+def test_default_label_names_the_config_and_env() -> None:
+    """The tab answers 'which session'; the range header answers 'what is it'."""
+    cases = [
+        # Ordinary case: variant name matches the env, so it adds nothing.
+        (
+            "/repo/dreadgoad.yaml",
+            "staging",
+            {"variant_name": "staging"},
+            "dreadgoad/staging",
+        ),
+        # A console-created config keeps its own name, which is the whole point
+        # once more than one config can exist.
+        (
+            "/r/.dreadgoad/console/configs/azure-lab.yaml",
+            "redteam",
+            {"variant_name": "redteam"},
+            "azure-lab/redteam",
+        ),
+        # Variant deliberately different from the env — the one case where the
+        # third segment carries information.
+        (
+            "/repo/dreadgoad.yaml",
+            "redteam",
+            {"variant_name": "phase2"},
+            "dreadgoad/redteam · phase2",
+        ),
+        # No variant at all.
+        ("/repo/dreadgoad.yaml", "prod", {}, "dreadgoad/prod"),
+        # The provider is deliberately NOT in the label: the range header
+        # already shows it, so repeating it spends tab width on nothing.
+        ("/repo/dreadgoad.yaml", "prod", {"provider": "azure"}, "dreadgoad/prod"),
+    ]
+    for config_path, env, snap, expected in cases:
+        got = default_label(config_path, env, snap)
+        assert got == expected, (config_path, env, got, expected)
+    print("PASS test_default_label_names_the_config_and_env")
+
+
+async def test_create_config_session_writes_a_config_and_attaches() -> None:
+    """One call makes the config, the env inside it, and the session."""
+    saved = os.environ.get("DREADGOAD_CONSOLE_STATE_ROOT")
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = str(tmp / "state")
+        svc = await _svc(tmp)
+        try:
+            s = await svc.create_config_session(
+                "Azure Lab #1",
+                "azure",
+                "redteam",
+                {
+                    "variant": True,
+                    "variant_source": "ad/GOAD",
+                    "vpc_cidr": "10.7.0.0/16",
+                },
+                region="eastus",
+            )
+            path = pathlib.Path(s["anchor"]["config_path"])
+            assert path.name == "azure-lab-1.yaml", f"name not slugged: {path}"
+            assert path.parent == paths.configs_root().resolve(), path
+
+            # The session reads back through the same snapshot path as any other.
+            assert s["anchor"]["env"] == "redteam", s
+            assert s["snapshot"]["provider"] == "azure", s
+            assert s["snapshot"]["region"] == "eastus", s
+
+            # And the new config is discoverable by the picker straight away.
+            listed = {c["path"]: c for c in configstore.known_configs()}
+            assert str(path) in listed, listed.keys()
+            assert listed[str(path)]["source"] == "managed", listed[str(path)]
+            assert listed[str(path)]["environments"] == ["redteam"], listed[str(path)]
+            print("PASS test_create_config_session_writes_a_config_and_attaches")
+        finally:
+            await svc.db.close()
+            os.environ.pop("DREADGOAD_CONSOLE_STATE_ROOT", None)
+            if saved is not None:
+                os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = saved
+
+
+async def test_create_config_session_refuses_a_taken_name() -> None:
+    saved = os.environ.get("DREADGOAD_CONSOLE_STATE_ROOT")
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = str(tmp / "state")
+        svc = await _svc(tmp)
+        try:
+            await svc.create_config_session("lab", "aws", "one", {}, region="us-east-1")
+            try:
+                # Same name, different provider: the dangerous case. Silently
+                # merging would hand the second session the first's provider.
+                await svc.create_config_session("lab", "azure", "two", {})
+                raise AssertionError("expected FileExistsError for a taken name")
+            except FileExistsError:
+                pass
+            # The first config is intact and still the only one.
+            path = paths.configs_root().resolve() / "lab.yaml"
+            import yaml
+
+            data = yaml.safe_load(path.read_text())
+            assert data["provider"] == "aws", data
+            assert list(data["environments"]) == ["one"], data
+            assert len(await svc.list_sessions()) == 1, "no session for a failed create"
+            print("PASS test_create_config_session_refuses_a_taken_name")
+        finally:
+            await svc.db.close()
+            os.environ.pop("DREADGOAD_CONSOLE_STATE_ROOT", None)
+            if saved is not None:
+                os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = saved
+
+
+async def test_create_config_session_rolls_back_on_failure() -> None:
+    """A half-made config would block retrying under the same name."""
+    saved = os.environ.get("DREADGOAD_CONSOLE_STATE_ROOT")
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = str(tmp / "state")
+        svc = await _svc(tmp)
+        try:
+            boom = RuntimeError("db is down")
+
+            async def fail(*_a: object, **_k: object) -> dict[str, object]:
+                raise boom
+
+            original = svc.create_session
+            svc.create_session = fail  # type: ignore[method-assign]
+            try:
+                await svc.create_config_session("doomed", "aws", "dev", {})
+                raise AssertionError("expected the injected failure to propagate")
+            except RuntimeError as exc:
+                assert exc is boom, exc
+            finally:
+                svc.create_session = original  # type: ignore[method-assign]
+
+            assert not (paths.configs_root().resolve() / "doomed.yaml").exists(), (
+                "a failed create must not leave a config that blocks the retry"
+            )
+            # Proven by the retry actually succeeding.
+            s = await svc.create_config_session("doomed", "aws", "dev", {})
+            assert s["anchor"]["env"] == "dev", s
+            print("PASS test_create_config_session_rolls_back_on_failure")
+        finally:
+            await svc.db.close()
+            os.environ.pop("DREADGOAD_CONSOLE_STATE_ROOT", None)
+            if saved is not None:
+                os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = saved
+
+
 async def _main() -> None:
     await test_create_attach_session()
     await test_delete_session_removes_dir_and_rows()
     await test_delete_refuses_working_dir_outside_session_root()
     await test_create_new_env_writes_yaml_and_backs_up()
     await test_greenfield_seeds_infra_only()
+    test_default_label_names_the_config_and_env()
+    await test_create_config_session_writes_a_config_and_attaches()
+    await test_create_config_session_refuses_a_taken_name()
+    await test_create_config_session_rolls_back_on_failure()
     print("ALL PASS")
 
 

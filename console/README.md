@@ -153,6 +153,9 @@ second tab is rejected with a 409 rather than overwriting the newer layout.
 | `health_sync.py` | Health-report parsing and per-host health overlays |
 | `topology_sync.py` | Range reseeding and extension-node discovery |
 | `labconfig.py` | Snapshot derivation + range topology seeding from lab config |
+| `configstore.py` | Which configs exist, where new ones are written, credential hints |
+| `labs.py` | Base-lab discovery for the variant-source picker (`lab list --json`) |
+| `scaffold.py` | Builds an environment's infra tree via `dreadgoad env create` |
 | `sessions.py` | Session lifecycle service |
 | `db.py` | SQLite persistence (single-worker executor, WAL) |
 | `fetch.py` | `/score` report fetch via `dreadgoad score fetch` |
@@ -165,8 +168,15 @@ second tab is rejected with a 409 rather than overwriting the newer layout.
 
 # Backend tests (each suite is standalone-runnable, no pytest required):
 .venv/bin/python console/backend/tests/test_commands.py
-# ... test_chat.py, test_db.py, test_fetch.py, test_hook.py, test_labconfig.py,
-#     test_longops.py, test_server_rest.py, test_sessions.py, test_summary.py
+# ... test_chat.py, test_configstore.py, test_db.py, test_fetch.py, test_hook.py,
+#     test_labconfig.py, test_labs.py, test_longops.py, test_server_rest.py,
+#     test_sessions.py, test_summary.py
+
+# Or the whole suite at once. asyncio_mode=auto is required — without it every
+# async test errors out as "async def functions are not natively supported".
+uv run --no-project --with-requirements console/backend/requirements.txt \
+  --with pytest --with pytest-asyncio --with httpx \
+  python -m pytest console/backend/tests/ -q -o asyncio_mode=auto
 
 ruff format console/backend/ && ruff check console/backend/
 pyright --pythonpath .venv/bin/python console/backend/

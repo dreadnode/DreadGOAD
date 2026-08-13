@@ -16,6 +16,7 @@ import os
 import shutil
 import typing as t
 
+import ruamel.yaml
 import yaml
 
 # config.json host `type` → RangeView role (§6.3).
@@ -25,12 +26,52 @@ _ROLE_BY_TYPE = {
     "workstation": "workstation",
 }
 
+# Every provider the Go CLI knows (cli/internal/provider/factory.go:10-13).
+CLI_PROVIDERS = ("aws", "azure", "proxmox", "ludus")
+
+# The subset the console can actually drive end to end. `derive_snapshot` only
+# builds a provider block for these two, `seed_topology` only knows azure's
+# bastion, and the frontend's CONNECT planner dead-ends on anything else
+# (frontend/src/connect.ts:90). A session on proxmox or ludus would be created
+# happily and then be unable to render or connect, so the create UI offers only
+# these while the CLI keeps supporting the rest.
+CONSOLE_PROVIDERS = ("aws", "azure")
+
+
+def _environments_of(data: dict[str, t.Any], config_path: str) -> dict[str, t.Any]:
+    """The ``environments`` mapping, or ValueError naming what was found instead.
+
+    ``environments:`` written as a YAML *list* is the easy mistake — it is how
+    almost every other list-shaped key in a config file looks. Without this the
+    shape error surfaced as an AttributeError from ``.keys()``, which no caller
+    catches: the environments endpoint lists ValueError/YAMLError/OSError and
+    would have returned a 500 for what is a typo in the operator's own file.
+    """
+    envs = data.get("environments")
+    if envs is None:
+        # Absent, or present-but-empty (``environments:`` with nothing under
+        # it). Returning a fresh mapping is only safe for readers; writers must
+        # attach it to the document themselves — see write_new_env.
+        return {}
+    if not isinstance(envs, dict):
+        raise ValueError(
+            f"{config_path}: 'environments' must be a mapping of name to "
+            f"settings, but it is a {type(envs).__name__}. It should read "
+            f"'environments:' followed by indented 'name:' entries, not a "
+            f"'-' list."
+        )
+    # NOT ``or {}``: an existing empty mapping is falsy, and substituting a new
+    # one for it would hand a writer a detached dict whose contents never reach
+    # the file.
+    return envs
+
 
 def list_environments(config_path: str) -> dict[str, t.Any]:
     """List the environment names defined in a ``dreadgoad.yaml`` (+ provider/region).
 
     Drives the new-session env dropdown. Raises FileNotFoundError / YAMLError /
-    OSError on a bad path or malformed file (surfaced as 400 by the endpoint).
+    ValueError / OSError on a bad path or malformed file (surfaced as 400 by the
+    endpoint).
     """
     with open(config_path) as f:
         data = yaml.safe_load(f) or {}
@@ -38,11 +79,50 @@ def list_environments(config_path: str) -> dict[str, t.Any]:
         raise ValueError(
             f"{config_path} is not a valid config (expected a YAML mapping)"
         )
+    envs = _environments_of(data, config_path)
+    provider = data.get("provider")
+    file_region = data.get("region")
+
+    # Per environment, the region the CLI would ACTUALLY use — which is not the
+    # same question for both providers:
+    #
+    #   aws    Config.ResolveRegion (config.go:474-485): the environment's own
+    #          region wins, the file-level key is the fallback.
+    #   azure  runInfraActionAzure reads cfg.Region directly (infra_cmd.go:215)
+    #          and never calls ResolveRegion, so a per-environment region is
+    #          silently ignored and only the file-level key counts.
+    #
+    # The console warns "this config sets no region" from this value, so folding
+    # the two together would have told an Azure operator they were fine right up
+    # until `up` failed with "azure region not configured".
     return {
-        "environments": list((data.get("environments") or {}).keys()),
-        "provider": data.get("provider"),
-        "region": data.get("region"),
+        "environments": list(envs.keys()),
+        "provider": provider,
+        "region": file_region,
+        "env_regions": {
+            name: resolve_region(provider, settings, file_region)
+            for name, settings in envs.items()
+        },
     }
+
+
+def resolve_region(
+    provider: str | None, env_settings: t.Any, file_region: t.Any
+) -> t.Any:
+    """The region the CLI will actually use for one environment.
+
+    Shared by :func:`list_environments` and :func:`derive_snapshot` so the
+    warning, the session header, and the region handed to ``env create`` cannot
+    disagree. They previously did: a per-environment region on an Azure config
+    made the header show a region, the scaffold target use it, and the warning
+    simultaneously report there was none.
+
+    See :func:`list_environments` for why the two providers differ.
+    """
+    if provider == "azure":
+        return file_region
+    env_region = env_settings.get("region") if isinstance(env_settings, dict) else None
+    return env_region or file_region
 
 
 def derive_snapshot(config_path: str, env: str) -> dict[str, t.Any]:
@@ -53,16 +133,27 @@ def derive_snapshot(config_path: str, env: str) -> dict[str, t.Any]:
     """
     with open(config_path) as f:
         data = yaml.safe_load(f) or {}
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"{config_path} is not a valid config (expected a YAML mapping)"
+        )
 
     provider = data.get("provider")
-    region = data.get("region")
-    envs = data.get("environments") or {}
+    envs = _environments_of(data, config_path)
     if env not in envs:
         available = ", ".join(sorted(envs)) or "none"
         raise ValueError(
             f"environment {env!r} not found in {config_path} (available: {available})"
         )
     e = envs[env] or {}
+
+    # Mirrors Config.ResolveRegion (config.go:474-485): the environment's own
+    # region wins, and the file-level key is the fallback for environments that
+    # don't declare one. Reading only the file-level key made the header show a
+    # region the CLI would not actually use. The CLI's highest-precedence source
+    # — --region / DREADGOAD_REGION — is deliberately not consulted: it belongs
+    # to a single invocation, not to the environment this snapshot describes.
+    region = resolve_region(provider, e, data.get("region"))
 
     variant_target = e.get("variant_target")
     variant_source = e.get("variant_source")
@@ -228,6 +319,23 @@ def lab_config_path(repo_root: str, lab: str | None) -> str | None:
     return os.path.join(repo_root, lab, "data", "config.json")
 
 
+def _round_trip_yaml() -> ruamel.yaml.YAML:
+    """A YAML handler that reads and writes a file without rewriting it.
+
+    ruamel's round-trip mode keeps comments, key order, blank lines and quoting
+    styles attached to the data, so dumping a loaded document reproduces
+    everything it did not change.
+
+    ``width`` is raised because the default (80) re-wraps long scalars that were
+    on one line — a wrapped CIDR or resource path is still valid YAML but shows
+    up as noise in the operator's diff of their own file.
+    """
+    handler = ruamel.yaml.YAML()
+    handler.preserve_quotes = True
+    handler.width = 4096
+    return handler
+
+
 def write_new_env(
     config_path: str,
     env_name: str,
@@ -237,21 +345,108 @@ def write_new_env(
     """Add/replace an env entry in a ``dreadgoad.yaml`` (create-new flow, §4.3).
 
     Backs up the file first (if it exists). ``top_level`` sets file-level keys
-    (``provider``/``region``) shared by all envs. Note: round-tripping via
-    ``safe_dump`` does not preserve comments — the backup is the safety net.
+    (``provider``/``region``) shared by all envs.
+
+    Rewritten through ruamel's round-trip loader rather than ``yaml.safe_dump``.
+    The checked-in ``dreadgoad.yaml`` is a documented template — the Proxmox key
+    reference, the provider and region hints — and safe_dump reproduced only the
+    data, so adding one environment through the console deleted 44 lines of
+    comments from a tracked file. The backup was the only thing standing between
+    that and a silent loss, and a backup you have to notice is not a safety net.
+
+    Falls back to a plain construction when the file does not exist yet: there
+    is nothing to preserve, and a config created here gets its own file rather
+    than sharing this one (see :func:`create_config`).
     """
-    data: dict[str, t.Any] = {}
+    handler = _round_trip_yaml()
+    data: t.Any = {}
     if os.path.isfile(config_path):
-        with open(config_path) as f:
-            data = yaml.safe_load(f) or {}
+        try:
+            with open(config_path) as f:
+                data = handler.load(f)
+        except ruamel.yaml.YAMLError as exc:
+            # ruamel's YAMLError shares no ancestry with pyyaml's beyond
+            # Exception, so it slips past every caller's `except yaml.YAMLError`
+            # — the create-environment route turned a malformed config from a
+            # 400 into a 500 the moment this function stopped using safe_load.
+            # Converting here keeps which YAML library is in use an implementation
+            # detail of this module, which is where that choice was made.
+            raise ValueError(f"{config_path} is not valid YAML: {exc}") from exc
+        if data is None:
+            data = {}
+        if not isinstance(data, dict):
+            raise ValueError(
+                f"{config_path} is not a valid config (expected a YAML mapping)"
+            )
         backup_yaml(config_path)
 
     if top_level:
         data.update(top_level)
-    envs = data.setdefault("environments", {})
+    # Attach the mapping to the document *before* resolving it, so `envs` is
+    # always the object that gets dumped rather than a copy of it.
+    if data.get("environments") is None:
+        data["environments"] = {}
+    envs = _environments_of(data, config_path)
     envs[env_name] = env_fields
 
     with open(config_path, "w") as f:
+        handler.dump(data, f)
+    return config_path
+
+
+def create_config(
+    config_path: str,
+    provider: str,
+    env_name: str,
+    env_fields: dict[str, t.Any],
+    region: str | None = None,
+) -> str:
+    """Write a brand-new ``dreadgoad.yaml`` with one environment in it.
+
+    Deliberately NOT :func:`write_new_env` with an absent file. That function
+    merges into whatever is already on disk and keeps a ``.bak`` — right for
+    adding an environment, wrong here: pointed at an existing config it would
+    silently adopt someone else's provider and environments as the "new" one.
+    Refusing instead matches ``dreadgoad init`` (cli/cmd/init.go:51-53), which
+    is the CLI-side equivalent of this call.
+
+    ``region`` is written file-level rather than onto the environment because
+    it is collected as a property of the config. ``Config.ResolveRegion``
+    (config.go:474-485) treats the file-level key as the fallback for
+    environments that don't declare their own, so a later per-environment
+    region overrides this without the two disagreeing.
+
+    Raises FileExistsError if ``config_path`` is taken, ValueError on an unknown
+    provider or an empty environment name.
+    """
+    if provider not in CLI_PROVIDERS:
+        raise ValueError(
+            f"unknown provider {provider!r} (expected one of "
+            f"{', '.join(CLI_PROVIDERS)})"
+        )
+    if not env_name.strip():
+        raise ValueError("environment name is required")
+    if os.path.exists(config_path):
+        raise FileExistsError(
+            f"{config_path} already exists — refusing to overwrite it"
+        )
+
+    data: dict[str, t.Any] = {"provider": provider}
+    if region:
+        data["region"] = region
+    # The default environment for a bare `dreadgoad ...` run next to this file.
+    # The console always passes --env explicitly (commands.py:413-415), so this
+    # only matters when the operator picks the config up by hand — which is
+    # exactly when a missing default is most confusing.
+    data["env"] = env_name
+    data["environments"] = {env_name: env_fields}
+
+    os.makedirs(os.path.dirname(config_path) or ".", exist_ok=True)
+    # Written 0o600, not the 0o644 of `dreadgoad config init` (config_cmd.go:112):
+    # a proxmox password or ludus api_key can be added to this file later, and
+    # widening permissions after the fact is a step nobody takes.
+    fd = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as f:
         yaml.safe_dump(data, f, sort_keys=False)
     return config_path
 

@@ -188,6 +188,72 @@ def main() -> None:
         assert "redteam" in envs2 and "dev" in envs2, envs2
         print("PASS create new environment")
 
+        # create a whole new CONFIG, its first env, and a session, in one call
+        r = client.post(
+            "/api/sessions",
+            json={
+                "mode": "new_config",
+                "config_name": "Azure Lab",
+                "provider": "azure",
+                "region": "eastus",
+                "env": "ops",
+                "env_fields": {"variant": False, "vpc_cidr": "10.11.0.0/16"},
+            },
+        )
+        assert r.status_code == 200, r.text
+        made = r.json()
+        assert made["snapshot"]["provider"] == "azure", made
+        assert made["snapshot"]["region"] == "eastus", made
+        new_cfg = made["anchor"]["config_path"]
+        assert new_cfg.endswith("/configs/azure-lab.yaml"), new_cfg
+        # The pre-existing aws config is untouched by the azure one.
+        assert (
+            client.get(f"/api/environments?config_path={cfg}").json()["provider"]
+            == "aws"
+        ), "creating a config must not touch another one"
+        print("PASS create new config")
+
+        # …and the same name a second time is a 409, not a silent merge
+        taken = client.post(
+            "/api/sessions",
+            json={
+                "mode": "new_config",
+                "config_name": "Azure Lab",
+                "provider": "aws",
+                "env": "other",
+            },
+        )
+        assert taken.status_code == 409, (taken.status_code, taken.text)
+        print("PASS duplicate config name → 409")
+
+        # providers the CLI has but the console cannot drive are refused up front
+        for unsupported in ("proxmox", "ludus", "gcp", ""):
+            bad = client.post(
+                "/api/sessions",
+                json={
+                    "mode": "new_config",
+                    "config_name": f"x-{unsupported or 'blank'}",
+                    "provider": unsupported,
+                    "env": "dev",
+                },
+            )
+            assert bad.status_code == 400, (unsupported, bad.status_code, bad.text)
+        print("PASS unsupported provider → 400")
+
+        # the config picker sees the default, the new one, and session anchors
+        listing = client.get("/api/configs").json()
+        by_path = {c["path"]: c for c in listing["configs"]}
+        assert new_cfg in by_path, list(by_path)
+        assert by_path[new_cfg]["source"] == "managed", by_path[new_cfg]
+        assert by_path[new_cfg]["environments"] == ["ops"], by_path[new_cfg]
+        # Resolved: entries are canonicalised, and _TMP is a /var symlink here.
+        assert str(cfg.resolve()) in by_path, (
+            f"a config reached only via a session anchor: {list(by_path)}"
+        )
+        assert listing["providers"] == ["aws", "azure"], listing["providers"]
+        assert set(listing["credential_hints"]) == {"aws", "azure"}, listing
+        print("PASS config listing")
+
         # list
         lst = client.get("/api/sessions").json()["sessions"]
         assert any(x["id"] == sid for x in lst), lst

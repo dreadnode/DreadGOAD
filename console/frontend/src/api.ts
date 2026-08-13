@@ -47,6 +47,43 @@ export interface AppConfig {
   default_model: string
   default_config_path: string
   api_key_set: boolean
+  // Providers the console can drive end to end. Sent by the backend rather
+  // than hardcoded here so the two cannot drift; the CLI supports more
+  // (proxmox, ludus) than the console can render.
+  providers?: string[]
+}
+
+/** One `dreadgoad.yaml` the console can attach to, as listed by /api/configs. */
+export interface ConfigSummary {
+  path: string
+  name: string
+  /** `default` = the repo-root one, `managed` = console-created, `session` = learned from an existing session's anchor. */
+  source: 'default' | 'managed' | 'session'
+  provider?: string | null
+  region?: string | null
+  environments: string[]
+  /** Set when the file could not be read or parsed; it is still listed. */
+  error?: string | null
+}
+
+/** A lab that can be used as a `variant_source`, from `dreadgoad lab list --json`. */
+export interface LabSummary {
+  name: string
+  /** Repo-relative dir — the value written to `variant_source`, e.g. `ad/GOAD`. */
+  dir: string
+  /** Providers the lab ships terraform for; a lab missing the session's provider cannot deploy. */
+  providers: string[]
+  hosts: string[]
+  /** True when this is itself a generated variant (it has a mapping.json). */
+  generated: boolean
+}
+
+export interface ConfigListing {
+  configs: ConfigSummary[]
+  configs_root: string
+  providers: string[]
+  /** Provider → advisory note when its credentials aren't visible, else null. */
+  credential_hints: Record<string, string | null>
 }
 
 export interface CommandDef {
@@ -65,7 +102,19 @@ export const api = {
   commands: (): Promise<{ commands: CommandDef[] }> =>
     fetch('/api/commands').then(r => json(r)),
 
-  environments: (configPath: string): Promise<{ environments: string[]; provider?: string; region?: string }> =>
+  configs: (): Promise<ConfigListing> => fetch('/api/configs').then(r => json<ConfigListing>(r)),
+
+  labs: (configPath?: string): Promise<{ labs: LabSummary[] }> =>
+    fetch('/api/labs' + (configPath ? `?config_path=${encodeURIComponent(configPath)}` : ''))
+      .then(r => json(r)),
+
+  environments: (configPath: string): Promise<{
+    environments: string[]
+    provider?: string
+    region?: string
+    /** Per environment, the region the CLI resolves — env key first, file key as fallback. */
+    env_regions?: Record<string, string | null>
+  }> =>
     fetch(`/api/environments?config_path=${encodeURIComponent(configPath)}`).then(r => json(r)),
 
   setSettings: (body: { api_key?: string; api_key_env?: string }): Promise<{ ok: boolean; api_key_env: string }> =>

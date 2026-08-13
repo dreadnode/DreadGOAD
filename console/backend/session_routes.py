@@ -7,7 +7,7 @@ import typing as t
 import yaml
 from fastapi import APIRouter, HTTPException, Request
 
-from . import chat, paths
+from . import chat, configstore, paths
 from .config_routes import DEFAULT_MODEL
 from .sessions import SessionService
 
@@ -31,6 +31,27 @@ async def create_session(request: Request, body: dict[str, t.Any]) -> dict[str, 
     label = body.get("label")
 
     try:
+        if mode == "new_config":
+            provider = (body.get("provider") or "").strip()
+            if provider not in configstore.PROVIDERS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"provider must be one of "
+                        f"{', '.join(configstore.PROVIDERS)}; got {provider!r}. "
+                        f"proxmox and ludus are supported by the CLI but not yet "
+                        f"by the console."
+                    ),
+                )
+            return await service.create_config_session(
+                body.get("config_name") or env,
+                provider,
+                env,
+                body.get("env_fields") or {},
+                region=(body.get("region") or "").strip() or None,
+                model=model,
+                label=label,
+            )
         if mode == "new":
             return await service.create_new_env_session(
                 config_path,
@@ -41,6 +62,11 @@ async def create_session(request: Request, body: dict[str, t.Any]) -> dict[str, 
                 label=label,
             )
         return await service.create_session(config_path, env, model=model, label=label)
+    except FileExistsError as exc:
+        # 409, not 400: the request was well-formed and the name is simply
+        # taken, which is the one failure here the operator fixes by renaming
+        # rather than by correcting what they typed.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except (FileNotFoundError, ValueError, yaml.YAMLError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

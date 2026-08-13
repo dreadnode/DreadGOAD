@@ -81,6 +81,27 @@ def sessions_root() -> Path:
     return root
 
 
+def configs_root() -> Path:
+    """``.dreadgoad/console/configs/`` — configs the console itself created.
+
+    Under the state root rather than beside it so the existing
+    ``DREADGOAD_CONSOLE_STATE_ROOT`` override isolates tests from the real repo,
+    and so everything the console writes lives in one place.
+
+    Two properties matter for what lands here. It is gitignored (``.gitignore``
+    line 17), so a ludus ``api_key`` or proxmox ``password`` written into one of
+    these cannot be committed by accident — unlike the repo-root
+    ``dreadgoad.yaml``, which is tracked. And it sits under the repo, so the
+    CLI's project-root walk finds ``ansible/`` above it and resolves inventory
+    and lab data in the right tree (see projectroot.py). Overriding the state
+    root to somewhere outside the repo breaks that second property;
+    ``projectroot.preflight`` detects it and warns rather than failing silently.
+    """
+    root = state_root() / "configs"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
 def session_dir(dirname: str) -> Path:
     """Working dir for a session (``<slug>-<shortid>``), created if missing."""
     d = sessions_root() / dirname

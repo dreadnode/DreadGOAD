@@ -7,10 +7,10 @@ import re
 import typing as t
 
 import yaml
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
 from . import __version__ as VERSION
-from . import commands, labconfig, paths
+from . import commands, configstore, labconfig, labs, paths
 
 router = APIRouter()
 
@@ -33,9 +33,45 @@ async def get_config() -> dict[str, t.Any]:
     return {
         "version": VERSION,
         "default_model": DEFAULT_MODEL,
-        "default_config_path": str(paths.repo_root() / "dreadgoad.yaml"),
+        "default_config_path": configstore.default_config_path(),
         "api_key_set": bool(os.environ.get("OPENROUTER_API_KEY")),
+        # The create UI offers these and no others; sending the list keeps the
+        # frontend from carrying its own copy that can drift from the backend's.
+        "providers": list(configstore.PROVIDERS),
     }
+
+
+@router.get("/api/configs")
+async def get_configs(request: Request) -> dict[str, t.Any]:
+    """List every config the console can attach to, for the new-session picker.
+
+    Session anchors are read straight from the sessions table rather than kept
+    in a registry of their own: the sessions *are* the record of which configs
+    are in use, and a second list would be one more thing to keep in step with
+    deletions.
+    """
+    sessions = await request.app.state.sessions.list_sessions()
+    anchors = [(s.get("anchor") or {}).get("config_path") for s in sessions]
+    configs = configstore.known_configs(p for p in anchors if p)
+    return {
+        "configs": configs,
+        "configs_root": str(paths.configs_root()),
+        "providers": list(configstore.PROVIDERS),
+        "credential_hints": {
+            provider: configstore.credential_hint(provider)
+            for provider in configstore.PROVIDERS
+        },
+    }
+
+
+@router.get("/api/labs")
+async def get_labs(config_path: str | None = None) -> dict[str, t.Any]:
+    """List labs available as a variant source, for the new-environment form.
+
+    ``config_path`` is optional: the create-a-config flow needs this list before
+    any config exists.
+    """
+    return {"labs": await labs.discover_labs(config_path)}
 
 
 @router.post("/api/settings")
