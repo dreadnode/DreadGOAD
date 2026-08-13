@@ -108,7 +108,9 @@ func RunBastionWatchdog(parentLifetime *os.File, command []string) error {
 	if parentLifetime == nil {
 		return fmt.Errorf("parent lifetime pipe is unavailable")
 	}
-	defer parentLifetime.Close()
+	defer func() {
+		_ = parentLifetime.Close()
+	}()
 	if len(command) == 0 {
 		return fmt.Errorf("watchdog command is required")
 	}

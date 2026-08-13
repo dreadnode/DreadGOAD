@@ -142,6 +142,47 @@ const (
 	parentDeathProcessFile = "DREADGOAD_TEST_PARENT_DEATH_PROCESS_FILE"
 )
 
+func runParentDeathWatchdogProcess() {
+	parentLifetime := os.NewFile(3, "test-parent-lifetime")
+	err := RunBastionWatchdog(parentLifetime, []string{
+		"sh", "-c",
+		`sleep 120 & printf '%s %s\n' "$$" "$!" > "$DREADGOAD_TEST_PARENT_DEATH_PROCESS_FILE"; wait`,
+	})
+	if err != nil {
+		os.Exit(4)
+	}
+	os.Exit(0)
+}
+
+func runParentDeathParentProcess() {
+	parentRead, parentWrite, err := os.Pipe()
+	if err != nil {
+		os.Exit(5)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		os.Exit(6)
+	}
+	watchdog := exec.Command(executable, "-test.run=^TestBastionWatchdogReapsOnParentDeath$")
+	watchdog.Env = append(os.Environ(), parentDeathRoleEnv+"=watchdog")
+	watchdog.ExtraFiles = []*os.File{parentRead}
+	watchdog.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := watchdog.Start(); err != nil {
+		os.Exit(7)
+	}
+	_ = parentRead.Close()
+	watchdogFile := os.Getenv(parentDeathProcessFile) + ".watchdog"
+	if err := os.WriteFile(watchdogFile, []byte(strconv.Itoa(watchdog.Process.Pid)), 0o600); err != nil {
+		os.Exit(8)
+	}
+	for {
+		// Keep the writer live until the outer test kills this process. Its
+		// kernel-driven close is the event under test.
+		runtime.KeepAlive(parentWrite)
+		time.Sleep(time.Second)
+	}
+}
+
 // TestBastionWatchdogReapsOnParentDeath exercises the failure mode that
 // in-process cleanup cannot cover. The outer test starts a simulated dreadgoad
 // parent, which starts the watchdog, which starts a shell wrapper and child.
@@ -150,44 +191,11 @@ const (
 func TestBastionWatchdogReapsOnParentDeath(t *testing.T) {
 	role := os.Getenv(parentDeathRoleEnv)
 	if role == "watchdog" {
-		parentLifetime := os.NewFile(3, "test-parent-lifetime")
-		err := RunBastionWatchdog(parentLifetime, []string{
-			"sh", "-c",
-			`sleep 120 & printf '%s %s\n' "$$" "$!" > "$DREADGOAD_TEST_PARENT_DEATH_PROCESS_FILE"; wait`,
-		})
-		if err != nil {
-			os.Exit(4)
-		}
-		os.Exit(0)
+		runParentDeathWatchdogProcess()
 	}
 
 	if role == "parent" {
-		parentRead, parentWrite, err := os.Pipe()
-		if err != nil {
-			os.Exit(5)
-		}
-		executable, err := os.Executable()
-		if err != nil {
-			os.Exit(6)
-		}
-		watchdog := exec.Command(executable, "-test.run=^TestBastionWatchdogReapsOnParentDeath$")
-		watchdog.Env = append(os.Environ(), parentDeathRoleEnv+"=watchdog")
-		watchdog.ExtraFiles = []*os.File{parentRead}
-		watchdog.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		if err := watchdog.Start(); err != nil {
-			os.Exit(7)
-		}
-		_ = parentRead.Close()
-		watchdogFile := os.Getenv(parentDeathProcessFile) + ".watchdog"
-		if err := os.WriteFile(watchdogFile, []byte(strconv.Itoa(watchdog.Process.Pid)), 0o600); err != nil {
-			os.Exit(8)
-		}
-		for {
-			// Keep the writer live until the outer test kills this process. Its
-			// kernel-driven close is the event under test.
-			runtime.KeepAlive(parentWrite)
-			time.Sleep(time.Second)
-		}
+		runParentDeathParentProcess()
 	}
 
 	tempDir := t.TempDir()
@@ -213,7 +221,9 @@ func TestBastionWatchdogReapsOnParentDeath(t *testing.T) {
 
 	commandPIDs := waitForPIDFile(t, processFile, 2)
 	watchdogPIDs := waitForPIDFile(t, processFile+".watchdog", 1)
-	allChildren := append(watchdogPIDs, commandPIDs...)
+	allChildren := make([]int, 0, len(watchdogPIDs)+len(commandPIDs))
+	allChildren = append(allChildren, watchdogPIDs...)
+	allChildren = append(allChildren, commandPIDs...)
 	for _, pid := range allChildren {
 		if !processAlive(pid) {
 			t.Fatalf("precondition failed: process %d not alive", pid)
@@ -250,7 +260,9 @@ func TestBastionWatchdogTracksGroupAfterLeaderExit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pipe: %v", err)
 	}
-	defer parentWrite.Close()
+	defer func() {
+		_ = parentWrite.Close()
+	}()
 
 	done := make(chan error, 1)
 	go func() {
@@ -265,7 +277,9 @@ func TestBastionWatchdogTracksGroupAfterLeaderExit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get descendant process group: %v", err)
 	}
-	defer syscall.Kill(-childPGID, syscall.SIGKILL)
+	defer func() {
+		_ = syscall.Kill(-childPGID, syscall.SIGKILL)
+	}()
 	time.Sleep(100 * time.Millisecond) // let the short-lived group leader exit
 	select {
 	case err := <-done:
