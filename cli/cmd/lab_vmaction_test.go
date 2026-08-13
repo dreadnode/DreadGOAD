@@ -53,6 +53,11 @@ func (p *recordingProvider) WaitForInstanceStopped(_ context.Context, _ string) 
 	return nil
 }
 
+func (p *recordingProvider) DestroyInstances(_ context.Context, _ []string) error {
+	p.record("destroy")
+	return nil
+}
+
 // captureStdout points os.Stdout at a real file for the duration of fn and
 // returns everything written. A file rather than a pipe so that what has been
 // printed is observable mid-run, synchronously, from inside a provider call.
@@ -86,7 +91,7 @@ func TestRestartAnnouncesBeforeItWaits(t *testing.T) {
 
 	_, err := captureStdout(t, func(outPath string) error {
 		prov.outPath = outPath
-		return execVMAction(context.Background(), prov, inst, "restart")
+		return execVMAction(context.Background(), prov, inst, "restart", false)
 	})
 	if err != nil {
 		t.Fatalf("execVMAction: %v", err)
@@ -124,7 +129,7 @@ func TestRestartOfStoppedVMSkipsTheStop(t *testing.T) {
 
 	out, err := captureStdout(t, func(outPath string) error {
 		prov.outPath = outPath
-		return execVMAction(context.Background(), prov, inst, "restart")
+		return execVMAction(context.Background(), prov, inst, "restart", false)
 	})
 	if err != nil {
 		t.Fatalf("execVMAction: %v", err)
@@ -152,7 +157,7 @@ func TestStartAndStopAnnounceBeforeTheyWait(t *testing.T) {
 
 		if _, err := captureStdout(t, func(outPath string) error {
 			prov.outPath = outPath
-			return execVMAction(context.Background(), prov, inst, tc.action)
+			return execVMAction(context.Background(), prov, inst, tc.action, false)
 		}); err != nil {
 			t.Fatalf("%s: %v", tc.action, err)
 		}
@@ -174,5 +179,101 @@ func TestVMActionTimeoutIsBounded(t *testing.T) {
 	}
 	if vmActionTimeout.Minutes() > 60 {
 		t.Errorf("vmActionTimeout %v is long enough to lose an afternoon", vmActionTimeout)
+	}
+}
+
+// TestDestroyVMWithoutYesAbortsWhenNobodyCanAnswer covers the failure that made
+// this flag necessary: the confirmation reads stdin, so a caller with no
+// terminal cannot answer it. Scanln fails, the abort branch prints "Aborted."
+// and returns nil — exit 0 for an instance that still exists. Any caller that
+// trusts the exit code is told the VM was destroyed.
+func TestDestroyVMWithoutYesAbortsWhenNobodyCanAnswer(t *testing.T) {
+	prov := &recordingProvider{}
+	inst := &provider.Instance{Name: "DC01", ID: "/subscriptions/x/DC01", State: "running"}
+
+	// stdin at EOF is what a piped, non-interactive caller looks like.
+	origStdin := os.Stdin
+	empty, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatalf("open devnull: %v", err)
+	}
+	os.Stdin = empty
+	defer func() { os.Stdin = origStdin; empty.Close() }()
+
+	out, runErr := captureStdout(t, func(outPath string) error {
+		prov.outPath = outPath
+		return execVMAction(context.Background(), prov, inst, "destroy", false)
+	})
+	if runErr != nil {
+		t.Fatalf("unexpected error: %v", runErr)
+	}
+	if len(prov.calls) != 0 {
+		t.Errorf("destroyed the VM without a confirmation: calls = %v", prov.calls)
+	}
+	if !strings.Contains(out, "Aborted.") {
+		t.Errorf("expected an abort notice, got %q", out)
+	}
+}
+
+// ...and with --yes it proceeds, which is the entire reason the flag exists.
+func TestDestroyVMWithYesSkipsThePrompt(t *testing.T) {
+	prov := &recordingProvider{}
+	inst := &provider.Instance{Name: "DC01", ID: "/subscriptions/x/DC01", State: "running"}
+
+	origStdin := os.Stdin
+	empty, err := os.Open(os.DevNull)
+	if err != nil {
+		t.Fatalf("open devnull: %v", err)
+	}
+	os.Stdin = empty
+	defer func() { os.Stdin = origStdin; empty.Close() }()
+
+	out, runErr := captureStdout(t, func(outPath string) error {
+		prov.outPath = outPath
+		return execVMAction(context.Background(), prov, inst, "destroy", true)
+	})
+	if runErr != nil {
+		t.Fatalf("destroy with --yes: %v", runErr)
+	}
+	if len(prov.calls) != 1 || prov.calls[0] != "destroy" {
+		t.Fatalf("calls = %v, want [destroy]", prov.calls)
+	}
+	if strings.Contains(out, "Type the instance ID") {
+		t.Errorf("--yes still prompted: %q", out)
+	}
+}
+
+// The GetBool-on-an-unregistered-flag pattern silently returns (false, err).
+// That exact shape caused a real bug elsewhere in this CLI, so pin the value
+// each *-vm command actually sees: only destroy-vm registers --yes, and the
+// other three must resolve false rather than anything surprising.
+func TestYesResolvesFalseForCommandsThatDoNotRegisterIt(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		reg  bool
+	}{
+		{"start-vm", false}, {"stop-vm", false},
+		{"restart-vm", false}, {"destroy-vm", true},
+	} {
+		var cmd = labStartVMCmd
+		switch tc.name {
+		case "stop-vm":
+			cmd = labStopVMCmd
+		case "restart-vm":
+			cmd = labRestartVMCmd
+		case "destroy-vm":
+			cmd = labDestroyVMCmd
+		}
+		got, err := cmd.Flags().GetBool("yes")
+		if tc.reg {
+			if err != nil {
+				t.Errorf("%s: destroy-vm must register --yes, got err %v", tc.name, err)
+			}
+		} else if err == nil {
+			t.Errorf("%s: unexpectedly registers --yes", tc.name)
+		}
+		if got {
+			t.Errorf("%s: --yes defaulted true; destroy would skip its prompt", tc.name)
+		}
 	}
 }

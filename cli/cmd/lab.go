@@ -77,6 +77,11 @@ func init() {
 	labCmd.AddCommand(labStopVMCmd)
 	labCmd.AddCommand(labRestartVMCmd)
 	labCmd.AddCommand(labDestroyVMCmd)
+	// Lets a caller with nobody at a keyboard run destroy-vm at all. Without it
+	// the confirmation below reads stdin, which a non-interactive caller cannot
+	// answer: fmt.Scanln fails, the function prints "Aborted." and returns nil,
+	// and the caller is told the VM was destroyed when it was untouched.
+	labDestroyVMCmd.Flags().Bool("yes", false, "Skip the confirmation prompt (for non-interactive callers)")
 }
 
 func getProvider(ctx context.Context) (provider.Provider, *config.Config, error) {
@@ -217,7 +222,7 @@ func runLabAction(action string) func(*cobra.Command, []string) error {
 // vmActionTimeout bounds a single-VM lifecycle action end to end.
 const vmActionTimeout = 15 * time.Minute
 
-func execVMAction(ctx context.Context, prov provider.Provider, inst *provider.Instance, action string) error {
+func execVMAction(ctx context.Context, prov provider.Provider, inst *provider.Instance, action string, yes bool) error {
 	ids := []string{inst.ID}
 	switch action {
 	case "start":
@@ -260,18 +265,29 @@ func execVMAction(ctx context.Context, prov provider.Provider, inst *provider.In
 		}
 		fmt.Printf("%s is running\n", inst.Name)
 	case "destroy":
-		return destroyVM(ctx, prov, inst)
+		return destroyVM(ctx, prov, inst, yes)
 	}
 	return nil
 }
 
-func destroyVM(ctx context.Context, prov provider.Provider, inst *provider.Instance) error {
-	fmt.Printf("WARNING: This will terminate %s (%s) permanently.\n", inst.Name, inst.ID)
-	fmt.Print("Type the instance ID to confirm: ")
-	var confirm string
-	if _, err := fmt.Scanln(&confirm); err != nil || confirm != inst.ID {
-		fmt.Println("Aborted.")
-		return nil
+// destroyVM terminates one instance, confirming first unless the caller has
+// already done so.
+//
+// The prompt reads stdin, so it can only be answered by a human at a terminal.
+// A non-interactive caller — the console, CI, any script — gets an error from
+// Scanln, falls into the abort branch, and is told "Aborted." with a nil error:
+// exit 0 for a VM that still exists. --yes exists so those callers can run the
+// command at all, and it is deliberately a flag rather than a stdin check so an
+// operator at a terminal keeps the type-the-ID gate.
+func destroyVM(ctx context.Context, prov provider.Provider, inst *provider.Instance, yes bool) error {
+	if !yes {
+		fmt.Printf("WARNING: This will terminate %s (%s) permanently.\n", inst.Name, inst.ID)
+		fmt.Print("Type the instance ID to confirm: ")
+		var confirm string
+		if _, err := fmt.Scanln(&confirm); err != nil || confirm != inst.ID {
+			fmt.Println("Aborted.")
+			return nil
+		}
 	}
 	if err := prov.DestroyInstances(ctx, []string{inst.ID}); err != nil {
 		return fmt.Errorf("terminate VM: %w", err)
@@ -303,6 +319,9 @@ func runVMAction(action string) func(*cobra.Command, []string) error {
 		}
 
 		fmt.Printf("Found: %s (%s) [%s]\n", inst.Name, inst.ID, inst.State)
-		return execVMAction(ctx, prov, inst, action)
+		// Only destroy-vm registers --yes; GetBool returns false for the others,
+		// which is the value they want anyway.
+		yes, _ := cmd.Flags().GetBool("yes")
+		return execVMAction(ctx, prov, inst, action, yes)
 	}
 }
