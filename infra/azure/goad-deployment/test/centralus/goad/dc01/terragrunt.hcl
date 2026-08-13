@@ -58,7 +58,7 @@ inputs = {
   admin_password      = local.admin_password
 
   bootstrap_script = templatefile(
-    "${get_repo_root()}/infra/azure/goad-deployment/test/centralus/goad/templates/bootstrap.ps1.tpl",
+    "${get_terragrunt_dir()}/../templates/bootstrap.ps1.tpl",
     {
       admin_password = local.admin_password
     },
