@@ -6,6 +6,8 @@ import (
 	"bufio"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,13 +22,12 @@ func processAlive(pid int) bool {
 	return syscall.Kill(pid, 0) == nil
 }
 
-// TestKillBastionTunnelReapsChildTree is the regression guard for the tunnel
+// TestTerminateProcessGroupReapsChildTree is the regression guard for the tunnel
 // leak: the real `az network bastion tunnel` is a shell wrapper that spawns a
-// python child, so killing only the wrapper leaves the child (and its tunnel)
+// Python child, so killing only the wrapper leaves the child (and its tunnel)
 // running. We reproduce that topology with `sh` (wrapper) spawning a
-// backgrounded `sleep` (child), then assert killBastionTunnel reaps BOTH by
-// signalling the whole process group.
-func TestKillBastionTunnelReapsChildTree(t *testing.T) {
+// backgrounded `sleep` (child), then assert terminateProcessGroup reaps BOTH.
+func TestTerminateProcessGroupReapsChildTree(t *testing.T) {
 	// sh backgrounds a long sleep (the "python child"), prints its PID, then
 	// waits — mirroring a wrapper that outlives nothing of its own but holds a
 	// child that must die with it.
@@ -57,7 +58,12 @@ func TestKillBastionTunnelReapsChildTree(t *testing.T) {
 		t.Fatalf("precondition failed: child %d not alive after start", childPID)
 	}
 
-	killBastionTunnel(cmd)
+	reaped := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(reaped)
+	}()
+	terminateProcessGroup(cmd, reaped)
 
 	// The grandchild reparents to init and is reaped shortly after SIGKILL.
 	deadline := time.Now().Add(5 * time.Second)
@@ -67,29 +73,40 @@ func TestKillBastionTunnelReapsChildTree(t *testing.T) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatalf("child process %d survived killBastionTunnel — tunnel would leak", childPID)
+	t.Fatalf("child process %d survived terminateProcessGroup — tunnel would leak", childPID)
 }
 
-// TestKillBastionTunnelNilSafe guards the early-error paths that may call
-// Close() before the command was started.
-func TestKillBastionTunnelNilSafe(t *testing.T) {
-	killBastionTunnel(nil)
-	killBastionTunnel(&exec.Cmd{}) // Process == nil
+// TestTerminateProcessGroupNilSafe guards early-error paths before start.
+func TestTerminateProcessGroupNilSafe(t *testing.T) {
+	terminateProcessGroup(nil, nil)
+	terminateProcessGroup(&exec.Cmd{}, nil) // Process == nil
 }
 
-// TestProvisionTunnelCloseIsRaceFree pins the closeOnce guard. killBastionTunnel
-// reaps with cmd.Wait, and two Wait calls on one exec.Cmd is a data race — so
-// concurrent Close must collapse to a single teardown. Run under -race; without
-// closeOnce the detector reports a write/write race inside os/exec.(*Cmd).Wait.
+// TestProvisionTunnelCloseIsRaceFree pins the closeOnce guards. Concurrent
+// Close calls must collapse to one pipe close and one wait for watchdog exit.
 func TestProvisionTunnelCloseIsRaceFree(t *testing.T) {
-	cmd := exec.Command("sleep", "120")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	parentRead, parentWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	cmd := exec.Command("sh", "-c", "cat <&3")
+	cmd.ExtraFiles = []*os.File{parentRead}
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start: %v", err)
 	}
+	_ = parentRead.Close()
 	// socks stays nil: this exercises the subprocess half, which is where the
 	// race lives.
-	tunnel := &ProvisionTunnel{bastionCmd: cmd}
+	process := &bastionTunnelProcess{
+		cmd:         cmd,
+		parentWrite: parentWrite,
+		done:        make(chan struct{}),
+	}
+	go func() {
+		process.waitErr = cmd.Wait()
+		close(process.done)
+	}()
+	tunnel := &ProvisionTunnel{bastionProcess: process}
 
 	var wg sync.WaitGroup
 	for range 4 {
@@ -106,6 +123,186 @@ func TestProvisionTunnelCloseIsRaceFree(t *testing.T) {
 	}
 }
 
+const (
+	parentDeathRoleEnv     = "DREADGOAD_TEST_PARENT_DEATH_ROLE"
+	parentDeathProcessFile = "DREADGOAD_TEST_PARENT_DEATH_PROCESS_FILE"
+)
+
+// TestBastionWatchdogReapsOnParentDeath exercises the failure mode that
+// in-process cleanup cannot cover. The outer test starts a simulated dreadgoad
+// parent, which starts the watchdog, which starts a shell wrapper and child.
+// SIGKILLing the simulated parent closes the liveness pipe; the independently
+// running watchdog must then terminate and reap the complete command group.
+func TestBastionWatchdogReapsOnParentDeath(t *testing.T) {
+	role := os.Getenv(parentDeathRoleEnv)
+	if role == "watchdog" {
+		parentLifetime := os.NewFile(3, "test-parent-lifetime")
+		err := RunBastionWatchdog(parentLifetime, []string{
+			"sh", "-c",
+			`sleep 120 & printf '%s %s\n' "$$" "$!" > "$DREADGOAD_TEST_PARENT_DEATH_PROCESS_FILE"; wait`,
+		})
+		if err != nil {
+			os.Exit(4)
+		}
+		os.Exit(0)
+	}
+
+	if role == "parent" {
+		parentRead, parentWrite, err := os.Pipe()
+		if err != nil {
+			os.Exit(5)
+		}
+		executable, err := os.Executable()
+		if err != nil {
+			os.Exit(6)
+		}
+		watchdog := exec.Command(executable, "-test.run=^TestBastionWatchdogReapsOnParentDeath$")
+		watchdog.Env = append(os.Environ(), parentDeathRoleEnv+"=watchdog")
+		watchdog.ExtraFiles = []*os.File{parentRead}
+		watchdog.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		if err := watchdog.Start(); err != nil {
+			os.Exit(7)
+		}
+		_ = parentRead.Close()
+		watchdogFile := os.Getenv(parentDeathProcessFile) + ".watchdog"
+		if err := os.WriteFile(watchdogFile, []byte(strconv.Itoa(watchdog.Process.Pid)), 0o600); err != nil {
+			os.Exit(8)
+		}
+		for {
+			// Keep the writer live until the outer test kills this process. Its
+			// kernel-driven close is the event under test.
+			runtime.KeepAlive(parentWrite)
+			time.Sleep(time.Second)
+		}
+	}
+
+	tempDir := t.TempDir()
+	processFile := filepath.Join(tempDir, "processes")
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatalf("locate test executable: %v", err)
+	}
+	parent := exec.Command(executable, "-test.run=^TestBastionWatchdogReapsOnParentDeath$")
+	parent.Env = append(os.Environ(),
+		parentDeathRoleEnv+"=parent",
+		parentDeathProcessFile+"="+processFile,
+	)
+	if err := parent.Start(); err != nil {
+		t.Fatalf("start simulated parent: %v", err)
+	}
+	defer func() {
+		if parent.ProcessState == nil {
+			_ = parent.Process.Kill()
+			_ = parent.Wait()
+		}
+	}()
+
+	commandPIDs := waitForPIDFile(t, processFile, 2)
+	watchdogPIDs := waitForPIDFile(t, processFile+".watchdog", 1)
+	allChildren := append(watchdogPIDs, commandPIDs...)
+	for _, pid := range allChildren {
+		if !processAlive(pid) {
+			t.Fatalf("precondition failed: process %d not alive", pid)
+		}
+	}
+
+	if err := parent.Process.Kill(); err != nil {
+		t.Fatalf("SIGKILL simulated parent: %v", err)
+	}
+	_ = parent.Wait()
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		alive := false
+		for _, pid := range allChildren {
+			alive = alive || processAlive(pid)
+		}
+		if !alive {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("watchdog or tunnel processes survived parent death: %v", allChildren)
+}
+
+// TestBastionWatchdogTracksGroupAfterLeaderExit mirrors the observed orphan
+// topology: the process-group leader is gone but a descendant still owns the
+// tunnel. The watchdog must continue supervising the group and reap that
+// descendant when the parent-lifetime pipe closes.
+func TestBastionWatchdogTracksGroupAfterLeaderExit(t *testing.T) {
+	processFile := filepath.Join(t.TempDir(), "child-pid")
+	t.Setenv(parentDeathProcessFile, processFile)
+	parentRead, parentWrite, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	defer parentWrite.Close()
+
+	done := make(chan error, 1)
+	go func() {
+		done <- RunBastionWatchdog(parentRead, []string{
+			"sh", "-c",
+			`sleep 120 & printf '%s\n' "$!" > "$DREADGOAD_TEST_PARENT_DEATH_PROCESS_FILE"; exit 0`,
+		})
+	}()
+
+	childPID := waitForPIDFile(t, processFile, 1)[0]
+	childPGID, err := syscall.Getpgid(childPID)
+	if err != nil {
+		t.Fatalf("get descendant process group: %v", err)
+	}
+	defer syscall.Kill(-childPGID, syscall.SIGKILL)
+	time.Sleep(100 * time.Millisecond) // let the short-lived group leader exit
+	select {
+	case err := <-done:
+		t.Fatalf("watchdog exited with descendant %d still alive: %v", childPID, err)
+	default:
+	}
+	if !processAlive(childPID) {
+		t.Fatalf("precondition failed: descendant %d exited early", childPID)
+	}
+
+	if err := parentWrite.Close(); err != nil {
+		t.Fatalf("close parent lifetime: %v", err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("watchdog cleanup: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("watchdog did not exit after parent lifetime closed")
+	}
+	if processAlive(childPID) {
+		t.Fatalf("descendant %d survived watchdog cleanup", childPID)
+	}
+}
+
+func waitForPIDFile(t *testing.T, path string, count int) []int {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			fields := strings.Fields(string(data))
+			if len(fields) == count {
+				pids := make([]int, 0, count)
+				for _, field := range fields {
+					pid, err := strconv.Atoi(field)
+					if err != nil {
+						t.Fatalf("parse pid %q from %s: %v", field, path, err)
+					}
+					pids = append(pids, pid)
+				}
+				return pids
+			}
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %d pids in %s", count, path)
+	return nil
+}
+
 // pgidGuardEnv re-enters this test binary as a subprocess for the guard check
 // below. A regression there SIGKILLs the caller's whole process group, so the
 // dangerous half runs isolated in its own group rather than taking down
@@ -115,12 +312,12 @@ const pgidGuardEnv = "DREADGOAD_TEST_PGID_GUARD_CHILD"
 // pgidGuardOK is the exit code the child reports when it survived the kill.
 const pgidGuardOK = 7
 
-// TestKillBastionTunnelSpareOwnProcessGroup pins the `pgid == pid` guard in
-// killBastionTunnel. Given a command started WITHOUT SysProcAttr.Setpgid,
+// TestTerminateProcessGroupSparesOwnProcessGroup pins the `pgid == pid` guard
+// in terminateProcessGroup. Given a command started WITHOUT Setpgid,
 // syscall.Getpgid returns the *caller's* group — so an unguarded
 // kill(-pgid, SIGKILL) would take down dreadgoad itself. The guard must detect
 // that and fall back to killing only the single process.
-func TestKillBastionTunnelSpareOwnProcessGroup(t *testing.T) {
+func TestTerminateProcessGroupSparesOwnProcessGroup(t *testing.T) {
 	if os.Getenv(pgidGuardEnv) == "1" {
 		// Detach into our own process group so a regression's group-kill is
 		// contained to this subprocess.
@@ -133,7 +330,12 @@ func TestKillBastionTunnelSpareOwnProcessGroup(t *testing.T) {
 		if err := victim.Start(); err != nil {
 			os.Exit(4)
 		}
-		killBastionTunnel(victim)
+		reaped := make(chan struct{})
+		go func() {
+			_ = victim.Wait()
+			close(reaped)
+		}()
+		terminateProcessGroup(victim, reaped)
 		// Still executing => the guard held and we did not signal our own group.
 		os.Exit(pgidGuardOK)
 	}
@@ -142,7 +344,7 @@ func TestKillBastionTunnelSpareOwnProcessGroup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("locate test binary: %v", err)
 	}
-	cmd := exec.Command(exe, "-test.run=TestKillBastionTunnelSpareOwnProcessGroup")
+	cmd := exec.Command(exe, "-test.run=TestTerminateProcessGroupSparesOwnProcessGroup")
 	cmd.Env = append(os.Environ(), pgidGuardEnv+"=1")
 
 	err = cmd.Run()
@@ -151,7 +353,7 @@ func TestKillBastionTunnelSpareOwnProcessGroup(t *testing.T) {
 		return // guard held
 	}
 	if code == -1 {
-		t.Fatalf("subprocess was killed by a signal (%v) — killBastionTunnel "+
+		t.Fatalf("subprocess was killed by a signal (%v) — terminateProcessGroup "+
 			"signalled its own process group; the pgid == pid guard is missing", cmd.ProcessState)
 	}
 	t.Fatalf("subprocess exited %d (err=%v), want %d", code, err, pgidGuardOK)
