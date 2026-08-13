@@ -223,6 +223,10 @@ func processGroupAlive(pgid int) bool {
 }
 
 func startBastionTunnelProcess(ctx context.Context, command []string) (*bastionTunnelProcess, error) {
+	if len(command) == 0 {
+		return nil, fmt.Errorf("watchdog command is required")
+	}
+
 	parentRead, parentWrite, err := os.Pipe()
 	if err != nil {
 		return nil, fmt.Errorf("create watchdog pipe: %w", err)

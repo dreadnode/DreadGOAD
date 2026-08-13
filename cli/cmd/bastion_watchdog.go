@@ -20,15 +20,27 @@ var bastionWatchdogCmd = &cobra.Command{
 	DisableFlagParsing: true,
 	Args:               cobra.MinimumNArgs(1),
 	RunE: func(_ *cobra.Command, args []string) error {
-		parentLifetime := os.NewFile(bastionParentLifetimeFD, "dreadgoad-parent-lifetime")
-		if parentLifetime == nil {
-			return fmt.Errorf("open parent lifetime descriptor %d", bastionParentLifetimeFD)
+		parentLifetime, err := openBastionParentLifetime(bastionParentLifetimeFD)
+		if err != nil {
+			return err
 		}
 		// ExtraFiles starts at fd 3. Keep the descriptor private to this
 		// watchdog; the supervised az process must not inherit it.
 		syscall.CloseOnExec(bastionParentLifetimeFD)
 		return azure.RunBastionWatchdog(parentLifetime, args)
 	},
+}
+
+func openBastionParentLifetime(fd uintptr) (*os.File, error) {
+	parentLifetime := os.NewFile(fd, "dreadgoad-parent-lifetime")
+	if parentLifetime == nil {
+		return nil, fmt.Errorf("open parent lifetime descriptor %d", fd)
+	}
+	if _, err := parentLifetime.Stat(); err != nil {
+		_ = parentLifetime.Close()
+		return nil, fmt.Errorf("validate parent lifetime descriptor %d: %w", fd, err)
+	}
+	return parentLifetime, nil
 }
 
 func init() {

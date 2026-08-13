@@ -4,6 +4,7 @@ package azure
 
 import (
 	"bufio"
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +16,19 @@ import (
 	"testing"
 	"time"
 )
+
+func TestStartBastionTunnelProcessRequiresCommand(t *testing.T) {
+	process, err := startBastionTunnelProcess(context.Background(), nil)
+	if err == nil {
+		if process != nil {
+			killBastionTunnel(process)
+		}
+		t.Fatal("startBastionTunnelProcess() error = nil, want missing command error")
+	}
+	if !strings.Contains(err.Error(), "watchdog command is required") {
+		t.Fatalf("startBastionTunnelProcess() error = %q, want missing command error", err)
+	}
+}
 
 // processAlive reports whether pid still exists (signal 0 probes without
 // delivering). A reaped process yields ESRCH.
