@@ -53,6 +53,12 @@ class Command:
     # long_running, and /score is neither. What matters here is whether
     # something outside this process is still moving after we stop watching.
     cloud_ops: bool = False
+    # Cannot be undone. Distinct from cloud_ops, which only says the command
+    # touches real resources: /start and /stop do that and are entirely
+    # reversible. This is the property that earns a confirmation, and only
+    # matters for `direct` commands — an agent-dispatched one gets a turn in
+    # which the operator can still say no.
+    destructive: bool = False
     description: str = ""  # what it does, one line, in the autocomplete menu
     # The consequence an operator needs *before* pressing enter: what it costs,
     # what it destroys, or what it depends on. Wording is taken from the CLI's
@@ -96,16 +102,18 @@ REGISTRY: dict[str, Command] = {
     "/start": Command(
         "/start",
         ("lab", "start"),
+        takes_args=True,
         cloud_ops=True,
-        description="Power on the stopped lab instances",
-        detail="resumes compute billing; takes a few minutes to become reachable",
+        description="Power on the stopped lab instances, or one named host",
+        detail="no host = the whole range; give a hostname to act on one VM",
     ),
     "/stop": Command(
         "/stop",
         ("lab", "stop"),
+        takes_args=True,
         cloud_ops=True,
-        description="Power off the running lab instances",
-        detail="stops compute billing; disks and range state are preserved",
+        description="Power off the running lab instances, or one named host",
+        detail="no host = the whole range; disks and range state are preserved",
     ),
     "/restart": Command(
         "/restart",
@@ -118,11 +126,31 @@ REGISTRY: dict[str, Command] = {
     ),
     "/destroy": Command(
         "/destroy",
-        ("infra", "destroy"),
+        # --auto-approve is REQUIRED, not a convenience. infra destroy's flag
+        # defaults to false (cli/cmd/infra_cmd.go:90), and the terragrunt runner
+        # turns that into an explicit --no-auto-approve (internal/terragrunt/
+        # runner.go:82-83), which stops terragrunt from passing -auto-approve to
+        # tofu. Tofu then prompts, and a console command has no terminal behind
+        # it, so every unit died with "error asking for approval: EOF" and
+        # nothing was ever destroyed. /up avoids this only because the `up`
+        # verb builds its infra step internally with auto-approve already true.
+        #
+        # The approval this replaces is not lost: it happens in the console,
+        # where the operator is actually present to give it.
+        ("infra", "destroy", "--auto-approve"),
+        takes_args=True,
         long_running=True,
         cloud_ops=True,
+        destructive=True,
         description="Tear down all infrastructure for this environment",
-        detail="irreversible — deletes the VMs, disks and network",
+        # Rendered verbatim in the confirmation dialog, so it has to be
+        # unambiguous on first read. An earlier phrasing began "no host destroys
+        # everything", which parses more naturally as "no host destroys
+        # anything" — the opposite of what it does.
+        detail=(
+            "irreversible — with no hostname this destroys the whole "
+            "environment; with one, only that VM"
+        ),
     ),
     "/instances": Command(
         "/instances",
@@ -213,6 +241,12 @@ def command_catalog() -> list[dict[str, t.Any]]:
             "dispatch": c.dispatch,
             "long_running": c.long_running,
             "takes_args": c.takes_args,
+            # Irreversible. The UI confirms before running one that is also
+            # ``direct``: those execute the moment they are sent, with no agent
+            # turn to question them and no prompt underneath — the CLI's own
+            # approval is bypassed with --auto-approve because a console command
+            # has no terminal to answer it.
+            "destructive": c.destructive,
         }
         for name, c in REGISTRY.items()
     ]
@@ -280,6 +314,8 @@ def _verb_for(cmd: Command, extra: list[str]) -> tuple[list[str], list[str]]:
     """Resolve a command's concrete verb + trailing args from chat args.
 
     Handles the arg-shaped commands:
+      - /start,/stop → `lab start` (whole range) or `lab start-vm <host>`
+      - /destroy     → `infra destroy` (everything) or `lab destroy-vm <host>`
       - /extensions  → `extension list` (no arg) or `extension provision <name>`
       - /score       → `score --report <path>` (+ any flags like --live-verify)
       - /variant     → `variant generate <flags…>`
@@ -322,6 +358,27 @@ def _verb_for(cmd: Command, extra: list[str]) -> tuple[list[str], list[str]]:
         if not extra:
             raise ValueError("/restart needs a hostname, e.g. /restart dc02")
         return ["lab", "restart-vm", extra[0]], extra[1:]
+    if cmd.name == "/destroy":
+        # No host tears down the environment through terragrunt; a host
+        # terminates that one VM through the cloud API. --yes is required for
+        # the same reason --auto-approve is on the infra form: destroy-vm
+        # confirms by reading stdin, and a console command has no terminal, so
+        # without it the CLI prints "Aborted." and exits 0 — reporting success
+        # for a VM it never touched.
+        if extra:
+            return ["lab", "destroy-vm", extra[0], "--yes"], extra[1:]
+        return list(cmd.verb), []
+    if cmd.name in ("/start", "/stop"):
+        # `lab start`/`lab stop` act on the whole range; `lab start-vm`/`stop-vm`
+        # take one hostname. Optional-arg shape like /extensions, so the bare
+        # form is unchanged and a host narrows it. The *-vm commands accept no
+        # flags at all, so anything past the first token can only be a surplus
+        # positional — passed through, where cobra's ExactArgs(1) rejects it with
+        # a clearer message than a guard here would produce.
+        action = cmd.name[1:]
+        if extra:
+            return ["lab", f"{action}-vm", extra[0]], extra[1:]
+        return ["lab", action], []
     if cmd.name == "/extensions":
         if extra:
             return ["extension", "provision", extra[0]], extra[1:]

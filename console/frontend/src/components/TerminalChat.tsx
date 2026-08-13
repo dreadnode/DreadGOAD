@@ -435,6 +435,9 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
   // An empty pane shows it regardless, so a new session opens on the workflow.
   const [helpAfter, setHelpAfter] = useState<number | null>(null)
   const [commands, setCommands] = useState<CommandDef[]>([])
+  // False once the command catalog fails to load: nothing can be classified,
+  // so the destructive-command confirm has to assume the worst.
+  const [catalogOk, setCatalogOk] = useState(true)
   const [cmdHighlight, setCmdHighlight] = useState(0)
   // Shell-style recall. `histIndex` counts back from the newest entry; null
   // means "not browsing", and `draft` holds whatever was half-typed when
@@ -523,7 +526,14 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
       .then(r => setCommands(
         [...r.commands, HELP_COMMAND].sort((a, b) => a.name.localeCompare(b.name)),
       ))
-      .catch(() => setCommands([HELP_COMMAND]))
+      .catch(() => {
+        // Falling back to help-only leaves every command unclassifiable, which
+        // matters because the destructive-command confirm below is keyed on
+        // catalog data. Recorded so that gate can fail closed rather than
+        // silently waving /destroy through.
+        setCommands([HELP_COMMAND])
+        setCatalogOk(false)
+      })
   }, [])
 
   // Autocomplete: filter to the typed `/`-token; hide once a space is typed (args).
@@ -591,6 +601,35 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
       return
     }
     if (!sessionId || status !== 'connected' || processing) return
+
+    // A destructive command dispatched `direct` runs the instant it is sent:
+    // there is no agent turn that might question it, and nothing downstream
+    // asks either — the CLI's approval prompt is bypassed with --auto-approve
+    // because a console command has no terminal to answer it. `/destroy` is the
+    // only one today, and this was the last gap between typing it and the range
+    // being gone. Keyed on `destructive`, not `cloud_ops`: /start and /stop
+    // touch real resources too and are entirely reversible, so gating on
+    // cloud_ops would confirm those and claim they cannot be undone. Copy comes
+    // from the command's own `detail`, so it stays true for whatever is added.
+    const spec = commands.find(c => c.name === t.split(' ')[0])
+    if (!catalogOk && t.startsWith('/')) {
+      // The catalog never loaded, so whether this is destructive is unknown —
+      // and one of the things it could be is /destroy. Asking about every slash
+      // command in this state is noisy; running the range's teardown without
+      // asking is worse, and the state is rare and visible.
+      if (!window.confirm(
+        `The command list could not be loaded, so ${t.split(' ')[0]} cannot be `
+        + 'checked for whether it is destructive.\n\nRun it anyway?',
+      )) return
+    }
+    if (spec?.destructive && spec.dispatch === 'direct') {
+      const ok = window.confirm(
+        `Run ${spec.name}?\n\n${spec.detail}\n\n`
+        + 'This starts immediately and cannot be undone.',
+      )
+      if (!ok) return
+    }
+
     onSend(t)
     setInput('')
     setCmdHighlight(0)

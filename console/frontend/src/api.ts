@@ -84,6 +84,8 @@ export interface ConfigListing {
   providers: string[]
   /** Provider → advisory note when its credentials aren't visible, else null. */
   credential_hints: Record<string, string | null>
+  /** Provider → suggested regions. Suggestions only; the field stays free text. */
+  regions?: Record<string, string[]>
 }
 
 export interface CommandDef {
@@ -94,6 +96,8 @@ export interface CommandDef {
   dispatch: 'direct' | 'agent'
   long_running: boolean
   takes_args: boolean
+  /** Cannot be undone. The UI confirms before running a `direct` one. */
+  destructive?: boolean
 }
 
 export const api = {

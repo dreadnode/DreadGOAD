@@ -135,7 +135,8 @@ def test_scrub_applies_by_default() -> None:
 def test_registry_flags_and_parsing() -> None:
     assert commands.REGISTRY["/up"].long_running is True
     assert commands.REGISTRY["/instances"].long_running is False
-    assert commands.REGISTRY["/destroy"].verb == ("infra", "destroy")
+    # --auto-approve is load-bearing; see test_destroy_carries_auto_approve.
+    assert commands.REGISTRY["/destroy"].verb == ("infra", "destroy", "--auto-approve")
     assert commands.is_command("/health") and not commands.is_command("hello there")
     assert commands.parse_command("/score /tmp/r.jsonl --live-verify") == (
         "/score",
@@ -557,6 +558,132 @@ async def test_cancel_escalates_to_sigkill() -> None:
         print("PASS test_cancel_escalates_to_sigkill")
 
 
+def test_destroy_carries_auto_approve() -> None:
+    """Without it /destroy cannot destroy anything, ever.
+
+    infra destroy's --auto-approve defaults to false (cli/cmd/infra_cmd.go:90),
+    and the terragrunt runner turns that into an explicit --no-auto-approve
+    (internal/terragrunt/runner.go:82-83) so tofu prompts. A console command has
+    no terminal, so the prompt is an immediate EOF: observed live as every unit
+    failing with "error asking for approval: EOF" and nothing being deleted.
+
+    Pinned here because the symptom appears only against real cloud state — the
+    argv looks perfectly reasonable, and nothing else in the suite would notice
+    the flag going missing.
+    """
+    session = {"anchor": {"config_path": "/c/dreadgoad.yaml", "env": "rt"}}
+    argv = commands.build_argv(session, "/destroy", repo_root=".")
+    assert argv[-3:] == ["infra", "destroy", "--auto-approve"], argv
+
+
+def test_no_console_command_can_block_on_a_prompt() -> None:
+    """Every registered verb must be runnable without a terminal.
+
+    The console pipes stdout and never attaches a tty, so any CLI verb that
+    waits for input hangs the turn or dies on EOF. This is the generalisation of
+    the /destroy failure: the console is a non-interactive caller, always.
+    """
+    for name, command in commands.REGISTRY.items():
+        verb = " ".join(command.verb)
+        # `infra apply` and `infra destroy` are the two verbs whose approval
+        # flag defaults to false; anything reaching them needs it explicitly.
+        if "infra destroy" in verb or "infra apply" in verb:
+            assert "--auto-approve" in command.verb, (
+                f"{name} runs `{verb}` without --auto-approve; tofu will prompt "
+                f"and the console has no terminal to answer it"
+            )
+        # `init` is the CLI's interactive wizard and must never be mapped.
+        assert command.verb[0] != "init", f"{name} maps to the interactive wizard"
+
+
+def test_catalog_exposes_destructive_for_the_confirm_gate() -> None:
+    """The UI confirms before a direct destructive command; it needs the flag.
+
+    `destructive` is deliberately NOT `cloud_ops`. /start and /stop touch real
+    cloud resources and are entirely reversible — gating on cloud_ops would put
+    a confirmation on both and tell the operator they cannot be undone, which is
+    false. Irreversibility is the property that earns the prompt.
+
+    Exposed through the catalog because the alternative is hardcoding "/destroy"
+    in the component, and then the next destructive command ships ungated.
+    """
+    catalog = {c["name"]: c for c in commands.command_catalog()}
+    assert len(catalog) == len(commands.REGISTRY)
+    for name, entry in catalog.items():
+        assert "destructive" in entry, f"{name} missing destructive"
+        assert entry["destructive"] == commands.REGISTRY[name].destructive, name
+
+    destroy = catalog["/destroy"]
+    assert destroy["destructive"] is True and destroy["dispatch"] == "direct", destroy
+    assert destroy["detail"], "the confirm renders detail; it cannot be empty"
+
+    # Reversible power commands must NOT be gated, however cloudy they are.
+    for name in ("/start", "/stop"):
+        assert commands.REGISTRY[name].cloud_ops is True, name
+        assert catalog[name]["destructive"] is False, (
+            f"{name} is reversible; confirming it would claim otherwise"
+        )
+
+    # Anything else that becomes direct + destructive inherits the confirm, and
+    # its `detail` becomes the prompt text — so it has to read correctly.
+    gated = {
+        n for n, e in catalog.items() if e["destructive"] and e["dispatch"] == "direct"
+    }
+    assert gated == {"/destroy"}, gated
+
+
+def test_start_stop_take_an_optional_hostname() -> None:
+    """No arg is the whole range; a hostname narrows it to one VM.
+
+    `lab start`/`lab stop` and `lab start-vm`/`stop-vm` are different CLI verbs,
+    so this is a shape change rather than a passthrough. The bare form must stay
+    byte-identical — it is the common case and was the only one before.
+    """
+    assert _argv("/start")[5:] == ["lab", "start"]
+    assert _argv("/stop")[5:] == ["lab", "stop"]
+    assert _argv("/start", ["dc01"])[5:] == ["lab", "start-vm", "dc01"]
+    assert _argv("/stop", ["srv02"])[5:] == ["lab", "stop-vm", "srv02"]
+
+    # Surplus positionals pass through to cobra's ExactArgs(1), which rejects
+    # them with "accepts 1 arg(s), received 2" — clearer than a guard here.
+    assert _argv("/stop", ["dc01", "dc02"])[5:] == ["lab", "stop-vm", "dc01", "dc02"]
+
+    # takes_args drives the UI hint; without it the menu implies no argument.
+    assert commands.REGISTRY["/start"].takes_args is True
+    assert commands.REGISTRY["/stop"].takes_args is True
+
+    # Still reversible, so still not gated by the destructive confirm.
+    assert commands.REGISTRY["/start"].destructive is False
+    assert commands.REGISTRY["/stop"].destructive is False
+    print("PASS test_start_stop_take_an_optional_hostname")
+
+
+def test_destroy_takes_an_optional_hostname() -> None:
+    """No host tears down everything; a host terminates that one VM.
+
+    Both forms need an approval flag, for the same underlying reason and by two
+    different mechanisms: `infra destroy` needs --auto-approve or terragrunt
+    withholds -auto-approve and tofu prompts (EOF, exit 1); `lab destroy-vm`
+    needs --yes or it reads stdin, prints "Aborted." and returns nil — exit 0
+    for a VM that still exists. The second is the more dangerous default,
+    because a caller trusting the exit code is told it worked.
+    """
+    assert _argv("/destroy")[5:] == ["infra", "destroy", "--auto-approve"]
+    assert _argv("/destroy", ["dc01"])[5:] == [
+        "lab",
+        "destroy-vm",
+        "dc01",
+        "--yes",
+    ]
+    assert commands.REGISTRY["/destroy"].takes_args is True
+
+    # Both forms are irreversible, so the confirm gate must cover both. It keys
+    # on the command, not the argument, so this holds by construction — asserted
+    # so that stays true if the gate is ever narrowed.
+    assert commands.REGISTRY["/destroy"].destructive is True
+    assert commands.REGISTRY["/destroy"].dispatch == "direct"
+
+
 def main() -> None:
     test_argv_injects_config_and_env()
     test_argv_multiword_and_flag_verbs()
@@ -578,6 +705,11 @@ def main() -> None:
     asyncio.run(test_surviving_child_does_not_hang_the_stream())
     asyncio.run(test_chatty_survivor_does_not_stream_forever())
     asyncio.run(test_output_at_exit_is_not_truncated())
+    test_destroy_carries_auto_approve()
+    test_start_stop_take_an_optional_hostname()
+    test_destroy_takes_an_optional_hostname()
+    test_catalog_exposes_destructive_for_the_confirm_gate()
+    test_no_console_command_can_block_on_a_prompt()
     asyncio.run(test_cancel_escalates_to_sigkill())
     print("ALL PASS")
 
