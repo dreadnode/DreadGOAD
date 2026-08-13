@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import TerminalChat from './components/TerminalChat'
 import RangeView from './components/RangeView'
 import { useWebSocket } from './hooks/useWebSocket'
@@ -269,7 +269,11 @@ export default function App() {
           </div>
         </div>
       ) : (
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, color: 'var(--dn-text-dim)' }}>
+        // --dn-text-dim measured 2.03:1 against --dn-black here, well under the
+        // 4.5:1 floor — the same mistake the modal's field labels had. This is
+        // the only thing on an otherwise empty screen, so it carries the whole
+        // first impression of the app.
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, color: 'var(--dn-text-bright)' }}>
           <div style={{ fontSize: 13 }}>No sessions yet.</div>
           <button onClick={() => setShowNew(true)} style={{
             background: 'var(--dg-brand)', border: 'none', color: 'var(--dn-black)',
@@ -632,7 +636,9 @@ function NewSessionModal({ cfg, onClose, onCreate }: {
                 { value: 'ludus', label: 'ludus — CLI only, no console support', disabled: true },
               ]}
             />
-            <Field label="Region" value={region} onChange={setRegion} placeholder={provider === 'azure' ? 'e.g. eastus' : 'e.g. us-east-1'} />
+            <Field label="Region" value={region} onChange={setRegion}
+              placeholder={provider === 'azure' ? 'e.g. eastus' : 'e.g. us-east-1'}
+              suggestions={listing?.regions?.[provider]} />
             {!region.trim() && (
               <div style={{ color: 'var(--dn-warning)', fontSize: 11, marginTop: -8, marginBottom: 12 }}>
                 Required — every {provider} command resolves its region from this config.
@@ -795,7 +801,24 @@ function SettingsModal({ cfg, model, onModelChange, onClose, onSaved }: {
   )
 }
 
-function Field({ label, value, onChange, placeholder, type, onBlur }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string; type?: string; onBlur?: () => void }) {
+function Field({ label, value, onChange, placeholder, type, onBlur, suggestions }: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+  type?: string
+  onBlur?: () => void
+  /** Offered via a datalist — the field stays free text, so these never constrain. */
+  suggestions?: string[]
+}) {
+  // useId, not a module counter: a datalist is referenced by id, so each field
+  // needs its own or they attach the wrong suggestions to each other. Deriving
+  // it from a counter meant writing to a module global during render — impure,
+  // and double-counted under StrictMode (main.tsx enables it). useId exists for
+  // exactly this and is stable across renders without the side effect.
+  const listId = useId()
+  const hasList = !!suggestions?.length
+
   return (
     <div style={{ marginBottom: 12 }}>
       {/* Bright and bold: --dn-text-dim measured 1.94:1 against the modal
@@ -806,11 +829,17 @@ function Field({ label, value, onChange, placeholder, type, onBlur }: { label: s
         display: 'block', marginBottom: 4,
         color: 'var(--dn-text-bright)', fontWeight: 700,
       }}>{label}</label>
-      <input type={type} value={value} placeholder={placeholder} onChange={e => onChange(e.target.value)} onBlur={onBlur} style={{
+      <input type={type} value={value} placeholder={placeholder} onChange={e => onChange(e.target.value)} onBlur={onBlur}
+        list={hasList ? listId : undefined} style={{
         width: '100%', boxSizing: 'border-box', padding: '6px 8px', background: 'var(--dn-bg)',
         border: '1px solid var(--dn-border)', borderRadius: 3, color: 'var(--dn-text)',
         fontFamily: 'var(--font-mono)', fontSize: 12,
       }} />
+      {hasList && (
+        <datalist id={listId}>
+          {suggestions!.map(s => <option key={s} value={s} />)}
+        </datalist>
+      )}
     </div>
   )
 }

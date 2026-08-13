@@ -28,6 +28,45 @@ PROVIDERS = labconfig.CONSOLE_PROVIDERS
 
 _SLUG_STRIP = re.compile(r"[^a-z0-9]+")
 
+# Suggestions for the region field — NOT a closed set. The field stays free
+# text because "which regions work" is not the same question for the two
+# providers:
+#
+#   azure  Hosts come from a marketplace image (publisher/offer/sku in the
+#          host terragrunt), which exists in essentially every region, so any
+#          value here is plausible.
+#   aws    Hosts resolve a warpgate-built AMI with owners = ["self"]
+#          (infra/goad-deployment/.../goad/dc01/terragrunt.hcl). AMIs are
+#          region-scoped and are not copied automatically, so a region only
+#          works where one has been built — offering all ~35 as a closed
+#          dropdown would present mostly choices that fail at apply time.
+#
+# The regions this repo already deploys into are listed first, since those are
+# the ones known to work here.
+COMMON_REGIONS: dict[str, tuple[str, ...]] = {
+    "aws": (
+        "us-west-1",
+        "us-east-2",
+        "us-east-1",
+        "us-west-2",
+        "eu-west-1",
+        "eu-west-2",
+        "eu-central-1",
+        "ap-southeast-2",
+    ),
+    "azure": (
+        "centralus",
+        "eastus",
+        "eastus2",
+        "westus2",
+        "westus3",
+        "northeurope",
+        "westeurope",
+        "uksouth",
+        "australiaeast",
+    ),
+}
+
 
 def slug_for(name: str) -> str:
     """Reduce a user-supplied config name to a safe bare filename stem.

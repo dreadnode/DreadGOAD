@@ -61,6 +61,12 @@ async def get_configs(request: Request) -> dict[str, t.Any]:
             provider: configstore.credential_hint(provider)
             for provider in configstore.PROVIDERS
         },
+        # Suggestions only — the region field stays free text. See
+        # configstore.COMMON_REGIONS for why a closed list would misrepresent AWS.
+        "regions": {
+            provider: list(configstore.COMMON_REGIONS.get(provider, ()))
+            for provider in configstore.PROVIDERS
+        },
     }
 
 
