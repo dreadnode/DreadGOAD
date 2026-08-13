@@ -37,6 +37,10 @@
 - name: Users
   ansible.builtin.import_tasks: users.yml
 
+- name: Reconcile user passwords
+  ansible.builtin.import_tasks: reconcile_passwords.yml
+  when: ad_reconcile_passwords | bool
+
 - name: Add members to the Domainlocal group, preserving existing membership
   microsoft.ad.group:
     name: "{{ item.key }}"
@@ -66,6 +70,10 @@
     state: present
   loop: "{{ ad_groups['global'] | dict2items }}"
   when: ad_groups['global'] is defined and item.value.members is defined
+
+- name: Reconcile group membership
+  ansible.builtin.import_tasks: reconcile_group_membership.yml
+  when: ad_reconcile_group_membership | bool
 
 # Managed BY
 - name: Assign managed_by domainlocal groups

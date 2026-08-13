@@ -15,7 +15,6 @@
 
 - A working Ludus v2 server: [https://docs.ludus.cloud/docs/quick-start/install-ludus/](https://docs.ludus.cloud/docs/quick-start/install-ludus/)
 - An **admin** user created with an API key
-- `zip` package installed on the server (`apt-get install -y zip`)
 - Packer templates built in Ludus for the required VM images (see [Building Packer Templates](#building-packer-templates) below)
 
 !!! tip "Ludus CLI auto-install"
@@ -334,20 +333,6 @@ ludus range status
 
 # Hard reset the VM via qm
 qm reset <VMID>
-```
-
-### ADCS template zip missing
-
-The ADCS role requires a `cert_templates.zip` file. If provisioning fails at the ADCS stage with a missing zip error:
-
-```bash
-# Ensure zip is installed
-apt-get install -y zip
-
-# Create the zip from the ADCS template files
-cd /opt/DreadGOAD/ad/GOAD/providers/ludus
-# The provision command handles this automatically, but if needed manually:
-zip -r cert_templates.zip cert_templates/
 ```
 
 ### "No running instances found"

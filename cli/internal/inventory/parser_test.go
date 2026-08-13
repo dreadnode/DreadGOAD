@@ -59,6 +59,7 @@ func TestParse_HostAttributes(t *testing.T) {
 	dc01 := inv.Hosts["DC01"]
 	if dc01 == nil {
 		t.Fatal("DC01 not found")
+		return
 	}
 	if dc01.InstanceID != "i-0e428dfc02f5007dd" {
 		t.Errorf("InstanceID = %q, want %q", dc01.InstanceID, "i-0e428dfc02f5007dd")
@@ -99,6 +100,7 @@ func TestParse_GroupMembership(t *testing.T) {
 	dc02 := inv.Hosts["DC02"]
 	if dc02 == nil {
 		t.Fatal("DC02 not found")
+		return
 	}
 	wantGroups := map[string]bool{"dc": false, "north": false}
 	for _, g := range dc02.Groups {
@@ -209,6 +211,7 @@ func TestHostByName(t *testing.T) {
 			}
 			if got == nil {
 				t.Fatalf("HostByName(%q) = nil, want %q", tt.query, tt.want)
+				return
 			}
 			if got.Name != tt.want {
 				t.Errorf("HostByName(%q).Name = %q, want %q", tt.query, got.Name, tt.want)

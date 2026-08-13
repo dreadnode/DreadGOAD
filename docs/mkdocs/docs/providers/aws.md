@@ -21,6 +21,14 @@ The architecture is quite the same than the Azure deployment.
 
 - [Terraform](https://www.terraform.io/downloads.html)
 - [AWS CLI](https://aws.amazon.com/cli/?nc1=h_ls)
+- [AWS Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)
+
+To use the optional attack box, subscribe to the official
+[Kali Linux AWS Marketplace image](https://aws.amazon.com/marketplace/pp/prodview-fznsw3f7mq7to)
+once in the target AWS account. DreadGOAD selects the latest
+`*kali-last-snapshot-amd64-*-804fcc46-63fc-4eb6-85a1-50e66d6c7215`
+image from `aws-marketplace`, constraining discovery to Kali's official
+Marketplace product ID.
 
 ## AWS configuration
 
@@ -99,6 +107,20 @@ dreadgoad inventory sync
 dreadgoad provision
 ```
 
+Include the optional private Kali attack box with:
+
+```bash
+dreadgoad infra apply --with-kali
+```
+
+The attack box is tagged `Role=AttackBox`, bootstraps the SSM agent and live
+scoring tools, and has no public IP or inbound SSH rule. Connect without adding
+it to the Ansible inventory:
+
+```bash
+dreadgoad ssm connect attack-box
+```
+
 ## start/stop/status
 
 - You can see the status of the lab with `dreadgoad lab status`
@@ -142,4 +164,6 @@ dreadgoad provision             # run Ansible provisioning via jumpbox
 ## Tips
 
 - To connect to a host via SSM you can use `dreadgoad ssm connect <host>`
+- `dreadgoad doctor` checks both the AWS CLI and Session Manager plugin so a
+  missing local plugin is reported before an interactive session is attempted.
 - All AWS elements are tagged with `<lab_name>-<lab_instance_id>`

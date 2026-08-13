@@ -1,0 +1,26 @@
+# Accepted findings for TestLabConfigIntegrity.
+#
+# One line per finding, formatted "<lab>|<env>|<finding>". A finding that is not
+# listed here fails the test; a line here that no longer occurs also fails, so
+# this list can only shrink. Every entry needs a reason and an intended fix.
+#
+# Only add an entry when a finding is understood and deliberately deferred, never
+# to quiet a failure you have not diagnosed.
+#
+# The GOAD|dev entry is correct rather than deferred. dev moves the `shares` vuln
+# off srv02 and onto dc02, carrying vulns_vars.thewall with it and nulling the
+# srv02 vulns_vars.shares, so CheckOverlayDrops sees srv02 lose a vuln the base
+# grants it. The capability is not lost, only rehomed, and the null is the
+# overlay stating that intent explicitly. Delete this line if dev ever stops
+# moving the share.
+GOAD|dev|hosts["srv02"].vulns: overlay drops an entry the base config declares, so it is never provisioned in this environment ("shares")
+
+# The GOAD-variant-1|dev entry is a real defect, deferred because fixing it means
+# picking share definitions for a generated lab rather than changing checker
+# behavior. The dev overlay adds `shares` to dc02's vulns but supplies no
+# vulns_vars.shares to drive it, so the role provisions nothing and dev is
+# quietly missing the share the vuln implies. GOAD's dev overlay does this
+# correctly, adding the vuln together with its vulns_vars block. Fix by giving
+# dc02 a vulns_vars.shares entry in ad/GOAD-variant-1/data/dev-overlay.json,
+# then delete this line.
+GOAD-variant-1|dev|hosts["dc02"].vulns: vuln has no vulns_vars entry, so its role provisions nothing ("shares")

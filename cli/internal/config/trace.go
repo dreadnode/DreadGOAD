@@ -26,9 +26,20 @@ func TraceConfig(cfg *Config, changedFlags map[string]bool) []TraceEntry {
 		value string
 	}
 
+	// Report the region the CLI will actually use, not the raw top-level key,
+	// which the active environment's own region usually outranks.
+	regionValue := cfg.Region
+	if r, err := cfg.ResolveRegion(); err == nil {
+		regionValue = r
+	}
+	regionSource := ""
+	if cfg.regionOverride == "" && cfg.ActiveEnvironment().Region != "" {
+		regionSource = fmt.Sprintf("config file (environments.%s.region)", cfg.Env)
+	}
+
 	items := []item{
 		{"env", cfg.Env},
-		{"region", cfg.Region},
+		{"region", regionValue},
 		{"debug", fmt.Sprintf("%v", cfg.Debug)},
 		{"max_retries", fmt.Sprintf("%d", cfg.MaxRetries)},
 		{"retry_delay", fmt.Sprintf("%ds", cfg.RetryDelay)},
@@ -47,6 +58,9 @@ func TraceConfig(cfg *Config, changedFlags map[string]bool) []TraceEntry {
 			value = "(unset)"
 		}
 		source := resolveSource(it.key, changedFlags, fileKeys, cfgFile)
+		if it.key == "region" && regionSource != "" && !changedFlags["region"] {
+			source = regionSource
+		}
 		entries = append(entries, TraceEntry{Key: it.key, Value: value, Source: source})
 	}
 	return entries

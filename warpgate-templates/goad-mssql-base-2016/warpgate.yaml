@@ -18,7 +18,7 @@ name: goad-mssql-base-2016
 version: latest
 
 base:
-  image: "arn:aws:ssm:us-west-1::parameter/aws/service/ami-windows-latest/Windows_Server-2016-English-Full-Base"
+  image: "arn:aws:ssm:${aws_region}::parameter/aws/service/ami-windows-latest/Windows_Server-2016-English-Full-Base"
 
 variables:
   aws_region: us-west-1
@@ -48,7 +48,7 @@ targets:
     region: "${aws_region}"
     instance_type: "${instance_type}"
     ami_name: "goad-mssql-base-2016-{{timestamp}}"
-    volume_size: 100
+    volume_size: 50
     ami_tags:
       Name: goad-mssql-base-2016
       Lab: GOAD

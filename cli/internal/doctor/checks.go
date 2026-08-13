@@ -55,7 +55,6 @@ func RunChecks(opts Options) []CheckResult {
 	results = append(results, checkAnsibleVersion(opts.Provider))
 	results = append(results, checkCommand("python3", "Python 3"))
 	results = append(results, checkCommand("jq", "jq"))
-	results = append(results, checkCommand("zip", "zip"))
 	results = append(results, checkInventoryFile(opts.InventoryPath, opts.Provider))
 	results = append(results, checkAnsibleCollections(opts.Provider)...)
 
@@ -68,6 +67,9 @@ func RunChecks(opts Options) []CheckResult {
 		// AWS is the historical default; proxmox currently uses the same
 		// terraform/terragrunt toolchain so it falls through here too.
 		results = append(results, checkCommand("aws", "AWS CLI"))
+		if opts.Provider == "" || opts.Provider == "aws" {
+			results = append(results, checkCommand("session-manager-plugin", "AWS Session Manager plugin"))
+		}
 		results = append(results, checkAWSCredentials())
 		results = append(results, checkTerragrunt())
 		results = append(results, checkTerraformOrTofu())

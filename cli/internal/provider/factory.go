@@ -18,8 +18,9 @@ type Constructor func(ctx context.Context, opts ConstructorOpts) (Provider, erro
 
 // ConstructorOpts holds the parameters needed to construct a provider.
 type ConstructorOpts struct {
-	Region string // AWS region or empty for non-AWS providers
-	Env    string // dreadgoad env name (used by providers that need to scope side-channel state — Azure WinRM tunnel + inventory lookup)
+	Region     string // AWS region or empty for non-AWS providers
+	AWSProfile string // optional AWS shared-config profile
+	Env        string // dreadgoad env name (used by providers that need to scope side-channel state — Azure WinRM tunnel + inventory lookup)
 
 	// Proxmox-specific
 	ProxmoxAPIURL string

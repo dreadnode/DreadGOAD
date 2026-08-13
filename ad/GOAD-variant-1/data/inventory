@@ -1,7 +1,7 @@
 ; GLOBAL CONFIG
 [all:vars]
 ; domain_name : folder inside ad/
-domain_name=GOAD
+domain_name=GOAD-variant-1
 
 ; administrator user
 admin_user=administrator

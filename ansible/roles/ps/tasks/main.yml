@@ -1,5 +1,11 @@
 ---
+# Scripts are rendered as Jinja templates rather than read verbatim, so they
+# can pull values such as bot-account passwords from the lab config instead of
+# hardcoding them. lookup('file') returns AnsibleUnsafeText, which Ansible
+# never re-templates by design, so a Jinja expression inside a script read that
+# way would reach the host literally. No lab script contains a Jinja opening
+# sequence of its own, so rendering every script is safe.
 - name: Play task {{ ps_script }}
   ansible.windows.win_shell: |
-    {{ lookup('file', ps_script) }}
+    {{ lookup('template', ps_script) }}
   register: ps_result

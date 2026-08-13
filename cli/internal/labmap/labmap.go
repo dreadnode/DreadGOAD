@@ -83,16 +83,17 @@ type GMSAConfig struct {
 // It includes the DC host role, trust relationships, ADCS settings, and
 // all users, groups, OUs, and ACLs defined for the domain.
 type DomainConfig struct {
-	DC              string                `json:"dc"` // host role key
-	DomainPassword  string                `json:"domain_password"`
-	NetBIOSName     string                `json:"netbios_name"`
-	Trust           string                `json:"trust"`
-	CAServer        string                `json:"ca_server"`
-	CAWebEnrollment *bool                 `json:"ca_web_enrollment"`
-	LAPSReaders     []string              `json:"laps_readers"`
-	GMSA            map[string]GMSAConfig `json:"gmsa"`
-	Users           map[string]UserConfig `json:"users"`
-	ACLs            map[string]ACLConfig  `json:"acls"`
+	DC                       string                `json:"dc"` // host role key
+	DomainPassword           string                `json:"domain_password"`
+	NetBIOSName              string                `json:"netbios_name"`
+	Trust                    string                `json:"trust"`
+	CAServer                 string                `json:"ca_server"`
+	CAWebEnrollment          *bool                 `json:"ca_web_enrollment"`
+	LAPSReaders              []string              `json:"laps_readers"`
+	MultiDomainGroupsMembers map[string][]string   `json:"multi_domain_groups_member"`
+	GMSA                     map[string]GMSAConfig `json:"gmsa"`
+	Users                    map[string]UserConfig `json:"users"`
+	ACLs                     map[string]ACLConfig  `json:"acls"`
 }
 
 // LabMap holds the resolved lab configuration for any GOAD-style lab.
@@ -547,6 +548,16 @@ type GroupFact struct {
 	DCRole string
 }
 
+// CrossDomainGroupFact holds a configured domain-local group membership set.
+// Members use the config's "domain\\principal" form and may include both
+// same-domain and foreign principals.
+type CrossDomainGroupFact struct {
+	Group   string
+	Domain  string
+	DCRole  string
+	Members []string
+}
+
 // AllConfiguredUsers returns every user defined in any DomainConfig's Users
 // map, with domain context. Used by checks that must verify the full user set
 // exists in AD.
@@ -591,6 +602,31 @@ func (m *LabMap) AllConfiguredGroups() []GroupFact {
 					DCRole: dc.DC,
 				})
 			}
+		}
+	}
+	sort.Slice(facts, func(i, j int) bool {
+		if facts[i].Domain != facts[j].Domain {
+			return facts[i].Domain < facts[j].Domain
+		}
+		return facts[i].Group < facts[j].Group
+	})
+	return facts
+}
+
+// CrossDomainGroupMemberships returns every configured
+// multi_domain_groups_member relation with the local domain/DC context.
+func (m *LabMap) CrossDomainGroupMemberships() []CrossDomainGroupFact {
+	var facts []CrossDomainGroupFact
+	for domain, dc := range m.DomainConfigs {
+		for group, members := range dc.MultiDomainGroupsMembers {
+			copied := make([]string, len(members))
+			copy(copied, members)
+			facts = append(facts, CrossDomainGroupFact{
+				Group:   group,
+				Domain:  domain,
+				DCRole:  dc.DC,
+				Members: copied,
+			})
 		}
 	}
 	sort.Slice(facts, func(i, j int) bool {

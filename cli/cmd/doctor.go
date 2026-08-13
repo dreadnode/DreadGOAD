@@ -13,7 +13,7 @@ var doctorCmd = &cobra.Command{
 	Short: "Run pre-flight system checks",
 	Long: `Verifies that all required tools and configurations are in place.
 
-Common checks: ansible-core version, Python, jq, zip, Ansible collections, inventory.
+Common checks: ansible-core version, Python, jq, Ansible collections, inventory.
 
 Provider-specific:
   aws (default)  AWS CLI, AWS credentials, Terragrunt, Terraform/Tofu
