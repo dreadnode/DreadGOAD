@@ -511,6 +511,15 @@ func createAzureEnvHCL(envDir, envName, vnetCIDR string) error {
   env             = %q
   vnet_cidr       = %q
 
+  # DC02 runs the recurring attack-simulation tasks and needs additional memory.
+  goad_instance_sizes = {
+    dc01  = "Standard_D2s_v3"
+    dc02  = "Standard_D4s_v3"
+    dc03  = "Standard_D2s_v3"
+    srv02 = "Standard_D2s_v3"
+    srv03 = "Standard_D2s_v3"
+  }
+
   bastion_sku               = "Standard"
   bastion_subnet_cidr       = %q
   bastion_tunneling_enabled = true
