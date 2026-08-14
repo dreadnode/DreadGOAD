@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dreadnode/dreadgoad/internal/azure"
 	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/dreadnode/dreadgoad/internal/provider"
 	"github.com/spf13/cobra"
@@ -60,6 +61,22 @@ var labRestartVMCmd = &cobra.Command{
 	RunE:  runVMAction("restart"),
 }
 
+var labDescribeCmd = &cobra.Command{
+	Use:   "describe <hostname>",
+	Short: "Show the disks and network interfaces attached to a lab VM",
+	Long: `Describe one VM's attached resources: managed disks and network
+interfaces, with their sizes, SKUs, subnets and security groups.
+
+Azure only. Read-only — nothing is modified.
+
+--id takes the VM's full ARM resource ID and skips hostname resolution, which
+otherwise lists every VM in the subscription to substring-match the name. A
+caller that already holds the ID (the console, which stores it on each range
+node) should pass it.`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runLabDescribe,
+}
+
 var labDestroyVMCmd = &cobra.Command{
 	Use:   "destroy-vm <hostname>",
 	Short: "Terminate a specific lab VM by hostname",
@@ -76,6 +93,9 @@ func init() {
 	labCmd.AddCommand(labStartVMCmd)
 	labCmd.AddCommand(labStopVMCmd)
 	labCmd.AddCommand(labRestartVMCmd)
+	labCmd.AddCommand(labDescribeCmd)
+	labDescribeCmd.Flags().String("id", "", "Full ARM resource ID of the VM (skips hostname lookup)")
+	labDescribeCmd.Flags().Bool("json", false, "Output machine-readable JSON")
 	labCmd.AddCommand(labDestroyVMCmd)
 	// Lets a caller with nobody at a keyboard run destroy-vm at all. Without it
 	// the confirmation below reads stdin, which a non-interactive caller cannot
@@ -222,6 +242,11 @@ func runLabAction(action string) func(*cobra.Command, []string) error {
 // vmActionTimeout bounds a single-VM lifecycle action end to end.
 const vmActionTimeout = 15 * time.Minute
 
+// Describing a VM is two reads, not a power operation. Borrowing
+// vmActionTimeout would leave the console's detail panel spinning for a quarter
+// of an hour on a stalled call; this fails while an operator is still watching.
+const describeTimeout = 90 * time.Second
+
 func execVMAction(ctx context.Context, prov provider.Provider, inst *provider.Instance, action string, yes bool) error {
 	ids := []string{inst.ID}
 	switch action {
@@ -323,5 +348,87 @@ func runVMAction(action string) func(*cobra.Command, []string) error {
 		// which is the value they want anyway.
 		yes, _ := cmd.Flags().GetBool("yes")
 		return execVMAction(ctx, prov, inst, action, yes)
+	}
+}
+
+// runLabDescribe reports one VM's attached disks and NICs.
+//
+// Azure-specific, so it type-asserts the provider rather than widening the
+// cross-provider interface — the same trade bastion.go makes for the same
+// reason. Other providers get a plain refusal instead of an empty result that
+// looks like a VM with no disks.
+func runLabDescribe(cmd *cobra.Command, args []string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), describeTimeout)
+	defer cancel()
+
+	prov, cfg, err := getProvider(ctx)
+	if err != nil {
+		return err
+	}
+	client, err := azureClientFromProvider(prov)
+	if err != nil {
+		return err
+	}
+
+	id, _ := cmd.Flags().GetString("id")
+	if id == "" {
+		if len(args) == 0 {
+			return fmt.Errorf("give a hostname, or --id with the VM's resource ID")
+		}
+		inst, err := client.FindInstanceByHostname(ctx, cfg.Env, args[0])
+		if err != nil {
+			return err
+		}
+		id = inst.ID
+	}
+
+	detail, err := client.DescribeInstance(ctx, id)
+	if err != nil {
+		return err
+	}
+
+	if asJSON, _ := cmd.Flags().GetBool("json"); asJSON {
+		enc := json.NewEncoder(cmd.OutOrStdout())
+		enc.SetIndent("", "  ")
+		return enc.Encode(detail)
+	}
+	printInstanceDetail(cmd, detail)
+	return nil
+}
+
+func printInstanceDetail(cmd *cobra.Command, d *azure.InstanceDetail) {
+	out := cmd.OutOrStdout()
+	fmt.Fprintf(out, "%s  (%s", d.Name, d.ResourceGroup)
+	if d.Location != "" {
+		fmt.Fprintf(out, ", %s", d.Location)
+	}
+	if d.VMSize != "" {
+		fmt.Fprintf(out, ", %s", d.VMSize)
+	}
+	// The JSON carries power state and the console panel shows it; a terminal
+	// reader asking about a VM's disks wants to know it is running just as much.
+	if d.PowerState != "" {
+		fmt.Fprintf(out, ", %s", d.PowerState)
+	}
+	fmt.Fprintln(out, ")")
+
+	fmt.Fprintf(out, "\nDisks (%d)\n", len(d.Disks))
+	for _, disk := range d.Disks {
+		size := ""
+		if disk.SizeGB != nil {
+			size = fmt.Sprintf("%d GB", *disk.SizeGB)
+		}
+		fmt.Fprintf(out, "  %-4s %-38s %-9s %s\n", disk.Role, disk.Name, size, disk.StorageType)
+	}
+
+	fmt.Fprintf(out, "\nNetwork interfaces (%d)\n", len(d.NICs))
+	for _, nic := range d.NICs {
+		fmt.Fprintf(out, "  %-38s %s\n", nic.Name, strings.Join(nic.PrivateIPs, ", "))
+		if nic.SubnetID != "" {
+			fmt.Fprintf(out, "      subnet %s\n", nic.SubnetID)
+		}
+		if nic.NSGID != "" {
+			fmt.Fprintf(out, "      nsg    %s\n", nic.NSGID)
+		}
 	}
 }
