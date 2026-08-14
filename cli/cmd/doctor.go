@@ -17,7 +17,11 @@ Common checks: ansible-core version, Python, jq, Ansible collections, inventory.
 
 Provider-specific:
   aws (default)  AWS CLI, AWS credentials, Terragrunt, Terraform/Tofu
-  azure          Azure CLI, az login session, az network bastion, Terragrunt, Terraform/Tofu
+  azure          Azure CLI, az login session, az network bastion, Terragrunt, Terraform/Tofu,
+                 plus VM size availability and vCPU quota in the configured region — the
+                 SkuNotAvailable failure that otherwise only appears minutes into apply.
+                 Both are reported as warnings: capacity is real-time and can change
+                 between this check and the deploy.
   ludus          Ludus CLI (or SSH reachability when ludus.ssh_host is set), API key`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if config.ConfigMissing() {
@@ -46,6 +50,10 @@ Provider-specific:
 					cfg.Ludus.SSHPort == 0,
 			},
 		})
+		// Azure capacity/quota. Appended rather than folded into RunChecks: it needs a
+		// provider client, and internal/doctor importing internal/azure to build one
+		// would drag the cloud SDK into every provider's pre-flight path.
+		results = append(results, azureCapacityChecks(cfg)...)
 		failed := doctor.PrintResults(results)
 
 		if failed > 0 {

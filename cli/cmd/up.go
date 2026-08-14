@@ -256,6 +256,10 @@ func runUpDoctor(cmd *cobra.Command, _ []string) error {
 				cfg.Ludus.SSHPort == 0,
 		},
 	})
+	// Azure capacity/quota. Appended rather than folded into RunChecks: it needs a
+	// provider client, and internal/doctor importing internal/azure to build one
+	// would drag the cloud SDK into every provider's pre-flight path.
+	results = append(results, azureCapacityChecks(cfg)...)
 	if failed := doctor.PrintResults(results); failed > 0 {
 		return upDoctorFailure(failed)
 	}
