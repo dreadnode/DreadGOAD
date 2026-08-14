@@ -61,8 +61,8 @@ func init() {
 
 func runEnvCreate(cmd *cobra.Command, args []string) error {
 	envName := strings.TrimSpace(args[0])
-	if envName == "" {
-		return fmt.Errorf("environment name cannot be empty")
+	if err := validateEnvName(envName); err != nil {
+		return err
 	}
 
 	cfg, err := config.Get()
@@ -117,6 +117,36 @@ func variantTargetFor(projectRoot, envName, variantSource string) string {
 		source = defaultVariantSource
 	}
 	return filepath.Join(projectRoot, "ad", filepath.Base(source)+"-"+envName)
+}
+
+// envNameRe is what an environment name may contain. The name is not just a
+// label: it becomes a directory under infra/, the {env}-inventory filename, the
+// ad/GOAD-{env} variant tree, and part of the deployed Azure resource names.
+//
+// Dots are deliberately allowed — "3.1" and "dg-test-2.A" are real environment
+// names. They used to break variant resolution, but that was viper splitting
+// config keys on ".", fixed in config.repairDottedEnvironmentKeys rather than by
+// forbidding the character.
+var envNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// validateEnvName rejects names that would escape or corrupt the paths built
+// from them, before any directory is created.
+func validateEnvName(name string) error {
+	if name == "" {
+		return fmt.Errorf("environment name cannot be empty")
+	}
+	// Checked ahead of the pattern so traversal gets a message that names the
+	// actual problem rather than a generic "invalid character".
+	if name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		return fmt.Errorf("environment name %q would escape the project directory", name)
+	}
+	if !envNameRe.MatchString(name) {
+		return fmt.Errorf(
+			"environment name %q is not usable as a directory and file name\n"+
+				"  use letters, digits, dot, hyphen or underscore, starting with a letter or digit (e.g. 3.1, dg-test-2.A)",
+			name)
+	}
+	return nil
 }
 
 func scaffoldEnv(cfg *config.Config, envName, region, vpcCIDR, reference, variantSource string, useVariant, force bool) error {

@@ -2,11 +2,14 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -152,8 +155,10 @@ func isSSMInventory(cfg *config.Config) bool {
 }
 
 // preflightChecks validates tooling, builds the Ansible collection, and
-// prepares artifacts needed before provisioning playbooks run.
-func preflightChecks(ctx context.Context, cfg *config.Config) error {
+// prepares artifacts needed before provisioning playbooks run. limit is the
+// Ansible host pattern the run is restricted to, or "" for the whole inventory;
+// it only affects how strictly the inventory is validated.
+func preflightChecks(ctx context.Context, cfg *config.Config, limit string) error {
 	if err := doctor.CheckAnsibleCoreVersion(cfg.ResolvedProvider()); err != nil {
 		return fmt.Errorf("ansible-core version check failed: %w", err)
 	}
@@ -186,7 +191,286 @@ func preflightChecks(ctx context.Context, cfg *config.Config) error {
 			slog.Warn("instance mapping generation failed, playbooks will use runtime detection", "error", err)
 		}
 	}
+
+	// Azure: `env create` writes the inventory with PENDING addresses and no
+	// other step fills them in, so resolve them from live NIC state here.
+	// Failing here beats failing inside network_setup.yml once the Bastion
+	// tunnel and playbook run are already underway.
+	if cfg.ResolvedProvider() == provider.NameAzure {
+		if err := inventorySyncFailure(syncAzureInventoryIPs(ctx, cfg), limit); err != nil {
+			return err
+		}
+		if err := inventorySyncFailure(syncAzureInventoryPasswords(cfg), limit); err != nil {
+			return err
+		}
+	}
+
+	// Last gates before any playbook runs, for every provider.
+	if err := validateInventoryResolved(cfg, limit); err != nil {
+		return err
+	}
+	return validateInventoryCredentials(cfg)
+}
+
+// materializedLabConfigPath is the lab config Terraform actually read when it
+// built the machines: infra_cmd.go's materializeLabConfig copies the resolved
+// config here, and every Azure goad unit hardcodes this path to source
+// admin_password. It is deliberately NOT cfg.ResolvedLabConfigPath() — that is
+// what the *playbooks* will read, and the two can disagree, which is precisely
+// the failure this check exists to catch.
+func materializedLabConfigPath(cfg *config.Config) string {
+	return filepath.Join(cfg.ProjectRoot, "ad", "GOAD", "data", cfg.Env+"-config.json")
+}
+
+// validateInventoryCredentials checks that the password Ansible will present
+// is the one the machines were actually built with.
+//
+// The Azure bootstrap creates the login Ansible uses with
+// `net user ansible '${admin_password}'`, where admin_password comes from
+// lab.hosts[<id>].local_admin_password in the materialized lab config. If the
+// inventory carries a different value — because it was scaffolded from a
+// provider template whose stock passwords were never reconciled with the
+// generated config — every host fails WinRM auth. That surfaces as a wall of
+// authentication errors with no hint that the inventory is the cause.
+//
+// Only a total mismatch is fatal. That is the unambiguous scaffolding bug, and
+// it is what a broken environment looks like: a healthy one matches on every
+// host. A partial mismatch is reported but allowed through, since a single host
+// can legitimately drift after provisioning has already run.
+func validateInventoryCredentials(cfg *config.Config) error {
+	// Azure only. The link between lab.hosts[*].local_admin_password and the
+	// account Ansible logs in as is Azure's bootstrap script; no other provider
+	// makes that promise. AWS's stock inventory carries passwords that match no
+	// config at all — it authenticates over SSM and never sends them — so
+	// comparing there would block a working provider on a value nothing uses.
+	if cfg.ResolvedProvider() != provider.NameAzure {
+		return nil
+	}
+	want, err := materializedHostPasswords(cfg)
+	if err != nil || len(want) == 0 {
+		// No materialized config (infra never ran here) means there is nothing
+		// to compare against. Absence is not a mismatch.
+		slog.Debug("skipping credential check; no materialized lab config", "error", err)
+		return nil
+	}
+	configPath := materializedLabConfigPath(cfg)
+
+	parsed, err := inv.Parse(cfg.InventoryPath())
+	if err != nil {
+		return nil // validateInventoryResolved already reported on this file
+	}
+
+	var mismatched []string
+	compared := 0
+	for name, host := range parsed.Hosts {
+		expected, ok := want[strings.ToLower(name)]
+		if !ok || host.Password == "" {
+			continue
+		}
+		compared++
+		if host.Password != expected {
+			mismatched = append(mismatched, name)
+		}
+	}
+	if compared == 0 || len(mismatched) == 0 {
+		return nil
+	}
+	sort.Strings(mismatched)
+
+	if len(mismatched) < compared {
+		slog.Warn("some hosts' inventory password differs from the one they were built with",
+			"hosts", strings.Join(mismatched, ","), "of", compared)
+		return nil
+	}
+	return fmt.Errorf(
+		"inventory %s has the wrong password for every host (%s)\n"+
+			"  The machines were built with lab.hosts[*].local_admin_password from %s,\n"+
+			"  but the inventory carries values scaffolded from a provider template.\n"+
+			"  Ansible would fail WinRM authentication on all %d hosts.\n"+
+			"  Fix: dreadgoad --env %s inventory sync",
+		cfg.InventoryPath(), strings.Join(mismatched, ", "), configPath, compared, cfg.Env)
+}
+
+// inventorySyncFailure decides whether a failed inventory sync stops the run.
+//
+// Under --limit it must not. The sync fails when some host cannot be resolved,
+// but a limited run may never target that host, and validateInventoryResolved
+// applies the same policy a few lines later — so letting the sync hard-fail
+// here would silently override the limit and block a legitimate partial run.
+func inventorySyncFailure(err error, limit string) error {
+	if err == nil {
+		return nil
+	}
+	if limit != "" {
+		slog.Warn("inventory sync did not resolve every host; continuing because the run is limited",
+			"limit", limit, "error", err)
+		return nil
+	}
+	return fmt.Errorf("inventory sync: %w", err)
+}
+
+// validateInventoryResolved refuses to hand Ansible an inventory that still
+// carries scaffolding placeholders.
+//
+// Ansible does not validate ansible_host. Given "PENDING" it tries to resolve a
+// host by that literal name and reports every play "unreachable" — which reads
+// as a network, firewall, or credential fault and costs an apply cycle to trace
+// back to the inventory.
+//
+// This runs for all providers rather than just the one that scaffolds PENDING,
+// because each arrives here unresolved by a different route: Azure had no
+// resolver at all, the AWS sync is warn-only at its call site above, and a
+// Ludus or Proxmox inventory that already exists on disk is never re-rendered,
+// so an unrendered {{ip_range}} survives bootstrap untouched.
+//
+// Under --limit an unresolved host may simply be out of scope, so this warns
+// rather than fails: blocking a deliberate partial run would be worse than the
+// unreachable error the operator gets anyway if the host is in scope.
+func validateInventoryResolved(cfg *config.Config, limit string) error {
+	data, err := os.ReadFile(cfg.InventoryPath())
+	if err != nil {
+		return fmt.Errorf("read inventory: %w", err)
+	}
+	stale := placeholderHosts(string(data))
+	if len(stale) == 0 {
+		return nil
+	}
+	if limit != "" {
+		slog.Warn("inventory has unresolved hosts; they will fail if the limit selects them",
+			"hosts", strings.Join(stale, ","), "limit", limit)
+		return nil
+	}
+	return fmt.Errorf(
+		"inventory %s has no address for %s\n"+
+			"  Ansible would treat the placeholder as a hostname and report these unreachable.\n"+
+			"  Run `dreadgoad --env %s infra apply` if the machines are not up yet,\n"+
+			"  then `dreadgoad --env %s inventory sync` to resolve their addresses",
+		cfg.InventoryPath(), strings.Join(stale, ", "), cfg.Env, cfg.Env)
+}
+
+// materializedHostPasswords returns the local admin password each machine was
+// built with, keyed by lowercased host id, read from the lab config Terraform
+// actually consumed.
+func materializedHostPasswords(cfg *config.Config) (map[string]string, error) {
+	raw, err := os.ReadFile(materializedLabConfigPath(cfg))
+	if err != nil {
+		return nil, err
+	}
+	var lab struct {
+		Lab struct {
+			Hosts map[string]struct {
+				LocalAdminPassword string `json:"local_admin_password"`
+			} `json:"hosts"`
+		} `json:"lab"`
+	}
+	if err := json.Unmarshal(raw, &lab); err != nil {
+		return nil, fmt.Errorf("parse lab config: %w", err)
+	}
+	out := make(map[string]string, len(lab.Lab.Hosts))
+	for name, h := range lab.Lab.Hosts {
+		if h.LocalAdminPassword != "" {
+			out[strings.ToLower(name)] = h.LocalAdminPassword
+		}
+	}
+	return out, nil
+}
+
+// quoteInventoryValue wraps a value so the inventory parser reads it back
+// intact. Reports false when the value contains both quote characters, which
+// inventory.stripQuotes cannot represent — better to leave that host alone than
+// to write a line that parses back as something else.
+func quoteInventoryValue(v string) (string, bool) {
+	if !strings.Contains(v, "'") {
+		return "'" + v + "'", true
+	}
+	if !strings.Contains(v, `"`) {
+		return `"` + v + `"`, true
+	}
+	return "", false
+}
+
+// syncAzureInventoryPasswords rewrites each host's ansible_password to the one
+// its machine was actually built with.
+//
+// Azure's bootstrap creates the account Ansible logs in as with
+// `net user ansible '${admin_password}'`, sourced from
+// lab.hosts[<id>].local_admin_password in the materialized lab config. The
+// inventory is scaffolded from a provider template carrying stock passwords
+// that appear in no config — measured at 0 of 5 agreement for every variant in
+// this repo, including ones generated correctly. Nothing else reconciles the
+// two, so provisioning authenticates with a password no machine has.
+//
+// Done here rather than at scaffold time so it also repairs ranges that are
+// already deployed, and so a regenerated lab config cannot leave the inventory
+// behind.
+func syncAzureInventoryPasswords(cfg *config.Config) error {
+	want, err := materializedHostPasswords(cfg)
+	if err != nil || len(want) == 0 {
+		slog.Debug("no materialized lab config; leaving inventory passwords alone", "error", err)
+		return nil
+	}
+
+	invPath := cfg.InventoryPath()
+	data, err := os.ReadFile(invPath)
+	if err != nil {
+		return fmt.Errorf("read inventory: %w", err)
+	}
+	content := string(data)
+
+	updated := 0
+	for host, password := range want {
+		quoted, ok := quoteInventoryValue(password)
+		if !ok {
+			slog.Warn("cannot represent this host's password in the inventory; leaving it unchanged", "host", host)
+			continue
+		}
+		re := regexp.MustCompile(
+			`(?mi)^(` + regexp.QuoteMeta(host) + `\s+[^\n]*?ansible_password=)('[^']*'|"[^"]*"|\S+)`)
+		// ReplaceAllStringFunc, not ReplaceAllString: a password may contain $,
+		// which the replacement template would read as a capture reference.
+		next := re.ReplaceAllStringFunc(content, func(m string) string {
+			i := strings.Index(m, "ansible_password=")
+			return m[:i+len("ansible_password=")] + quoted
+		})
+		if next != content {
+			content = next
+			updated++
+		}
+	}
+
+	if updated == 0 {
+		return nil
+	}
+	// Mode applies only on create; an existing inventory keeps its own.
+	if err := os.WriteFile(invPath, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("write inventory: %w", err)
+	}
+	fmt.Printf("Reconciled ansible_password for %d host(s) from %s\n",
+		updated, filepath.Base(materializedLabConfigPath(cfg)))
 	return nil
+}
+
+// syncAzureInventoryIPs points every inventory host at its live private IP.
+// Azure allocates those from the subnet's pool at create time, so they are not
+// knowable when the environment is scaffolded and cannot be baked into the
+// provider inventory template the way Ludus and Proxmox ranges can.
+func syncAzureInventoryIPs(ctx context.Context, cfg *config.Config) error {
+	prov, err := cfg.NewProvider(ctx)
+	if err != nil {
+		return fmt.Errorf("create provider: %w", err)
+	}
+	live, err := prov.DiscoverInstances(ctx, cfg.Env)
+	if err != nil {
+		return fmt.Errorf("discover instances: %w", err)
+	}
+	if len(live) == 0 {
+		return fmt.Errorf("no instances found for env=%s: run 'dreadgoad infra apply' first", cfg.Env)
+	}
+	instances := make([]instanceInfo, 0, len(live))
+	for _, i := range live {
+		instances = append(instances, instanceInfo{InstanceID: i.ID, Name: i.Name, PrivateIP: i.PrivateIP})
+	}
+	return applyInstanceUpdates(cfg.InventoryPath(), instances)
 }
 
 // bootstrapInventory creates the inventory file if it does not exist.
@@ -492,7 +776,7 @@ func provisionPlaybooks(ctx context.Context, cfg *config.Config, playbooks []str
 	logFile := filepath.Join(cfg.LogDir, fmt.Sprintf("%s-dreadgoad-%s.log",
 		cfg.Env, time.Now().Format("20060102_150405")))
 
-	if err := preflightChecks(ctx, cfg); err != nil {
+	if err := preflightChecks(ctx, cfg, limit); err != nil {
 		return err
 	}
 

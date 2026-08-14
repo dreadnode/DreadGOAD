@@ -17,6 +17,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.45.5
 	github.com/cowdogmoo/warpgate/v3 v3.2.1-0.20260602203901-b5973d1cb1c0
 	github.com/fatih/color v1.19.0
+	github.com/go-viper/mapstructure/v2 v2.5.0
 	github.com/masterzen/winrm v0.0.0-20260407182533-5570be7f80cf
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
@@ -68,7 +69,6 @@ require (
 	github.com/docker/docker-credential-helpers v0.9.7 // indirect
 	github.com/fsnotify/fsnotify v1.10.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
-	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/gofrs/uuid v4.4.0+incompatible // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/google/go-containerregistry v0.21.6 // indirect
