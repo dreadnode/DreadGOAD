@@ -15,7 +15,7 @@ import (
 // Instance represents a discovered Azure VM relevant to dreadgoad.
 type Instance struct {
 	ID            string // full Azure resource ID (used for run-command targeting)
-	Name          string // VM resource name (e.g. "test-goad-dreadgoad-kingslanding-vm")
+	Name          string // VM resource name (e.g. "test-dreadgoad-kingslanding-vm")
 	ResourceGroup string
 	// SubscriptionID the VM lives in, parsed from its own resource ID rather
 	// than read from the client, so it reflects where the resource actually is.

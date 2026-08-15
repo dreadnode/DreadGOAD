@@ -26,6 +26,11 @@
 - name: Install DSC modules (skip on prebaked AMIs)
   when: not ((goad_prebaked | default({})).dsc_modules | default(false))
   block:
+    - name: Unblock PackageManagement DLLs (MOTW causes 0x8000FFFF on Install-Module)
+      ansible.windows.win_shell: |
+        Get-ChildItem -Path 'C:\Program Files\WindowsPowerShell\Modules' -Recurse -ErrorAction SilentlyContinue |
+          Unblock-File -ErrorAction SilentlyContinue
+
     - name: Upgrade module PowerShellGet to fix accept license issue
       ansible.windows.win_shell: |
         $ProgressPreference = 'SilentlyContinue'
@@ -33,9 +38,7 @@
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         Install-PackageProvider -Name NuGet -Force -Confirm:$false
         Install-Module PowerShellGet -Force -Confirm:$false
-        # Newly-installed DLLs sometimes carry Mark-of-the-Web from the .nupkg
-        # download, which makes Microsoft.PackageManagement.dll fail to load on
-        # the next Install-Module call ("Catastrophic failure" / 0x8000FFFF).
+        # Re-unblock: the installs above may have written new MOTW-flagged DLLs.
         Get-ChildItem -Path 'C:\Program Files\WindowsPowerShell\Modules' -Recurse -ErrorAction SilentlyContinue |
           Unblock-File -ErrorAction SilentlyContinue
       register: powershellget_install

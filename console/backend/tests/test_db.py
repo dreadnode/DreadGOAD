@@ -205,12 +205,30 @@ async def test_layout_revision_protects_against_stale_range_writes() -> None:
         await db.close()
 
 
+async def test_delete_session_cascades_thread_meta() -> None:
+    db, _ = await _fresh_db()
+    try:
+        await db.upsert_session({"id": "s-1"})
+        await db.set_meta("thread:s-1", [{"role": "user", "content": "hi"}])
+        assert await db.get_meta("thread:s-1") is not None, "thread not stored"
+        # Unrelated meta must survive the cascade.
+        await db.set_meta("schema_version", 2)
+
+        await db.delete_session("s-1")
+        assert await db.get_meta("thread:s-1") is None, "thread not cascade-deleted"
+        assert await db.get_meta("schema_version") == 2, "unrelated meta was deleted"
+        print("PASS test_delete_session_cascades_thread_meta")
+    finally:
+        await db.close()
+
+
 async def _main() -> None:
     await test_session_and_range_crud()
     await test_event_seq_and_replay()
     await test_meta_round_trip()
     await test_concurrent_writes_no_loss()
     await test_layout_revision_protects_against_stale_range_writes()
+    await test_delete_session_cascades_thread_meta()
     print("ALL PASS")
 
 

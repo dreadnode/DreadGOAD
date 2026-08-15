@@ -20,6 +20,7 @@ const (
 	ErrSSMUserAccount  ErrorType = "ssm_user_account_issue"
 	ErrMSIInstaller    ErrorType = "msi_installer_error"
 	ErrWUACOM          ErrorType = "wua_com_error"
+	ErrPackageMgmt     ErrorType = "package_management_dll"
 	ErrUnclassified    ErrorType = "unclassified"
 )
 
@@ -58,6 +59,11 @@ func DetectErrorType(output string) (ErrorType, string) {
 		"registry key that has been marked for deletion",
 		"Microsoft.Update.UpdateColl"):
 		return ErrWUACOM, "Windows Update COM object corrupted (0x800703FA)"
+
+	case containsAny(output, "0x8000FFFF", "8000ffff",
+		"Microsoft.PackageManagement.dll",
+		"Catastrophic failure"):
+		return ErrPackageMgmt, "PackageManagement DLL load failure (MOTW / 0x8000FFFF)"
 
 	default:
 		detail := extractFatalContext(output)

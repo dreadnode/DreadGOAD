@@ -100,10 +100,11 @@ html, body, #root {
   color: var(--dg-interactive);
 }
 
-/* "Agent working" indicator — a shimmer: a bright band swept left→right across
+/* "Agent <verb>" indicator — a shimmer: a bright band swept left→right across
    the label. The gradient is twice the element's width and clipped to the
    glyphs, so animating background-position alone moves the highlight; nothing
-   is laid out or composited per frame.
+   is laid out or composited per frame. The verb varies per turn (agentVerbs.ts)
+   and the 200% is a percentage, so the sweep resizes with the word for free.
 
    Position 100% seats the image's right edge at the element's right edge (the
    bright midpoint then sits at x=0); position 0% seats its left edge at the
@@ -162,6 +163,12 @@ html, body, #root {
   70%  { content: '⠧'; }
   80%  { content: '⠇'; }
   90%  { content: '⠏'; }
+}
+
+.dg-spinner::before {
+  content: '⠋';
+  animation: braille-spin 0.8s steps(1) infinite;
+  font-size: 14px;
 }
 
 /* Copy-command blocks in the connect modal. Hover and focus states can't be

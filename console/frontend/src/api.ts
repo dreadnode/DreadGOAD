@@ -88,6 +88,46 @@ export interface ConfigListing {
   regions?: Record<string, string[]>
 }
 
+/** One managed disk attached to a VM (Azure). */
+export interface DiskDetail {
+  name: string
+  /** `os` or `data`. */
+  role: string
+  lun?: number
+  size_gb?: number
+  storage_type?: string
+  caching?: string
+  create_option?: string
+  managed_disk_id?: string
+}
+
+/** One network interface attached to a VM (Azure). */
+export interface NICDetail {
+  name: string
+  id: string
+  private_ips: string[]
+  subnet_id?: string
+  nsg_id?: string
+  mac_address?: string
+  primary?: boolean
+  accelerated_networking?: boolean
+  public_ip_id?: string
+}
+
+/** Attached-resource detail for one range host, from `lab describe --json`. */
+export interface HostDetail {
+  /** Echoed back so a late response can be discarded rather than mis-rendered. */
+  node_id: string
+  id: string
+  name: string
+  resource_group: string
+  location?: string
+  vm_size?: string
+  power_state?: string
+  disks: DiskDetail[]
+  nics: NICDetail[]
+}
+
 export interface CommandDef {
   name: string
   description: string
@@ -147,6 +187,10 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model }),
     }).then(r => json(r)),
+
+  hostDetail: (sessionId: string, nodeId: string): Promise<HostDetail> =>
+    fetch(`/api/ranges/${sessionId}/hosts/${encodeURIComponent(nodeId)}`)
+      .then(r => json<HostDetail>(r)),
 
   getRange: (id: string): Promise<RangeDoc> =>
     fetch(`/api/ranges/${id}`).then(r => json<RangeDoc>(r)),

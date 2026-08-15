@@ -138,7 +138,7 @@ second tab is rejected with a 409 rather than overwriting the newer layout.
 | `server.py` | FastAPI assembly, lifecycle, router registration, frontend mount |
 | `config_routes.py` | Health, configuration, settings, and command-catalog routes |
 | `session_routes.py` | Session lifecycle and model-selection routes |
-| `range_routes.py` | Range reads and revision-protected layout routes |
+| `range_routes.py` | Range reads, per-host detail, revision-protected layout routes |
 | `chat_socket.py` | Bounded WebSocket protocol and multiplexed chat transport |
 | `chat.py` | Thin chat facade: turn dispatch, agent routing, model switching |
 | `chat_runtime.py` | Per-session state, connection ownership, cancellation, cleanup |
@@ -153,6 +153,7 @@ second tab is rejected with a 409 rather than overwriting the newer layout.
 | `health_sync.py` | Health-report parsing and per-host health overlays |
 | `topology_sync.py` | Range reseeding and extension-node discovery |
 | `labconfig.py` | Snapshot derivation + range topology seeding from lab config |
+| `hostdetail.py` | Disks/NICs for one host via `lab describe` (Azure, read-only) |
 | `configstore.py` | Which configs exist, where new ones are written, credential hints |
 | `labs.py` | Base-lab discovery for the variant-source picker (`lab list --json`) |
 | `scaffold.py` | Builds an environment's infra tree via `dreadgoad env create` |
@@ -169,7 +170,8 @@ second tab is rejected with a 409 rather than overwriting the newer layout.
 # Backend tests (each suite is standalone-runnable, no pytest required):
 .venv/bin/python console/backend/tests/test_commands.py
 # ... test_chat.py, test_configstore.py, test_db.py, test_fetch.py, test_hook.py,
-#     test_labconfig.py, test_labs.py, test_longops.py, test_server_rest.py,
+#     test_hostdetail.py, test_labconfig.py, test_labs.py, test_longops.py,
+#     test_server_rest.py,
 #     test_sessions.py, test_summary.py
 
 # Or the whole suite at once. asyncio_mode=auto is required — without it every

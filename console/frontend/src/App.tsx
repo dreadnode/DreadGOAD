@@ -29,6 +29,11 @@ export default function App() {
   // When the in-flight turn started (epoch ms), so the elapsed timer survives a
   // reload instead of restarting from zero. 0 means idle.
   const [turnStart, setTurnStart] = useState<Record<string, number>>({})
+  // Seed for the "Agent <verb>" flavour word, one per session per turn. Held
+  // here rather than in TerminalChat because that component is not keyed by
+  // session: switching tabs changes its `processing` prop true→false→true, and
+  // a latch living inside it would re-roll the word for a turn already running.
+  const [verbSeed, setVerbSeed] = useState<Record<string, number>>({})
 
   const sessionsRef = useRef<Session[]>([])
   const resumedRef = useRef<Set<string>>(new Set())
@@ -51,6 +56,10 @@ export default function App() {
       const running = ev.active === true
       setProcessing(prev => ({ ...prev, [sid]: running }))
       setProcCmd(prev => ({ ...prev, [sid]: running ? (ev.command as string) || '' : '' }))
+      setVerbSeed(prev => ({
+        ...prev,
+        [sid]: running ? prev[sid] || Date.now() : 0,
+      }))
       setTurnStart(prev => {
         const at = running ? Date.parse((ev.started_at as string) || '') : NaN
         // Fall back to now if the timestamp is unusable, so the timer starts
@@ -76,6 +85,7 @@ export default function App() {
       setProcessing(prev => ({ ...prev, [sid]: false }))
       setProcCmd(prev => ({ ...prev, [sid]: '' }))
       setTurnStart(prev => ({ ...prev, [sid]: 0 }))
+      setVerbSeed(prev => ({ ...prev, [sid]: 0 }))
     }
   }, [])
 
@@ -114,6 +124,8 @@ export default function App() {
     setProcessing(prev => ({ ...prev, [activeId]: true }))
     // Optimistic start; a later resume replaces it with the server's timestamp.
     setTurnStart(prev => ({ ...prev, [activeId]: Date.now() }))
+    // A new turn always draws a new word.
+    setVerbSeed(prev => ({ ...prev, [activeId]: Date.now() }))
     send(JSON.stringify({ session_id: activeId, content }))
   }, [activeId, send])
 
@@ -254,6 +266,7 @@ export default function App() {
               onSend={sendMessage}
               processing={!!processing[activeId]}
               turnStartedAt={turnStart[activeId] || 0}
+              verbSeed={verbSeed[activeId] || 0}
               onCancel={onCancel}
               model={sessions.find(s => s.id === activeId)?.model}
               onOpenSettings={() => setShowSettings(true)}

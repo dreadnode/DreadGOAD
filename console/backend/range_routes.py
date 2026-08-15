@@ -7,7 +7,7 @@ import typing as t
 
 from fastapi import APIRouter, HTTPException, Request
 
-from . import topology_sync
+from . import hostdetail, topology_sync
 
 router = APIRouter()
 
@@ -31,6 +31,29 @@ async def get_range(request: Request, session_id: str) -> dict[str, t.Any]:
     if rng is None:
         raise HTTPException(status_code=404, detail="range not found")
     return await topology_sync.repair_missing_config_hosts(request.app, session_id, rng)
+
+
+@router.get("/api/ranges/{session_id}/hosts/{node_id}")
+async def get_host_detail(
+    request: Request, session_id: str, node_id: str
+) -> dict[str, t.Any]:
+    """Disks and network interfaces attached to one host.
+
+    Separate from the range read because it costs cloud calls: it is fetched
+    when an operator opens a node, not on every poll of the topology.
+    """
+    db = request.app.state.db
+    session = await db.get_session(session_id)
+    rng = await db.get_range(session_id)
+    if session is None or rng is None:
+        raise HTTPException(status_code=404, detail="range not found")
+    try:
+        return await hostdetail.host_detail(session, rng, node_id)
+    except hostdetail.HostDetailUnavailable as exc:
+        # 409, not 500: the request was well-formed and the answer is simply
+        # not available yet — usually a host that has not been deployed. The
+        # panel renders the reason, so it has to be a sentence.
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 def _normalize_layout(body: dict[str, t.Any]) -> tuple[dict[str, dict[str, int]], int]:

@@ -3,6 +3,7 @@
 #
 #   ./dreadgoad-console                 # build frontend, serve on :24749
 #   ./dreadgoad-console --dev           # run vite dev server + backend (hot reload)
+#   ./dreadgoad-console --help          # usage and the environment variables
 #
 # Requires: python3, node/npm, and the compiled `dreadgoad` Go binary on PATH
 # (or at cli/dreadgoad) — the backend shells out to it. See design §10.
@@ -16,15 +17,19 @@ VENV="$ROOT/.venv"
 # ephemeral range (32768-60999) so the bind never races an outbound
 # connection, and unregistered with IANA.
 PORT="${DREADGOAD_CONSOLE_PORT:-${DREADGOAD_WEBAPP_PORT:-24749}}"
-MODEL="${DREADGOAD_CONSOLE_MODEL:-${DREADGOAD_WEBAPP_MODEL:-openrouter/anthropic/claude-sonnet-5}}"
-DEV=0
-[ "${1:-}" = "--dev" ] && DEV=1
-
+# Left empty when nothing is set: the backend owns the fallback
+# (console/backend/paths.py FALLBACK_MODEL). Repeating the literal here would
+# let the launch banner advertise a model the agent is not running.
+MODEL="${DREADGOAD_CONSOLE_MODEL:-${DREADGOAD_WEBAPP_MODEL:-}}"
+API_KEY_ENV="OPENROUTER_API_KEY"
 # --- palette ---------------------------------------------------------------
 # 256-color approximations of the app's brand tokens (console/frontend/src/index.css):
 #   202 ≈ --dg-brand #ef562f   209 ≈ --dg-interactive #ff7a52
 #   75  ≈ --dn-electric        78 ≈ --dn-success   214 ≈ --dn-warning
 # Disabled when stdout isn't a TTY or NO_COLOR is set (https://no-color.org).
+#
+# Defined above the argument loop, not below it: --help renders through this
+# palette, so it has to exist before the first thing that can print.
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   BRAND=$'\033[38;5;202m'; CORAL=$'\033[38;5;209m'; BLUE=$'\033[38;5;75m'
   GREEN=$'\033[38;5;78m';  AMBER=$'\033[38;5;214m'; RED=$'\033[38;5;203m'
@@ -35,6 +40,138 @@ else
 fi
 
 COLS="$(tput cols 2>/dev/null || echo 80)"
+
+# resolved_model — what a new session will actually run on.
+#
+# Asks the backend rather than repeating its fallback: paths.py is stdlib-only
+# and __init__.py is inert, so system python can import it with no venv. If
+# that fails for any reason the launcher says so instead of inventing a name,
+# because a banner that states the wrong model is worse than one that admits
+# it does not know.
+resolved_model() {
+  if [ -n "$MODEL" ]; then
+    printf '%s' "$MODEL"
+    return
+  fi
+  python3 -c 'import sys; sys.path.insert(0, sys.argv[1])
+from console.backend import paths
+print(paths.default_model())' "$ROOT" 2>/dev/null || printf 'backend default'
+}
+
+# --- help -------------------------------------------------------------------
+# Colour is passed as its own printf argument rather than embedded in the
+# format string, so %-Ns pads the visible text and the columns line up whether
+# or not the palette is active.
+help_head() { printf '\n  %s%s%s\n' "$FAINT" "$1" "$RESET"; }
+help_opt()  { printf '    %s%-18s%s %s%s%s\n' "$CORAL" "$1" "$RESET" "$DIM" "$2" "$RESET"; }
+help_env()  { printf '    %s%-26s%s %s%s%s\n' "$BLUE" "$1" "$RESET" "$DIM" "$2" "$RESET"; }
+# Continuation under an option, aligned to its description column. Keeps long
+# defaults off the flag line, which otherwise runs past 80 columns.
+help_cont() { printf '    %-18s %s%s%s\n' "" "$FAINT" "$1" "$RESET"; }
+
+usage() {
+  local self
+  self="$(basename "$0")"
+  # The compact wordmark, matching banner()'s narrow-terminal form — help is
+  # reference material, not a launch, so it does not get the full six-line
+  # ASCII lockup.
+  printf '\n  %s%s▰▰%s %s%sDREADGOAD%s %s%sCONSOLE%s\n' \
+    "$BOLD" "$BRAND" "$RESET" "$BOLD" "$BRAND" "$RESET" "$BOLD" "$CORAL" "$RESET"
+  printf '  %sActive Directory range control plane%s\n' "$DIM" "$RESET"
+
+  help_head "USAGE"
+  printf '    %s%s%s %s[--dev] [--model NAME] [--api-key-env VAR]%s\n' \
+    "$BOLD" "$self" "$RESET" "$CORAL" "$RESET"
+  printf '    %s%s%s %s-h | --help%s\n' "$BOLD" "$self" "$RESET" "$CORAL" "$RESET"
+
+  help_head "OPTIONS"
+  help_opt "(none)" "build the frontend and serve it on :$PORT"
+  help_opt "--dev" "vite dev server + backend, with hot reload"
+  help_opt "--model NAME" "agent model for new sessions"
+  help_cont "default: $(resolved_model)"
+  help_opt "--api-key-env VAR" "read the LLM key from VAR"
+  help_cont "default: $API_KEY_ENV"
+  help_opt "-h, --help" "show this message and exit"
+
+  help_head "ENVIRONMENT"
+  help_env "DREADGOAD_CONSOLE_PORT" "port to serve on (default 24749)"
+  help_env "DREADGOAD_CONSOLE_MODEL" "agent model (same as --model)"
+  help_env "OPENROUTER_API_KEY" "LLM key, or set one in-app via the gear icon"
+  help_env "NO_COLOR" "disable coloured output"
+
+  help_head "NOTES"
+  printf '    %sThe key itself is never taken as an argument — it would land in%s\n' "$DIM" "$RESET"
+  printf '    %sshell history and in ps output. --api-key-env names the variable%s\n' "$DIM" "$RESET"
+  printf '    %sholding it, and its value is passed to the backend.%s\n' "$DIM" "$RESET"
+  printf '\n'
+}
+
+# Parsed as a loop with an explicit reject arm. Previously this was a single
+# `[ "${1:-}" = "--dev" ]` test, so anything else — `-h`, or a typo like
+# `--Dev` — fell through silently to a full launch: venv, npm build, and a
+# second bind on an already-serving port.
+DEV=0
+
+# need_value <flag> <count> — a flag taking an argument must be told it is
+# missing. Under `set -u` a bare $2 would abort with "unbound variable", which
+# says nothing about which flag was wrong.
+need_value() {
+  if [ "$2" -lt 2 ]; then
+    printf 'dreadgoad-console: %s requires a value\n\n' "$1" >&2
+    usage >&2
+    exit 2
+  fi
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --dev) DEV=1 ;;
+    --model)
+      need_value "$1" $#
+      MODEL="$2"
+      shift
+      ;;
+    --model=*) MODEL="${1#*=}" ;;
+    --api-key-env)
+      need_value "$1" $#
+      API_KEY_ENV="$2"
+      shift
+      ;;
+    --api-key-env=*) API_KEY_ENV="${1#*=}" ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      printf 'dreadgoad-console: unknown option: %s\n\n' "$1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+# An empty value is a typo, not a request to unset. Caught here so it fails at
+# the flag rather than as a mystifying default further down.
+if [ -z "$API_KEY_ENV" ]; then
+  printf 'dreadgoad-console: --api-key-env requires a variable name\n' >&2
+  exit 2
+fi
+
+# The name is about to go through indirect expansion (${!API_KEY_ENV}), and
+# bash evaluates an array subscript inside it -- `a[$(command)]` runs the
+# command. Validate the shape before the value is ever expanded.
+#
+# The pattern deliberately mirrors _API_KEY_ENV_RE in
+# console/backend/config_routes.py, which restricts the same setting for the
+# same reason: a name like PATH or LD_PRELOAD would let this flag rewrite the
+# environment of every subprocess the console launches.
+if ! [[ "$API_KEY_ENV" =~ ^[A-Z][A-Z0-9_]*_(API_KEY|KEY|TOKEN)$ ]]; then
+  printf 'dreadgoad-console: --api-key-env must name a credential variable\n' >&2
+  printf '  expected something like OPENROUTER_API_KEY, ANTHROPIC_API_KEY or CI_TOKEN\n' >&2
+  printf '  got: %s\n' "$API_KEY_ENV" >&2
+  exit 2
+fi
 
 banner() {
   # The wordmark is 74 cols wide; fall back to a one-liner in narrow terminals.
@@ -109,17 +246,52 @@ else
   CLI_PATH=""
 fi
 
+# --- credentials and model reach the backend through the environment --------
+# uvicorn is exec'd (or backgrounded) from this shell, so exporting here is how
+# --model and --api-key-env take effect. Previously MODEL was computed for the
+# banner and never exported, so the summary reported a model the backend had
+# no idea about unless the caller had already exported it themselves.
+if [ -n "$MODEL" ]; then
+  export DREADGOAD_CONSOLE_MODEL="$MODEL"
+fi
+
+# Indirect expansion, defaulted, because `set -u` aborts on an unset name.
+API_KEY_VALUE="${!API_KEY_ENV:-}"
+if [ "$API_KEY_ENV" != "OPENROUTER_API_KEY" ]; then
+  if [ -z "$API_KEY_VALUE" ]; then
+    printf '\n'
+    fail "--api-key-env named $API_KEY_ENV, but that variable is empty or unset."
+    fail "export it first, or drop the flag to use OPENROUTER_API_KEY."
+    exit 1
+  fi
+  # The backend reads OPENROUTER_API_KEY; copy the value across rather than
+  # teaching it a second variable name.
+  export OPENROUTER_API_KEY="$API_KEY_VALUE"
+fi
+
 field "root"    "$ROOT"
 field "python"  "$PY_V"
 field "node"    "$NODE_V" "$([ "$NODE_V" = "not found" ] && echo "$RED" || echo "$DIM")"
 field "cli"     "${CLI_PATH:-not found}$CLI_NOTE" "$([ -z "$CLI_PATH" ] && echo "$RED" || echo "$DIM")"
-field "model"   "$MODEL" "$BLUE"
+field "model"   "$(resolved_model)" "$BLUE"
 if [ -n "${OPENROUTER_API_KEY:-}" ]; then
-  field "api key" "● set (OPENROUTER_API_KEY)" "$GREEN"
+  field "api key" "● set ($API_KEY_ENV)" "$GREEN"
 else
   field "api key" "○ not set — add one in-app via ⚙" "$AMBER"
 fi
 field "port"    "$PORT"
+
+# --- refuse to start a second instance -------------------------------------
+# Checked before any work: without it a re-run reinstalls deps and rebuilds the
+# whole frontend before uvicorn finally fails to bind, which reads as a slow
+# hang rather than "it's already running".
+if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+  printf '\n'
+  fail "port $PORT is already in use — the console is probably already running."
+  fail "open http://localhost:$PORT, stop the running instance, or set"
+  fail "DREADGOAD_CONSOLE_PORT to a free port."
+  exit 1
+fi
 
 # --- Python venv + backend deps --------------------------------------------
 if [ ! -d "$VENV" ]; then

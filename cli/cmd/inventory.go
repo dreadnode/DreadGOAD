@@ -189,7 +189,7 @@ func loadInstances(ctx context.Context, jsonFile, invPath string, cfg *config.Co
 // extractHostRole extracts the Ansible inventory hostname from a VM name.
 // Supports multiple naming conventions:
 //   - AWS: "dreadgoad-dc01" -> "dc01"
-//   - Azure: "3.1-goad-dreadgoad-DC01-vm" -> "dc01"
+//   - Azure: "A-dreadgoad-DC01-vm" -> "dc01"
 //   - Ludus/Proxmox: "DG-GOAD-DC01" -> "dc01"
 //
 // Falls back to the last hyphen-separated segment for unknown patterns.
@@ -202,10 +202,7 @@ func extractHostRole(vmName string) string {
 	lower = strings.TrimSuffix(lower, "-vm")
 
 	// AWS convention: "dreadgoad-<role>". Anchored on the *last* occurrence
-	// because an Azure name can carry the token twice — the deployment prefix
-	// and the instance-factory prefix both use it, as in
-	// "dreadindex2-dreadgoad-dreadgoad-DC01-vm". Splitting on the first
-	// occurrence returns "dreadgoad-dc01".
+	// so it works regardless of what the env/deployment prefix contains.
 	if i := strings.LastIndex(lower, "dreadgoad-"); i >= 0 {
 		if role := lower[i+len("dreadgoad-"):]; role != "" {
 			return role

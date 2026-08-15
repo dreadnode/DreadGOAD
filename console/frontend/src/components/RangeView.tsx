@@ -15,6 +15,7 @@ import { api } from '../api'
 import type { RangeDoc, RangeHost, RangeLayout, Session } from '../types'
 import { LatestLayoutSaver } from '../layoutSaveQueue'
 import ConnectModal from './ConnectModal'
+import HostDetailPanel from './HostDetailPanel'
 import Tooltip from './Tooltip'
 
 // How a node asks for the connect modal. A context rather than a prop on the
@@ -25,6 +26,7 @@ import Tooltip from './Tooltip'
 // so a size check that cannot supply one silently measures the button-less node
 // and reports a bound that does not hold in the app.
 export const ConnectRequest = createContext<((host: RangeHost) => void) | null>(null)
+export const DetailRequest = createContext<((nodeId: string) => void) | null>(null)
 
 // Only the attack box gets a connect button. The Windows hosts run no SSH
 // server, and the bastion is a managed service with nothing to log into.
@@ -72,6 +74,12 @@ const TIER: Record<string, number> = {
   linux: 3, other: 3,         // extensions & everything else
 }
 const INGRESS_ROLES = new Set(['bastion', 'attackbox'])
+
+// The badge is narrower than the ring. On the attack box a CONNECT button
+// already says you can get in, so the label restated it; the bastion has no
+// button (isConnectable is attackbox-only) and the badge is the only thing
+// marking it as a way in.
+const INGRESS_BADGE_ROLES = new Set(['bastion'])
 
 // Node geometry, in border-box terms. The previous spacing was derived from
 // HostNode's `maxWidth: 210`, which is the CONTENT box — the rendered node adds
@@ -156,6 +164,7 @@ export function HostNode({ data }: NodeProps) {
   const ingress = INGRESS_ROLES.has(h.role)
   const service = isManagedService(h)
   const onConnect = useContext(ConnectRequest)
+  const onDetail = useContext(DetailRequest)
   // Shown only when it differs from the displayed name. On a variant they
   // always do (dc01 vs "solar"), but the attack box and bastion are named after
   // their role in every range, and "attackbox ATTACKBOX" is noise. Compared
@@ -175,7 +184,7 @@ export function HostNode({ data }: NodeProps) {
       borderRadius: 6, padding: '8px 12px', minWidth: 140, maxWidth: 210,
       fontFamily: 'var(--font-mono)', color: 'var(--dn-text)',
     }}>
-      {ingress && (
+      {INGRESS_BADGE_ROLES.has(h.role) && (
         <div style={{
           fontSize: 9, letterSpacing: 0.5, color, marginBottom: 4, fontWeight: 700,
         }}>◆ INGRESS</div>
@@ -257,19 +266,28 @@ export function HostNode({ data }: NodeProps) {
             }}
           >{h.health}</span>
         )}
+        {onDetail && !service && (
+          <button
+            className="nodrag"
+            onClick={e => { e.stopPropagation(); onDetail(h.id) }}
+            title="Disks, NICs, and attached resources for this host"
+            style={{
+              marginLeft: 'auto', flexShrink: 0, padding: '1px 7px',
+              borderRadius: 3, border: '1px solid var(--dg-node-label)',
+              background: 'transparent', color: 'var(--dg-node-label)',
+              cursor: 'pointer', whiteSpace: 'nowrap',
+              fontFamily: 'var(--font-mono)', fontSize: 10, lineHeight: 1.6,
+            }}
+          >details</button>
+        )}
         {onConnect && isConnectable(h) && (
           <button
-            // nodrag: React Flow starts a drag on pointerdown anywhere in the
-            // node, which would swallow the click.
             className="nodrag"
-            onClick={() => onConnect(h)}
+            onClick={e => { e.stopPropagation(); onConnect(h) }}
             title="Show the Bastion tunnel + ssh commands for this host"
             style={{
-              // Border matches the label rather than using the generic border
-              // token: --dn-border-lt is 1.21:1 against the node surface, so the
-              // outline was invisible and the word read as loose text sitting in
-              // the status row instead of a control you can press.
-              marginLeft: 'auto', flexShrink: 0, padding: '1px 7px',
+              marginLeft: onDetail ? undefined : 'auto', flexShrink: 0,
+              padding: '1px 7px',
               borderRadius: 3, border: '1px solid var(--dg-interactive)',
               background: 'transparent', color: 'var(--dg-interactive)',
               cursor: 'pointer', whiteSpace: 'nowrap',
@@ -443,6 +461,7 @@ export default function RangeView(
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [error, setError] = useState<string | null>(null)
   const [connectHost, setConnectHost] = useState<RangeHost | null>(null)
+  const [detailNode, setDetailNode] = useState<string | null>(null)
   const loadRef = useRef<() => void>(() => {})
   const activeSessionRef = useRef(sessionId)
   activeSessionRef.current = sessionId
@@ -485,7 +504,15 @@ export default function RangeView(
   const requestConnect = useCallback((host: RangeHost) => setConnectHost(host), [])
 
   // A session switch must not leave the previous range's commands on screen.
-  useEffect(() => { setConnectHost(null) }, [sessionId])
+  // The detail panel needs the same treatment and for a sharper reason: node
+  // ids default to the config key, so `dc01` and `attackbox` exist in every
+  // range. A panel left open across a switch would silently re-fetch the same
+  // id against the new session and render a different machine's disks under
+  // the node the operator thought they were looking at.
+  useEffect(() => {
+    setConnectHost(null)
+    setDetailNode(null)
+  }, [sessionId])
 
   const persistLayout = useCallback((draggedNode: Node) => {
     if (!layoutSaver) return
@@ -615,21 +642,31 @@ export default function RangeView(
           <div style={emptyStyle}>{error}</div>
         ) : (
           <ConnectRequest.Provider value={requestConnect}>
+          <DetailRequest.Provider value={setDetailNode}>
             <ReactFlow
               nodes={nodes}
               edges={[]}
               nodeTypes={nodeTypes}
               onNodesChange={handleChange}
               onNodeDragStop={(_, node) => persistLayout(node)}
+              onNodeClick={(_, node) => setDetailNode(node.id)}
               fitView
               proOptions={{ hideAttribution: true }}
             >
               <Background color="var(--dn-border)" gap={20} />
               <Controls position="bottom-right" />
             </ReactFlow>
+          </DetailRequest.Provider>
           </ConnectRequest.Provider>
         )}
       </div>
+      {detailNode && (
+        <HostDetailPanel
+          sessionId={sessionId}
+          nodeId={detailNode}
+          onClose={() => setDetailNode(null)}
+        />
+      )}
       {connectHost && (
         <ConnectModal
           session={session}

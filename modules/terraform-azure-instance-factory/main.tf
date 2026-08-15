@@ -95,8 +95,12 @@ resource "azurerm_virtual_machine_extension" "bootstrap" {
     script_hash = sha256(var.bootstrap_script)
   })
 
+  # Avoid -EncodedCommand: UTF-16LE → base64 bloats a 3 KB script past the
+  # 8191-char CreateProcess command-line cap. Instead, base64-encode the raw
+  # UTF-8 script and decode+execute it in a short stub. ASCII base64 is ~1.3×
+  # the source (vs ~2.7× for UTF-16LE base64), leaving ~4 KB of headroom.
   protected_settings = jsonencode({
-    commandToExecute = "powershell.exe -ExecutionPolicy Unrestricted -EncodedCommand ${textencodebase64(var.bootstrap_script, "UTF-16LE")}"
+    commandToExecute = "powershell.exe -ExecutionPolicy Unrestricted -Command \"[IO.File]::WriteAllBytes('C:\\dg-bootstrap.ps1',[Convert]::FromBase64String('${base64encode(var.bootstrap_script)}'));& 'C:\\dg-bootstrap.ps1'\""
   })
 
   tags = local.common_tags

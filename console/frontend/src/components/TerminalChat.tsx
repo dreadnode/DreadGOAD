@@ -4,7 +4,14 @@ import remarkGfm from 'remark-gfm'
 import type { ChatEvent, HealthCheck, Instance } from '../types'
 import type { ConnectionStatus } from '../hooks/useWebSocket'
 import { api, type CommandDef } from '../api'
+import { agentVerb } from '../agentVerbs'
 import { buildHelpLines, type HelpLineKind } from '../help'
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) { const v = n / 1_000_000; return (v >= 10 ? Math.round(v) : +v.toFixed(1)) + 'M' }
+  if (n >= 1_000) { const v = n / 1_000; return (v >= 10 ? Math.round(v) : +v.toFixed(1)) + 'k' }
+  return String(n)
+}
 
 const HEALTH_COLOR: Record<string, string> = {
   OK: 'var(--dn-success)',
@@ -263,6 +270,8 @@ interface Props {
   /** Epoch ms the in-flight turn began; 0 when idle. Supplied by the server on
    *  resume so the elapsed time is true across a reload. */
   turnStartedAt: number
+  /** Seeds the flavour verb; changes once per turn. See agentVerbs.ts. */
+  verbSeed: number
   onCancel: () => void
   model?: string
   onOpenSettings?: () => void
@@ -429,7 +438,28 @@ export function mergeHistory(
   return out
 }
 
-export default function TerminalChat({ sessionId, messages, status, onSend, processing, turnStartedAt, onCancel, model, onOpenSettings }: Props) {
+/**
+ * Keep the guide's transcript position inside the transcript.
+ *
+ * A resume replaces `messages` wholesale, and the replacement can be shorter
+ * than what was on screen. `helpAfter` then points past the end, where
+ * `slice(0, helpAfter)` returns everything and `slice(helpAfter)` returns
+ * nothing: the guide pins itself to the bottom and every later message stacks
+ * *above* it, until the transcript grows past the stale index and it silently
+ * jumps back into the middle.
+ *
+ * Re-anchoring to the end rather than clamping at render time is deliberate —
+ * the recorded position is meaningless once the transcript it referred to is
+ * gone, so the guide should stay where it currently is and new output should
+ * land below it. mergeHistory guards the same hazard for client-only entries.
+ *
+ * Exported so the behaviour can be checked without a DOM.
+ */
+export function reanchorHelp(helpAfter: number | null, length: number): number | null {
+  return helpAfter !== null && helpAfter > length ? length : helpAfter
+}
+
+export default function TerminalChat({ sessionId, messages, status, onSend, processing, turnStartedAt, verbSeed, onCancel, model, onOpenSettings }: Props) {
   const [input, setInput] = useState('')
   // Transcript position the guide was last requested at; null = never asked.
   // An empty pane shows it regardless, so a new session opens on the workflow.
@@ -456,17 +486,43 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const activeCmdRef = useRef<HTMLDivElement>(null)
+  const pinnedRef = useRef(true)
+  const [showJump, setShowJump] = useState(false)
 
-  // Follow the transcript, EXCEPT while the pane holds only the workflow guide.
+  const sessionTokens = useMemo(() => {
+    let inp = 0, out = 0
+    for (const ev of messages) {
+      if (ev.kind === 'generation' && ev.usage) {
+        inp += ev.usage.input_tokens || 0
+        out += ev.usage.output_tokens || 0
+      }
+    }
+    return { input: inp, output: out }
+  }, [messages])
+
+  const handleScroll = () => {
+    const el = scrollRef.current
+    if (!el) return
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+    pinnedRef.current = atBottom
+    if (atBottom) setShowJump(false)
+  }
+
+  // Follow the transcript only while the user is pinned to the bottom.
   // The guide is taller than the pane, so scrolling to the end would open a new
-  // session on its last line — the reader needs its first line. As soon as a
-  // turn produces output, following resumes and stays on for the session.
+  // session on its last line — the reader needs its first line.
   useEffect(() => {
     if (messages.length === 0) {
+      pinnedRef.current = true
+      setShowJump(false)
       scrollRef.current?.scrollTo({ top: 0 })
       return
     }
-    endRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (pinnedRef.current) {
+      endRef.current?.scrollIntoView({ behavior: 'smooth' })
+    } else {
+      setShowJump(true)
+    }
   }, [messages])
 
   // Auto-grow the input upward as it wraps to multiple lines (like ALFRED).
@@ -498,7 +554,17 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
   // change (App renders one instance and swaps its props), so without this the
   // index would carry into the next session — showing the panel where /help was
   // never typed, and at an offset that means nothing in that transcript.
-  useEffect(() => { setHelpAfter(null) }, [sessionId])
+  useEffect(() => {
+    setHelpAfter(null)
+    pinnedRef.current = true
+    setShowJump(false)
+  }, [sessionId])
+
+  // See reanchorHelp: a resume can hand us a shorter transcript than the one
+  // the guide's position was recorded against.
+  useEffect(() => {
+    setHelpAfter(prev => reanchorHelp(prev, messages.length))
+  }, [messages.length])
 
   // Recall history, oldest first. Derived from the transcript rather than kept
   // as its own list: the transcript is the server's record, so history survives
@@ -550,6 +616,12 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
   const showCmdMenu = filteredCommands.length > 0
     && !input.includes(' ')
     && histIndex === null
+
+  // One verb per turn. Pure in render because the seed only changes when a turn
+  // starts (App owns it per session): latching locally would re-roll the word
+  // when a tab switch flips `processing`, and drawing at random here would
+  // reshuffle it every second, since the stopwatch below re-renders this row.
+  const verb = agentVerb(verbSeed)
 
   // Stopwatch for the current turn. Counts from the supplied start rather than
   // from mount, so a reload mid-turn shows the true elapsed time instead of
@@ -723,7 +795,7 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--dn-bg)', borderRight: '1px solid var(--dn-border)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--dn-bg)', borderRight: '1px solid var(--dn-border)', position: 'relative' }}>
       {/* minHeight is shared with RangeView's header so the two pane banners
           line up across the split — see --dg-pane-header-h in index.css. */}
       <div style={{
@@ -733,6 +805,15 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
       }}>
         <span style={{ color: 'var(--dg-brand)', fontSize: 13, fontWeight: 700 }}>AGENT</span>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+          <span
+            title={status}
+            style={{
+              width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+              background: status === 'connected' ? 'var(--dn-success)'
+                : status === 'connecting' ? 'var(--dn-warning)' : 'var(--dn-error)',
+              boxShadow: status === 'connected' ? '0 0 6px var(--dn-success)' : 'none',
+            }}
+          />
           {model && (
             <span
               role="button"
@@ -747,18 +828,15 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
               }}
             >{model}</span>
           )}
-          <span
-            title={status}
-            style={{
-              width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
-              background: status === 'connected' ? 'var(--dn-success)'
-                : status === 'connecting' ? 'var(--dn-warning)' : 'var(--dn-error)',
-              boxShadow: status === 'connected' ? '0 0 6px var(--dn-success)' : 'none',
-            }}
-          />
+          {(sessionTokens.input > 0 || sessionTokens.output > 0) && (
+            <span
+              style={{ fontSize: 10, whiteSpace: 'nowrap' }}
+              title={`Input: ${sessionTokens.input.toLocaleString()} tokens\nOutput: ${sessionTokens.output.toLocaleString()} tokens`}
+            ><span style={{ color: '#fff' }}>{'↑'}</span><span style={{ color: 'var(--dg-brand)' }}>{formatTokens(sessionTokens.input)}</span>{' '}<span style={{ color: '#fff' }}>{'↓'}</span><span style={{ color: 'var(--dg-brand)' }}>{formatTokens(sessionTokens.output)}</span></span>
+          )}
         </div>
       </div>
-      <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '12px 16px' }}>
+      <div ref={scrollRef} onScroll={handleScroll} style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', position: 'relative' }}>
         {!sessionId && <div style={{ color: 'var(--dn-text-dim)', fontSize: 13 }}>Create or select a session to begin.</div>}
         {/* The guide leads an empty pane, so a fresh session opens on the
             workflow rather than a blank screen. After /help it renders at the
@@ -778,7 +856,7 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
                 highlight, flattening the sweep. */}
             <span className="agent-working" style={{
               fontSize: 13, fontFamily: 'var(--font-mono)',
-            }}>Agent working</span>
+            }}>Agent {verb}</span>
             <span
               // Tabular figures so the digits don't shuffle the row every tick.
               style={{
@@ -796,6 +874,22 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
         )}
         <div ref={endRef} />
       </div>
+      {showJump && (
+        <button
+          onClick={() => {
+            pinnedRef.current = true
+            setShowJump(false)
+            endRef.current?.scrollIntoView({ behavior: 'smooth' })
+          }}
+          style={{
+            position: 'absolute', bottom: 72, left: '50%', transform: 'translateX(-50%)',
+            zIndex: 30, padding: '4px 14px', borderRadius: 12,
+            border: '1px solid var(--dn-border-lt)', background: 'var(--dn-surface)',
+            color: 'var(--dg-interactive)', fontSize: 11, cursor: 'pointer',
+            fontFamily: 'var(--font-mono)', boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+          }}
+        >↓ jump to latest</button>
+      )}
       <div style={{ position: 'relative', borderTop: '1px solid var(--dn-border)', background: 'var(--dn-black)' }}>
         {showCmdMenu && (
           <div style={{

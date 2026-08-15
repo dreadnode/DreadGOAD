@@ -251,6 +251,14 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 		baseOpts.Forks = 1
 		return runPlaybookAttempt(ctx, baseOpts)
 
+	case ErrPackageMgmt:
+		log.Info("PackageManagement DLL failure (MOTW) - rebooting to clear loaded assemblies")
+		rebootFailedHosts(ctx, opts, log)
+		time.Sleep(30 * time.Second)
+
+		baseOpts.Forks = 1
+		return runPlaybookAttempt(ctx, baseOpts)
+
 	default:
 		log.Info("retrying with general robust settings")
 		baseOpts.Forks = 1

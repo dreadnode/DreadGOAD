@@ -19,7 +19,9 @@ import asyncio
 import typing as t
 from copy import deepcopy
 
-from . import chat_events, chat_runtime, command_runner, commands, thread_repair
+from rigging import Message
+
+from . import chat_events, chat_runtime, command_runner, commands, paths, thread_repair
 from .agent import create_agent
 
 # Public facade used by server.py. Internal state remains owned and tested in
@@ -41,6 +43,23 @@ run_cli = command_runner.run_cli
 TURN_BUSY_MESSAGE = (
     "A turn is already running for this session; wait or cancel it first."
 )
+
+
+async def _save_thread(app: t.Any, session_id: str, agent: t.Any) -> None:
+    """Persist the agent's conversation thread to the meta table."""
+    thread = getattr(agent, "thread", None)
+    if thread is None:
+        return
+    serialized = [msg.model_dump(mode="json") for msg in thread.messages]
+    await app.state.db.set_meta(f"thread:{session_id}", serialized)
+
+
+async def _load_thread(app: t.Any, session_id: str) -> list[Message] | None:
+    """Load a persisted thread, returning deserialized Messages or None."""
+    raw = await app.state.db.get_meta(f"thread:{session_id}")
+    if raw is None:
+        return None
+    return [Message.model_validate(m) for m in raw]
 
 
 def dispatch(app: t.Any, session_id: str, content: str) -> asyncio.Task[t.Any] | None:
@@ -127,12 +146,20 @@ async def _get_agent(app: t.Any, session_id: str) -> t.Any | None:
     if session is None:
         return None
     agent = create_agent(
-        session.get("model") or "openrouter/anthropic/claude-sonnet-5",
+        # Falls back to the shared default rather than a literal of its own:
+        # a session row written before the model column existed, or with a
+        # blank value, should still run on whatever the console is configured
+        # for -- not on a string frozen into this module.
+        session.get("model") or paths.default_model(),
         session,
         app,
         session_id,
         run_cli,
     )
+    messages = await _load_thread(app, session_id)
+    if messages is not None:
+        agent.thread.messages = messages
+        thread_repair.repair_tool_pairing(agent.thread.messages)
     runtime.agent = agent
     return agent
 
@@ -161,6 +188,7 @@ async def swap_model(
             fresh = create_agent(new_model, session, app, session_id, run_cli)
             fresh.thread.messages = history
             runtime.agent = fresh
+            await _save_thread(app, session_id, fresh)
         # else: no live agent — _get_agent will build with the new model next turn.
 
     await emit_event(
@@ -244,3 +272,5 @@ async def _run_agent(app: t.Any, session_id: str, prompt: str) -> None:
     except Exception as exc:  # noqa: BLE001 - surface any agent error to the client
         await emit_event(app, session_id, "error", {"message": f"agent error: {exc}"})
         await emit_event(app, session_id, "agent_end", {"failed": True})
+    finally:
+        await _save_thread(app, session_id, agent)

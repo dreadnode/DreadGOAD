@@ -145,6 +145,7 @@ class Database:
         self._c.execute("DELETE FROM sessions WHERE id=?", (session_id,))
         self._c.execute("DELETE FROM ranges WHERE session_id=?", (session_id,))
         self._c.execute("DELETE FROM events WHERE session_id=?", (session_id,))
+        self._c.execute("DELETE FROM meta WHERE key=?", (f"thread:{session_id}",))
         self._c.commit()
 
     # --- ranges ------------------------------------------------------------

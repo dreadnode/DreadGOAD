@@ -43,7 +43,7 @@ include "root" {
 
 inputs = {
   env           = local.env
-  instance_name = "${local.deployment_name}-dreadgoad-${local.hostname}"
+  instance_name = "${local.deployment_name}-${local.hostname}"
   computer_name = local.hostname
   instance_size = "Standard_D2s_v3"
   source_image = {
@@ -67,7 +67,7 @@ inputs = {
   tags = {
     Project      = "DreadGOAD"
     Role         = "DomainController"
-    Lab          = "${local.deployment_name}-goad"
+    Lab          = "${local.deployment_name}"
     Domain       = include.host.locals.domain
     ComputerName = local.hostname
     GoadId       = local.goad_id

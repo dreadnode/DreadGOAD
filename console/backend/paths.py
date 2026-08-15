@@ -13,6 +13,15 @@ from pathlib import Path
 _ENV_PREFIX = "DREADGOAD_CONSOLE_"
 _LEGACY_ENV_PREFIX = "DREADGOAD_WEBAPP_"
 
+# The model a session runs on when nothing else names one.
+#
+# Defined here, in the leaf module every consumer already imports, so the
+# literal exists exactly once. It previously appeared in three places -- the
+# API, the chat runtime, and the launcher's banner -- which is one value with
+# three owners: change any one and the launcher prints a default the agent
+# is not using.
+FALLBACK_MODEL = "openrouter/anthropic/claude-sonnet-5"
+
 
 def setting(name: str, default: str | None = None) -> str | None:
     """Read a console setting from the environment, e.g. ``setting("PORT")``.
@@ -26,6 +35,16 @@ def setting(name: str, default: str | None = None) -> str | None:
         or os.environ.get(_LEGACY_ENV_PREFIX + name)
         or default
     )
+
+
+def default_model() -> str:
+    """The model to use when a caller names none.
+
+    ``DREADGOAD_CONSOLE_MODEL`` (or the legacy ``DREADGOAD_WEBAPP_MODEL``),
+    else :data:`FALLBACK_MODEL`. Read on each call rather than captured at
+    import, so a value exported after startup is still honoured.
+    """
+    return setting("MODEL") or FALLBACK_MODEL
 
 
 def repo_root() -> Path:

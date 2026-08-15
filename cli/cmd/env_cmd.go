@@ -411,7 +411,7 @@ func createEnvHCL(envDir, envName, vpcCIDR string) error {
 	content := fmt.Sprintf(`# Set common variables for the environment.
 # This is automatically pulled in by the root terragrunt.hcl configuration.
 locals {
-  deployment_name = "goad"           # Change to your deployment name
+  deployment_name = "dreadgoad"      # Change to your deployment name
   aws_account_id  = get_aws_account_id()
   env             = %q
   vpc_cidr        = %q
@@ -621,7 +621,7 @@ func createAzureEnvHCL(envDir, envName, vnetCIDR string) error {
 		return err
 	}
 	content := fmt.Sprintf(`locals {
-  deployment_name = "goad"
+  deployment_name = "dreadgoad"
   env             = %q
   vnet_cidr       = %q
 

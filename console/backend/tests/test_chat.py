@@ -32,6 +32,7 @@ from console.backend import (  # noqa: E402
 from console.backend.db import Database  # noqa: E402
 from console.backend.sessions import SessionService  # noqa: E402
 from dreadnode.agent.tools import FunctionCall, ToolCall  # noqa: E402
+from rigging import Message  # noqa: E402
 
 _REPO = pathlib.Path(__file__).resolve().parents[3]
 _YAML = (
@@ -673,7 +674,8 @@ async def test_swap_model_preserves_thread_and_persists() -> None:
         ws = FakeWS()
         chat.register_conn(s["id"], ws)
 
-        old = FakeThreadAgent(["msg-1", "msg-2"])
+        history = [Message(role="user", content="msg-1"), Message(role="assistant", content="msg-2")]
+        old = FakeThreadAgent(history)
         chat_runtime.runtime(s["id"]).agent = old
         seen = {}
 
@@ -693,7 +695,12 @@ async def test_swap_model_preserves_thread_and_persists() -> None:
             assert seen["model"] == "openrouter/x/y"
             new = chat_runtime.runtime(s["id"]).agent
             assert new is not old, "agent must be rebuilt"
-            assert new.thread.messages == ["msg-1", "msg-2"], "history must carry over"
+            assert len(new.thread.messages) == 2, "history must carry over"
+            assert new.thread.messages[0].role == "user"
+            assert new.thread.messages[1].role == "assistant"
+            # thread persisted to DB after swap
+            stored = await db.get_meta(f"thread:{s['id']}")
+            assert stored is not None and len(stored) == 2, "swap must persist thread"
             # a status event announces the change
             assert any(
                 m["kind"] == "status" and "Model changed" in (m.get("content") or "")
@@ -703,6 +710,80 @@ async def test_swap_model_preserves_thread_and_persists() -> None:
         finally:
             chat.create_agent = orig
             chat_runtime.runtime(s["id"]).agent = None
+            await db.close()
+
+
+async def test_thread_persisted_and_restored_on_agent_rebuild() -> None:
+    """After a turn the thread is saved; evicting the agent and rebuilding restores it."""
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        cfg = tmp / "dreadgoad.yaml"
+        cfg.write_text(_YAML)
+        db = await Database(str(tmp / "state.db")).connect()
+        svc = SessionService(db, repo_root=str(_REPO), sessions_root=tmp / "sessions")
+        app = types.SimpleNamespace(state=types.SimpleNamespace(db=db, sessions=svc))
+        s = await svc.create_session(str(cfg), "dev")
+        ws = FakeWS()
+        chat.register_conn(s["id"], ws)
+
+        fake = FakeAgent()
+        # Give the fake agent a thread with messages that model_dump round-trips.
+        fake.thread = types.SimpleNamespace(messages=[])
+        fake.thread.messages = [
+            Message(role="user", content="hello"),
+            Message(role="assistant", content="hi there"),
+        ]
+
+        orig_get = chat._get_agent
+        first_call = True
+
+        async def patched_get_agent(a, sid):  # noqa: ANN001, ANN202
+            nonlocal first_call
+            if first_call:
+                first_call = False
+                chat_runtime.runtime(sid).agent = fake
+                return fake
+            # Second call: let the real _get_agent rebuild from DB.
+            return await orig_get(a, sid)
+
+        chat._get_agent = patched_get_agent
+        orig_create = chat.create_agent
+
+        rebuilt_agent = [None]
+
+        def recording_create(model, session, app_, sid_, run_cli_):  # noqa: ANN001, ANN202
+            fa = FakeAgent()
+            fa.thread = types.SimpleNamespace(messages=[])
+            rebuilt_agent[0] = fa
+            return fa
+
+        chat.create_agent = recording_create
+        try:
+            # Run an agent turn — this saves the thread via the finally block.
+            await chat._run_agent(app, s["id"], "hello")
+
+            # Thread should be persisted now.
+            stored = await db.get_meta(f"thread:{s['id']}")
+            assert stored is not None, "thread was not persisted after agent turn"
+            assert len(stored) == 2, f"expected 2 messages, got {len(stored)}"
+
+            # Evict the agent — simulates a server restart.
+            chat_runtime.runtime(s["id"]).agent = None
+            chat._get_agent = orig_get
+
+            # Rebuild the agent — should restore the thread.
+            agent = await chat._get_agent(app, s["id"])
+            assert agent is rebuilt_agent[0], "agent was not rebuilt"
+            assert len(agent.thread.messages) == 2, (
+                f"thread not restored: {len(agent.thread.messages)} messages"
+            )
+            assert agent.thread.messages[0].role == "user"
+            assert agent.thread.messages[1].role == "assistant"
+            print("PASS test_thread_persisted_and_restored_on_agent_rebuild")
+        finally:
+            chat._get_agent = orig_get
+            chat.create_agent = orig_create
+            await chat.cleanup_session(s["id"])
             await db.close()
 
 
@@ -1280,6 +1361,7 @@ async def _main() -> None:
     test_instructions_renders_system_prompt()
     await test_health_emits_report_and_suppresses_json()
     await test_swap_model_preserves_thread_and_persists()
+    await test_thread_persisted_and_restored_on_agent_rebuild()
     await test_swap_model_no_live_agent()
     await test_dispatch_rejects_queued_turn_and_allows_concurrency()
     await test_cancel_session_cancels_every_parallel_command()

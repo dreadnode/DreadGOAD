@@ -14,7 +14,7 @@ from . import commands, configstore, labconfig, labs, paths
 
 router = APIRouter()
 
-DEFAULT_MODEL = paths.setting("MODEL") or "openrouter/anthropic/claude-sonnet-5"
+DEFAULT_MODEL = paths.default_model()
 
 # Settings may only write credential-shaped variables. Allowing arbitrary names
 # could alter PATH/LD_PRELOAD and hijack subprocesses launched by the console.
