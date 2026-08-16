@@ -128,7 +128,7 @@ module "jumpbox" {
 
 | Name | Version |
 | ---- | ------- |
-| <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | 5.0.1 |
+| <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | 5.1.0 |
 
 ## Modules
 
