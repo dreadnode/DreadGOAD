@@ -60,7 +60,7 @@ repos:
         stages: [manual]
 
   - repo: https://github.com/ansible/ansible-lint
-    rev: v26.6.0
+    rev: v26.8.0
     hooks:
       - id: ansible-lint
         entry: ansible-lint -v --force-color -c .hooks/linters/ansible-lint.yaml
