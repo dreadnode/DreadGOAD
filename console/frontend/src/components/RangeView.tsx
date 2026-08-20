@@ -333,13 +333,16 @@ type ViewMode = 'graph' | 'table'
 function RangeTable(
   { range, sessionId }: { range: RangeDoc; sessionId: string },
 ) {
-  const [expanded, setExpanded] = useState<string | null>(null)
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [details, setDetails] = useState<Record<string, HostDetail | null>>({})
   const [errors, setErrors] = useState<Record<string, string>>({})
 
   const toggle = (id: string) => {
-    if (expanded === id) { setExpanded(null); return }
-    setExpanded(id)
+    setExpanded(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) { next.delete(id) } else { next.add(id) }
+      return next
+    })
     if (details[id] === undefined && !errors[id]) {
       api.hostDetail(sessionId, id)
         .then(d => setDetails(prev => ({ ...prev, [id]: d })))
@@ -366,7 +369,7 @@ function RangeTable(
             borderBottom: '1px solid var(--dn-border-lt)',
             position: 'sticky', top: 0, background: 'var(--dn-black)', zIndex: 1,
           }}>
-            {['', 'Hostname', 'Key', 'Role', 'Domain', 'Status', 'Health', 'Private IP', 'Public IP', 'VM Name'].map(col => (
+            {['', 'Hostname', 'VM Name', 'Role', 'Status', 'Health', 'Domain', 'Private IP', 'Public IP'].map(col => (
               <th key={col} style={{
                 textAlign: 'left', padding: '8px 10px', fontSize: 10,
                 letterSpacing: '0.06em', textTransform: 'uppercase',
@@ -380,7 +383,7 @@ function RangeTable(
             const service = isManagedService(h)
             const color = service ? 'var(--dn-electric)' : (STATUS_COLOR[h.status] ?? STATUS_COLOR.unknown)
             const healthColor = HEALTH_COLOR[h.health] ?? 'var(--dg-node-label)'
-            const isOpen = expanded === h.id
+            const isOpen = expanded.has(h.id)
             const detail = details[h.id]
             const detailErr = errors[h.id]
             return (
@@ -397,9 +400,8 @@ function RangeTable(
                 >
                   <td style={cellStyle}>{ROLE_ICON[h.role] ?? ROLE_ICON.other}</td>
                   <td style={{ ...cellStyle, color: 'var(--dn-text-bright)', fontWeight: 600 }}>{h.hostname}</td>
-                  <td style={{ ...cellStyle, color: 'var(--dg-node-label)' }}>{h.key ?? ''}</td>
+                  <td style={{ ...cellStyle, color: 'var(--dg-node-value)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={h.cloud_name ?? undefined}>{h.cloud_name ?? ''}</td>
                   <td style={cellStyle}>{h.role}</td>
-                  <td style={{ ...cellStyle, color: 'var(--dg-node-value)' }}>{h.domain ?? ''}</td>
                   <td style={cellStyle}>
                     <span style={{ color, whiteSpace: 'nowrap' }}>
                       {service ? 'managed service' : `● ${h.status}`}
@@ -410,13 +412,13 @@ function RangeTable(
                       <span style={{ color: healthColor }} title={HEALTH_TITLE[h.health] ?? h.health}>{h.health}</span>
                     )}
                   </td>
+                  <td style={{ ...cellStyle, color: 'var(--dg-node-value)' }}>{h.domain ?? ''}</td>
                   <td style={{ ...cellStyle, fontVariantNumeric: 'tabular-nums' }}>{h.ip_private ?? ''}</td>
                   <td style={{ ...cellStyle, fontVariantNumeric: 'tabular-nums' }}>{h.ip_public ?? ''}</td>
-                  <td style={{ ...cellStyle, color: 'var(--dg-node-value)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={h.cloud_name ?? undefined}>{h.cloud_name ?? ''}</td>
                 </tr>
                 {isOpen && (
                   <tr style={{ background: 'var(--dn-surface)', borderBottom: '1px solid var(--dn-border)' }}>
-                    <td colSpan={10} style={{ padding: '10px 10px 14px 42px' }}>
+                    <td colSpan={9} style={{ padding: '10px 10px 14px 42px' }}>
                       <AccordionDetail detail={detail} error={detailErr} />
                     </td>
                   </tr>
@@ -802,8 +804,8 @@ export default function RangeView(
             title={viewMode === 'graph' ? 'Switch to table view' : 'Switch to graph view'}
             style={{
               padding: '2px 8px', borderRadius: 3,
-              border: '1px solid var(--dn-border-lt)', background: 'transparent',
-              color: 'var(--dg-node-label)', cursor: 'pointer',
+              border: '1px solid var(--dn-electric)', background: 'transparent',
+              color: 'var(--dn-electric)', cursor: 'pointer',
               fontFamily: 'var(--font-mono)', fontSize: 10, whiteSpace: 'nowrap',
             }}
           >{viewMode === 'graph' ? '☰ TABLE' : '⬡ GRAPH'}</button>
