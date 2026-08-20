@@ -10,6 +10,7 @@ Flags (all optional — default is a clean full run, no args needed):
 - `--exclude <csv>`      exclude infra modules (comma-separated)
 - `--max-retries <n>`    provisioning retry attempts
 - `--retry-delay <sec>`  delay between retries (seconds)
+- `--with-kali`          deploy the optional Kali attack box
 
 Guidance:
 - A plain `/up` with NO args does the full clean bring-up — that's the common case.
@@ -18,3 +19,8 @@ Guidance:
   valid values above; if theirs doesn't match, ask.
 - `/up` deploys real cloud infra and costs money — if the range may already be up
   or the request is ambiguous, confirm intent before running.
+- When adding a component to an already-running range (e.g. `--with-kali` on a
+  healthy range), ALWAYS pass `--limit` to scope provisioning to the new host.
+  Infra apply is idempotent regardless, but without `--limit` every Ansible
+  playbook re-runs against every host — slow, noisy, and risks disturbing a
+  healthy range. Example: `/up --with-kali --skip-doctor --limit kali`.

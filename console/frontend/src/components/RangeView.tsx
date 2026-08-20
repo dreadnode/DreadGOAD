@@ -1,5 +1,5 @@
 import {
-  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
+  createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState,
 } from 'react'
 import {
   ReactFlow,
@@ -12,6 +12,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { api } from '../api'
+import type { HostDetail } from '../api'
 import type { RangeDoc, RangeHost, RangeLayout, Session } from '../types'
 import { LatestLayoutSaver } from '../layoutSaveQueue'
 import ConnectModal from './ConnectModal'
@@ -327,6 +328,168 @@ export function HostNode({ data }: NodeProps) {
 
 const nodeTypes = { host: HostNode }
 
+type ViewMode = 'graph' | 'table'
+
+function RangeTable(
+  { range, sessionId }: { range: RangeDoc; sessionId: string },
+) {
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [details, setDetails] = useState<Record<string, HostDetail | null>>({})
+  const [errors, setErrors] = useState<Record<string, string>>({})
+
+  const toggle = (id: string) => {
+    if (expanded === id) { setExpanded(null); return }
+    setExpanded(id)
+    if (details[id] === undefined && !errors[id]) {
+      api.hostDetail(sessionId, id)
+        .then(d => setDetails(prev => ({ ...prev, [id]: d })))
+        .catch(e => setErrors(prev => ({ ...prev, [id]: e?.message || 'unavailable' })))
+    }
+  }
+
+  const sorted = useMemo(() => {
+    const order = ['bastion', 'attackbox', 'dc', 'member', 'workstation', 'linux', 'other']
+    return [...range.hosts].sort((a, b) => {
+      const ai = order.indexOf(a.role), bi = order.indexOf(b.role)
+      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi)
+    })
+  }, [range.hosts])
+
+  return (
+    <div style={{ flex: 1, overflow: 'auto', background: 'var(--dn-black)' }}>
+      <table style={{
+        width: '100%', borderCollapse: 'collapse',
+        fontFamily: 'var(--font-mono)', fontSize: 12,
+      }}>
+        <thead>
+          <tr style={{
+            borderBottom: '1px solid var(--dn-border-lt)',
+            position: 'sticky', top: 0, background: 'var(--dn-black)', zIndex: 1,
+          }}>
+            {['', 'Hostname', 'Key', 'Role', 'Domain', 'Status', 'Health', 'Private IP', 'Public IP', 'VM Name'].map(col => (
+              <th key={col} style={{
+                textAlign: 'left', padding: '8px 10px', fontSize: 10,
+                letterSpacing: '0.06em', textTransform: 'uppercase',
+                color: 'var(--dn-electric)', fontWeight: 700, whiteSpace: 'nowrap',
+              }}>{col}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map(h => {
+            const service = isManagedService(h)
+            const color = service ? 'var(--dn-electric)' : (STATUS_COLOR[h.status] ?? STATUS_COLOR.unknown)
+            const healthColor = HEALTH_COLOR[h.health] ?? 'var(--dg-node-label)'
+            const isOpen = expanded === h.id
+            const detail = details[h.id]
+            const detailErr = errors[h.id]
+            return (
+              <Fragment key={h.id}>
+                <tr
+                  onClick={() => toggle(h.id)}
+                  style={{
+                    borderBottom: isOpen ? 'none' : '1px solid var(--dn-border)',
+                    cursor: 'pointer',
+                    background: isOpen ? 'var(--dn-surface)' : 'transparent',
+                  }}
+                  onMouseEnter={e => { if (!isOpen) (e.currentTarget as HTMLElement).style.background = 'var(--dn-surface-alt)' }}
+                  onMouseLeave={e => { if (!isOpen) (e.currentTarget as HTMLElement).style.background = 'transparent' }}
+                >
+                  <td style={cellStyle}>{ROLE_ICON[h.role] ?? ROLE_ICON.other}</td>
+                  <td style={{ ...cellStyle, color: 'var(--dn-text-bright)', fontWeight: 600 }}>{h.hostname}</td>
+                  <td style={{ ...cellStyle, color: 'var(--dg-node-label)' }}>{h.key ?? ''}</td>
+                  <td style={cellStyle}>{h.role}</td>
+                  <td style={{ ...cellStyle, color: 'var(--dg-node-value)' }}>{h.domain ?? ''}</td>
+                  <td style={cellStyle}>
+                    <span style={{ color, whiteSpace: 'nowrap' }}>
+                      {service ? 'managed service' : `● ${h.status}`}
+                    </span>
+                  </td>
+                  <td style={cellStyle}>
+                    {h.health !== 'unknown' && (
+                      <span style={{ color: healthColor }} title={HEALTH_TITLE[h.health] ?? h.health}>{h.health}</span>
+                    )}
+                  </td>
+                  <td style={{ ...cellStyle, fontVariantNumeric: 'tabular-nums' }}>{h.ip_private ?? ''}</td>
+                  <td style={{ ...cellStyle, fontVariantNumeric: 'tabular-nums' }}>{h.ip_public ?? ''}</td>
+                  <td style={{ ...cellStyle, color: 'var(--dg-node-value)', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={h.cloud_name ?? undefined}>{h.cloud_name ?? ''}</td>
+                </tr>
+                {isOpen && (
+                  <tr style={{ background: 'var(--dn-surface)', borderBottom: '1px solid var(--dn-border)' }}>
+                    <td colSpan={10} style={{ padding: '10px 10px 14px 42px' }}>
+                      <AccordionDetail detail={detail} error={detailErr} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function AccordionDetail(
+  { detail, error }:
+  { detail: HostDetail | null | undefined; error?: string },
+) {
+  if (error) {
+    return <span style={{ color: 'var(--dg-node-label)', fontSize: 11 }}>{error}</span>
+  }
+  if (detail === undefined || detail === null) {
+    return (
+      <span style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--dg-node-label)', fontSize: 11 }}>
+        <span className="dg-spinner" /> Fetching details…
+      </span>
+    )
+  }
+  if (detail.kind === 'bastion') {
+    const deployed = !!detail.cloud_id
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11 }}>
+        <DetailRow label="Type" value="Azure Bastion (managed service)" />
+        <DetailRow label="Status" value={deployed ? (detail.status || 'deployed') : 'not deployed'} />
+        {detail.resource_group && <DetailRow label="Resource Group" value={detail.resource_group} />}
+        {detail.ip_public && <DetailRow label="Public IP" value={detail.ip_public} />}
+        {detail.cloud_id && <DetailRow label="Resource ID" value={detail.cloud_id} />}
+      </div>
+    )
+  }
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11 }}>
+      {detail.vm_size && <DetailRow label="VM Size" value={detail.vm_size} />}
+      {detail.location && <DetailRow label="Region" value={detail.location} />}
+      {detail.resource_group && <DetailRow label="Resource Group" value={detail.resource_group} />}
+      {detail.power_state && <DetailRow label="Power State" value={detail.power_state} />}
+      {(detail.disks || []).length > 0 && (
+        <DetailRow label="Disks" value={(detail.disks || []).map(d => `${d.name} (${d.role}${d.size_gb ? `, ${d.size_gb} GiB` : ''})`).join(', ')} />
+      )}
+      {(detail.nics || []).length > 0 && (
+        <DetailRow label="NICs" value={(detail.nics || []).map(n => `${n.name}${n.private_ips?.length ? ` [${n.private_ips.join(', ')}]` : ''}`).join(', ')} />
+      )}
+    </div>
+  )
+}
+
+function DetailRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: 'flex', gap: 10, minWidth: 0 }}>
+      <span style={{
+        flexShrink: 0, width: 110, color: 'var(--dg-node-label)',
+        fontSize: 10, letterSpacing: '0.05em', textTransform: 'uppercase',
+      }}>{label}</span>
+      <span style={{
+        color: 'var(--dn-text)', minWidth: 0, overflowWrap: 'anywhere',
+      }}>{value}</span>
+    </div>
+  )
+}
+
+const cellStyle: React.CSSProperties = {
+  padding: '7px 10px', whiteSpace: 'nowrap', color: 'var(--dn-text)',
+}
+
 // Range state only refreshes when a command completes — there is no polling.
 // Past this age the reading is more likely stale than quiet, which is worth
 // flagging: a wedged command leaves the view frozen with no other symptom.
@@ -462,6 +625,7 @@ export default function RangeView(
   const [error, setError] = useState<string | null>(null)
   const [connectHost, setConnectHost] = useState<RangeHost | null>(null)
   const [detailNode, setDetailNode] = useState<string | null>(null)
+  const [viewMode, setViewMode] = useState<ViewMode>('graph')
   const loadRef = useRef<() => void>(() => {})
   const activeSessionRef = useRef(sessionId)
   activeSessionRef.current = sessionId
@@ -627,20 +791,30 @@ export default function RangeView(
             <span
               style={{
                 fontSize: 11, whiteSpace: 'nowrap',
-                // Amber once stale — the view updates only after a command, so
-                // an old timestamp is the only sign a run is wedged or absent.
                 color: checked.stale ? 'var(--dn-warning)' : 'var(--dn-text-muted)',
               }}
             >{checked.label}</span>
             </Tooltip>
           )}
           <span style={{ color: 'var(--dg-node-label)', fontSize: 11 }}>{header}</span>
+          <button
+            onClick={() => setViewMode(v => v === 'graph' ? 'table' : 'graph')}
+            title={viewMode === 'graph' ? 'Switch to table view' : 'Switch to graph view'}
+            style={{
+              padding: '2px 8px', borderRadius: 3,
+              border: '1px solid var(--dn-border-lt)', background: 'transparent',
+              color: 'var(--dg-node-label)', cursor: 'pointer',
+              fontFamily: 'var(--font-mono)', fontSize: 10, whiteSpace: 'nowrap',
+            }}
+          >{viewMode === 'graph' ? '☰ TABLE' : '⬡ GRAPH'}</button>
         </div>
       </div>
-      <div style={{ flex: 1, position: 'relative' }}>
-        {error ? (
-          <div style={emptyStyle}>{error}</div>
-        ) : (
+      {error ? (
+        <div style={{ ...emptyStyle, flex: 1 }}>{error}</div>
+      ) : viewMode === 'table' && range ? (
+        <RangeTable range={range} sessionId={sessionId} />
+      ) : (
+        <div style={{ flex: 1, position: 'relative' }}>
           <ConnectRequest.Provider value={requestConnect}>
           <DetailRequest.Provider value={setDetailNode}>
             <ReactFlow
@@ -658,9 +832,9 @@ export default function RangeView(
             </ReactFlow>
           </DetailRequest.Provider>
           </ConnectRequest.Provider>
-        )}
-      </div>
-      {detailNode && (
+        </div>
+      )}
+      {detailNode && viewMode === 'graph' && (
         <HostDetailPanel
           sessionId={sessionId}
           nodeId={detailNode}
