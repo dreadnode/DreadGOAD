@@ -200,6 +200,69 @@ async def test_malformed_documents_are_reasons_not_500s() -> None:
     print("PASS test_malformed_documents_are_reasons_not_500s")
 
 
+_BASTION_ARM_ID = (
+    "/subscriptions/70a9/resourceGroups/DG-RG/providers/"
+    "Microsoft.Network/bastionHosts/dg-goad-bastion"
+)
+
+
+async def _no_cli(argv: list[str], cwd: str) -> tuple[int, str, str]:
+    raise AssertionError("bastion path must never call the CLI")
+
+
+async def test_bastion_returns_managed_service_detail() -> None:
+    """A bastion host returns kind=bastion with data from the range doc."""
+    rng = {"hosts": [
+        {"id": "bastion", "hostname": "bastion", "role": "bastion",
+         "cloud_id": _BASTION_ARM_ID, "cloud_name": "dg-goad-bastion",
+         "status": "running", "ip_public": "20.1.2.3",
+         "last_checked_at": "2026-08-14T10:00:00Z"},
+    ]}
+    got = await hostdetail.host_detail(_SESSION, rng, "bastion", capture_command=_no_cli)
+    assert got["kind"] == "bastion", got
+    assert got["node_id"] == "bastion", got
+    assert got["resource_group"] == "DG-RG", got
+    assert got["name"] == "dg-goad-bastion", got
+    assert got["status"] == "running", got
+    assert got["ip_public"] == "20.1.2.3", got
+    assert got["cloud_id"] == _BASTION_ARM_ID, got
+    assert "disks" not in got, "bastion must not have VM fields"
+    assert "nics" not in got, "bastion must not have VM fields"
+    print("PASS test_bastion_returns_managed_service_detail")
+
+
+async def test_bastion_without_cloud_id_does_not_crash() -> None:
+    """Before discovery the bastion has no cloud_id — still returns detail."""
+    rng = {"hosts": [
+        {"id": "bastion", "hostname": "bastion", "role": "bastion",
+         "cloud_id": None, "status": None},
+    ]}
+    got = await hostdetail.host_detail(_SESSION, rng, "bastion", capture_command=_no_cli)
+    assert got["kind"] == "bastion", got
+    assert got["cloud_id"] is None, f"expected None: {got['cloud_id']!r}"
+    assert got["resource_group"] == "", got
+    assert got["status"] == "unknown", got
+    print("PASS test_bastion_without_cloud_id_does_not_crash")
+
+
+async def test_bastion_name_fallback() -> None:
+    base = {"id": "b", "role": "bastion"}
+    # node_id fallback
+    got = await hostdetail.host_detail(
+        _SESSION, {"hosts": [{**base}]}, "b", capture_command=_no_cli)
+    assert got["name"] == "b", got
+    # hostname
+    got = await hostdetail.host_detail(
+        _SESSION, {"hosts": [{**base, "hostname": "mybastion"}]}, "b", capture_command=_no_cli)
+    assert got["name"] == "mybastion", got
+    # cloud_name wins
+    got = await hostdetail.host_detail(
+        _SESSION, {"hosts": [{**base, "hostname": "x", "cloud_name": "azure-b"}]}, "b",
+        capture_command=_no_cli)
+    assert got["name"] == "azure-b", got
+    print("PASS test_bastion_name_fallback")
+
+
 async def _main() -> None:
     test_find_host_matches_on_node_id()
     test_build_argv_passes_the_resource_id()
@@ -209,6 +272,9 @@ async def _main() -> None:
     await test_unknown_node_is_refused()
     await test_cli_failures_surface_as_reasons()
     await test_malformed_documents_are_reasons_not_500s()
+    await test_bastion_returns_managed_service_detail()
+    await test_bastion_without_cloud_id_does_not_crash()
+    await test_bastion_name_fallback()
     print("ALL PASS")
 
 

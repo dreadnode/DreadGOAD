@@ -118,14 +118,20 @@ export interface NICDetail {
 export interface HostDetail {
   /** Echoed back so a late response can be discarded rather than mis-rendered. */
   node_id: string
-  id: string
+  /** "bastion" for managed services; absent for regular VMs. */
+  kind?: string
+  id?: string
   name: string
   resource_group: string
   location?: string
   vm_size?: string
   power_state?: string
-  disks: DiskDetail[]
-  nics: NICDetail[]
+  status?: string
+  cloud_id?: string | null
+  ip_public?: string | null
+  last_checked_at?: string | null
+  disks?: DiskDetail[]
+  nics?: NICDetail[]
 }
 
 export interface CommandDef {

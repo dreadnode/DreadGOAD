@@ -16,5 +16,5 @@ Set-ADAccountControl -Identity $identity -TrustedToAuthForDelegation $true
 
 $missing = @($delegateTo | Where-Object { $user.'msDS-AllowedToDelegateTo' -notcontains $_ })
 if ($missing.Count -gt 0) {
-    Set-ADUser -Identity $identity -Add @{'msDS-AllowedToDelegateTo' = $missing }
+    Set-ADUser -Identity $identity -Add @{'msDS-AllowedToDelegateTo' = [string[]]$missing }
 }

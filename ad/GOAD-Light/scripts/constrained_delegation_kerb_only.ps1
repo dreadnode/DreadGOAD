@@ -14,5 +14,5 @@ if ($computer.ServicePrincipalNames -notcontains $spn) {
 
 $missing = @($delegateTo | Where-Object { $computer.'msDS-AllowedToDelegateTo' -notcontains $_ })
 if ($missing.Count -gt 0) {
-    Set-ADComputer -Identity $identity -Add @{'msDS-AllowedToDelegateTo' = $missing }
+    Set-ADComputer -Identity $identity -Add @{'msDS-AllowedToDelegateTo' = [string[]]$missing }
 }

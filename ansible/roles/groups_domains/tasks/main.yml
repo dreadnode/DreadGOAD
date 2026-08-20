@@ -46,7 +46,7 @@
         try {
           $output = repadmin /syncall /APeD 2>&1
           if ($LASTEXITCODE -ne 0) {
-            throw "repadmin exited with code $LASTEXITCODE: $output"
+            throw "repadmin exited with code ${LASTEXITCODE}: $output"
           }
           Write-Output "Replication initiated with repadmin: $output"
           return $true

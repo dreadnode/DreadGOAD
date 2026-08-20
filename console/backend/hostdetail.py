@@ -112,6 +112,31 @@ def _json_candidates(text: str) -> t.Iterator[str]:
         yield "\n".join(block)
 
 
+def _bastion_detail(host: dict[str, t.Any], node_id: str) -> dict[str, t.Any]:
+    """Summary for the Azure Bastion managed service (no ``lab describe`` call)."""
+    cloud_id = host.get("cloud_id") or ""
+    rg = ""
+    if cloud_id:
+        m = _ARM_RG_RE.match(cloud_id)
+        if m:
+            rg = m.group("rg")
+    return {
+        "node_id": node_id,
+        "kind": "bastion",
+        "name": host.get("cloud_name") or host.get("hostname") or node_id,
+        "status": host.get("status") or "unknown",
+        "cloud_id": cloud_id or None,
+        "resource_group": rg,
+        "ip_public": host.get("ip_public"),
+        "last_checked_at": host.get("last_checked_at"),
+    }
+
+
+_ARM_RG_RE = __import__("re").compile(
+    r"^/subscriptions/[^/]+/resourcegroups/(?P<rg>[^/]+)/", __import__("re").IGNORECASE
+)
+
+
 async def host_detail(
     session: dict[str, t.Any],
     rng: dict[str, t.Any],
@@ -122,6 +147,9 @@ async def host_detail(
     host = find_host(rng, node_id)
     if host is None:
         raise HostDetailUnavailable(f"no host {node_id!r} in this range")
+
+    if host.get("role") == "bastion":
+        return _bastion_detail(host, node_id)
 
     snapshot = session.get("snapshot") or {}
     provider = str(snapshot.get("provider") or "")

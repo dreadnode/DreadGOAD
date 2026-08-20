@@ -167,6 +167,7 @@ html, body, #root {
 
 .dg-spinner::before {
   content: '⠋';
+  color: var(--dg-brand);
   animation: braille-spin 0.8s steps(1) infinite;
   font-size: 14px;
 }

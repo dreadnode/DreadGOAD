@@ -237,7 +237,7 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 
 	case ErrMSIInstaller:
 		log.Info("MSI installer error - rebooting failed hosts before retry")
-		rebootFailedHosts(ctx, opts, log)
+		rebootFailedHosts(ctx, opts, failResult.FailedHosts, log)
 		time.Sleep(30 * time.Second)
 
 		baseOpts.Forks = 1
@@ -245,15 +245,15 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 
 	case ErrWUACOM:
 		log.Info("WUA COM corruption - rebooting to clear pending registry deletions")
-		rebootFailedHosts(ctx, opts, log)
+		rebootFailedHosts(ctx, opts, failResult.FailedHosts, log)
 		time.Sleep(30 * time.Second)
 
 		baseOpts.Forks = 1
 		return runPlaybookAttempt(ctx, baseOpts)
 
 	case ErrPackageMgmt:
-		log.Info("PackageManagement DLL failure (MOTW) - rebooting to clear loaded assemblies")
-		rebootFailedHosts(ctx, opts, log)
+		log.Info("PackageManagement DLL failure - rebooting to clear pending file operations")
+		rebootFailedHosts(ctx, opts, failResult.FailedHosts, log)
 		time.Sleep(30 * time.Second)
 
 		baseOpts.Forks = 1
@@ -385,13 +385,17 @@ func fixSSMUsers(ctx context.Context, env string, failedHosts []string, log *slo
 	}
 }
 
-func rebootFailedHosts(ctx context.Context, opts RetryOptions, log *slog.Logger) {
+func rebootFailedHosts(ctx context.Context, opts RetryOptions, hosts []string, log *slog.Logger) {
+	if len(hosts) == 0 {
+		log.Warn("no failed hosts to reboot")
+		return
+	}
 	cfg, err := config.Get()
 	if err != nil {
 		log.Warn("could not get config for reboot", "error", err)
 		return
 	}
-	for _, host := range strings.Split(opts.Limit, ",") {
+	for _, host := range hosts {
 		if host == "" {
 			continue
 		}
@@ -400,6 +404,9 @@ func rebootFailedHosts(ctx context.Context, opts RetryOptions, log *slog.Logger)
 			host, "-i", filepath.Join(cfg.ProjectRoot, opts.Env+"-inventory"),
 			"-m", "ansible.windows.win_reboot",
 			"-a", "reboot_timeout=600 post_reboot_delay=60",
+		}
+		for k, v := range opts.ExtraVars {
+			args = append(args, "-e", k+"="+v)
 		}
 		rebootCmd := execCommand(ctx, "ansible", args...)
 		rebootCmd.Dir = cfg.ProjectRoot
