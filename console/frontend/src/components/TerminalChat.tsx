@@ -487,6 +487,7 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const activeCmdRef = useRef<HTMLDivElement>(null)
   const pinnedRef = useRef(true)
+  const autoScrollingRef = useRef(false)
   const [showJump, setShowJump] = useState(false)
 
   const sessionTokens = useMemo(() => {
@@ -501,16 +502,19 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
   }, [messages])
 
   const handleScroll = () => {
+    if (autoScrollingRef.current) return
     const el = scrollRef.current
     if (!el) return
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
     pinnedRef.current = atBottom
-    if (atBottom) setShowJump(false)
+    setShowJump(!atBottom)
   }
 
   // Follow the transcript only while the user is pinned to the bottom.
   // The guide is taller than the pane, so scrolling to the end would open a new
   // session on its last line — the reader needs its first line.
+  // autoScrollingRef suppresses handleScroll during the smooth animation so
+  // intermediate scroll positions don't unpin the view.
   useEffect(() => {
     if (messages.length === 0) {
       pinnedRef.current = true
@@ -519,7 +523,9 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
       return
     }
     if (pinnedRef.current) {
+      autoScrollingRef.current = true
       endRef.current?.scrollIntoView({ behavior: 'smooth' })
+      setTimeout(() => { autoScrollingRef.current = false }, 600)
     } else {
       setShowJump(true)
     }
@@ -878,8 +884,10 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
         <button
           onClick={() => {
             pinnedRef.current = true
+            autoScrollingRef.current = true
             setShowJump(false)
             endRef.current?.scrollIntoView({ behavior: 'smooth' })
+            setTimeout(() => { autoScrollingRef.current = false }, 600)
           }}
           style={{
             position: 'absolute', bottom: 72, left: '50%', transform: 'translateX(-50%)',

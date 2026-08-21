@@ -14,6 +14,7 @@ import '@xyflow/react/dist/style.css'
 import { api } from '../api'
 import type { HostDetail } from '../api'
 import type { RangeDoc, RangeHost, RangeLayout, Session } from '../types'
+import { buildConnectPlan, type ConnectPlan } from '../connect'
 import { LatestLayoutSaver } from '../layoutSaveQueue'
 import ConnectModal from './ConnectModal'
 import HostDetailPanel from './HostDetailPanel'
@@ -331,7 +332,7 @@ const nodeTypes = { host: HostNode }
 type ViewMode = 'graph' | 'table'
 
 function RangeTable(
-  { range, sessionId }: { range: RangeDoc; sessionId: string },
+  { range, sessionId, session }: { range: RangeDoc; sessionId: string; session?: Session },
 ) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [details, setDetails] = useState<Record<string, HostDetail | null>>({})
@@ -419,7 +420,7 @@ function RangeTable(
                 {isOpen && (
                   <tr style={{ background: 'var(--dn-surface)', borderBottom: '1px solid var(--dn-border)' }}>
                     <td colSpan={9} style={{ padding: '10px 10px 14px 42px' }}>
-                      <AccordionDetail detail={detail} error={detailErr} />
+                      <AccordionDetail detail={detail} error={detailErr} host={h} session={session} />
                     </td>
                   </tr>
                 )}
@@ -433,8 +434,8 @@ function RangeTable(
 }
 
 function AccordionDetail(
-  { detail, error }:
-  { detail: HostDetail | null | undefined; error?: string },
+  { detail, error, host, session }:
+  { detail: HostDetail | null | undefined; error?: string; host: RangeHost; session?: Session },
 ) {
   if (error) {
     return <span style={{ color: 'var(--dg-node-label)', fontSize: 11 }}>{error}</span>
@@ -446,6 +447,7 @@ function AccordionDetail(
       </span>
     )
   }
+  const plan = host.role === 'attackbox' ? buildConnectPlan(session, host) : null
   if (detail.kind === 'bastion') {
     const deployed = !!detail.cloud_id
     return (
@@ -458,18 +460,108 @@ function AccordionDetail(
       </div>
     )
   }
+  const disks = detail.disks || []
+  const nics = detail.nics || []
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11 }}>
-      {detail.vm_size && <DetailRow label="VM Size" value={detail.vm_size} />}
-      {detail.location && <DetailRow label="Region" value={detail.location} />}
-      {detail.resource_group && <DetailRow label="Resource Group" value={detail.resource_group} />}
-      {detail.power_state && <DetailRow label="Power State" value={detail.power_state} />}
-      {(detail.disks || []).length > 0 && (
-        <DetailRow label="Disks" value={(detail.disks || []).map(d => `${d.name} (${d.role}${d.size_gb ? `, ${d.size_gb} GiB` : ''})`).join(', ')} />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 11 }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {detail.vm_size && <DetailRow label="VM Size" value={detail.vm_size} />}
+        {detail.location && <DetailRow label="Region" value={detail.location} />}
+        {detail.resource_group && <DetailRow label="Resource Group" value={detail.resource_group} />}
+        {detail.power_state && <DetailRow label="Power State" value={detail.power_state} />}
+      </div>
+      {disks.length > 0 && (
+        <ResourceSection title={`Disks (${disks.length})`}>
+          {disks.map(d => (
+            <ResourceCard key={`${d.role}-${d.name}-${d.lun ?? 'os'}`} title={d.name} tag={d.role}>
+              {d.size_gb != null && <DetailRow label="Size" value={`${d.size_gb} GiB`} />}
+              {d.storage_type && <DetailRow label="Type" value={d.storage_type} />}
+              {d.caching && <DetailRow label="Caching" value={d.caching} />}
+              {d.lun != null && <DetailRow label="LUN" value={String(d.lun)} />}
+            </ResourceCard>
+          ))}
+        </ResourceSection>
       )}
-      {(detail.nics || []).length > 0 && (
-        <DetailRow label="NICs" value={(detail.nics || []).map(n => `${n.name}${n.private_ips?.length ? ` [${n.private_ips.join(', ')}]` : ''}`).join(', ')} />
+      {nics.length > 0 && (
+        <ResourceSection title={`Network interfaces (${nics.length})`}>
+          {nics.map(n => (
+            <ResourceCard key={n.id} title={n.name} tag={n.primary ? 'primary' : undefined}>
+              {(n.private_ips?.length ?? 0) > 0 && <DetailRow label="Private IP" value={n.private_ips.join(', ')} />}
+              {n.mac_address && <DetailRow label="MAC" value={n.mac_address} />}
+              {n.subnet_id && <DetailRow label="Subnet" value={shortId(n.subnet_id)} />}
+              {n.nsg_id && <DetailRow label="NSG" value={shortId(n.nsg_id)} />}
+              {n.accelerated_networking && <DetailRow label="Accel net" value="enabled" />}
+              {n.public_ip_id && <DetailRow label="Public IP" value={shortId(n.public_ip_id)} />}
+            </ResourceCard>
+          ))}
+        </ResourceSection>
       )}
+      {plan && <ConnectCommands plan={plan} />}
+    </div>
+  )
+}
+
+function ConnectCommands({ plan }: { plan: ConnectPlan }) {
+  if (plan.kind === 'azure-bastion') {
+    return (
+      <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <CopyableCommand label="Bastion Tunnel" value={plan.tunnel} />
+        <CopyableCommand label="SSH" value={plan.ssh} />
+      </div>
+    )
+  }
+  if (plan.kind === 'aws-ssm') {
+    return (
+      <div style={{ marginTop: 8 }}>
+        <CopyableCommand label="SSM Session" value={plan.session} />
+      </div>
+    )
+  }
+  return null
+}
+
+function CopyableCommand({ label, value }: { label: string; value: string }) {
+  const [copied, setCopied] = useState(false)
+  const copy = () => {
+    navigator.clipboard?.writeText(value)
+      .then(() => { setCopied(true); setTimeout(() => setCopied(false), 1600) })
+      .catch(() => {})
+  }
+  return (
+    <div>
+      <span style={{
+        fontSize: 10, letterSpacing: '0.05em', textTransform: 'uppercase',
+        color: 'var(--dn-electric)', fontWeight: 700,
+      }}>{label}</span>
+      <div style={{
+        display: 'flex', alignItems: 'stretch', marginTop: 3,
+        border: '1px solid var(--dn-border-lt)', borderRadius: 3,
+        background: 'var(--dn-black)', overflow: 'hidden',
+      }}>
+        <textarea
+          readOnly
+          value={value}
+          spellCheck={false}
+          rows={Math.min(7, Math.max(2, Math.ceil(value.length / 58)))}
+          onFocus={e => e.currentTarget.select()}
+          style={{
+            flex: 1, minWidth: 0, resize: 'none', border: 'none', outline: 'none',
+            background: 'transparent', color: 'var(--dn-text)',
+            fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.65,
+            padding: '6px 8px',
+          }}
+        />
+        <button
+          onClick={e => { e.stopPropagation(); copy() }}
+          title="Copy to clipboard"
+          style={{
+            flexShrink: 0, width: 32, border: 'none', cursor: 'pointer',
+            borderLeft: '1px solid var(--dn-border-lt)', background: 'transparent',
+            color: copied ? 'var(--dn-success)' : 'var(--dg-node-label)',
+            fontFamily: 'var(--font-mono)', fontSize: 13,
+          }}
+        >{copied ? '✓' : '⧉'}</button>
+      </div>
     </div>
   )
 }
@@ -486,6 +578,46 @@ function DetailRow({ label, value }: { label: string; value: string }) {
       }}>{value}</span>
     </div>
   )
+}
+
+function ResourceSection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      <span style={{
+        fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase',
+        color: 'var(--dg-interactive)',
+      }}>{title}</span>
+      {children}
+    </div>
+  )
+}
+
+function ResourceCard({ title, tag, children }: {
+  title: string; tag?: string; children: React.ReactNode
+}) {
+  return (
+    <div style={{
+      border: '1px solid var(--dn-border-lt)', borderRadius: 4,
+      padding: '7px 10px', display: 'flex', flexDirection: 'column', gap: 4,
+    }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{title}</span>
+        {tag && (
+          <span style={{
+            fontSize: 10, letterSpacing: '0.06em', textTransform: 'uppercase',
+            padding: '1px 6px', borderRadius: 3,
+            border: '1px solid var(--dg-interactive)', color: 'var(--dg-interactive)',
+          }}>{tag}</span>
+        )}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function shortId(id: string): string {
+  const parts = id.split('/')
+  return parts[parts.length - 1] || id
 }
 
 const cellStyle: React.CSSProperties = {
@@ -814,7 +946,7 @@ export default function RangeView(
       {error ? (
         <div style={{ ...emptyStyle, flex: 1 }}>{error}</div>
       ) : viewMode === 'table' && range ? (
-        <RangeTable range={range} sessionId={sessionId} />
+        <RangeTable range={range} sessionId={sessionId} session={session} />
       ) : (
         <div style={{ flex: 1, position: 'relative' }}>
           <ConnectRequest.Provider value={requestConnect}>

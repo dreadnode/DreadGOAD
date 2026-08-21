@@ -24,7 +24,9 @@ from dreadnode.agent.thread import Thread
 from dreadnode.agent.tools import tool
 from dreadnode.agent.tools.fs import Filesystem
 
-from . import commands, summary
+import os
+
+from . import commands, projectroot, summary
 
 # Signature of the shared command pipeline (chat.run_cli), injected to avoid a
 # chat <-> agent import cycle: (app, session_id, command, args) -> (exit, output).
@@ -232,6 +234,49 @@ def _make_run_dreadgoad(app: t.Any, session_id: str, run_cli: RunCli):  # noqa: 
     return run_dreadgoad
 
 
+def _make_read_lab_file(session: dict[str, t.Any]):  # noqa: ANN202
+    """Build a read-only tool for the variant's ``ad/<lab>/data/`` directory.
+
+    Returns None when the session has no lab (no variant scaffolded yet), so the
+    caller can skip it. The sandbox is the ``data/`` dir only — no traversal out.
+    """
+    snap = session.get("snapshot") or {}
+    lab = snap.get("lab")
+    if not lab:
+        return None
+    anchor = session.get("anchor") or {}
+    config_path = anchor.get("config_path")
+    if not config_path:
+        return None
+    root = str(projectroot.resolve_root(config_path)[0])
+    data_dir = os.path.realpath(os.path.join(root, lab, "data"))
+    if not os.path.isdir(data_dir):
+        return None
+
+    @tool(catch=True)
+    async def read_lab_file(path: str = "config.json") -> str:
+        """Read a file from the variant's lab data directory (ad/<lab>/data/).
+
+        The default ``config.json`` contains the variant mapping: host roles
+        to randomized AD hostnames, domains, users, groups, and
+        vulnerabilities. Other files include ``inventory`` and overlay JSONs.
+
+        Args:
+            path: Relative path within the data directory. Defaults to
+                ``config.json`` (the variant mapping).
+        """
+        full = os.path.realpath(os.path.join(data_dir, path))
+        if not full.startswith(data_dir + os.sep) and full != data_dir:
+            return f"Error: '{path}' is outside the lab data directory."
+        if not os.path.isfile(full):
+            avail = ", ".join(sorted(os.listdir(data_dir)))
+            return f"Error: '{path}' not found. Available: {avail}"
+        with open(full) as f:
+            return f.read()
+
+    return read_lab_file
+
+
 def create_agent(
     model: str,
     session: dict[str, t.Any],
@@ -248,11 +293,15 @@ def create_agent(
     """
     session_dir = session.get("session_dir", ".")
     fs = Filesystem(path=session_dir, variant="write")
+    tools: list[t.Any] = [fs, _make_run_dreadgoad(app, session_id, run_cli)]
+    lab_reader = _make_read_lab_file(session)
+    if lab_reader is not None:
+        tools.append(lab_reader)
     return LocalTaskAgent(
         name="dreadgoad-agent",
         description="Builds, manages, and validates a DreadGOAD range",
         model=model,
         instructions=_instructions(session),
         max_steps=50,
-        tools=[fs, _make_run_dreadgoad(app, session_id, run_cli)],
+        tools=tools,
     )
