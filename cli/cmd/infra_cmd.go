@@ -89,6 +89,11 @@ func init() {
 	infraApplyCmd.Flags().Bool("individual", false, "Apply each subdirectory individually (for module groups like goad/)")
 	infraDestroyCmd.Flags().Bool("auto-approve", false, "Skip confirmation prompt")
 
+	// Timeout for long-running actions. Zero means no limit.
+	for _, cmd := range []*cobra.Command{infraApplyCmd, infraDestroyCmd} {
+		cmd.Flags().Duration("timeout", 20*time.Minute, "Maximum wall-clock time for the operation (0 = no limit)")
+	}
+
 	// Optional-module flags. The matching DREADGOAD_ENABLE_* env vars are what
 	// the Terragrunt exclude{} blocks check; these flags set them for the child
 	// process so users don't have to.
@@ -134,6 +139,39 @@ func materializeLabConfig(cfg *config.Config) error {
 		return fmt.Errorf("write lab config: %w", err)
 	}
 	return nil
+}
+
+// confirmDestroy prompts the operator to confirm a destructive destroy.
+// Returns nil when confirmed (or when --auto-approve is set), a non-nil
+// error to abort. This replaces the OpenTofu approval prompt, which hangs
+// on EOF in any non-interactive context (console, CI, piped input).
+func confirmDestroy(cmd *cobra.Command, env, region string) error {
+	autoApprove, _ := cmd.Flags().GetBool("auto-approve")
+	if autoApprove {
+		return nil
+	}
+	bold := color.New(color.Bold)
+	target := env
+	if region != "" {
+		target = env + "/" + region
+	}
+	bold.Printf("Destroy will tear down all infrastructure for %s.\n", target)
+	fmt.Print("Type 'yes' to confirm: ")
+	var answer string
+	if _, err := fmt.Scanln(&answer); err != nil || answer != "yes" {
+		return fmt.Errorf("destroy cancelled")
+	}
+	return nil
+}
+
+// infraContext builds a context with the --timeout flag applied. A zero
+// duration (or missing flag) returns a bare Background context.
+func infraActionContext(cmd *cobra.Command) (context.Context, context.CancelFunc) {
+	timeout, _ := cmd.Flags().GetDuration("timeout")
+	if timeout > 0 {
+		return context.WithTimeout(context.Background(), timeout)
+	}
+	return context.Background(), func() {}
 }
 
 func runInfraAction(action string) func(*cobra.Command, []string) error {
@@ -242,7 +280,12 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 	// a legacy layout would find none and silently orphan them.
 	opts.ExtraEnv = append(opts.ExtraEnv, azureModuleEnv(cmd, action, workDir)...)
 
-	if action == "apply" || action == "destroy" {
+	if action == "destroy" {
+		if err := confirmDestroy(cmd, cfg.Env, region); err != nil {
+			return err
+		}
+		opts.AutoApprove = true
+	} else if action == "apply" {
 		autoApprove, _ := cmd.Flags().GetBool("auto-approve")
 		opts.AutoApprove = autoApprove
 	}
@@ -261,7 +304,8 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 	}
 	fmt.Printf("Log: %s\n\n", opts.LogFile)
 
-	ctx := context.Background()
+	ctx, cancel := infraActionContext(cmd)
+	defer cancel()
 
 	if module != "" {
 		return runTerragruntModule(ctx, cmd, opts, workDir, module, exclude, action)
@@ -335,7 +379,12 @@ func runInfraActionAWS(cmd *cobra.Command, cfg *config.Config, action string) er
 		opts.ExtraEnv = append(opts.ExtraEnv, "DREADGOAD_ENABLE_AWS_KALI=true")
 	}
 
-	if action == "apply" || action == "destroy" {
+	if action == "destroy" {
+		if err := confirmDestroy(cmd, cfg.Env, region); err != nil {
+			return err
+		}
+		opts.AutoApprove = true
+	} else if action == "apply" {
 		autoApprove, _ := cmd.Flags().GetBool("auto-approve")
 		opts.AutoApprove = autoApprove
 	}
@@ -355,7 +404,8 @@ func runInfraActionAWS(cmd *cobra.Command, cfg *config.Config, action string) er
 	}
 	fmt.Printf("Log: %s\n\n", opts.LogFile)
 
-	ctx := context.Background()
+	ctx, cancel := infraActionContext(cmd)
+	defer cancel()
 
 	if module != "" {
 		return runTerragruntModule(ctx, cmd, opts, workDir, module, exclude, action)
@@ -391,7 +441,12 @@ func runInfraActionTerraform(cmd *cobra.Command, cfg *config.Config, action stri
 		LogFile:         infraLogPath(cfg, action, providerName, ""),
 	}
 
-	if action == "apply" || action == "destroy" {
+	if action == "destroy" {
+		if err := confirmDestroy(cmd, cfg.Env, ""); err != nil {
+			return err
+		}
+		opts.AutoApprove = true
+	} else if action == "apply" {
 		autoApprove, _ := cmd.Flags().GetBool("auto-approve")
 		opts.AutoApprove = autoApprove
 	}
@@ -410,7 +465,8 @@ func runInfraActionTerraform(cmd *cobra.Command, cfg *config.Config, action stri
 	fmt.Printf("Lab: %s\n", cfg.ProxmoxLab())
 	fmt.Printf("Log: %s\n\n", opts.LogFile)
 
-	ctx := context.Background()
+	ctx, cancel := infraActionContext(cmd)
+	defer cancel()
 	return terraform.Run(ctx, opts)
 }
 

@@ -55,6 +55,9 @@ func Run(ctx context.Context, opts Options) error {
 	cmd.Stderr = writer
 
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("terraform %s timed out: %w", opts.Action, ctx.Err())
+		}
 		return fmt.Errorf("terraform %s failed: %w", opts.Action, err)
 	}
 	return nil

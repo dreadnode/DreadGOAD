@@ -301,6 +301,7 @@ func newUpInfraCommand(ctx context.Context, providerName string) *cobra.Command 
 	synth.Flags().Bool("with-bastion", needsTunnel, "")
 	synth.Flags().Bool("with-controller", needsTunnel, "")
 	synth.Flags().Bool("with-kali", upWithKali, "")
+	synth.Flags().Duration("timeout", 0, "")
 	synth.SetContext(ctx)
 	return synth
 }

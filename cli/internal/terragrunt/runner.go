@@ -69,6 +69,10 @@ func Run(ctx context.Context, opts Options) error {
 	cmd.Stderr = cmd.Stdout
 
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("terragrunt %s timed out (context: %w); last output:\n%s",
+				opts.Action, ctx.Err(), lastLines(tail.String(), 20))
+		}
 		return commandError(fmt.Sprintf("terragrunt %s failed", opts.Action), err, tail.String(), opts.TerragruntBinary)
 	}
 	return nil
@@ -114,6 +118,10 @@ func RunAll(ctx context.Context, opts Options) error {
 	cmd.Stderr = cmd.Stdout
 
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("terragrunt run --all %s timed out (context: %w); last output:\n%s",
+				opts.Action, ctx.Err(), lastLines(tail.String(), 20))
+		}
 		return commandError(fmt.Sprintf("terragrunt run --all %s failed", opts.Action), err, tail.String(), opts.TerragruntBinary)
 	}
 	return nil
@@ -250,6 +258,14 @@ func (b *tailBuffer) Write(p []byte) (int, error) {
 
 func (b *tailBuffer) String() string {
 	return string(b.buf)
+}
+
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) <= n {
+		return strings.Join(lines, "\n")
+	}
+	return strings.Join(lines[len(lines)-n:], "\n")
 }
 
 func commandError(message string, runErr error, output, terragruntBinary string) error {

@@ -126,17 +126,9 @@ REGISTRY: dict[str, Command] = {
     ),
     "/destroy": Command(
         "/destroy",
-        # --auto-approve is REQUIRED, not a convenience. infra destroy's flag
-        # defaults to false (cli/cmd/infra_cmd.go:90), and the terragrunt runner
-        # turns that into an explicit --no-auto-approve (internal/terragrunt/
-        # runner.go:82-83), which stops terragrunt from passing -auto-approve to
-        # tofu. Tofu then prompts, and a console command has no terminal behind
-        # it, so every unit died with "error asking for approval: EOF" and
-        # nothing was ever destroyed. /up avoids this only because the `up`
-        # verb builds its infra step internally with auto-approve already true.
-        #
-        # The approval this replaces is not lost: it happens in the console,
-        # where the operator is actually present to give it.
+        # --auto-approve skips the CLI's interactive confirmation prompt,
+        # which would EOF in a non-interactive context. The console collects
+        # its own confirmation before dispatching this command.
         ("infra", "destroy", "--auto-approve"),
         takes_args=True,
         long_running=True,
