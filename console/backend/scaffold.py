@@ -17,8 +17,12 @@ from __future__ import annotations
 import os
 import typing as t
 
-from . import commands, paths, projectroot
+import logging
+
+from . import commands, labconfig, paths, projectroot
 from .cli import capture
+
+log = logging.getLogger(__name__)
 
 Capture = t.Callable[[list[str], str], t.Awaitable[tuple[int, str, str]]]
 
@@ -161,3 +165,55 @@ async def scaffold_env(
 
     output = (stdout or "") + (stderr or "")
     return return_code == 0, output.strip()
+
+
+async def generate_answer_key(
+    session: dict[str, t.Any],
+    fallback_root: str,
+    capture_command: Capture | None = None,
+) -> str | None:
+    """Generate ``answer_key.json`` beside a session's lab config.
+
+    Returns the output path on success, or None on failure (logged, not raised).
+    Called after the variant is scaffolded so the config.json exists.
+    """
+    config_path = labconfig.session_lab_config_path(session, fallback_root)
+    if not config_path or not os.path.isfile(config_path):
+        return None
+
+    output_path = os.path.join(os.path.dirname(config_path), "answer_key.json")
+    if os.path.isfile(output_path):
+        return output_path
+
+    anchor = session.get("anchor") or {}
+    cp = anchor.get("config_path")
+    root = str(projectroot.resolve_root(cp)[0]) if cp else fallback_root
+
+    argv = [
+        commands.resolve_bin(root),
+        "--config",
+        str(cp),
+        "--env",
+        str(anchor.get("env", "")),
+        "score",
+        "generate-key",
+        "--config",
+        config_path,
+        "--output",
+        output_path,
+    ]
+    runner = capture_command or capture
+    try:
+        rc, stdout, stderr = await runner(argv, root)
+    except (OSError, ValueError) as exc:
+        log.warning("answer key generation failed: %s", exc)
+        return None
+
+    if rc != 0:
+        log.warning(
+            "answer key generation exited %d: %s", rc, (stderr or stdout or "").strip()
+        )
+        return None
+
+    log.info("generated answer key: %s", output_path)
+    return output_path

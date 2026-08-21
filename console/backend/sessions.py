@@ -102,6 +102,7 @@ class SessionService:
         topo["session_id"] = sid
         await self.db.upsert_range(sid, topo)
 
+        await scaffold.generate_answer_key(session, self.repo_root)
         await self.db.append_event(sid, "session_created", {"label": lbl})
         return session
 
@@ -175,6 +176,7 @@ class SessionService:
             },
         )
         if ok:
+            await scaffold.generate_answer_key(session, self.repo_root)
             # The variant only exists now, so the topology seeded during
             # create_session above saw no lab config and holds infra nodes only.
             await self._reseed_topology(session)
