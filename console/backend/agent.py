@@ -291,7 +291,11 @@ def create_agent(
     only range-mutating tool is ``run_dreadgoad`` (constrained to this session);
     file writes are sandboxed to the session dir. No general shell tool.
     """
-    session_dir = session.get("session_dir", ".")
+    session_dir = session.get("session_dir")
+    if not session_dir:
+        raise ValueError(
+            "session has no session_dir — cannot sandbox agent file writes"
+        )
     fs = Filesystem(path=session_dir, variant="write")
     tools: list[t.Any] = [fs, _make_run_dreadgoad(app, session_id, run_cli)]
     lab_reader = _make_read_lab_file(session)

@@ -674,7 +674,10 @@ async def test_swap_model_preserves_thread_and_persists() -> None:
         ws = FakeWS()
         chat.register_conn(s["id"], ws)
 
-        history = [Message(role="user", content="msg-1"), Message(role="assistant", content="msg-2")]
+        history = [
+            Message(role="user", content="msg-1"),
+            Message(role="assistant", content="msg-2"),
+        ]
         old = FakeThreadAgent(history)
         chat_runtime.runtime(s["id"]).agent = old
         seen = {}

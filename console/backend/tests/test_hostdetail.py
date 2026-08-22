@@ -212,13 +212,23 @@ async def _no_cli(argv: list[str], cwd: str) -> tuple[int, str, str]:
 
 async def test_bastion_returns_managed_service_detail() -> None:
     """A bastion host returns kind=bastion with data from the range doc."""
-    rng = {"hosts": [
-        {"id": "bastion", "hostname": "bastion", "role": "bastion",
-         "cloud_id": _BASTION_ARM_ID, "cloud_name": "dg-goad-bastion",
-         "status": "running", "ip_public": "20.1.2.3",
-         "last_checked_at": "2026-08-14T10:00:00Z"},
-    ]}
-    got = await hostdetail.host_detail(_SESSION, rng, "bastion", capture_command=_no_cli)
+    rng = {
+        "hosts": [
+            {
+                "id": "bastion",
+                "hostname": "bastion",
+                "role": "bastion",
+                "cloud_id": _BASTION_ARM_ID,
+                "cloud_name": "dg-goad-bastion",
+                "status": "running",
+                "ip_public": "20.1.2.3",
+                "last_checked_at": "2026-08-14T10:00:00Z",
+            },
+        ]
+    }
+    got = await hostdetail.host_detail(
+        _SESSION, rng, "bastion", capture_command=_no_cli
+    )
     assert got["kind"] == "bastion", got
     assert got["node_id"] == "bastion", got
     assert got["resource_group"] == "DG-RG", got
@@ -233,11 +243,20 @@ async def test_bastion_returns_managed_service_detail() -> None:
 
 async def test_bastion_without_cloud_id_does_not_crash() -> None:
     """Before discovery the bastion has no cloud_id — still returns detail."""
-    rng = {"hosts": [
-        {"id": "bastion", "hostname": "bastion", "role": "bastion",
-         "cloud_id": None, "status": None},
-    ]}
-    got = await hostdetail.host_detail(_SESSION, rng, "bastion", capture_command=_no_cli)
+    rng = {
+        "hosts": [
+            {
+                "id": "bastion",
+                "hostname": "bastion",
+                "role": "bastion",
+                "cloud_id": None,
+                "status": None,
+            },
+        ]
+    }
+    got = await hostdetail.host_detail(
+        _SESSION, rng, "bastion", capture_command=_no_cli
+    )
     assert got["kind"] == "bastion", got
     assert got["cloud_id"] is None, f"expected None: {got['cloud_id']!r}"
     assert got["resource_group"] == "", got
@@ -249,16 +268,24 @@ async def test_bastion_name_fallback() -> None:
     base = {"id": "b", "role": "bastion"}
     # node_id fallback
     got = await hostdetail.host_detail(
-        _SESSION, {"hosts": [{**base}]}, "b", capture_command=_no_cli)
+        _SESSION, {"hosts": [{**base}]}, "b", capture_command=_no_cli
+    )
     assert got["name"] == "b", got
     # hostname
     got = await hostdetail.host_detail(
-        _SESSION, {"hosts": [{**base, "hostname": "mybastion"}]}, "b", capture_command=_no_cli)
+        _SESSION,
+        {"hosts": [{**base, "hostname": "mybastion"}]},
+        "b",
+        capture_command=_no_cli,
+    )
     assert got["name"] == "mybastion", got
     # cloud_name wins
     got = await hostdetail.host_detail(
-        _SESSION, {"hosts": [{**base, "hostname": "x", "cloud_name": "azure-b"}]}, "b",
-        capture_command=_no_cli)
+        _SESSION,
+        {"hosts": [{**base, "hostname": "x", "cloud_name": "azure-b"}]},
+        "b",
+        capture_command=_no_cli,
+    )
     assert got["name"] == "azure-b", got
     print("PASS test_bastion_name_fallback")
 

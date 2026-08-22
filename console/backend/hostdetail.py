@@ -194,7 +194,9 @@ async def host_detail(
         ) from exc
 
     if return_code != 0:
-        raise HostDetailUnavailable(_clean_cli_error(stderr or stdout or "lab describe failed"))
+        raise HostDetailUnavailable(
+            _clean_cli_error(stderr or stdout or "lab describe failed")
+        )
     try:
         detail = json.loads(stdout)
     except ValueError as exc:

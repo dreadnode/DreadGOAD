@@ -187,7 +187,9 @@ async def generate_answer_key(
 
     anchor = session.get("anchor") or {}
     cp = anchor.get("config_path")
-    root = str(projectroot.resolve_root(cp)[0]) if cp else fallback_root
+    if not cp:
+        return None
+    root = str(projectroot.resolve_root(cp)[0])
 
     argv = [
         commands.resolve_bin(root),
