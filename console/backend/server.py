@@ -20,7 +20,6 @@ from .chat_socket import (  # noqa: F401 -- compatibility re-exports
     ws_origin_allowed,
 )
 from .config_routes import (  # noqa: F401 -- compatibility re-exports
-    DEFAULT_MODEL as _DEFAULT_MODEL,
     get_commands,
     get_config,
     get_environments,

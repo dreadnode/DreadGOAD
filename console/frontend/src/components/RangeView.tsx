@@ -8,7 +8,6 @@ import {
   useNodesState,
   type Node,
   type NodeProps,
-  type NodeChange,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { api } from '../api'
@@ -522,9 +521,15 @@ function ConnectCommands({ plan }: { plan: ConnectPlan }) {
 
 function CopyableCommand({ label, value }: { label: string; value: string }) {
   const [copied, setCopied] = useState(false)
+  const timerRef = useRef<ReturnType<typeof setTimeout>>()
+  useEffect(() => () => clearTimeout(timerRef.current), [])
   const copy = () => {
     navigator.clipboard?.writeText(value)
-      .then(() => { setCopied(true); setTimeout(() => setCopied(false), 1600) })
+      .then(() => {
+        setCopied(true)
+        clearTimeout(timerRef.current)
+        timerRef.current = setTimeout(() => setCopied(false), 1600)
+      })
       .catch(() => {})
   }
   return (
@@ -791,11 +796,20 @@ export default function RangeView(
   }, [sessionId, refreshKey, setNodes, layoutSaver])
   loadRef.current = load
 
-  useEffect(() => { load() }, [load])
-
-  const handleChange = useCallback((changes: NodeChange<Node>[]) => {
-    onNodesChange(changes)
-  }, [onNodesChange])
+  useEffect(() => {
+    if (!sessionId) { setRange(null); return }
+    let cancelled = false
+    api.getRange(sessionId)
+      .then(r => {
+        if (cancelled) return
+        layoutSaver?.setRevision(r.layout_revision ?? 0)
+        setRange(r)
+        setNodes(buildNodes(r))
+        setError(null)
+      })
+      .catch(() => { if (!cancelled) setError('range not found') })
+    return () => { cancelled = true }
+  }, [sessionId, refreshKey, setNodes, layoutSaver])
 
   // Stable identity: it goes into a context every node consumes, so a new
   // function each render would re-render the whole topology.
@@ -955,7 +969,7 @@ export default function RangeView(
               nodes={nodes}
               edges={[]}
               nodeTypes={nodeTypes}
-              onNodesChange={handleChange}
+              onNodesChange={onNodesChange}
               onNodeDragStop={(_, node) => persistLayout(node)}
               onNodeClick={(_, node) => setDetailNode(node.id)}
               fitView

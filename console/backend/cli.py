@@ -8,6 +8,7 @@ live tail. The returned handle exposes cancellation (SIGINT) for §6.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import signal
 import time
@@ -15,6 +16,8 @@ import typing as t
 from pathlib import Path
 
 OnLine = t.Callable[[str], t.Any]
+
+Capture = t.Callable[[list[str], str], t.Awaitable[tuple[int, str, str]]]
 
 # How often to check whether the process has exited while a read is pending.
 # Only costs anything when output is idle; a ready line returns immediately.
@@ -254,20 +257,9 @@ class RunningCommand:
         )
 
 
-class _suppress:
-    """Swallow every exception from the block.
-
-    Used only around ``os.killpg``, where the interesting failures are benign
-    races (ProcessLookupError, PermissionError) against a process that already
-    exited. Deliberately broader than ``contextlib.suppress(ProcessLookupError)``
-    so signalling can never take down a turn.
-    """
-
-    def __enter__(self) -> None:
-        return None
-
-    def __exit__(self, *exc: object) -> bool:
-        return True  # swallow ProcessLookupError etc.
+def _suppress() -> contextlib.AbstractContextManager[None]:
+    """Swallow OS-level errors from killpg (benign races against exited processes)."""
+    return contextlib.suppress(OSError)
 
 
 async def start_command(argv: list[str], cwd: str | Path) -> RunningCommand:

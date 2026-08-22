@@ -17,9 +17,9 @@ from pathlib import Path
 from rigging import Message
 from rigging.tools.base import FunctionCall, ToolCall
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
-from backend.thread_repair import (  # noqa: E402
+from console.backend.thread_repair import (  # noqa: E402
     MISSING_RESULT_NOTE,
     repair_tool_pairing,
 )
@@ -225,7 +225,7 @@ async def test_cancelled_command_yields_a_paired_result_and_stops() -> None:
     function would skip the exact layer whose ``except Exception`` misses
     CancelledError, and so would prove nothing about the bug.
     """
-    from backend import agent as agent_mod
+    from console.backend import agent as agent_mod
 
     async def cancelling_run_cli(
         app: object, session_id: str, command: str, args: list[str]
@@ -253,7 +253,7 @@ async def test_genuine_task_cancellation_is_not_swallowed() -> None:
     discriminates rather than swallowing every CancelledError — which would
     trade a wedged session for a turn that ignores shutdown.
     """
-    from backend import agent as agent_mod
+    from console.backend import agent as agent_mod
 
     started = asyncio.Event()
 
@@ -327,7 +327,7 @@ async def test_run_agent_heals_a_poisoned_thread_before_streaming() -> None:
     Asserted through ``_run_agent`` rather than the pure function so the wiring
     is covered too — the repair must happen *before* stream() copies the thread.
     """
-    from backend import chat, chat_runtime
+    from console.backend import chat, chat_runtime
 
     class PoisonedAgent:
         """Cached agent whose thread carries an orphan from a killed turn."""
@@ -366,7 +366,10 @@ async def test_run_agent_heals_a_poisoned_thread_before_streaming() -> None:
 
     app = types.SimpleNamespace(
         state=types.SimpleNamespace(
-            db=types.SimpleNamespace(append_event=fake_append_event),
+            db=types.SimpleNamespace(
+                append_event=fake_append_event,
+                set_meta=lambda *a, **kw: asyncio.sleep(0),
+            ),
             sessions=None,
         )
     )

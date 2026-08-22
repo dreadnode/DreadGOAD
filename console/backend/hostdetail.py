@@ -13,12 +13,11 @@ an empty panel that looks like a VM with no disks.
 from __future__ import annotations
 
 import json
+import re
 import typing as t
 
 from . import commands, paths, projectroot
-from .cli import capture
-
-Capture = t.Callable[[list[str], str], t.Awaitable[tuple[int, str, str]]]
+from .cli import Capture, capture
 
 SUPPORTED_PROVIDERS = ("azure",)
 
@@ -132,8 +131,8 @@ def _bastion_detail(host: dict[str, t.Any], node_id: str) -> dict[str, t.Any]:
     }
 
 
-_ARM_RG_RE = __import__("re").compile(
-    r"^/subscriptions/[^/]+/resourcegroups/(?P<rg>[^/]+)/", __import__("re").IGNORECASE
+_ARM_RG_RE = re.compile(
+    r"^/subscriptions/[^/]+/resourcegroups/(?P<rg>[^/]+)/", re.IGNORECASE
 )
 
 

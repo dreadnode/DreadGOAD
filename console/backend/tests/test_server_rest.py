@@ -21,7 +21,13 @@ import os  # noqa: E402
 
 os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = _TMP
 
-import pytest  # noqa: E402
+try:
+    import pytest  # noqa: E402
+
+    _fixture = pytest.fixture
+except ModuleNotFoundError:
+    pytest = None  # type: ignore[assignment]
+    _fixture = lambda f: f  # noqa: E731
 from fastapi import WebSocketDisconnect  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
@@ -47,7 +53,7 @@ environments:
 """
 
 
-@pytest.fixture
+@_fixture
 def client() -> Iterator[TestClient]:
     """A started app for the websocket tests below.
 
@@ -351,6 +357,8 @@ def main() -> None:
         assert client.get(f"/api/sessions/{sid}").status_code == 404
         print("PASS delete session")
 
+        test_range_read_repairs_missing_config_hosts(client)
+
         test_ws_origin_allowed()
         test_parse_ws_message_validation()
         test_ws_rejects_cross_origin(client)
@@ -417,6 +425,7 @@ def test_range_read_repairs_missing_config_hosts(client: TestClient) -> None:
     assert [h["id"] for h in repeat["hosts"]] == [h["id"] for h in after["hosts"]]
 
     client.delete(f"/api/sessions/{sid}")
+    print("PASS test_range_read_repairs_missing_config_hosts")
 
 
 def test_ws_origin_allowed() -> None:

@@ -7,9 +7,8 @@ import os
 import typing as t
 
 from . import commands, labconfig, paths, projectroot
-from .cli import capture
+from .cli import Capture, capture
 
-Capture = t.Callable[[list[str], str], t.Awaitable[tuple[int, str, str]]]
 _EXT_ROLE = "linux"
 
 
@@ -51,16 +50,12 @@ async def extension_nodes(
             nodes.append(
                 {
                     "id": machine,
+                    "key": machine,
                     "hostname": machine,
                     "role": _EXT_ROLE,
                     "source": "extension",
                     "domain": None,
-                    "status": "unknown",
-                    "health": "unknown",
-                    "ip_private": None,
-                    "ip_public": None,
-                    "cloud_id": None,
-                    "last_checked_at": None,
+                    **labconfig._blank_dynamic(),
                 }
             )
     return nodes

@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react'
 import type { RangeHost, Session } from '../types'
 import { BASTION_LOCAL_PORT, buildConnectPlan } from '../connect'
+import Modal from './Modal'
 
 /** One read-only command with a copy button. */
 function CommandField(
@@ -108,28 +109,8 @@ export default function ConnectModal(
 ) {
   const plan = buildConnectPlan(session, host)
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [onClose])
-
   return (
-    <div
-      onClick={onClose}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.6)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-      }}
-    >
-      <div
-        onClick={e => e.stopPropagation()}
-        style={{
-          background: 'var(--dn-surface)', border: '1px solid var(--dn-border-lt)',
-          borderRadius: 6, padding: 20, width: 620, maxWidth: '92vw',
-          fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--dn-text)',
-        }}
-      >
+    <Modal onClose={onClose} width={620}>
         <div style={{
           color: 'var(--dg-brand)', fontWeight: 700, fontSize: 13, marginBottom: 4,
         }}>Connect to {host.hostname}</div>
@@ -242,7 +223,6 @@ export default function ConnectModal(
             }}
           >CLOSE</button>
         </div>
-      </div>
-    </div>
+    </Modal>
   )
 }

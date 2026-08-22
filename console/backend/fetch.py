@@ -20,9 +20,7 @@ import os
 import typing as t
 
 from . import commands, paths, projectroot
-from .cli import capture
-
-Capture = t.Callable[[list[str], str], t.Awaitable[tuple[int, str, str]]]
+from .cli import Capture, capture
 
 
 def build_fetch_argv(

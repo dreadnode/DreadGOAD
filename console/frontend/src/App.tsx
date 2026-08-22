@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import TerminalChat from './components/TerminalChat'
 import RangeView from './components/RangeView'
+import Modal from './components/Modal'
 import { useWebSocket } from './hooks/useWebSocket'
 import { api, type AppConfig, type ConfigListing, type LabSummary } from './api'
 import type { ChatEvent, Session } from './types'
@@ -404,7 +405,7 @@ function NewSessionModal({ cfg, onClose, onCreate }: {
   // Read the chosen config's environments. Always re-read rather than trusting
   // the listing's copy: the file is on disk and a `dreadgoad env add` between
   // opening this modal and using it would otherwise go unseen.
-  const loadEnvs = useCallback(async (path: string) => {
+  const loadEnvs = useCallback(async (path: string, signal?: { cancelled: boolean }) => {
     if (!path.trim()) {
       setEnvs([]); setEnvChoice(''); setConfigOk(false); setLoadedProvider(''); setLoadedRegions({}); setLoadedPath('')
       setEnvErr('config path is required')
@@ -414,34 +415,33 @@ function NewSessionModal({ cfg, onClose, onCreate }: {
     setEnvErr('')
     try {
       const r = await api.environments(path.trim())
+      if (signal?.cancelled) return
       setEnvs(r.environments)
       setConfigOk(true)
       setLoadedPath(path.trim())
-      // Read from the file rather than from the listing: it is fresher, and for
-      // a hand-typed path there is no listing entry to read a provider from.
       setLoadedProvider(r.provider || '')
       setLoadedRegions(r.env_regions || {})
       setEnvChoice(prev => (r.environments.includes(prev) ? prev : (r.environments[0] || NEW_ENV)))
     } catch (e) {
+      if (signal?.cancelled) return
       setEnvs([]); setEnvChoice(''); setConfigOk(false); setLoadedProvider(''); setLoadedRegions({}); setLoadedPath('')
       setEnvErr(e instanceof Error ? e.message : String(e))
     } finally {
-      setLoading(false)
+      if (!signal?.cancelled) setLoading(false)
     }
   }, [])
 
   useEffect(() => {
     if (creatingConfig) { setEnvs([]); setConfigOk(true); setEnvErr(''); return }
+    const signal = { cancelled: false }
     if (choice === OTHER_PATH) {
-      // Nothing has been read from this path yet, so clear the previous
-      // config's verdict. Without this, switching here from a valid selection
-      // left configOk true and CREATE enabled against an empty path.
       setEnvs([]); setEnvChoice(''); setConfigOk(false); setLoadedProvider(''); setLoadedRegions({}); setLoadedPath('')
       setEnvErr(customPath.trim() ? '' : 'enter a path, then click away to load it')
-      if (customPath.trim()) loadEnvs(customPath)
-      return
+      if (customPath.trim()) loadEnvs(customPath, signal)
+      return () => { signal.cancelled = true }
     }
-    loadEnvs(choice)
+    loadEnvs(choice, signal)
+    return () => { signal.cancelled = true }
     // customPath is deliberately not a dependency: it would re-request on every
     // keystroke. The field loads on blur instead.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -598,8 +598,7 @@ function NewSessionModal({ cfg, onClose, onCreate }: {
   effects.push('deploy nothing — run /up in chat when you are ready')
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: 'var(--dn-surface)', border: '1px solid var(--dn-border-lt)', borderRadius: 6, padding: 20, width: 460, maxHeight: '86vh', overflowY: 'auto', fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--dn-text)' }}>
+    <Modal onClose={onClose} width={460} maxHeight="86vh">
         <div style={{ color: 'var(--dg-brand)', fontWeight: 700, fontSize: 13, marginBottom: 4 }}>New Session</div>
         <div style={{ color: 'var(--dn-text-muted)', fontSize: 11, marginBottom: 16 }}>
           A session is a tab you talk to. It can create the config and environment it needs.
@@ -743,8 +742,7 @@ function NewSessionModal({ cfg, onClose, onCreate }: {
             style={{ ...btnStyle(true), opacity: valid ? 1 : 0.5, cursor: valid ? 'pointer' : 'not-allowed' }}
           >{submitting ? 'CREATING…' : 'CREATE'}</button>
         </div>
-      </div>
-    </div>
+    </Modal>
   )
 }
 
@@ -781,8 +779,7 @@ function SettingsModal({ cfg, model, onModelChange, onClose, onSaved }: {
   }
 
   return (
-    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div onClick={e => e.stopPropagation()} style={{ background: 'var(--dn-surface)', border: '1px solid var(--dn-border-lt)', borderRadius: 6, padding: 20, width: 420, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--dn-text)' }}>
+    <Modal onClose={onClose} width={420}>
         <div style={{ color: 'var(--dg-brand)', fontWeight: 700, fontSize: 13, marginBottom: 16 }}>Settings</div>
 
         {onModelChange ? (
@@ -809,8 +806,7 @@ function SettingsModal({ cfg, model, onModelChange, onClose, onSaved }: {
           <button onClick={onClose} style={btnStyle(false)}>CANCEL</button>
           <button onClick={save} disabled={saving} style={btnStyle(true)}>{saving ? 'SAVING…' : 'SAVE'}</button>
         </div>
-      </div>
-    </div>
+    </Modal>
   )
 }
 

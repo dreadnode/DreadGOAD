@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { HostDetail } from '../api'
+import Modal from './Modal'
 
 // Read-only: everything here describes what Azure already has. Nothing in this
 // panel mutates a resource, so there is no confirm gate and no destructive path
@@ -119,34 +120,19 @@ export default function HostDetailPanel(
     return () => { live = false }
   }, [sessionId, nodeId])
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
-
   return (
-    <div
-      onClick={onClose}
-      style={{
-        position: 'fixed', inset: 0, zIndex: 40,
-        background: 'rgba(0,0,0,0.55)', display: 'flex',
-        alignItems: 'center', justifyContent: 'center', padding: 24,
-      }}
+    <Modal
+      onClose={onClose}
+      width="min(760px, 100%)"
+      maxHeight="82vh"
+      zIndex={40}
+      ariaLabel={`Attached resources for ${detail?.name || nodeId}`}
+      borderColor="var(--dn-border)"
+      backdropOpacity={0.55}
+      backdropPadding={24}
+      panelPadding={18}
+      gap={14}
     >
-      <div
-        // The backdrop closes; the panel itself must not, or every click inside
-        // it dismisses the thing being read.
-        onClick={e => e.stopPropagation()}
-        role="dialog"
-        aria-label={`Attached resources for ${detail?.name || nodeId}`}
-        style={{
-          width: 'min(760px, 100%)', maxHeight: '82vh', overflowY: 'auto',
-          background: 'var(--dn-surface)', border: '1px solid var(--dn-border)',
-          borderRadius: 6, padding: 18, color: 'var(--dn-text)', fontSize: 12,
-          display: 'flex', flexDirection: 'column', gap: 14,
-        }}
-      >
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 14, fontWeight: 600 }}>
             {detail?.name || nodeId}
@@ -215,8 +201,7 @@ export default function HostDetailPanel(
             </Section>
           </>
         )}
-      </div>
-    </div>
+    </Modal>
   )
 }
 

@@ -88,8 +88,6 @@ def dispatch(app: t.Any, session_id: str, content: str) -> asyncio.Task[t.Any] |
             async with runtime.lock:
                 await handle_message(app, session_id, content)
         except asyncio.CancelledError:
-            # One terminal event releases the UI's processing state whether the
-            # cancel landed during model generation or a CLI tool call.
             await emit_event(
                 app,
                 session_id,
@@ -97,9 +95,15 @@ def dispatch(app: t.Any, session_id: str, content: str) -> asyncio.Task[t.Any] |
                 {"failed": False, "cancelled": True},
             )
             raise
+        except Exception:
+            # Any non-cancel exception (db error, corrupt thread, agent setup
+            # failure) must still release the frontend's processing state.
+            try:
+                await emit_event(app, session_id, "agent_end", {"failed": True})
+            except Exception:  # noqa: BLE001
+                pass
+            raise
         finally:
-            # Identity check protects a newer reservation if cleanup removed
-            # this one while its task was still unwinding.
             if runtime.turn is turn:
                 runtime.turn = None
 

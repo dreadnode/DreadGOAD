@@ -14,8 +14,6 @@ from . import commands, configstore, labconfig, labs, paths
 
 router = APIRouter()
 
-DEFAULT_MODEL = paths.default_model()
-
 # Settings may only write credential-shaped variables. Allowing arbitrary names
 # could alter PATH/LD_PRELOAD and hijack subprocesses launched by the console.
 _API_KEY_ENV_RE = re.compile(r"^[A-Z][A-Z0-9_]*_(?:API_KEY|KEY|TOKEN)$")
@@ -32,7 +30,7 @@ async def get_config() -> dict[str, t.Any]:
     """Return bootstrap values needed before a session exists."""
     return {
         "version": VERSION,
-        "default_model": DEFAULT_MODEL,
+        "default_model": paths.default_model(),
         "default_config_path": configstore.default_config_path(),
         "api_key_set": bool(os.environ.get("OPENROUTER_API_KEY")),
         # The create UI offers these and no others; sending the list keeps the

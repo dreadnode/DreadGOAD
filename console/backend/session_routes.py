@@ -8,7 +8,6 @@ import yaml
 from fastapi import APIRouter, HTTPException, Request
 
 from . import chat, configstore, paths
-from .config_routes import DEFAULT_MODEL
 from .sessions import SessionService
 
 router = APIRouter()
@@ -27,7 +26,7 @@ async def create_session(request: Request, body: dict[str, t.Any]) -> dict[str, 
     env = (body.get("env") or "").strip()
     if not env:
         raise HTTPException(status_code=400, detail="env is required")
-    model = body.get("model") or DEFAULT_MODEL
+    model = body.get("model") or paths.default_model()
     label = body.get("label")
 
     try:

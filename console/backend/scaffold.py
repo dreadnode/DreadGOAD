@@ -20,11 +20,9 @@ import typing as t
 import logging
 
 from . import commands, labconfig, paths, projectroot
-from .cli import capture
+from .cli import Capture, capture
 
 log = logging.getLogger(__name__)
-
-Capture = t.Callable[[list[str], str], t.Awaitable[tuple[int, str, str]]]
 
 # Mirrors viper's default (cli/internal/config/defaults.go:123). The console
 # writes configs without an `infra:` block, so this is what they resolve to.

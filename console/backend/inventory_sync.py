@@ -8,9 +8,7 @@ import typing as t
 from datetime import datetime, timezone
 
 from . import commands, labconfig, paths, projectroot
-from .cli import capture
-
-Capture = t.Callable[[list[str], str], t.Awaitable[tuple[int, str, str]]]
+from .cli import Capture, capture
 
 _STATE = {
     "running": "running",

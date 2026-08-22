@@ -141,5 +141,6 @@ async def ws_chat(websocket: WebSocket) -> None:
                     persist=False,
                 )
     except WebSocketDisconnect:
-        # Turns continue server-side; reconnecting registers a new live target.
+        pass
+    finally:
         chat.unregister_conn(websocket)
