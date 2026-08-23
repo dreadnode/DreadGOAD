@@ -252,6 +252,27 @@ class Database:
 
     # --- events ------------------------------------------------------------
 
+    MAX_EVENTS = 2000
+
+    async def prune_events(self, session_id: str, keep: int = MAX_EVENTS) -> int:
+        """Delete the oldest events for a session, keeping the last ``keep``."""
+        return await self._run(self._prune_events, session_id, keep)
+
+    def _prune_events(self, session_id: str, keep: int) -> int:
+        row = self._c.execute(
+            "SELECT seq FROM events WHERE session_id=? "
+            "ORDER BY seq DESC LIMIT 1 OFFSET ?",
+            (session_id, keep - 1),
+        ).fetchone()
+        if row is None:
+            return 0
+        cursor = self._c.execute(
+            "DELETE FROM events WHERE session_id=? AND seq < ?",
+            (session_id, row["seq"]),
+        )
+        self._c.commit()
+        return cursor.rowcount
+
     async def append_event(
         self, session_id: str, kind: str, payload: dict[str, t.Any]
     ) -> int:

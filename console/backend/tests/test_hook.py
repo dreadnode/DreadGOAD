@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import pathlib
 import sys
 import tempfile
@@ -381,7 +382,7 @@ def test_summarize_changes() -> None:
     print("PASS test_summarize_changes")
 
 
-async def _db_with_session() -> Database:
+async def _db_with_session() -> tuple[Database, str]:
     tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
     tmp.close()
     db = await Database(tmp.name).connect()
@@ -416,7 +417,7 @@ async def _db_with_session() -> Database:
             "last_checked_at": "OLD",
         },
     )
-    return db
+    return db, tmp.name
 
 
 class _App:
@@ -425,7 +426,7 @@ class _App:
 
 
 async def test_run_check_success_updates_range() -> None:
-    db = await _db_with_session()
+    db, db_path = await _db_with_session()
     orig = inventory_sync.capture
 
     async def fake_capture(argv, cwd):  # noqa: ANN001
@@ -453,11 +454,12 @@ async def test_run_check_success_updates_range() -> None:
     finally:
         inventory_sync.capture = orig
         await db.close()
+        os.unlink(db_path)
 
 
 async def test_run_check_syncs_attack_box() -> None:
     """run_check learns the attack box id from the instances and persists it (§5.2)."""
-    db = await _db_with_session()
+    db, db_path = await _db_with_session()
     orig = inventory_sync.capture
 
     async def fake_capture(argv, cwd):  # noqa: ANN001
@@ -490,10 +492,11 @@ async def test_run_check_syncs_attack_box() -> None:
     finally:
         inventory_sync.capture = orig
         await db.close()
+        os.unlink(db_path)
 
 
 async def test_run_check_failure_preserves_state() -> None:
-    db = await _db_with_session()
+    db, db_path = await _db_with_session()
     orig = inventory_sync.capture
 
     async def fake_capture(argv, cwd):  # noqa: ANN001
@@ -519,6 +522,7 @@ async def test_run_check_failure_preserves_state() -> None:
     finally:
         inventory_sync.capture = orig
         await db.close()
+        os.unlink(db_path)
 
 
 async def test_apply_health_targets_config_hosts() -> None:
@@ -555,6 +559,7 @@ async def test_apply_health_targets_config_hosts() -> None:
         print("PASS test_apply_health_targets_config_hosts")
     finally:
         await db.close()
+        os.unlink(tmp.name)
 
 
 def test_parse_health_report_noisy() -> None:
@@ -665,6 +670,7 @@ async def test_apply_health_per_host_from_json() -> None:
         print("PASS test_apply_health_per_host_from_json")
     finally:
         await db.close()
+        os.unlink(tmp.name)
 
 
 async def test_reseed_adds_enabled_extension_nodes() -> None:
@@ -726,6 +732,7 @@ async def test_reseed_adds_enabled_extension_nodes() -> None:
     finally:
         topology_sync.capture = orig
         await db.close()
+        os.unlink(tmp.name)
 
 
 def main() -> None:
@@ -843,6 +850,7 @@ async def test_repair_seeds_hosts_missing_from_the_original_topology() -> None:
         print("PASS test_repair_seeds_hosts_missing_from_the_original_topology")
     finally:
         await db.close()
+        os.unlink(tmp.name)
 
 
 async def test_repair_leaves_a_genuine_greenfield_range_alone() -> None:
@@ -885,6 +893,7 @@ async def test_repair_leaves_a_genuine_greenfield_range_alone() -> None:
         print("PASS test_repair_leaves_a_genuine_greenfield_range_alone")
     finally:
         await db.close()
+        os.unlink(tmp.name)
 
 
 async def test_repair_never_removes_nodes_it_did_not_seed() -> None:
@@ -949,6 +958,7 @@ async def test_repair_never_removes_nodes_it_did_not_seed() -> None:
         print("PASS test_repair_never_removes_nodes_it_did_not_seed")
     finally:
         await db.close()
+        os.unlink(tmp.name)
 
 
 if __name__ == "__main__":

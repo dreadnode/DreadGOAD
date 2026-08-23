@@ -13,6 +13,7 @@ import tempfile
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
 from console.backend.labconfig import (  # noqa: E402
+    MAX_BACKUPS,
     backup_yaml,
     create_config,
     derive_snapshot,
@@ -136,6 +137,24 @@ def test_backup_yaml_versions() -> None:
     for p in (tmp.name, b1, b2):
         os.unlink(p)
     print("PASS test_backup_yaml_versions")
+
+
+def test_backup_yaml_rotates_old_copies() -> None:
+    tmp = tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False)
+    tmp.write("a: 1\n")
+    tmp.close()
+    paths = []
+    for _ in range(MAX_BACKUPS + 3):
+        paths.append(backup_yaml(tmp.name))
+    total = MAX_BACKUPS + 3
+    assert paths[-1].endswith(f".bak.{total}"), paths[-1]
+    for old in paths[: total - MAX_BACKUPS]:
+        assert not os.path.exists(old), f"stale backup not removed: {old}"
+    for kept in paths[total - MAX_BACKUPS :]:
+        assert os.path.isfile(kept), f"recent backup missing: {kept}"
+    for p in [tmp.name] + [p for p in paths if os.path.exists(p)]:
+        os.unlink(p)
+    print("PASS test_backup_yaml_rotates_old_copies")
 
 
 def test_merge_reseed_preserves_state_and_adds_nodes() -> None:
@@ -536,6 +555,7 @@ if __name__ == "__main__":
     test_seed_topology_from_goad_config()
     test_seed_topology_aws_has_no_bastion()
     test_backup_yaml_versions()
+    test_backup_yaml_rotates_old_copies()
     test_merge_reseed_preserves_state_and_adds_nodes()
     test_env_setting_prefers_new_name_accepts_legacy()
     test_state_root_migrates_legacy_dir()

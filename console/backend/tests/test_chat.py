@@ -20,7 +20,17 @@ import types
 from contextlib import asynccontextmanager
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
-os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = tempfile.mkdtemp(prefix="dg-chat-")
+_SAVED_STATE_ROOT = os.environ.get("DREADGOAD_CONSOLE_STATE_ROOT")
+_OWN_STATE_ROOT = tempfile.mkdtemp(prefix="dg-chat-")
+os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = _OWN_STATE_ROOT
+
+
+def _restore_env() -> None:
+    if _SAVED_STATE_ROOT is not None:
+        os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = _SAVED_STATE_ROOT
+    else:
+        os.environ.pop("DREADGOAD_CONSOLE_STATE_ROOT", None)
+
 
 from console.backend import (  # noqa: E402
     agent,
@@ -33,6 +43,14 @@ from console.backend.db import Database  # noqa: E402
 from console.backend.sessions import SessionService  # noqa: E402
 from dreadnode.agent.tools import FunctionCall, ToolCall  # noqa: E402
 from rigging import Message  # noqa: E402
+
+def setup_module(_mod: object = None) -> None:
+    os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = _OWN_STATE_ROOT
+
+
+def teardown_module(_mod: object = None) -> None:
+    _restore_env()
+
 
 _REPO = pathlib.Path(__file__).resolve().parents[3]
 _YAML = (
@@ -1351,34 +1369,37 @@ async def test_cleanup_all_force_stops_and_awaits_stubborn_turn() -> None:
 
 
 async def _main() -> None:
-    await test_direct_dispatch_emits_and_persists()
-    await test_start_failure_finishes_turn_and_restores_status()
-    test_final_status_precedence()
-    await test_replay_matches_live_event_shape()
-    await test_resume_reports_in_flight_turn()
-    await test_turn_flag_cleared_when_turn_raises()
-    await test_reattach_targets_current_conn()
-    await test_agent_command_routes_to_agent()
-    await test_run_dreadgoad_tool_validates_and_runs()
-    await test_direct_command_rejects_extra_args()
-    test_instructions_renders_system_prompt()
-    await test_health_emits_report_and_suppresses_json()
-    await test_swap_model_preserves_thread_and_persists()
-    await test_thread_persisted_and_restored_on_agent_rebuild()
-    await test_swap_model_no_live_agent()
-    await test_dispatch_rejects_queued_turn_and_allows_concurrency()
-    await test_cancel_session_cancels_every_parallel_command()
-    await test_captured_helper_is_owned_and_cancelled_with_turn()
-    await test_cancelled_command_aborts_turn_before_agent_can_retry()
-    await test_cancelling_a_cloud_command_says_so_and_rereads_state()
-    await test_cancel_landing_during_the_end_emit_still_aborts()
-    await test_a_wedged_refresh_cannot_hold_the_cancel_open()
-    await test_cancelled_read_is_not_flagged_still_running()
-    await test_immediate_cancel_still_finishes_the_ui_turn()
-    await test_cleanup_all_force_stops_and_awaits_stubborn_turn()
-    await test_cleanup_session_evicts()
-    test_cleanup_reservation_is_exclusive()
-    print("ALL PASS")
+    try:
+        await test_direct_dispatch_emits_and_persists()
+        await test_start_failure_finishes_turn_and_restores_status()
+        test_final_status_precedence()
+        await test_replay_matches_live_event_shape()
+        await test_resume_reports_in_flight_turn()
+        await test_turn_flag_cleared_when_turn_raises()
+        await test_reattach_targets_current_conn()
+        await test_agent_command_routes_to_agent()
+        await test_run_dreadgoad_tool_validates_and_runs()
+        await test_direct_command_rejects_extra_args()
+        test_instructions_renders_system_prompt()
+        await test_health_emits_report_and_suppresses_json()
+        await test_swap_model_preserves_thread_and_persists()
+        await test_thread_persisted_and_restored_on_agent_rebuild()
+        await test_swap_model_no_live_agent()
+        await test_dispatch_rejects_queued_turn_and_allows_concurrency()
+        await test_cancel_session_cancels_every_parallel_command()
+        await test_captured_helper_is_owned_and_cancelled_with_turn()
+        await test_cancelled_command_aborts_turn_before_agent_can_retry()
+        await test_cancelling_a_cloud_command_says_so_and_rereads_state()
+        await test_cancel_landing_during_the_end_emit_still_aborts()
+        await test_a_wedged_refresh_cannot_hold_the_cancel_open()
+        await test_cancelled_read_is_not_flagged_still_running()
+        await test_immediate_cancel_still_finishes_the_ui_turn()
+        await test_cleanup_all_force_stops_and_awaits_stubborn_turn()
+        await test_cleanup_session_evicts()
+        test_cleanup_reservation_is_exclusive()
+        print("ALL PASS")
+    finally:
+        _restore_env()
 
 
 if __name__ == "__main__":

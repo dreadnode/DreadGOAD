@@ -488,6 +488,7 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
   const activeCmdRef = useRef<HTMLDivElement>(null)
   const pinnedRef = useRef(true)
   const autoScrollingRef = useRef(false)
+  const autoScrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [showJump, setShowJump] = useState(false)
 
   const sessionTokens = useMemo(() => {
@@ -525,7 +526,8 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
     if (pinnedRef.current) {
       autoScrollingRef.current = true
       endRef.current?.scrollIntoView({ behavior: 'smooth' })
-      setTimeout(() => { autoScrollingRef.current = false }, 600)
+      if (autoScrollTimer.current) clearTimeout(autoScrollTimer.current)
+      autoScrollTimer.current = setTimeout(() => { autoScrollingRef.current = false }, 600)
     } else {
       setShowJump(true)
     }
@@ -850,10 +852,10 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
             still lands below it and the scroll position stays truthful. */}
         {messages.length === 0 && <HelpPanel commands={commands} />}
         {messages.slice(0, helpAfter ?? messages.length)
-          .map((ev, i) => <Message key={ev._cid ?? i} ev={ev} />)}
+          .map((ev, i) => <Message key={ev.seq != null ? `s${ev.seq}` : (ev._cid ?? i)} ev={ev} />)}
         {helpAfter !== null && messages.length > 0 && <HelpPanel commands={commands} />}
         {helpAfter !== null && messages.slice(helpAfter)
-          .map((ev, i) => <Message key={ev._cid ?? `h${i}`} ev={ev} />)}
+          .map((ev, i) => <Message key={ev.seq != null ? `s${ev.seq}` : (ev._cid ?? `h${i}`)} ev={ev} />)}
         {processing && (
           <div style={{ display: 'flex', gap: 16, alignItems: 'baseline', marginTop: 4 }}>
             {/* Colour and opacity live in the stylesheet, not here: the shimmer
@@ -887,7 +889,8 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
             autoScrollingRef.current = true
             setShowJump(false)
             endRef.current?.scrollIntoView({ behavior: 'smooth' })
-            setTimeout(() => { autoScrollingRef.current = false }, 600)
+            if (autoScrollTimer.current) clearTimeout(autoScrollTimer.current)
+            autoScrollTimer.current = setTimeout(() => { autoScrollingRef.current = false }, 600)
           }}
           style={{
             position: 'absolute', bottom: 72, left: '50%', transform: 'translateX(-50%)',

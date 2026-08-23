@@ -476,14 +476,27 @@ def create_config(
     return config_path
 
 
+MAX_BACKUPS = 5
+
+
 def backup_yaml(config_path: str) -> str:
     """Write a versioned backup copy of a yaml before mutating it (§4.3).
 
     Returns the backup path (``<config>.bak.N`` with the next free N).
+    Keeps at most :data:`MAX_BACKUPS` copies; older ones are removed.
     """
-    n = 1
-    while os.path.exists(f"{config_path}.bak.{n}"):
-        n += 1
+    parent = os.path.dirname(config_path) or "."
+    prefix = os.path.basename(config_path) + ".bak."
+    max_n = 0
+    for entry in os.listdir(parent):
+        if entry.startswith(prefix) and entry[len(prefix) :].isdigit():
+            max_n = max(max_n, int(entry[len(prefix) :]))
+    n = max_n + 1
     backup = f"{config_path}.bak.{n}"
     shutil.copy2(config_path, backup)
+    for old in range(1, n + 1 - MAX_BACKUPS):
+        try:
+            os.remove(f"{config_path}.bak.{old}")
+        except FileNotFoundError:
+            pass
     return backup

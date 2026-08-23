@@ -8,6 +8,7 @@ Runnable two ways:
 from __future__ import annotations
 
 import asyncio
+import os
 import pathlib
 import sys
 import tempfile
@@ -26,7 +27,7 @@ async def _fresh_db() -> tuple[Database, str]:
 
 
 async def test_session_and_range_crud() -> None:
-    db, _ = await _fresh_db()
+    db, db_path = await _fresh_db()
     try:
         s = {"id": "s-1", "label": "test", "status": "new"}
         await db.upsert_session(s)
@@ -66,10 +67,11 @@ async def test_session_and_range_crud() -> None:
         print("PASS test_session_and_range_crud")
     finally:
         await db.close()
+        os.unlink(db_path)
 
 
 async def test_event_seq_and_replay() -> None:
-    db, _ = await _fresh_db()
+    db, db_path = await _fresh_db()
     try:
         await db.upsert_session({"id": "s-1"})
         await db.upsert_session({"id": "s-2"})
@@ -108,10 +110,11 @@ async def test_event_seq_and_replay() -> None:
         print("PASS test_event_seq_and_replay")
     finally:
         await db.close()
+        os.unlink(db_path)
 
 
 async def test_meta_round_trip() -> None:
-    db, _ = await _fresh_db()
+    db, db_path = await _fresh_db()
     try:
         assert await db.get_meta("schema_version") is None, (
             "missing meta should be None"
@@ -126,11 +129,12 @@ async def test_meta_round_trip() -> None:
         print("PASS test_meta_round_trip")
     finally:
         await db.close()
+        os.unlink(db_path)
 
 
 async def test_concurrent_writes_no_loss() -> None:
     """N interleaved async writes must all persist with unique, gapless seqs."""
-    db, _ = await _fresh_db()
+    db, db_path = await _fresh_db()
     try:
         await db.upsert_session({"id": "s-1"})
         n = 100
@@ -154,11 +158,12 @@ async def test_concurrent_writes_no_loss() -> None:
         print("PASS test_concurrent_writes_no_loss")
     finally:
         await db.close()
+        os.unlink(db_path)
 
 
 async def test_layout_revision_protects_against_stale_range_writes() -> None:
     """A stale health/topology snapshot cannot restore an older layout."""
-    db, _ = await _fresh_db()
+    db, db_path = await _fresh_db()
     try:
         original = {
             "session_id": "s-layout",
@@ -203,10 +208,11 @@ async def test_layout_revision_protects_against_stale_range_writes() -> None:
         print("PASS test_layout_revision_protects_against_stale_range_writes")
     finally:
         await db.close()
+        os.unlink(db_path)
 
 
 async def test_delete_session_cascades_thread_meta() -> None:
-    db, _ = await _fresh_db()
+    db, db_path = await _fresh_db()
     try:
         await db.upsert_session({"id": "s-1"})
         await db.set_meta("thread:s-1", [{"role": "user", "content": "hi"}])
@@ -220,6 +226,37 @@ async def test_delete_session_cascades_thread_meta() -> None:
         print("PASS test_delete_session_cascades_thread_meta")
     finally:
         await db.close()
+        os.unlink(db_path)
+
+
+async def test_prune_events() -> None:
+    db, db_path = await _fresh_db()
+    try:
+        await db.upsert_session({"id": "s-1"})
+        for i in range(50):
+            await db.append_event("s-1", "generation", {"i": i})
+
+        deleted = await db.prune_events("s-1", keep=20)
+        assert deleted == 30, f"expected 30 deleted, got {deleted}"
+        remaining = await db.get_events("s-1")
+        assert len(remaining) == 20, f"expected 20 remaining, got {len(remaining)}"
+        seqs = [e["seq"] for e in remaining]
+        assert seqs == list(range(31, 51)), f"kept wrong window: {seqs}"
+
+        deleted = await db.prune_events("s-1", keep=20)
+        assert deleted == 0, f"no-op prune should delete 0, got {deleted}"
+
+        deleted = await db.prune_events("s-1", keep=5)
+        assert deleted == 15, f"expected 15 deleted, got {deleted}"
+        remaining = await db.get_events("s-1")
+        assert len(remaining) == 5
+        seqs = [e["seq"] for e in remaining]
+        assert seqs == list(range(46, 51)), f"kept wrong window: {seqs}"
+
+        print("PASS test_prune_events")
+    finally:
+        await db.close()
+        os.unlink(db_path)
 
 
 async def _main() -> None:
@@ -229,6 +266,7 @@ async def _main() -> None:
     await test_concurrent_writes_no_loss()
     await test_layout_revision_protects_against_stale_range_writes()
     await test_delete_session_cascades_thread_meta()
+    await test_prune_events()
     print("ALL PASS")
 
 

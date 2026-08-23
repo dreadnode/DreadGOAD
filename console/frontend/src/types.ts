@@ -48,18 +48,12 @@ export interface RangeHost {
   last_checked_at?: string | null
 }
 
-export interface RangeEdge {
-  from: string
-  to: string
-  type: string
-}
-
 export type RangeLayout = Record<string, { x: number; y: number }>
 
 export interface RangeDoc {
   session_id: string
   hosts: RangeHost[]
-  edges: RangeEdge[]
+  edges: unknown[]
   layout: RangeLayout
   layout_revision?: number
   last_checked_at?: string | null
@@ -117,7 +111,8 @@ export interface ExecResult {
 
 // Chat event as sent over the WebSocket (kind + kind-specific fields).
 export interface ChatEvent {
-  _cid?: number // client-assigned stable key (App-side)
+  _cid?: number // client-assigned key for live events (App-side)
+  seq?: number  // server-assigned key for persisted events (DB-side)
   session_id?: string
   kind: string
   content?: string

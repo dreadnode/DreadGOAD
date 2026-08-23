@@ -15,11 +15,26 @@ from collections.abc import Iterator
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
-_TMP = tempfile.mkdtemp(prefix="dg-rest-")
-# Isolate DB + session dirs before importing the app.
 import os  # noqa: E402
 
+_SAVED_STATE_ROOT = os.environ.get("DREADGOAD_CONSOLE_STATE_ROOT")
+_TMP = tempfile.mkdtemp(prefix="dg-rest-")
 os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = _TMP
+
+
+def _restore_env() -> None:
+    if _SAVED_STATE_ROOT is not None:
+        os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = _SAVED_STATE_ROOT
+    else:
+        os.environ.pop("DREADGOAD_CONSOLE_STATE_ROOT", None)
+
+
+def setup_module(_mod: object = None) -> None:
+    os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = _TMP
+
+
+def teardown_module(_mod: object = None) -> None:
+    _restore_env()
 
 try:
     import pytest  # noqa: E402
@@ -367,6 +382,7 @@ def main() -> None:
         test_ws_cancel_reaches_runtime(client)
 
     asyncio.run(test_reconcile_interrupted())
+    _restore_env()
     print("ALL PASS")
 
 

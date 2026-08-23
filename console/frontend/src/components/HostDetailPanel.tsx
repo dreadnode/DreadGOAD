@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { HostDetail } from '../api'
+import { shortResourceId } from '../format'
 import Modal from './Modal'
 
 // Read-only: everything here describes what Azure already has. Nothing in this
@@ -67,7 +68,7 @@ function BastionDetail({ detail }: { detail: HostDetail }) {
       {detail.resource_group && <Row label="Resource grp" value={detail.resource_group} />}
       {detail.ip_public && <Row label="Public IP" value={detail.ip_public} />}
       {detail.cloud_id && (
-        <Row label="Resource ID" value={shortName(detail.cloud_id)} full={detail.cloud_id} />
+        <Row label="Resource ID" value={shortResourceId(detail.cloud_id)} full={detail.cloud_id} />
       )}
       {detail.last_checked_at && (
         <Row label="Last sync" value={new Date(detail.last_checked_at).toLocaleString()} />
@@ -192,10 +193,10 @@ export default function HostDetailPanel(
                     <Row label="Private IP" value={n.private_ips.join(', ')} />
                   )}
                   {n.mac_address && <Row label="MAC" value={n.mac_address} />}
-                  {n.subnet_id && <Row label="Subnet" value={shortName(n.subnet_id)} full={n.subnet_id} />}
-                  {n.nsg_id && <Row label="NSG" value={shortName(n.nsg_id)} full={n.nsg_id} />}
+                  {n.subnet_id && <Row label="Subnet" value={shortResourceId(n.subnet_id)} full={n.subnet_id} />}
+                  {n.nsg_id && <Row label="NSG" value={shortResourceId(n.nsg_id)} full={n.nsg_id} />}
                   {n.accelerated_networking && <Row label="Accel net" value="enabled" />}
-                  {n.public_ip_id && <Row label="Public IP" value={shortName(n.public_ip_id)} full={n.public_ip_id} />}
+                  {n.public_ip_id && <Row label="Public IP" value={shortResourceId(n.public_ip_id)} full={n.public_ip_id} />}
                 </Card>
               ))}
             </Section>
@@ -222,9 +223,3 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   )
 }
 
-// Resource IDs are ~200 characters of subscription and provider path. The last
-// segment is the part an operator reads; the full ID is in the tooltip.
-function shortName(id: string): string {
-  const parts = id.split('/')
-  return parts[parts.length - 1] || id
-}

@@ -13,6 +13,7 @@ export function useWebSocket(
   const onMessageRef = useRef(onMessage)
   const onOpenRef = useRef(onOpen)
   const unmountedRef = useRef(false)
+  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   onMessageRef.current = onMessage
   onOpenRef.current = onOpen
@@ -41,7 +42,7 @@ export function useWebSocket(
       if (unmountedRef.current) return
       setStatus('disconnected')
       wsRef.current = null
-      setTimeout(connect, 2000)
+      reconnectTimer.current = setTimeout(connect, 2000)
     }
     ws.onerror = () => ws.close()
     wsRef.current = ws
@@ -52,6 +53,7 @@ export function useWebSocket(
     connect()
     return () => {
       unmountedRef.current = true
+      if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
       wsRef.current?.close()
       wsRef.current = null
     }

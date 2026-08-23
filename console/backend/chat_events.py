@@ -103,9 +103,14 @@ def flatten_stored_event(event: dict[str, t.Any]) -> dict[str, t.Any]:
     }
 
 
+MAX_REPLAY = 500
+
+
 async def replay(app: t.Any, session_id: str) -> None:
     """Send persisted chat history and current turn state on reconnect."""
+    await app.state.db.prune_events(session_id)
     events = await app.state.db.get_events(session_id, kinds=CHAT_KINDS)
+    events = events[-MAX_REPLAY:]
     current = chat_runtime.runtimes.get(session_id)
     if current is None or current.conn is None:
         return

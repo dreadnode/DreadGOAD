@@ -1,6 +1,7 @@
 import {
   createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState,
 } from 'react'
+import { shortResourceId } from '../format'
 import {
   ReactFlow,
   Background,
@@ -488,10 +489,10 @@ function AccordionDetail(
             <ResourceCard key={n.id} title={n.name} tag={n.primary ? 'primary' : undefined}>
               {(n.private_ips?.length ?? 0) > 0 && <DetailRow label="Private IP" value={n.private_ips.join(', ')} />}
               {n.mac_address && <DetailRow label="MAC" value={n.mac_address} />}
-              {n.subnet_id && <DetailRow label="Subnet" value={shortId(n.subnet_id)} />}
-              {n.nsg_id && <DetailRow label="NSG" value={shortId(n.nsg_id)} />}
+              {n.subnet_id && <DetailRow label="Subnet" value={shortResourceId(n.subnet_id)} />}
+              {n.nsg_id && <DetailRow label="NSG" value={shortResourceId(n.nsg_id)} />}
               {n.accelerated_networking && <DetailRow label="Accel net" value="enabled" />}
-              {n.public_ip_id && <DetailRow label="Public IP" value={shortId(n.public_ip_id)} />}
+              {n.public_ip_id && <DetailRow label="Public IP" value={shortResourceId(n.public_ip_id)} />}
             </ResourceCard>
           ))}
         </ResourceSection>
@@ -569,10 +570,6 @@ function ResourceCard({ title, tag, children }: {
   )
 }
 
-function shortId(id: string): string {
-  const parts = id.split('/')
-  return parts[parts.length - 1] || id
-}
 
 const cellStyle: React.CSSProperties = {
   padding: '7px 10px', whiteSpace: 'nowrap', color: 'var(--dn-text)',
