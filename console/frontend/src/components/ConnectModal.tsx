@@ -2,106 +2,10 @@
 // ssh command that goes through it, each with a copy button. The console runs
 // neither — the operator pastes them into their own terminal, which is why this
 // adds no execution surface to the server.
-import { useEffect, useState } from 'react'
 import type { RangeHost, Session } from '../types'
 import { BASTION_LOCAL_PORT, buildConnectPlan } from '../connect'
 import Modal from './Modal'
-
-/** One read-only command with a copy button. */
-function CommandField(
-  { step, label, value, hint }:
-    { step: number; label: string; value: string; hint: string },
-) {
-  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle')
-
-  // Revert the button after a beat so a second copy still reads as an action.
-  useEffect(() => {
-    if (state === 'idle') return
-    const id = setTimeout(() => setState('idle'), 1600)
-    return () => clearTimeout(id)
-  }, [state])
-
-  const copy = () => {
-    // localhost is a secure context, so the async clipboard API is available —
-    // but it still rejects if the document is not focused or permission is
-    // denied, and a copy button that silently does nothing is worse than one
-    // that admits it. The text stays selectable either way.
-    navigator.clipboard?.writeText(value)
-      .then(() => setState('copied'))
-      .catch(() => setState('failed'))
-  }
-
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <div style={{
-        display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6,
-      }}>
-        {/* The step number carries the ordering, so it stays coloured while the
-            label itself goes bright — bold alone on a mid-blue reads as emphasis
-            at 11px but not as a heading. */}
-        <span style={{ color: 'var(--dn-electric)', fontSize: 12, fontWeight: 700 }}>
-          {step}.
-        </span>
-        <span style={{
-          color: 'var(--dn-text-bright)', fontSize: 12, fontWeight: 700,
-          letterSpacing: 0.2,
-        }}>{label}</span>
-        {/* --dg-node-label, not --dn-text-dim: the dim token measures 1.8:1 on
-            this surface (see index.css) and this hint was unreadable. */}
-        <span style={{ color: 'var(--dg-node-label)', fontSize: 10 }}>{hint}</span>
-      </div>
-      <div className="dg-cmd" style={{
-        display: 'flex', alignItems: 'stretch',
-        border: '1px solid var(--dn-border-lt)', borderRadius: 4,
-        // A shade below the modal so the block reads as a terminal inset rather
-        // than another panel sitting on top of it.
-        background: 'var(--dn-black)',
-        overflow: 'hidden',
-      }}>
-        {/* A textarea, not a div: it is selectable and scrollable with the
-            keyboard, so the command is still reachable when the clipboard API
-            refuses. readOnly rather than disabled keeps it focusable. */}
-        <textarea
-          readOnly
-          value={value}
-          spellCheck={false}
-          // Sized to the content: the tunnel command is ~5 wrapped lines and the
-          // ssh one is 2, and a fixed height clipped the longer one mid-word
-          // behind a scrollbar — which hides exactly the part (the resource id)
-          // an operator would want to eyeball before pasting. ~58 characters per
-          // line at this width; capped so a pathological value can't push the
-          // buttons off screen.
-          rows={Math.min(7, Math.max(2, Math.ceil(value.length / 58)))}
-          onFocus={e => e.currentTarget.select()}
-          style={{
-            flex: 1, minWidth: 0, resize: 'none', border: 'none', outline: 'none',
-            background: 'transparent', color: 'var(--dn-text)',
-            fontFamily: 'var(--font-mono)', fontSize: 11.5, lineHeight: 1.65,
-            padding: '10px 0 10px 12px',
-          }}
-        />
-        <button
-          className="dg-copy"
-          onClick={copy}
-          title="Copy to clipboard"
-          aria-label={`Copy: ${label}`}
-          style={{
-            flexShrink: 0, width: 44, border: 'none', cursor: 'pointer',
-            borderLeft: '1px solid var(--dn-border-lt)', background: 'transparent',
-            color: state === 'copied' ? 'var(--dn-success)'
-              : state === 'failed' ? 'var(--dn-error)' : 'var(--dg-node-label)',
-            fontFamily: 'var(--font-mono)', fontSize: 14,
-          }}
-        >{state === 'copied' ? '✓' : state === 'failed' ? '✕' : '⧉'}</button>
-      </div>
-      {state === 'failed' && (
-        <div style={{ color: 'var(--dn-error)', fontSize: 10, marginTop: 4 }}>
-          clipboard blocked — select the text and copy manually
-        </div>
-      )}
-    </div>
-  )
-}
+import CopyableCommand from './CopyableCommand'
 
 export default function ConnectModal(
   { session, host, onClose }:
@@ -136,13 +40,13 @@ export default function ConnectModal(
 
         {plan.kind === 'azure-bastion' && (
           <>
-            <CommandField
+            <CopyableCommand
               step={1}
               label="Open the Bastion tunnel"
               value={plan.tunnel}
               hint="keeps running — leave this terminal open"
             />
-            <CommandField
+            <CopyableCommand
               step={2}
               label="SSH through the tunnel"
               value={plan.ssh}
@@ -166,7 +70,7 @@ export default function ConnectModal(
 
         {plan.kind === 'aws-ssm' && (
           <>
-            <CommandField
+            <CopyableCommand
               step={1}
               label="Open an SSM session"
               value={plan.session}

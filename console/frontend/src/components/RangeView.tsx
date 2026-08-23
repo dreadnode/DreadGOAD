@@ -16,6 +16,7 @@ import type { RangeDoc, RangeHost, RangeLayout, Session } from '../types'
 import { buildConnectPlan, type ConnectPlan } from '../connect'
 import { LatestLayoutSaver } from '../layoutSaveQueue'
 import ConnectModal from './ConnectModal'
+import CopyableCommand from './CopyableCommand'
 import HostDetailPanel from './HostDetailPanel'
 import Tooltip from './Tooltip'
 
@@ -504,71 +505,19 @@ function ConnectCommands({ plan }: { plan: ConnectPlan }) {
   if (plan.kind === 'azure-bastion') {
     return (
       <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <CopyableCommand label="Bastion Tunnel" value={plan.tunnel} />
-        <CopyableCommand label="SSH" value={plan.ssh} />
+        <CopyableCommand compact label="Bastion Tunnel" value={plan.tunnel} />
+        <CopyableCommand compact label="SSH" value={plan.ssh} />
       </div>
     )
   }
   if (plan.kind === 'aws-ssm') {
     return (
       <div style={{ marginTop: 8 }}>
-        <CopyableCommand label="SSM Session" value={plan.session} />
+        <CopyableCommand compact label="SSM Session" value={plan.session} />
       </div>
     )
   }
   return null
-}
-
-function CopyableCommand({ label, value }: { label: string; value: string }) {
-  const [copied, setCopied] = useState(false)
-  const timerRef = useRef<ReturnType<typeof setTimeout>>()
-  useEffect(() => () => clearTimeout(timerRef.current), [])
-  const copy = () => {
-    navigator.clipboard?.writeText(value)
-      .then(() => {
-        setCopied(true)
-        clearTimeout(timerRef.current)
-        timerRef.current = setTimeout(() => setCopied(false), 1600)
-      })
-      .catch(() => {})
-  }
-  return (
-    <div>
-      <span style={{
-        fontSize: 10, letterSpacing: '0.05em', textTransform: 'uppercase',
-        color: 'var(--dn-electric)', fontWeight: 700,
-      }}>{label}</span>
-      <div style={{
-        display: 'flex', alignItems: 'stretch', marginTop: 3,
-        border: '1px solid var(--dn-border-lt)', borderRadius: 3,
-        background: 'var(--dn-black)', overflow: 'hidden',
-      }}>
-        <textarea
-          readOnly
-          value={value}
-          spellCheck={false}
-          rows={Math.min(7, Math.max(2, Math.ceil(value.length / 58)))}
-          onFocus={e => e.currentTarget.select()}
-          style={{
-            flex: 1, minWidth: 0, resize: 'none', border: 'none', outline: 'none',
-            background: 'transparent', color: 'var(--dn-text)',
-            fontFamily: 'var(--font-mono)', fontSize: 11, lineHeight: 1.65,
-            padding: '6px 8px',
-          }}
-        />
-        <button
-          onClick={e => { e.stopPropagation(); copy() }}
-          title="Copy to clipboard"
-          style={{
-            flexShrink: 0, width: 32, border: 'none', cursor: 'pointer',
-            borderLeft: '1px solid var(--dn-border-lt)', background: 'transparent',
-            color: copied ? 'var(--dn-success)' : 'var(--dg-node-label)',
-            fontFamily: 'var(--font-mono)', fontSize: 13,
-          }}
-        >{copied ? '✓' : '⧉'}</button>
-      </div>
-    </div>
-  )
 }
 
 function DetailRow({ label, value }: { label: string; value: string }) {
