@@ -157,6 +157,14 @@ REGISTRY: dict[str, Command] = {
         description="Check each host is reachable and Active Directory is serving",
         detail="read-only; reports per host, so a failure is scoped to one machine",
     ),
+    "/status": Command(
+        "/status",
+        (),
+        dispatch="agent",
+        long_running=True,
+        description="Cloud power state + host-level health in one pass",
+        detail="read-only; runs /instances then /health and summarizes",
+    ),
     "/validate": Command(
         "/validate",
         ("validate",),
@@ -228,8 +236,9 @@ def command_catalog() -> list[dict[str, t.Any]]:
             "description": c.description,
             "detail": c.detail,
             # The CLI verb it maps to — an operator who knows `dreadgoad` can
-            # tell at a glance what will actually run.
-            "cli": "dreadgoad " + " ".join(c.verb),
+            # tell at a glance what will actually run. Empty for composite
+            # commands that run multiple verbs via the agent.
+            "cli": ("dreadgoad " + " ".join(c.verb)).strip() if c.verb else "",
             "dispatch": c.dispatch,
             "long_running": c.long_running,
             "takes_args": c.takes_args,

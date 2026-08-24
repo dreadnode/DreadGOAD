@@ -358,8 +358,8 @@ function Message({ ev }: { ev: ChatEvent }) {
   }
 }
 
-// Client-side only: /help maps to no CLI verb, so it lives here rather than in
-// the server registry (which the agent may run — it must not "run" the guide).
+// Client-side only: /help and /copy map to no CLI verb, so they live here
+// rather than in the server registry (which the agent may run).
 const HELP_COMMAND: CommandDef = {
   name: '/help',
   description: 'How a range run works, start to finish',
@@ -368,6 +368,16 @@ const HELP_COMMAND: CommandDef = {
   dispatch: 'direct',
   long_running: false,
   takes_args: false,
+}
+
+const COPY_COMMAND: CommandDef = {
+  name: '/copy',
+  description: 'Copy last N agent messages (default 1, "all" for entire chat)',
+  detail: 'copies to clipboard; nothing is sent to the backend',
+  cli: '',
+  dispatch: 'direct',
+  long_running: false,
+  takes_args: true,
 }
 
 // Keyed off the line's declared kind, not its text. Detail paragraphs
@@ -598,14 +608,14 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
   useEffect(() => {
     api.commands()
       .then(r => setCommands(
-        [...r.commands, HELP_COMMAND].sort((a, b) => a.name.localeCompare(b.name)),
+        [...r.commands, HELP_COMMAND, COPY_COMMAND].sort((a, b) => a.name.localeCompare(b.name)),
       ))
       .catch(() => {
         // Falling back to help-only leaves every command unclassifiable, which
         // matters because the destructive-command confirm below is keyed on
         // catalog data. Recorded so that gate can fail closed rather than
         // silently waving /destroy through.
-        setCommands([HELP_COMMAND])
+        setCommands([HELP_COMMAND, COPY_COMMAND])
         setCatalogOk(false)
       })
   }, [])
@@ -680,6 +690,30 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
       setHistIndex(null)
       return
     }
+    // /copy is client-side: grab the last N generation events (or all) and
+    // write them to the clipboard. Like /help it works without a live session.
+    if (t.startsWith('/copy')) {
+      const countArg = t.slice(5).trim()
+      const all = messages.filter(m => m.kind === 'generation' && m.content)
+      const copyAll = countArg.toLowerCase() === 'all'
+      const parsed = countArg && !copyAll ? parseInt(countArg, 10) : 1
+      const count = isNaN(parsed) || parsed <= 0 ? 1 : parsed
+      const selected = copyAll ? all : all.slice(-count)
+      if (selected.length > 0) {
+        const text = selected.map(m => m.content).join('\n\n')
+        navigator.clipboard.writeText(text).catch(() => {})
+      }
+      setClientOnly(prev => (
+        prev[prev.length - 1]?.text === t && prev[prev.length - 1]?.after === messages.length
+          ? prev
+          : [...prev, { text: t, after: messages.length }]
+      ))
+      setInput('')
+      setCmdHighlight(0)
+      setHistIndex(null)
+      return
+    }
+
     if (!sessionId || status !== 'connected' || processing) return
 
     // A destructive command dispatched `direct` runs the instant it is sent:

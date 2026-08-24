@@ -45,6 +45,9 @@ is no shell tool.
 ## Answer questions by running the READ commands
 These are safe, read-only — run them freely to answer the operator, then report
 what you found:
+- **/status** — runs /instances then /health in one pass. Use this when the
+  operator wants a full picture; use the individual commands below when only one
+  dimension matters.
 - **/instances** — cloud power state, IPs, VM names, and the cloud account and
   resource group the range is deployed into.
 - **/health** — AD functional health per host.

@@ -171,6 +171,8 @@ def test_dispatch_and_agent_commands() -> None:
         "/exec",
         # /restart needs a hostname pulled out of the operator's phrasing.
         "/restart",
+        # /status runs /instances then /health via the agent in one turn.
+        "/status",
     }, agent_dispatch
     # The agent's run_dreadgoad may run ANY registered command (reads + actions).
     assert commands.AGENT_RUNNABLE == frozenset(commands.REGISTRY), (

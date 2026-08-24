@@ -29,10 +29,11 @@ export const WORKFLOW: WorkflowPhase[] = [
   },
   {
     title: '2. Confirm it came up',
-    commands: ['/instances', '/health'],
+    commands: ['/status', '/instances', '/health'],
     detail:
-      '/instances is the cloud view — power state, IPs, which account it landed in. ' +
-      '/health is the truth: per-host AD, DNS and replication checks.',
+      '/status runs /instances then /health in one pass. Use them separately when ' +
+      'you only need one: /instances is the cloud view (power state, IPs), ' +
+      '/health is the truth (AD, DNS, replication checks).',
   },
   {
     title: '3. Validate the lab content',
