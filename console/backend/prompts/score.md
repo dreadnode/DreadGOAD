@@ -11,8 +11,12 @@ Useful flags:
 - `--output <path>`       write the JSON result to a file instead of stdout
 
 Guidance:
-- Always pass the report path as args[0]. Example: score `/root/report.jsonl`
-  with live verification → args = `["/root/report.jsonl", "--live-verify"]`.
+- Always pass the report path as args[0].
+- **Always include `--live-verify` unless the operator explicitly says not to.**
+  Static scoring alone misses credentials the agent changed during exploitation
+  (password resets, shadow credentials). Live verification is the only way to
+  confirm those, and it is what the operator expects when they ask to score a run.
+  Example: score `/root/report.jsonl` → args = `["/root/report.jsonl", "--live-verify"]`.
 - If the operator doesn't give a report path, ask for one — do not guess.
 - Do NOT pass `--attack-box`/`--region`/`--ssh-key`; the range's cloud context is
   resolved for you.
