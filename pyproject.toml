@@ -8,19 +8,27 @@ readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.8"
-rich = "^15.0.0"
+# Preserve Python 3.8 support after Rich 15 dropped it.
+rich = [{ version = "^14.3.4", python = "==3.8" },
+        { version = "^15.0.0", python = ">=3.9" }]
 psutil = "^7.0.0"
 Jinja2 = "^3.1.4"
 PyYAML = "^6.0.2"
-setuptools = {version = "^82.0.0", python = ">=3.9"}
+# Setuptools 83+ requires Python 3.10 or newer.
+setuptools = [{ version = "==75.3.4", python = "==3.8" },
+              { version = "^82.0.0", python = "==3.9" },
+              { version = "^84.0.0", python = ">=3.10" }]
 ansible-runner = [{ version = "==2.3.6", python = "==3.8" },
                   { version = "^2.4.0", python = ">=3.9" }]
 ansible-core = [{ version = "==2.12.6", python = "<3.11" },
                 { version = "==2.18.0", python = ">=3.11" }]
 pywinrm = "^0.5.0"
 azure-identity = "^1.19.0"
-azure-mgmt-compute = "^38.0.0"
-azure-mgmt-network = "^30.0.0"
+# Current Azure management SDKs require Python 3.9 or newer.
+azure-mgmt-compute = [{ version = "==33.1.0", python = "==3.8" },
+                      { version = "^38.0.0", python = ">=3.9" }]
+azure-mgmt-network = [{ version = "==28.1.0", python = "==3.8" },
+                      { version = "^30.0.0", python = ">=3.9" }]
 boto3 = "^1.35.70"
 proxmoxer = "^2.1.0"
 requests = "^2.32.3"

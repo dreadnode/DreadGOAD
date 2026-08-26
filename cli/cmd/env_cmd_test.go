@@ -136,3 +136,32 @@ func TestDeriveAzureSubnets(t *testing.T) {
 		})
 	}
 }
+
+func TestCreateAzureEnvHCLSetsGOADInstanceSizes(t *testing.T) {
+	envDir := t.TempDir()
+	if err := createAzureEnvHCL(envDir, "memory-test", "10.8.0.0/16"); err != nil {
+		t.Fatalf("createAzureEnvHCL() error = %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(envDir, "env.hcl"))
+	if err != nil {
+		t.Fatalf("read env.hcl: %v", err)
+	}
+
+	for _, want := range []string{
+		`goad_instance_sizes = {`,
+		`dc01  = "Standard_D2s_v3"`,
+		`dc02  = "Standard_D4s_v3"`,
+		`dc03  = "Standard_D2s_v3"`,
+		`srv02 = "Standard_D2s_v3"`,
+		`srv03 = "Standard_D2s_v3"`,
+	} {
+		if !strings.Contains(string(content), want) {
+			t.Errorf("env.hcl missing %q", want)
+		}
+	}
+
+	if got := strings.Count(string(content), `"Standard_D4s_v3"`); got != 1 {
+		t.Errorf("D4s_v3 count = %d, want 1", got)
+	}
+}

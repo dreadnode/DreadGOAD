@@ -18,6 +18,10 @@ locals {
 
   hostname = include.host.locals.computer_name
   goad_id  = include.host.locals.goad_id
+  instance_size = try(
+    local.env_vars.locals.goad_instance_sizes[local.goad_id],
+    "Standard_D2s_v3",
+  )
 
   lab_config     = jsondecode(file("${get_repo_root()}/ad/GOAD/data/${local.env}-config.json"))
   admin_password = local.lab_config.lab.hosts[local.goad_id].local_admin_password
@@ -45,7 +49,7 @@ inputs = {
   env           = local.env
   instance_name = "${local.deployment_name}-${local.hostname}"
   computer_name = local.hostname
-  instance_size = "Standard_D2s_v3"
+  instance_size = local.instance_size
   source_image = {
     publisher = "MicrosoftWindowsServer"
     offer     = "WindowsServer"

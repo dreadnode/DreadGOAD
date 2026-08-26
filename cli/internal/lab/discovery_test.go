@@ -97,6 +97,7 @@ func TestDiscoverLabs_Providers(t *testing.T) {
 	}
 	if goad == nil {
 		t.Fatal("GOAD lab not found")
+		return
 	}
 	if len(goad.Providers) != 2 {
 		t.Errorf("expected 2 providers, got %d: %v", len(goad.Providers), goad.Providers)
@@ -118,6 +119,7 @@ func TestDiscoverLabs_Hosts(t *testing.T) {
 	}
 	if goad == nil {
 		t.Fatal("GOAD lab not found")
+		return
 	}
 	if len(goad.Hosts) != 2 {
 		t.Errorf("expected 2 hosts, got %d: %v", len(goad.Hosts), goad.Hosts)
