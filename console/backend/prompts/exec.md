@@ -55,4 +55,5 @@ file, or password fields into chat. If a task seems to need a credential, ask.
 ## When exec itself fails
 A timeout with no result usually means the guest agent is down too, not just WinRM.
 That is a genuine dead end for this channel — tell the operator the host likely needs
-a reboot (`/stop` then `/start`) rather than retrying.
+a targeted reboot (`/restart <host>`) rather than retrying. Do not cycle the whole
+range with `/stop` then `/start` for one unresponsive host.

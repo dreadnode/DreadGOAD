@@ -103,7 +103,7 @@ resource "azurerm_virtual_machine_extension" "bootstrap" {
   # UTF-8 BOM is required because Windows PowerShell 5.1 otherwise reads script
   # files using the legacy system code page and corrupts non-ASCII content.
   protected_settings = jsonencode({
-    commandToExecute = "powershell.exe -ExecutionPolicy Unrestricted -Command \"[IO.File]::WriteAllBytes('C:\\dg-bootstrap.ps1',[Convert]::FromBase64String('${base64encode(local.bootstrap_script_with_bom)}'));& 'C:\\dg-bootstrap.ps1'\""
+    commandToExecute = "powershell.exe -ExecutionPolicy Unrestricted -Command \"$path='C:\\dg-bootstrap.ps1';try{[IO.File]::WriteAllBytes($path,[Convert]::FromBase64String('${base64encode(local.bootstrap_script_with_bom)}'));& $path}finally{Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue}\""
   })
 
   tags = local.common_tags

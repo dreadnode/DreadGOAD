@@ -15,8 +15,10 @@ Flags (all optional — default is a clean full run, no args needed):
 Guidance:
 - A plain `/up` with NO args does the full clean bring-up — that's the common case.
 - "resume from provisioning" / "pick up where it failed" → `--from provision`.
-  "just redo infra" → `--from infra`. Map the operator's step name to the four
-  valid values above; if theirs doesn't match, ask.
+  "resume from infra" → `--from infra`, which continues through provisioning and
+  health-check. For "just redo infra", run `dreadgoad infra apply` directly instead.
+  Map the operator's step name to the four valid values above; if theirs doesn't
+  match, ask.
 - `/up` deploys real cloud infra and costs money — if the range may already be up
   or the request is ambiguous, confirm intent before running.
 - When adding a component to an already-running range (e.g. `--with-kali` on a

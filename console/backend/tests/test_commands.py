@@ -217,7 +217,10 @@ def test_load_prompt_and_guidance_injection() -> None:
     assert "variant generate" in commands.expand_command_prompt("/variant", [])
     assert "report path" in commands.expand_command_prompt("/score", []).lower()
     assert "extension list" in commands.expand_command_prompt("/extensions", [])
-    assert "pipeline" in commands.expand_command_prompt("/up", []).lower()
+    up_prompt = commands.expand_command_prompt("/up", [])
+    assert "pipeline" in up_prompt.lower()
+    assert "continues through provisioning" in up_prompt
+    assert "dreadgoad infra apply" in up_prompt
     print("PASS test_load_prompt_and_guidance_injection")
 
 
@@ -389,6 +392,8 @@ def test_exec_guidance_states_the_dangerous_parts() -> None:
     assert "4096" in p, "output cap must be stated or the agent reads fragments"
     assert "no dry run" in p.lower(), "irreversibility must be stated"
     assert "untrusted" in p.lower(), "output is attacker-influenced data"
+    assert "/restart <host>" in p, "one failed host must get a targeted restart"
+    assert "Do not cycle the whole" in p, "must not power-cycle the whole range"
     print("PASS test_exec_guidance_states_the_dangerous_parts")
 
 
