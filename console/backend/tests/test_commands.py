@@ -600,7 +600,8 @@ def test_no_console_command_can_block_on_a_prompt() -> None:
                 f"and the console has no terminal to answer it"
             )
         # `init` is the CLI's interactive wizard and must never be mapped.
-        assert command.verb[0] != "init", f"{name} maps to the interactive wizard"
+        if command.verb:
+            assert command.verb[0] != "init", f"{name} maps to the interactive wizard"
 
 
 def test_catalog_exposes_destructive_for_the_confirm_gate() -> None:

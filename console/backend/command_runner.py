@@ -51,6 +51,42 @@ def _health_progress(line: str) -> str | None:
     return f"{status:<5} {name}" + (f" — {detail}" if detail else "")
 
 
+def _security_progress(line: str) -> str | None:
+    """Render one security-check NDJSON record as readable live progress."""
+    line = line.strip()
+    if not line.startswith("{") or '"status"' not in line or '"checks"' in line:
+        return None
+    try:
+        check = json.loads(line)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(check, dict) or "checks" in check:
+        return None
+    status = check.get("status", "?")
+    name = check.get("name", "")
+    resource = check.get("resource", "")
+    severity = check.get("severity", "")
+    detail = check.get("detail", "")
+    label = f"{name} [{resource}]" if resource else name
+    sev = f" ({severity})" if severity else ""
+    return f"{status:<5} {label}{sev}" + (f" — {detail}" if detail else "")
+
+
+def _parse_security_report(output: str) -> dict[str, t.Any] | None:
+    """Extract a security report from NDJSON output (same pattern as health)."""
+    for line in output.splitlines():
+        line = line.strip()
+        if not line.startswith("{") or '"checks"' not in line:
+            continue
+        try:
+            parsed = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(parsed, dict) and "checks" in parsed:
+            return parsed
+    return None
+
+
 class _Aborted(Exception):
     """A pre-flight failure with separate operator and caller output."""
 
@@ -65,7 +101,7 @@ def final_status(name: str, exit_code: int, cancelled: bool) -> str:
     """Return the session lifecycle status after a long-running command."""
     if cancelled:
         return "interrupted"
-    if name == "/health":
+    if name in ("/health", "/secure"):
         return "running"
     if exit_code:
         return "error"
@@ -179,6 +215,11 @@ async def _stream_output(
             if progress is None:
                 continue
             line = progress
+        if name == "/secure":
+            progress = _security_progress(line)
+            if progress is None:
+                continue
+            line = progress
         await chat_events.emit_event(
             app, session_id, "command_progress", {"line": line}, persist=False
         )
@@ -275,6 +316,22 @@ async def _emit_overlays(
                         if summary.exec_succeeded(result.get("status"))
                     ),
                     "total": len(results),
+                },
+            )
+    elif name == "/secure":
+        report = _parse_security_report(output)
+        if report is not None:
+            checks = report.get("checks") or []
+            await chat_events.emit_event(
+                app,
+                session_id,
+                "security_report",
+                {
+                    "passed": report.get("passed", 0),
+                    "failed": report.get("failed", 0),
+                    "warned": report.get("warned", 0),
+                    "skipped": report.get("skipped", 0),
+                    "security_checks": checks,
                 },
             )
     elif name in ("/variant", "/extensions"):

@@ -201,6 +201,33 @@ async def swap_model(
     return session
 
 
+async def _inject_direct_note(
+    app: t.Any, session_id: str, name: str, exit_code: int
+) -> None:
+    """Add a note to the agent thread so the LLM knows a direct command ran.
+
+    Direct commands bypass the agent entirely, so without this the LLM has
+    no record that /destroy, /instances, etc. happened between its turns.
+    Best-effort: agent setup failures must not break direct commands.
+    """
+    try:
+        agent = await _get_agent(app, session_id)
+    except Exception:  # noqa: BLE001
+        return
+    if agent is None:
+        return
+    thread = getattr(agent, "thread", None)
+    if thread is None:
+        return
+
+    status = "succeeded" if exit_code == 0 else f"failed (exit {exit_code})"
+    thread.messages.extend([
+        Message(role="user", content=f"[System: the operator ran {name} directly. It {status}.]"),
+        Message(role="assistant", content=f"Noted — {name} {status}."),
+    ])
+    await _save_thread(app, session_id, agent)
+
+
 async def handle_message(app: t.Any, session_id: str, content: str) -> None:
     """Route a message: direct command → run_cli; agent command / free-text → agent."""
     await emit_event(app, session_id, "user_message", {"content": content})
@@ -214,11 +241,6 @@ async def handle_message(app: t.Any, session_id: str, content: str) -> None:
             return
         cmd = commands.REGISTRY[name]
         if cmd.dispatch == "direct":
-            # Most direct commands are deterministic reads with a fixed verb;
-            # extra operator tokens would land as bogus CLI args, so reject
-            # cleanly instead of shelling out to a guaranteed CLI error (C4).
-            # Gated on takes_args, not on dispatch: /scrub is direct *and*
-            # accepts arguments (a dry-run token, CLI flags).
             if extra and not cmd.takes_args:
                 await emit_event(
                     app,
@@ -229,6 +251,7 @@ async def handle_message(app: t.Any, session_id: str, content: str) -> None:
                 await emit_event(app, session_id, "agent_end", {"failed": True})
                 return
             exit_code, _ = await run_cli(app, session_id, name, extra)
+            await _inject_direct_note(app, session_id, name, exit_code)
             await emit_event(app, session_id, "agent_end", {"failed": exit_code != 0})
             return
         # dispatch="agent": expand to a structured prompt; the agent runs it via

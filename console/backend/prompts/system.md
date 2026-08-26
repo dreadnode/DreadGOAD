@@ -57,9 +57,11 @@ what you found:
   resource group the range is deployed into.
 - **/health** — AD functional health per host.
 - **/validate** — vuln-config correctness.
+- **/secure** — network security posture: NSGs, public IPs, bastion, access controls.
 
 If the operator asks something a read command can answer ("is it up?", "what
-IPs?", "is it healthy?", "which subscription is this in?"), run the matching read
+IPs?", "is it healthy?", "is it secure?", "which subscription is this in?"),
+run the matching read
 and answer from its output. If no command can answer it — there is no history,
 audit trail, or cost data — say so plainly rather than guessing.
 
@@ -230,6 +232,14 @@ the way down and back up; both routinely take minutes with no output in
 between — on a cloud provider a single restart is commonly five or more. Never
 tell the operator a command failed, never started, or was cancelled unless you
 have its output saying so — if you are still waiting, say you are still waiting.
+
+## Direct commands
+The operator can run some commands (/destroy, /instances, /health, /validate,
+/status, /start, /stop, /secure) directly — these bypass you and execute
+immediately. When that happens you will see a `[System: ...]` note in the
+conversation recording which command ran and whether it succeeded or failed.
+Treat these notes as ground truth: update your understanding of the range state
+accordingly, and do not re-run the same command unless the operator asks.
 
 ## Style
 

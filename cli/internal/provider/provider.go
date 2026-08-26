@@ -168,3 +168,28 @@ type SSMStatus struct {
 	InstanceID string
 	PingStatus string
 }
+
+// SecurityCheckResult is one check's outcome in the security report.
+type SecurityCheckResult struct {
+	Name     string `json:"name"`
+	Resource string `json:"resource"`
+	Status   string `json:"status"`   // "OK", "FAIL", "WARN", "SKIP"
+	Severity string `json:"severity"` // "critical", "high", "info"
+	Detail   string `json:"detail"`
+}
+
+// SecurityReport is the --json payload for security-check.
+type SecurityReport struct {
+	Passed  int                   `json:"passed"`
+	Failed  int                   `json:"failed"`
+	Warned  int                   `json:"warned"`
+	Skipped int                   `json:"skipped"`
+	Checks  []SecurityCheckResult `json:"checks"`
+}
+
+// SecurityChecker is an optional interface for providers that can audit
+// the network security posture of a deployed range. vpcCIDR is the
+// expected VNet/VPC address space from the config.
+type SecurityChecker interface {
+	SecurityCheck(ctx context.Context, env, vpcCIDR string) ([]SecurityCheckResult, error)
+}

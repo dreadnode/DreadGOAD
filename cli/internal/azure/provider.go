@@ -194,6 +194,7 @@ var (
 	_ provider.Provider         = (*AzureProvider)(nil)
 	_ provider.InteractiveShell = (*AzureProvider)(nil)
 	_ provider.Drainer          = (*AzureProvider)(nil)
+	_ provider.SecurityChecker  = (*AzureProvider)(nil)
 )
 
 func toProviderInstance(i Instance) provider.Instance {

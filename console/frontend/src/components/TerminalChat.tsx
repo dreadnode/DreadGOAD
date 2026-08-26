@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { ChatEvent, HealthCheck, Instance } from '../types'
+import type { ChatEvent, HealthCheck, Instance, SecurityCheck } from '../types'
 import type { ConnectionStatus } from '../hooks/useWebSocket'
 import { api, type CommandDef } from '../api'
 import { agentVerb } from '../agentVerbs'
 import { buildHelpLines, type HelpLineKind } from '../help'
+import ConfirmModal from './ConfirmModal'
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) { const v = n / 1_000_000; return (v >= 10 ? Math.round(v) : +v.toFixed(1)) + 'M' }
@@ -36,6 +37,47 @@ function HealthReport({ ev }: { ev: ChatEvent }) {
           <div key={i} style={{ display: 'contents' }}>
             <span style={{ color: HEALTH_COLOR[c.status] ?? 'var(--dn-text-muted)', fontWeight: 700 }}>{c.status}</span>
             <span style={{ color: 'var(--dn-text-muted)' }}>{c.host}</span>
+            <span style={{ color: 'var(--dn-text-dim)', whiteSpace: 'pre-wrap' }}>
+              {c.name}{c.detail ? ` — ${c.detail}` : ''}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+const SECURITY_COLOR: Record<string, string> = {
+  OK: 'var(--dn-success)',
+  FAIL: 'var(--dn-error)',
+  WARN: 'var(--dn-warning)',
+  SKIP: 'var(--dn-text-muted)',
+}
+
+const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, info: 2 }
+
+function SecurityReport({ ev }: { ev: ChatEvent }) {
+  const checks = ev.security_checks ?? []
+  const failed = ev.failed ?? 0
+  const warned = ev.warned ?? 0
+  const summaryColor = failed > 0 ? 'var(--dn-error)' : warned > 0 ? 'var(--dn-warning)' : 'var(--dn-success)'
+  const sorted = [...checks].sort((a, b) =>
+    (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9)
+  )
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ marginBottom: 4 }}>
+        <Badge text="SECURITY" color="var(--dg-interactive)" />
+        <span style={{ color: summaryColor, fontSize: 12 }}>
+          {ev.passed ?? 0} passed · {failed} failed · {warned} warned · {ev.skipped ?? 0} skipped
+        </span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'auto auto auto 1fr', gap: '2px 10px', fontSize: 11, marginLeft: 12 }}>
+        {sorted.map((c: SecurityCheck, i: number) => (
+          <div key={i} style={{ display: 'contents' }}>
+            <span style={{ color: SECURITY_COLOR[c.status] ?? 'var(--dn-text-muted)', fontWeight: 700 }}>{c.status}</span>
+            <span style={{ color: 'var(--dn-text-dim)', fontSize: 10 }}>{c.severity}</span>
+            <span style={{ color: 'var(--dn-text-muted)' }}>{c.resource}</span>
             <span style={{ color: 'var(--dn-text-dim)', whiteSpace: 'pre-wrap' }}>
               {c.name}{c.detail ? ` — ${c.detail}` : ''}
             </span>
@@ -349,6 +391,8 @@ function Message({ ev }: { ev: ChatEvent }) {
       return <ScrubReport ev={ev} />
     case 'exec_report':
       return <ExecReport ev={ev} />
+    case 'security_report':
+      return <SecurityReport ev={ev} />
     case 'status':
       return <div style={{ margin: '6px 0', fontSize: 11, color: 'var(--dn-text-dim)', fontStyle: 'italic' }}>{ev.content}</div>
     case 'error':
@@ -500,6 +544,10 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
   const autoScrollingRef = useRef(false)
   const autoScrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [showJump, setShowJump] = useState(false)
+  const [pendingConfirm, setPendingConfirm] = useState<{
+    title: string; message: string; confirmLabel?: string;
+    destructive?: boolean; onConfirm: () => void;
+  } | null>(null)
 
   const sessionTokens = useMemo(() => {
     let inp = 0, out = 0
@@ -574,6 +622,7 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
   // never typed, and at an offset that means nothing in that transcript.
   useEffect(() => {
     setHelpAfter(null)
+    setPendingConfirm(null)
     pinnedRef.current = true
     setShowJump(false)
   }, [sessionId])
@@ -725,33 +774,37 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
     // touch real resources too and are entirely reversible, so gating on
     // cloud_ops would confirm those and claim they cannot be undone. Copy comes
     // from the command's own `detail`, so it stays true for whatever is added.
-    const spec = commands.find(c => c.name === t.split(' ')[0])
-    if (!catalogOk && t.startsWith('/')) {
-      // The catalog never loaded, so whether this is destructive is unknown —
-      // and one of the things it could be is /destroy. Asking about every slash
-      // command in this state is noisy; running the range's teardown without
-      // asking is worse, and the state is rare and visible.
-      if (!window.confirm(
-        `The command list could not be loaded, so ${t.split(' ')[0]} cannot be `
-        + 'checked for whether it is destructive.\n\nRun it anyway?',
-      )) return
-    }
-    if (spec?.destructive && spec.dispatch === 'direct') {
-      const ok = window.confirm(
-        `Run ${spec.name}?\n\n${spec.detail}\n\n`
-        + 'This starts immediately and cannot be undone.',
-      )
-      if (!ok) return
+    const doSend = () => {
+      onSend(t)
+      setInput('')
+      setCmdHighlight(0)
+      setHistIndex(null)
+      setDraft('')
     }
 
-    onSend(t)
-    setInput('')
-    setCmdHighlight(0)
-    // Leave browsing mode: the sent message becomes the newest entry (via the
-    // transcript), so a following Up should start from it, not from wherever
-    // the operator had scrolled back to.
-    setHistIndex(null)
-    setDraft('')
+    const spec = commands.find(c => c.name === t.split(' ')[0])
+    if (!catalogOk && t.startsWith('/')) {
+      setPendingConfirm({
+        title: 'Unverified command',
+        message: `The command list could not be loaded, so ${t.split(' ')[0]} cannot be `
+          + 'checked for whether it is destructive.\n\nRun it anyway?',
+        destructive: true,
+        onConfirm: () => { doSend(); setPendingConfirm(null) },
+      })
+      return
+    }
+    if (spec?.destructive && spec.dispatch === 'direct') {
+      setPendingConfirm({
+        title: `Run ${spec.name}?`,
+        message: `${spec.detail}\n\nThis starts immediately and cannot be undone.`,
+        destructive: true,
+        confirmLabel: 'RUN',
+        onConfirm: () => { doSend(); setPendingConfirm(null) },
+      })
+      return
+    }
+
+    doSend()
   }
 
   const selectCommand = (cmd: CommandDef) => {
@@ -838,6 +891,16 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--dn-bg)', borderRight: '1px solid var(--dn-border)', position: 'relative' }}>
+      {pendingConfirm && (
+        <ConfirmModal
+          title={pendingConfirm.title}
+          message={pendingConfirm.message}
+          confirmLabel={pendingConfirm.confirmLabel}
+          destructive={pendingConfirm.destructive}
+          onConfirm={pendingConfirm.onConfirm}
+          onCancel={() => setPendingConfirm(null)}
+        />
+      )}
       {/* minHeight is shared with RangeView's header so the two pane banners
           line up across the split — see --dg-pane-header-h in index.css. */}
       <div style={{

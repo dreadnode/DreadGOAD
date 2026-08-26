@@ -31,6 +31,7 @@ CHAT_KINDS = [
     "validate_report",
     "scrub_report",
     "exec_report",
+    "security_report",
 ]
 
 

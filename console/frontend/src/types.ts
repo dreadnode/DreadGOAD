@@ -109,6 +109,15 @@ export interface ExecResult {
   stderr: string
 }
 
+// One check from a /secure report (security-check --json).
+export interface SecurityCheck {
+  name: string
+  resource: string
+  status: 'OK' | 'FAIL' | 'WARN' | 'SKIP'
+  severity: 'critical' | 'high' | 'info'
+  detail: string
+}
+
 // Chat event as sent over the WebSocket (kind + kind-specific fields).
 export interface ChatEvent {
   _cid?: number // client-assigned key for live events (App-side)
@@ -144,6 +153,8 @@ export interface ChatEvent {
   removed?: number
   results?: ExecResult[]
   succeeded?: number
+  warned?: number
+  security_checks?: SecurityCheck[]
   usage?: { input_tokens?: number; output_tokens?: number }
   events?: ChatEvent[]
   [key: string]: unknown

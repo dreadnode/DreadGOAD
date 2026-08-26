@@ -165,6 +165,13 @@ REGISTRY: dict[str, Command] = {
         description="Cloud power state + host-level health in one pass",
         detail="read-only; runs /instances then /health and summarizes",
     ),
+    "/secure": Command(
+        "/secure",
+        ("security-check", "--json"),
+        long_running=True,
+        description="Audit network security posture of the deployed range",
+        detail="read-only; checks NSGs, public IPs, bastion, and access controls",
+    ),
     "/validate": Command(
         "/validate",
         ("validate",),

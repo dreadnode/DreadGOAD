@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import TerminalChat from './components/TerminalChat'
 import RangeView from './components/RangeView'
 import Modal from './components/Modal'
+import ConfirmModal from './components/ConfirmModal'
 import NewSessionModal from './components/NewSessionModal'
 import { Field, btnStyle } from './components/FormFields'
 import { useWebSocket } from './hooks/useWebSocket'
@@ -38,6 +39,10 @@ export default function App() {
   // session: switching tabs changes its `processing` prop true→false→true, and
   // a latch living inside it would re-roll the word for a turn already running.
   const [verbSeed, setVerbSeed] = useState<Record<string, number>>({})
+  const [pendingConfirm, setPendingConfirm] = useState<{
+    title: string; message: string; confirmLabel?: string;
+    destructive?: boolean; onConfirm: () => void;
+  } | null>(null)
 
   const sessionsRef = useRef<Session[]>([])
   const resumedRef = useRef<Set<string>>(new Set())
@@ -145,15 +150,23 @@ export default function App() {
   }, [activeId, send])
 
   const onCancel = useCallback(() => {
-    if (!activeId) return
+    if (!activeId || pendingConfirm) return
     const cmd = procCmd[activeId]
-    // Cancelling mid-terraform can leave infra half-applied/destroyed (§5.4).
-    if ((cmd === '/up' || cmd === '/destroy') &&
-      !window.confirm(`Cancelling ${cmd} mid-run can leave infrastructure in a half-applied state. Cancel anyway?`)) {
+    if (cmd === '/up' || cmd === '/destroy') {
+      setPendingConfirm({
+        title: `Cancel ${cmd}?`,
+        message: `Cancelling ${cmd} mid-run can leave infrastructure in a half-applied state.`,
+        destructive: true,
+        confirmLabel: 'CANCEL ANYWAY',
+        onConfirm: () => {
+          send(JSON.stringify({ type: 'cancel', session_id: activeId }))
+          setPendingConfirm(null)
+        },
+      })
       return
     }
     send(JSON.stringify({ type: 'cancel', session_id: activeId }))
-  }, [activeId, send, procCmd])
+  }, [activeId, send, procCmd, pendingConfirm])
 
   const createSession = useCallback(async (body: Record<string, unknown>) => {
     const s = await api.createSession(body)
@@ -209,6 +222,16 @@ export default function App() {
           onSaved={() => { setShowSettings(false); api.config().then(setCfg).catch(() => {}) }}
         />
       )}
+      {pendingConfirm && (
+        <ConfirmModal
+          title={pendingConfirm.title}
+          message={pendingConfirm.message}
+          confirmLabel={pendingConfirm.confirmLabel}
+          destructive={pendingConfirm.destructive}
+          onConfirm={pendingConfirm.onConfirm}
+          onCancel={() => setPendingConfirm(null)}
+        />
+      )}
 
       {/* Tab bar */}
       <div style={{ display: 'flex', alignItems: 'center', borderBottom: '1px solid var(--dn-border)', background: 'var(--dn-black)', padding: '0 8px', height: 40, gap: 4 }}>
@@ -244,13 +267,13 @@ export default function App() {
             <span
               onClick={(e) => {
                 e.stopPropagation()
-                // Names what survives as well as what goes: deleting a session
-                // has never removed the environment it created from the config,
-                // and nothing said so — leaving entries in a tracked
-                // dreadgoad.yaml that look like they were cleaned up.
-                if (window.confirm(`Delete session "${s.label}"? This cancels any running operation and removes its working dir.\n\nThe environment stays in the config file, and any deployed infrastructure stays up — run /destroy first if you want it gone.`)) {
-                  closeSession(s.id)
-                }
+                setPendingConfirm({
+                  title: `Delete "${s.label}"?`,
+                  message: 'This cancels any running operation and removes its working dir.\n\nThe environment stays in the config file, and any deployed infrastructure stays up — run /destroy first if you want it gone.',
+                  destructive: true,
+                  confirmLabel: 'DELETE',
+                  onConfirm: () => { closeSession(s.id); setPendingConfirm(null) },
+                })
               }}
               style={{ color: 'var(--dn-text-dim)' }}
             >✕</span>
