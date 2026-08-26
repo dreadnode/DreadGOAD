@@ -67,8 +67,8 @@ type Client struct {
 
 	// SDK clients are constructed lazily once SubscriptionID is known. Guarded
 	// by sdkOnce so concurrent first-use doesn't double-build them.
-	sdkOnce     sync.Once
-	sdkErr      error
+	sdkOnce       sync.Once
+	sdkErr        error
 	vmClient      *armcompute.VirtualMachinesClient
 	nicClient     *armnetwork.InterfacesClient
 	rcClient      *armcompute.VirtualMachineRunCommandsClient

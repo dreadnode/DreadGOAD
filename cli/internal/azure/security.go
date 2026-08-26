@@ -7,9 +7,16 @@ import (
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/arm"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/compute/armcompute/v8"
-	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v9"
+	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork/v10"
 	"github.com/dreadnode/dreadgoad/internal/provider"
 )
+
+type vmNICInfo struct {
+	vmName string
+	tags   map[string]string
+	nics   []NICDetail
+	vm     *armcompute.VirtualMachine
+}
 
 // SecurityCheck audits the network security posture of a deployed range.
 func (p *AzureProvider) SecurityCheck(ctx context.Context, env, vpcCIDR string) ([]provider.SecurityCheckResult, error) {
@@ -27,17 +34,24 @@ func (p *AzureProvider) SecurityCheck(ctx context.Context, env, vpcCIDR string) 
 	}
 
 	rg := instances[0].ResourceGroup
-
-	// Collect NIC details for every VM.
-	type vmNICInfo struct {
-		vmName string
-		tags   map[string]string
-		nics   []NICDetail
-		vm     *armcompute.VirtualMachine
+	vmInfos := collectVMNICInfo(ctx, c, instances)
+	nsgMap, err := listSecurityGroups(ctx, c, rg)
+	if err != nil {
+		return nil, err
 	}
+
+	results := publicIPChecks(vmInfos)
+	results = append(results, nsgPresenceChecks(vmInfos, nsgMap)...)
+	results = append(results, nsgRuleChecks(nsgMap, vpcCIDR)...)
+	results = append(results, bastionCheck(rg, bastionExists(ctx, c, rg)))
+	results = append(results, sshKeyAuthChecks(vmInfos)...)
+	return results, nil
+}
+
+func collectVMNICInfo(ctx context.Context, c *Client, instances []Instance) []vmNICInfo {
 	var vmInfos []vmNICInfo
-	for _, inst := range instances {
-		rid, err := arm.ParseResourceID(inst.ID)
+	for _, instance := range instances {
+		rid, err := arm.ParseResourceID(instance.ID)
 		if err != nil {
 			continue
 		}
@@ -48,26 +62,34 @@ func (p *AzureProvider) SecurityCheck(ctx context.Context, env, vpcCIDR string) 
 			continue
 		}
 		vm := resp.VirtualMachine
-		info := vmNICInfo{vmName: inst.Name, tags: inst.Tags, vm: &vm}
+		info := vmNICInfo{vmName: instance.Name, tags: instance.Tags, vm: &vm}
 		if vm.Properties != nil && vm.Properties.NetworkProfile != nil {
-			for _, ref := range vm.Properties.NetworkProfile.NetworkInterfaces {
-				if ref == nil || ref.ID == nil {
-					continue
-				}
-				nic, err := c.describeNIC(ctx, *ref.ID)
-				if err != nil {
-					info.nics = append(info.nics, NICDetail{ID: *ref.ID, Name: nicNameOf(*ref.ID)})
-					continue
-				}
-				info.nics = append(info.nics, *nic)
-			}
+			info.nics = collectNICDetails(ctx, c, vm.Properties.NetworkProfile.NetworkInterfaces)
 		}
 		vmInfos = append(vmInfos, info)
 	}
+	return vmInfos
+}
 
-	// List all NSGs in the resource group.
-	nsgMap := make(map[string]*armnetwork.SecurityGroup)
-	pager := c.nsgClient.NewListPager(rg, nil)
+func collectNICDetails(ctx context.Context, c *Client, refs []*armcompute.NetworkInterfaceReference) []NICDetail {
+	var nics []NICDetail
+	for _, ref := range refs {
+		if ref == nil || ref.ID == nil {
+			continue
+		}
+		nic, err := c.describeNIC(ctx, *ref.ID)
+		if err != nil {
+			nics = append(nics, NICDetail{ID: *ref.ID, Name: nicNameOf(*ref.ID)})
+			continue
+		}
+		nics = append(nics, *nic)
+	}
+	return nics
+}
+
+func listSecurityGroups(ctx context.Context, c *Client, resourceGroup string) (map[string]*armnetwork.SecurityGroup, error) {
+	nsgs := make(map[string]*armnetwork.SecurityGroup)
+	pager := c.nsgClient.NewListPager(resourceGroup, nil)
 	for pager.More() {
 		page, err := pager.NextPage(ctx)
 		if err != nil {
@@ -75,183 +97,156 @@ func (p *AzureProvider) SecurityCheck(ctx context.Context, env, vpcCIDR string) 
 		}
 		for _, nsg := range page.Value {
 			if nsg != nil && nsg.ID != nil {
-				nsgMap[strings.ToLower(*nsg.ID)] = nsg
+				nsgs[strings.ToLower(*nsg.ID)] = nsg
 			}
 		}
 	}
+	return nsgs, nil
+}
 
-	// Check for bastion.
-	var bastionFound bool
-	bPager := c.bastionClient.NewListByResourceGroupPager(rg, nil)
-	for bPager.More() {
-		page, err := bPager.NextPage(ctx)
+func bastionExists(ctx context.Context, c *Client, resourceGroup string) bool {
+	pager := c.bastionClient.NewListByResourceGroupPager(resourceGroup, nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
 		if err != nil {
-			break
+			return false
 		}
 		if len(page.Value) > 0 {
-			bastionFound = true
-			break
+			return true
 		}
 	}
+	return false
+}
 
+func publicIPChecks(vmInfos []vmNICInfo) []provider.SecurityCheckResult {
 	var results []provider.SecurityCheckResult
-
-	// Check 1: PublicIP — no lab VM should have a public IP.
 	for _, info := range vmInfos {
 		role := strings.ToLower(info.tags["Role"])
 		for _, nic := range info.nics {
-			if nic.PublicIPID != "" {
-				if role == "bastion" {
-					results = append(results, provider.SecurityCheckResult{
-						Name: "PublicIP", Resource: info.vmName,
-						Status: "OK", Severity: "critical",
-						Detail: "public IP attached (bastion — expected)",
-					})
-				} else {
-					results = append(results, provider.SecurityCheckResult{
-						Name: "PublicIP", Resource: info.vmName,
-						Status: "FAIL", Severity: "critical",
-						Detail: fmt.Sprintf("NIC %s has public IP %s", nic.Name, lastSegment(nic.PublicIPID)),
-					})
-				}
-			} else {
-				results = append(results, provider.SecurityCheckResult{
-					Name: "PublicIP", Resource: info.vmName,
-					Status: "OK", Severity: "critical",
-					Detail: "no public IP attached",
-				})
+			switch {
+			case nic.PublicIPID == "":
+				results = append(results, securityResult(
+					"PublicIP", info.vmName, "OK", "critical", "no public IP attached"))
+			case role == "bastion":
+				results = append(results, securityResult(
+					"PublicIP", info.vmName, "OK", "critical", "public IP attached (bastion — expected)"))
+			default:
+				results = append(results, securityResult(
+					"PublicIP", info.vmName, "FAIL", "critical",
+					fmt.Sprintf("NIC %s has public IP %s", nic.Name, lastSegment(nic.PublicIPID))))
 			}
 		}
 	}
+	return results
+}
 
-	// Check 2: NSGPresent — every NIC must have an NSG (direct or via subnet).
+func nsgPresenceChecks(
+	vmInfos []vmNICInfo,
+	nsgMap map[string]*armnetwork.SecurityGroup,
+) []provider.SecurityCheckResult {
+	var results []provider.SecurityCheckResult
 	for _, info := range vmInfos {
 		for _, nic := range info.nics {
-			if nic.NSGID != "" {
-				results = append(results, provider.SecurityCheckResult{
-					Name: "NSGPresent", Resource: info.vmName + "/" + nic.Name,
-					Status: "OK", Severity: "critical",
-					Detail: "NSG associated: " + lastSegment(nic.NSGID),
-				})
-			} else if subnetHasNSG(nic.SubnetID, nsgMap) {
-				results = append(results, provider.SecurityCheckResult{
-					Name: "NSGPresent", Resource: info.vmName + "/" + nic.Name,
-					Status: "OK", Severity: "critical",
-					Detail: "subnet-level NSG covers this NIC",
-				})
-			} else {
-				results = append(results, provider.SecurityCheckResult{
-					Name: "NSGPresent", Resource: info.vmName + "/" + nic.Name,
-					Status: "FAIL", Severity: "critical",
-					Detail: "no NSG on NIC or subnet",
-				})
+			resource := info.vmName + "/" + nic.Name
+			switch {
+			case nic.NSGID != "":
+				results = append(results, securityResult(
+					"NSGPresent", resource, "OK", "critical", "NSG associated: "+lastSegment(nic.NSGID)))
+			case subnetHasNSG(nic.SubnetID, nsgMap):
+				results = append(results, securityResult(
+					"NSGPresent", resource, "OK", "critical", "subnet-level NSG covers this NIC"))
+			default:
+				results = append(results, securityResult(
+					"NSGPresent", resource, "FAIL", "critical", "no NSG on NIC or subnet"))
 			}
 		}
 	}
+	return results
+}
 
-	// Check 3-5: NSG rule checks against each NSG in the resource group.
+func nsgRuleChecks(
+	nsgMap map[string]*armnetwork.SecurityGroup,
+	vpcCIDR string,
+) []provider.SecurityCheckResult {
+	var results []provider.SecurityCheckResult
 	for _, nsg := range nsgMap {
 		name := derefStr(nsg.Name)
 		rules := securityRulesOf(nsg)
-
-		// NSGDenyAll: must have an inbound Deny rule.
-		if hasDenyAllInbound(rules) {
-			results = append(results, provider.SecurityCheckResult{
-				Name: "NSGDenyAll", Resource: name,
-				Status: "OK", Severity: "critical",
-				Detail: "DenyAllInbound rule present",
-			})
-		} else {
-			results = append(results, provider.SecurityCheckResult{
-				Name: "NSGDenyAll", Resource: name,
-				Status: "FAIL", Severity: "critical",
-				Detail: "no DenyAllInbound rule found",
-			})
-		}
-
-		// NSGNoWild: no inbound Allow rule with source * or Internet.
-		wildcards := wildcardAllowRules(rules)
-		if len(wildcards) == 0 {
-			results = append(results, provider.SecurityCheckResult{
-				Name: "NSGNoWild", Resource: name,
-				Status: "OK", Severity: "high",
-				Detail: "no wildcard/Internet inbound Allow rules",
-			})
-		} else {
-			results = append(results, provider.SecurityCheckResult{
-				Name: "NSGNoWild", Resource: name,
-				Status: "FAIL", Severity: "high",
-				Detail: fmt.Sprintf("wildcard inbound Allow: %s", strings.Join(wildcards, ", ")),
-			})
-		}
-
-		// NSGInbound: inbound Allow sources should be VNet CIDR or AzureLoadBalancer.
-		unexpected := unexpectedSources(rules, vpcCIDR)
-		if len(unexpected) == 0 {
-			results = append(results, provider.SecurityCheckResult{
-				Name: "NSGInbound", Resource: name,
-				Status: "OK", Severity: "high",
-				Detail: "all inbound Allow sources are expected",
-			})
-		} else {
-			results = append(results, provider.SecurityCheckResult{
-				Name: "NSGInbound", Resource: name,
-				Status: "WARN", Severity: "high",
-				Detail: fmt.Sprintf("unexpected inbound sources: %s", strings.Join(unexpected, ", ")),
-			})
-		}
+		results = append(results,
+			denyAllCheck(name, rules),
+			wildcardCheck(name, rules),
+			inboundSourceCheck(name, rules, vpcCIDR),
+		)
 	}
+	return results
+}
 
-	// Check 6: BastionExists.
-	if bastionFound {
-		results = append(results, provider.SecurityCheckResult{
-			Name: "BastionExists", Resource: rg,
-			Status: "OK", Severity: "high",
-			Detail: "Azure Bastion host found",
-		})
-	} else {
-		results = append(results, provider.SecurityCheckResult{
-			Name: "BastionExists", Resource: rg,
-			Status: "FAIL", Severity: "high",
-			Detail: "no Azure Bastion found in resource group",
-		})
+func denyAllCheck(resource string, rules []inboundRule) provider.SecurityCheckResult {
+	if hasDenyAllInbound(rules) {
+		return securityResult("NSGDenyAll", resource, "OK", "critical", "DenyAllInbound rule present")
 	}
+	return securityResult("NSGDenyAll", resource, "FAIL", "critical", "no DenyAllInbound rule found")
+}
 
-	// Check 7: SSHKeyAuth — Linux VMs should use SSH key auth.
+func wildcardCheck(resource string, rules []inboundRule) provider.SecurityCheckResult {
+	wildcards := wildcardAllowRules(rules)
+	if len(wildcards) == 0 {
+		return securityResult("NSGNoWild", resource, "OK", "high", "no wildcard/Internet inbound Allow rules")
+	}
+	return securityResult("NSGNoWild", resource, "FAIL", "high",
+		fmt.Sprintf("wildcard inbound Allow: %s", strings.Join(wildcards, ", ")))
+}
+
+func inboundSourceCheck(resource string, rules []inboundRule, vpcCIDR string) provider.SecurityCheckResult {
+	unexpected := unexpectedSources(rules, vpcCIDR)
+	if len(unexpected) == 0 {
+		return securityResult("NSGInbound", resource, "OK", "high", "all inbound Allow sources are expected")
+	}
+	return securityResult("NSGInbound", resource, "WARN", "high",
+		fmt.Sprintf("unexpected inbound sources: %s", strings.Join(unexpected, ", ")))
+}
+
+func bastionCheck(resource string, found bool) provider.SecurityCheckResult {
+	if found {
+		return securityResult("BastionExists", resource, "OK", "high", "Azure Bastion host found")
+	}
+	return securityResult("BastionExists", resource, "FAIL", "high", "no Azure Bastion found in resource group")
+}
+
+func sshKeyAuthChecks(vmInfos []vmNICInfo) []provider.SecurityCheckResult {
+	var results []provider.SecurityCheckResult
 	for _, info := range vmInfos {
 		if info.vm == nil || info.vm.Properties == nil || info.vm.Properties.OSProfile == nil {
 			continue
 		}
-		osProfile := info.vm.Properties.OSProfile
-		if osProfile.LinuxConfiguration == nil {
+		linuxCfg := info.vm.Properties.OSProfile.LinuxConfiguration
+		if linuxCfg == nil {
 			continue
 		}
-		linuxCfg := osProfile.LinuxConfiguration
 		if linuxCfg.DisablePasswordAuthentication != nil && *linuxCfg.DisablePasswordAuthentication {
-			results = append(results, provider.SecurityCheckResult{
-				Name: "SSHKeyAuth", Resource: info.vmName,
-				Status: "OK", Severity: "info",
-				Detail: "password authentication disabled",
-			})
-		} else {
-			results = append(results, provider.SecurityCheckResult{
-				Name: "SSHKeyAuth", Resource: info.vmName,
-				Status: "WARN", Severity: "info",
-				Detail: "password authentication enabled on Linux VM",
-			})
+			results = append(results, securityResult(
+				"SSHKeyAuth", info.vmName, "OK", "info", "password authentication disabled"))
+			continue
 		}
+		results = append(results, securityResult(
+			"SSHKeyAuth", info.vmName, "WARN", "info", "password authentication enabled on Linux VM"))
 	}
+	return results
+}
 
-	return results, nil
+func securityResult(name, resource, status, severity, detail string) provider.SecurityCheckResult {
+	return provider.SecurityCheckResult{
+		Name: name, Resource: resource, Status: status, Severity: severity, Detail: detail,
+	}
 }
 
 // inboundRule is a flattened view of one NSG security rule's relevant fields.
 type inboundRule struct {
-	name          string
-	access        string
-	direction     string
-	sourcePrefix  string
-	priority      int32
+	name         string
+	access       string
+	direction    string
+	sourcePrefix string
+	priority     int32
 }
 
 func securityRulesOf(nsg *armnetwork.SecurityGroup) []inboundRule {
@@ -264,7 +259,7 @@ func securityRulesOf(nsg *armnetwork.SecurityGroup) []inboundRule {
 			continue
 		}
 		p := r.Properties
-		if p.Direction == nil || string(*p.Direction) != "Inbound" {
+		if p.Direction == nil || p.Access == nil || string(*p.Direction) != "Inbound" {
 			continue
 		}
 		priority := int32(0)
@@ -309,10 +304,10 @@ func wildcardAllowRules(rules []inboundRule) []string {
 
 func unexpectedSources(rules []inboundRule, vpcCIDR string) []string {
 	expected := map[string]bool{
-		"*":                     true, // deny rules use *
-		"azureloadbalancer":     true,
+		"*":                      true, // deny rules use *
+		"azureloadbalancer":      true,
 		strings.ToLower(vpcCIDR): true,
-		"virtualnetwork":       true,
+		"virtualnetwork":         true,
 	}
 	var unexpected []string
 	for _, r := range rules {

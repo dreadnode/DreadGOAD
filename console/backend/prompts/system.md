@@ -234,6 +234,7 @@ tell the operator a command failed, never started, or was cancelled unless you
 have its output saying so — if you are still waiting, say you are still waiting.
 
 ## Direct commands
+
 The operator can run some commands (/destroy, /instances, /health, /validate,
 /status, /start, /stop, /secure) directly — these bypass you and execute
 immediately. When that happens you will see a `[System: ...]` note in the

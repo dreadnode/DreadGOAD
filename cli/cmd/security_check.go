@@ -78,49 +78,12 @@ func runSecurityCheck(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	passed, failed, warned, skipped := 0, 0, 0, 0
-	emit := func(res provider.SecurityCheckResult) {
-		if jsonOut {
-			if b, err := json.Marshal(res); err == nil {
-				fmt.Println(string(b))
-			}
-		}
+	for _, result := range results {
+		emitSecurityResult(result, jsonOut)
 	}
-
-	for _, res := range results {
-		emit(res)
-		switch res.Status {
-		case "OK":
-			passed++
-			if !jsonOut {
-				color.Green("%-50s %-8s %-8s %s", res.Name+" ["+res.Resource+"]", res.Status, res.Severity, res.Detail)
-			}
-		case "FAIL":
-			failed++
-			if !jsonOut {
-				color.Red("%-50s %-8s %-8s %s", res.Name+" ["+res.Resource+"]", res.Status, res.Severity, res.Detail)
-			}
-		case "WARN":
-			warned++
-			if !jsonOut {
-				color.Yellow("%-50s %-8s %-8s %s", res.Name+" ["+res.Resource+"]", res.Status, res.Severity, res.Detail)
-			}
-		case "SKIP":
-			skipped++
-			if !jsonOut {
-				color.Yellow("%-50s %-8s %-8s %s", res.Name+" ["+res.Resource+"]", res.Status, res.Severity, res.Detail)
-			}
-		}
-	}
+	report := summarizeSecurityResults(results)
 
 	if jsonOut {
-		report := provider.SecurityReport{
-			Passed:  passed,
-			Failed:  failed,
-			Warned:  warned,
-			Skipped: skipped,
-			Checks:  results,
-		}
 		b, err := json.Marshal(report)
 		if err != nil {
 			return err
@@ -129,11 +92,52 @@ func runSecurityCheck(cmd *cobra.Command, args []string) error {
 	} else {
 		fmt.Println(strings.Repeat("-", 90))
 		fmt.Printf("Results: %d passed, %d failed, %d warned, %d skipped\n",
-			passed, failed, warned, skipped)
+			report.Passed, report.Failed, report.Warned, report.Skipped)
 	}
 
-	if failed > 0 {
-		return fmt.Errorf("%d security check(s) failed", failed)
+	if report.Failed > 0 {
+		return fmt.Errorf("%d security check(s) failed", report.Failed)
 	}
 	return nil
+}
+
+func summarizeSecurityResults(results []provider.SecurityCheckResult) provider.SecurityReport {
+	report := provider.SecurityReport{Checks: results}
+	for _, result := range results {
+		switch result.Status {
+		case "OK":
+			report.Passed++
+		case "FAIL":
+			report.Failed++
+		case "WARN":
+			report.Warned++
+		case "SKIP":
+			report.Skipped++
+		}
+	}
+	return report
+}
+
+func emitSecurityResult(result provider.SecurityCheckResult, jsonOut bool) {
+	if jsonOut {
+		if data, err := json.Marshal(result); err == nil {
+			fmt.Println(string(data))
+		}
+		return
+	}
+
+	args := []any{
+		result.Name + " [" + result.Resource + "]",
+		result.Status,
+		result.Severity,
+		result.Detail,
+	}
+	switch result.Status {
+	case "OK":
+		color.Green("%-50s %-8s %-8s %s", args...)
+	case "FAIL":
+		color.Red("%-50s %-8s %-8s %s", args...)
+	case "WARN", "SKIP":
+		color.Yellow("%-50s %-8s %-8s %s", args...)
+	}
 }
