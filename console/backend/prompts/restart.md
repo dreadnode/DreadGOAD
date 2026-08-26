@@ -2,6 +2,7 @@
 leaving every other host in the range running. It maps to `lab restart-vm`.
 
 ## Usage
+
 Pass the hostname as the first argument: `/restart dc02`. It is resolved by
 `FindInstanceByHostname`, so use the short name the range knows (`dc02`,
 `srv03`), not the provider's full VM name.
@@ -10,6 +11,7 @@ Exactly one host per invocation. There is no "all" form — use `/stop` then
 `/start` if the whole range genuinely needs cycling.
 
 ## When this is the right tool
+
 A hard power cycle is the fix when a host is too wedged for anything softer:
 
 - Out of memory. The signature is a host that pings and shows `running` in
@@ -25,6 +27,7 @@ is a guess; "it's out of memory and cannot start a process, so nothing in-guest
 can fix it" is a reason.
 
 ## What it costs
+
 The host is hard-reset — anything unsaved in memory is lost, and Active
 Directory on that machine goes offline for the reboot. On a domain controller
 that means clients briefly fail to authenticate against it and replication
@@ -34,6 +37,7 @@ It does NOT touch disks, configuration, or AD data. A reboot is recoverable;
 this is far safer than `/reset` or `/provision`.
 
 ## Afterwards
+
 1. Give it a couple of minutes — the API returns as soon as the reset is issued,
    not when the OS is back.
 2. `/instances` to confirm it is running again.

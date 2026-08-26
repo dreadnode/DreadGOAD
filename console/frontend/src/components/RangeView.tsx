@@ -590,7 +590,7 @@ export interface CheckedLabel {
 
 /**
  * Describe when the range was last refreshed. Pure and exported so the age
- * boundaries and the null/unparseable/clock-skew paths can be tested directly
+ * boundaries and the null/unparsable/clock-skew paths can be tested directly
  * rather than through a reimplementation.
  */
 export function describeChecked(
@@ -601,7 +601,7 @@ export function describeChecked(
     return { label: 'never checked', stale: true, exact: 'No command has run yet' }
   }
   const at = new Date(iso).getTime()
-  if (Number.isNaN(at)) return null      // unparseable → say nothing, not "NaN ago"
+  if (Number.isNaN(at)) return null      // unparsable → say nothing, not "NaN ago"
   const age = Math.max(now - at, 0)      // clock skew must not yield "-3m ago"
   return {
     label: `updated ${formatAge(age)}`,

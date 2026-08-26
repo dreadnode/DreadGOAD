@@ -109,7 +109,7 @@ def default_config_path() -> str:
 def _summarise(path: str, source: str) -> dict[str, t.Any]:
     """Describe one config for the picker, reporting rather than raising.
 
-    A config that has gone missing or unparseable still has to appear in the
+    A config that has gone missing or unparsable still has to appear in the
     list: it is very likely the one the operator is looking for, and dropping
     it silently turns "my config is broken" into "my config vanished".
     """

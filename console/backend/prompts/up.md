@@ -2,6 +2,7 @@
 pipeline in order: doctor → infra → provision → health-check.
 
 Flags (all optional — default is a clean full run, no args needed):
+
 - `--from <step>`        resume from a step: `doctor`, `infra`, `provision`, or `health-check`
 - `--skip-doctor`        skip the pre-flight doctor checks
 - `--limit <hosts>`      limit provisioning to specific hosts
@@ -13,6 +14,7 @@ Flags (all optional — default is a clean full run, no args needed):
 - `--with-kali`          deploy the optional Kali attack box
 
 Guidance:
+
 - A plain `/up` with NO args does the full clean bring-up — that's the common case.
 - "resume from provisioning" / "pick up where it failed" → `--from provision`.
   "resume from infra" → `--from infra`, which continues through provisioning and

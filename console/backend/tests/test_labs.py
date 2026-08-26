@@ -108,7 +108,7 @@ async def test_discover_labs_degrades_to_empty_rather_than_raising() -> None:
             "non-zero exit with parseable output",
         ),
         ("", 1, "non-zero exit, no output"),
-        ("not json at all", 0, "unparseable stdout"),
+        ("not json at all", 0, "unparsable stdout"),
         ('{"not": "a list"}', 0, "wrong JSON shape"),
         ("[{}]", 0, "entry with no name"),
         ('[{"name": ""}]', 0, "entry with a blank name"),

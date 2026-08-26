@@ -3,6 +3,7 @@ baseline. It is a two-stage reset: (1) purge unmanaged AD objects (users/
 computers/groups not in the lab config), then (2) re-run the AD-state playbooks.
 
 Flags (all optional — default runs both stages):
+
 - `--skip-purge`         skip the unmanaged-object purge stage
 - `--skip-provision`     skip the AD-state playbook stage
 - `--plays <csv>`        comma-separated playbooks (default: the AD-state set)
@@ -12,6 +13,7 @@ Flags (all optional — default runs both stages):
 - `--retry-delay <sec>`  delay between retries (seconds)
 
 Guidance:
+
 - Plain `/reset` with NO args does the full two-stage reset — the common case.
 - "just re-apply AD state, don't delete anything" → `--skip-purge`. "only clean
   up stray objects" → `--skip-provision`.

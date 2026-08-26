@@ -557,7 +557,7 @@ func resolveReferenceInventory(projectRoot, reference string) (string, error) {
 
 // generateVariantConfig builds the variant for an environment.
 //
-// ``variantSource`` names the base lab to copy from — ad/GOAD by default, but
+// “variantSource“ names the base lab to copy from — ad/GOAD by default, but
 // the repo ships several (GOAD-Light, GOAD-Mini, SCCM, NHA, DRACARYS) and they
 // differ in host count and provider support. It was previously hardcoded to
 // ad/GOAD, which made `env create --variant` unable to express any of them.

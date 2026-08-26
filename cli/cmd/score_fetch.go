@@ -91,6 +91,6 @@ func runScoreFetch(cmd *cobra.Command, _ []string) error {
 	if err := os.WriteFile(local, []byte(out), 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", local, err)
 	}
-	fmt.Fprintf(cmd.ErrOrStderr(), "fetched %s -> %s (%d bytes)\n", remote, local, len(out))
+	_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "fetched %s -> %s (%d bytes)\n", remote, local, len(out))
 	return nil
 }

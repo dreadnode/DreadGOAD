@@ -234,9 +234,9 @@ func TestRepairIsANoOpWithoutEnvironments(t *testing.T) {
 	}
 }
 
-// Unparseable YAML must not wipe the map. Losing every environment silently is
+// Unparsable YAML must not wipe the map. Losing every environment silently is
 // worse than keeping whatever viper managed to read.
-func TestRepairKeepsViperResultOnUnparseableFile(t *testing.T) {
+func TestRepairKeepsViperResultOnUnparsableFile(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 	dir := t.TempDir()

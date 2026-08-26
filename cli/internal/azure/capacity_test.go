@@ -112,14 +112,14 @@ func TestVCPUsParsedFromCapabilities(t *testing.T) {
 	if got := vcpusOf(caps); got != 2 {
 		t.Errorf("vcpusOf = %d, want 2", got)
 	}
-	// Absent or unparseable capabilities yield 0, which the caller treats as
+	// Absent or unparsable capabilities yield 0, which the caller treats as
 	// "cannot estimate" rather than "needs no cores".
 	if got := vcpusOf(nil); got != 0 {
 		t.Errorf("vcpusOf(nil) = %d, want 0", got)
 	}
 	bad := "not-a-number"
 	if got := vcpusOf([]*armcompute.ResourceSKUCapabilities{{Name: &name, Value: &bad}}); got != 0 {
-		t.Errorf("vcpusOf(unparseable) = %d, want 0", got)
+		t.Errorf("vcpusOf(unparsable) = %d, want 0", got)
 	}
 }
 

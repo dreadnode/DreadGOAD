@@ -104,81 +104,20 @@ func runHealthCheck(cmd *cobra.Command, args []string) error {
 	retried := 0
 	results := make([]healthCheckResult, 0, len(checks))
 
-	retryOpts := provider.RetryCommandOptions{
-		MaxRetries: cfg.MaxRetries,
-		RetryDelay: time.Duration(cfg.RetryDelay) * time.Second,
-	}
-
-	// In JSON mode, stream each check as a compact JSON line the moment it
-	// completes (NDJSON) so callers can show live progress; the final line is
-	// the full report — the only line carrying a "checks" field.
-	emit := func(res healthCheckResult) {
-		results = append(results, res)
-		if jsonOut {
-			if b, err := json.Marshal(res); err == nil {
-				fmt.Println(string(b))
-			}
-		}
-	}
-
 	for _, check := range checks {
-		instanceID, ok := infra.HostMap[check.host]
-		if !ok {
-			if !jsonOut {
-				color.Yellow("%-40s %-10s %s", check.name, "SKIP", "instance not found")
-			}
-			emit(healthCheckResult{check.name, check.host, "SKIP", "instance not found"})
-			skipped++
-			continue
-		}
-
-		result, attempts, err := provider.RunCommandWithRetry(
-			ctx, infra.Provider, instanceID, check.command, 90*time.Second, retryOpts,
-			func(attempt int) {
-				if !jsonOut {
-					color.Yellow("%-40s %-10s %s", check.name, "RETRY",
-						fmt.Sprintf("transient failure, retry %d/%d...", attempt, cfg.MaxRetries))
-				}
-			},
-		)
-
-		if err != nil {
-			if !jsonOut {
-				color.Red("%-40s %-10s %s", check.name, "FAIL", err.Error())
-			}
-			emit(healthCheckResult{check.name, check.host, "FAIL", err.Error()})
-			failed++
-			continue
-		}
-		if result.Status != "Success" {
-			if !jsonOut {
-				color.Red("%-40s %-10s %s", check.name, "FAIL", "command status: "+result.Status)
-			}
-			emit(healthCheckResult{check.name, check.host, "FAIL", "command status: " + result.Status})
-			failed++
-			continue
-		}
-
-		ok, detail := check.eval(result.Stdout)
-		if ok {
-			if !jsonOut {
-				if attempts > 1 {
-					color.Green("%-40s %-10s %s (passed on attempt %d)", check.name, "OK", detail, attempts)
-				} else {
-					color.Green("%-40s %-10s %s", check.name, "OK", detail)
-				}
-			}
+		res, attempts := executeHealthCheck(ctx, infra, cfg, check, jsonOut)
+		results = append(results, res)
+		emitHealthCheckProgress(res, jsonOut)
+		switch res.Status {
+		case "OK":
+			passed++
 			if attempts > 1 {
 				retried++
 			}
-			emit(healthCheckResult{check.name, check.host, "OK", detail})
-			passed++
-		} else {
-			if !jsonOut {
-				color.Red("%-40s %-10s %s", check.name, "FAIL", detail)
-			}
-			emit(healthCheckResult{check.name, check.host, "FAIL", detail})
+		case "FAIL":
 			failed++
+		case "SKIP":
+			skipped++
 		}
 	}
 
@@ -202,6 +141,81 @@ func runHealthCheck(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%d health check(s) failed", failed)
 	}
 	return nil
+}
+
+func emitHealthCheckProgress(result healthCheckResult, jsonOut bool) {
+	if !jsonOut {
+		return
+	}
+	if data, err := json.Marshal(result); err == nil {
+		fmt.Println(string(data))
+	}
+}
+
+func executeHealthCheck(
+	ctx context.Context,
+	infra *infraContext,
+	cfg *config.Config,
+	check healthCheck,
+	jsonOut bool,
+) (healthCheckResult, int) {
+	instanceID, ok := infra.HostMap[check.host]
+	if !ok {
+		if !jsonOut {
+			color.Yellow("%-40s %-10s %s", check.name, "SKIP", "instance not found")
+		}
+		return healthCheckResult{check.name, check.host, "SKIP", "instance not found"}, 0
+	}
+
+	retryOpts := provider.RetryCommandOptions{
+		MaxRetries: cfg.MaxRetries,
+		RetryDelay: time.Duration(cfg.RetryDelay) * time.Second,
+	}
+	result, attempts, err := provider.RunCommandWithRetry(
+		ctx, infra.Provider, instanceID, check.command, 90*time.Second, retryOpts,
+		func(attempt int) {
+			if !jsonOut {
+				color.Yellow("%-40s %-10s %s", check.name, "RETRY",
+					fmt.Sprintf("transient failure, retry %d/%d...", attempt, cfg.MaxRetries))
+			}
+		},
+	)
+	if err != nil {
+		if !jsonOut {
+			color.Red("%-40s %-10s %s", check.name, "FAIL", err.Error())
+		}
+		return healthCheckResult{check.name, check.host, "FAIL", err.Error()}, attempts
+	}
+	if result.Status != "Success" {
+		detail := "command status: " + result.Status
+		if !jsonOut {
+			color.Red("%-40s %-10s %s", check.name, "FAIL", detail)
+		}
+		return healthCheckResult{check.name, check.host, "FAIL", detail}, attempts
+	}
+
+	ok, detail := check.eval(result.Stdout)
+	status := "FAIL"
+	if ok {
+		status = "OK"
+	}
+	printHealthCheckOutcome(check, status, detail, attempts, jsonOut)
+	return healthCheckResult{check.name, check.host, status, detail}, attempts
+}
+
+func printHealthCheckOutcome(check healthCheck, status, detail string, attempts int, jsonOut bool) {
+	if jsonOut {
+		return
+	}
+	if status == "FAIL" {
+		color.Red("%-40s %-10s %s", check.name, status, detail)
+		return
+	}
+	if attempts > 1 {
+		color.Green("%-40s %-10s %s (passed on attempt %d)", check.name, status, detail, attempts)
+		return
+	}
+	color.Green("%-40s %-10s %s", check.name, status, detail)
 }
 
 func buildChecks(lab *labmap.LabMap) []healthCheck {

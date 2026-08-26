@@ -155,7 +155,7 @@ func confirmDestroy(cmd *cobra.Command, env, region string) error {
 	if region != "" {
 		target = env + "/" + region
 	}
-	bold.Printf("Destroy will tear down all infrastructure for %s.\n", target)
+	_, _ = bold.Printf("Destroy will tear down all infrastructure for %s.\n", target)
 	fmt.Print("Type 'yes' to confirm: ")
 	var answer string
 	if _, err := fmt.Scanln(&answer); err != nil || answer != "yes" {
@@ -281,12 +281,13 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 	// a legacy layout would find none and silently orphan them.
 	opts.ExtraEnv = append(opts.ExtraEnv, azureModuleEnv(cmd, action, workDir)...)
 
-	if action == "destroy" {
+	switch action {
+	case "destroy":
 		if err := confirmDestroy(cmd, cfg.Env, region); err != nil {
 			return err
 		}
 		opts.AutoApprove = true
-	} else if action == "apply" {
+	case "apply":
 		autoApprove, _ := cmd.Flags().GetBool("auto-approve")
 		opts.AutoApprove = autoApprove
 	}
@@ -380,12 +381,13 @@ func runInfraActionAWS(cmd *cobra.Command, cfg *config.Config, action string) er
 		opts.ExtraEnv = append(opts.ExtraEnv, "DREADGOAD_ENABLE_AWS_KALI=true")
 	}
 
-	if action == "destroy" {
+	switch action {
+	case "destroy":
 		if err := confirmDestroy(cmd, cfg.Env, region); err != nil {
 			return err
 		}
 		opts.AutoApprove = true
-	} else if action == "apply" {
+	case "apply":
 		autoApprove, _ := cmd.Flags().GetBool("auto-approve")
 		opts.AutoApprove = autoApprove
 	}
@@ -442,12 +444,13 @@ func runInfraActionTerraform(cmd *cobra.Command, cfg *config.Config, action stri
 		LogFile:         infraLogPath(cfg, action, providerName, ""),
 	}
 
-	if action == "destroy" {
+	switch action {
+	case "destroy":
 		if err := confirmDestroy(cmd, cfg.Env, ""); err != nil {
 			return err
 		}
 		opts.AutoApprove = true
-	} else if action == "apply" {
+	case "apply":
 		autoApprove, _ := cmd.Flags().GetBool("auto-approve")
 		opts.AutoApprove = autoApprove
 	}

@@ -6,11 +6,13 @@ The FIRST argument you pass is the report path; the console handles fetching it
 Everything after the report path is passed through to the CLI as flags.
 
 Useful flags:
+
 - `--live-verify`         re-verify findings live against the attack box
 - `--answer-key <path>`   override the answer key (default `scoreboard/answer_key.json`)
 - `--output <path>`       write the JSON result to a file instead of stdout
 
 Guidance:
+
 - Always pass the report path as args[0].
 - **Always include `--live-verify` unless the operator explicitly says not to.**
   Static scoring alone misses credentials the agent changed during exploitation

@@ -78,7 +78,7 @@ func infraStateError(workDir, env, region, action string, dirExists bool) error 
 		return fmt.Errorf(
 			"infra working directory not found: %s\n"+
 				"Environment %q has not been scaffolded for region %q.\n"+
-				"Run 'dreadgoad infra validate' to check your setup.",
+				"Run 'dreadgoad infra validate' to check your setup",
 			workDir, env, region)
 	}
 
@@ -97,7 +97,7 @@ func infraStateError(workDir, env, region, action string, dirExists bool) error 
 			"If the range is still running, either run 'dreadgoad infra destroy' on the "+
 			"machine that deployed it, or delete its cloud resources directly — on Azure "+
 			"that is the range's resource group, which 'dreadgoad lab status --json' "+
-			"reports as the \"group\" field.",
+			"reports as the \"group\" field",
 		env, region, detail, workDir)
 }
 
@@ -111,7 +111,7 @@ func checkInfraWorkDir(workDir, env, region, action string) error {
 	return fmt.Errorf(
 		"infra working directory not found: %s\n"+
 			"Environment %q has not been scaffolded for region %q.\n"+
-			"Run 'dreadgoad infra validate' to check your setup.",
+			"Run 'dreadgoad infra validate' to check your setup",
 		workDir, env, region)
 }
 

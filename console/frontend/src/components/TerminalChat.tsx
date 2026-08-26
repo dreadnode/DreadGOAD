@@ -146,7 +146,7 @@ function ValidateReport({ ev }: { ev: ChatEvent }) {
       </div>
       {skipped > 0 && (
         <div style={{ marginLeft: 12, marginTop: 4, fontSize: 11, color: 'var(--dn-text-muted)' }}>
-          {skipped} categor{skipped === 1 ? 'y' : 'ies'} not configured for this variant
+          {skipped} {skipped === 1 ? 'category' : 'categories'} not configured for this variant
         </div>
       )}
     </div>

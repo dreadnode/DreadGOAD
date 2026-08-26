@@ -198,7 +198,7 @@ func TestDestroyVMWithoutYesAbortsWhenNobodyCanAnswer(t *testing.T) {
 		t.Fatalf("open devnull: %v", err)
 	}
 	os.Stdin = empty
-	defer func() { os.Stdin = origStdin; empty.Close() }()
+	defer func() { os.Stdin = origStdin; _ = empty.Close() }()
 
 	out, runErr := captureStdout(t, func(outPath string) error {
 		prov.outPath = outPath
@@ -226,7 +226,7 @@ func TestDestroyVMWithYesSkipsThePrompt(t *testing.T) {
 		t.Fatalf("open devnull: %v", err)
 	}
 	os.Stdin = empty
-	defer func() { os.Stdin = origStdin; empty.Close() }()
+	defer func() { os.Stdin = origStdin; _ = empty.Close() }()
 
 	out, runErr := captureStdout(t, func(outPath string) error {
 		prov.outPath = outPath

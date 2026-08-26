@@ -398,37 +398,37 @@ func runLabDescribe(cmd *cobra.Command, args []string) error {
 
 func printInstanceDetail(cmd *cobra.Command, d *azure.InstanceDetail) {
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "%s  (%s", d.Name, d.ResourceGroup)
+	_, _ = fmt.Fprintf(out, "%s  (%s", d.Name, d.ResourceGroup)
 	if d.Location != "" {
-		fmt.Fprintf(out, ", %s", d.Location)
+		_, _ = fmt.Fprintf(out, ", %s", d.Location)
 	}
 	if d.VMSize != "" {
-		fmt.Fprintf(out, ", %s", d.VMSize)
+		_, _ = fmt.Fprintf(out, ", %s", d.VMSize)
 	}
 	// The JSON carries power state and the console panel shows it; a terminal
 	// reader asking about a VM's disks wants to know it is running just as much.
 	if d.PowerState != "" {
-		fmt.Fprintf(out, ", %s", d.PowerState)
+		_, _ = fmt.Fprintf(out, ", %s", d.PowerState)
 	}
-	fmt.Fprintln(out, ")")
+	_, _ = fmt.Fprintln(out, ")")
 
-	fmt.Fprintf(out, "\nDisks (%d)\n", len(d.Disks))
+	_, _ = fmt.Fprintf(out, "\nDisks (%d)\n", len(d.Disks))
 	for _, disk := range d.Disks {
 		size := ""
 		if disk.SizeGB != nil {
 			size = fmt.Sprintf("%d GB", *disk.SizeGB)
 		}
-		fmt.Fprintf(out, "  %-4s %-38s %-9s %s\n", disk.Role, disk.Name, size, disk.StorageType)
+		_, _ = fmt.Fprintf(out, "  %-4s %-38s %-9s %s\n", disk.Role, disk.Name, size, disk.StorageType)
 	}
 
-	fmt.Fprintf(out, "\nNetwork interfaces (%d)\n", len(d.NICs))
+	_, _ = fmt.Fprintf(out, "\nNetwork interfaces (%d)\n", len(d.NICs))
 	for _, nic := range d.NICs {
-		fmt.Fprintf(out, "  %-38s %s\n", nic.Name, strings.Join(nic.PrivateIPs, ", "))
+		_, _ = fmt.Fprintf(out, "  %-38s %s\n", nic.Name, strings.Join(nic.PrivateIPs, ", "))
 		if nic.SubnetID != "" {
-			fmt.Fprintf(out, "      subnet %s\n", nic.SubnetID)
+			_, _ = fmt.Fprintf(out, "      subnet %s\n", nic.SubnetID)
 		}
 		if nic.NSGID != "" {
-			fmt.Fprintf(out, "      nsg    %s\n", nic.NSGID)
+			_, _ = fmt.Fprintf(out, "      nsg    %s\n", nic.NSGID)
 		}
 	}
 }

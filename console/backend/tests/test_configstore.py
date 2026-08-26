@@ -134,16 +134,16 @@ def test_known_configs_reports_broken_configs_instead_of_dropping_them() -> None
     with isolated_state():
         root = paths.configs_root().resolve()
         _write(root / "bad.yaml", "provider: aws\nenvironments:\n  - this is a list\n")
-        _write(root / "unparseable.yaml", "key: [unclosed\n")
+        _write(root / "unparsable.yaml", "key: [unclosed\n")
 
         configs = {c["name"]: c for c in configstore.known_configs()}
 
         assert "bad.yaml" in configs, "a config with the wrong shape must still list"
         assert configs["bad.yaml"]["error"], configs["bad.yaml"]
 
-        assert "unparseable.yaml" in configs, "invalid YAML must still list"
-        assert "not valid YAML" in configs["unparseable.yaml"]["error"], configs[
-            "unparseable.yaml"
+        assert "unparsable.yaml" in configs, "invalid YAML must still list"
+        assert "not valid YAML" in configs["unparsable.yaml"]["error"], configs[
+            "unparsable.yaml"
         ]
 
         # A config whose file vanished between sessions is reported, not dropped.

@@ -106,11 +106,6 @@ func runExec(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	ids := make([]string, 0, len(targets))
-	for _, t := range targets {
-		ids = append(ids, t.ID)
-	}
-
 	// The whole point of this verb is reaching a host that has stopped
 	// answering on WinRM, so demand the control-plane channel rather than
 	// trusting RunCommandOnMultiple to be one. On Azure it is NOT: that path
@@ -124,15 +119,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 			prov.Name())
 	}
 
-	if !asJSON {
-		names := make([]string, 0, len(targets))
-		for _, t := range targets {
-			names = append(names, t.Name)
-		}
-		fmt.Printf("Running on: %s\n", strings.Join(names, ", "))
-		fmt.Printf("Via: %s (control plane, no WinRM)\n", oob.OutOfBandChannel())
-		fmt.Printf("Command: %s\n\n", script)
-	}
+	printExecPlan(targets, oob, script, asJSON)
 
 	// Azure schedules run-command deletes in background goroutines; draining
 	// keeps them from being orphaned when the process exits. Registered BEFORE
@@ -145,45 +132,78 @@ func runExec(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	results := runOutOfBandOnAll(ctx, oob, ids, script, timeout)
-
-	out := make([]execResult, 0, len(targets))
-	failed := 0
-	for _, t := range targets {
-		r := execResult{Host: t.Name, InstanceID: t.ID, Status: "no result"}
-		if res := results[t.ID]; res != nil {
-			r.Status, r.Stdout, r.Stderr = res.Status, res.Stdout, res.Stderr
-		}
-		if !isCommandSuccess(r.Status) {
-			failed++
-		}
-		out = append(out, r)
-	}
-
-	if asJSON {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(out); err != nil {
-			return err
-		}
-	} else {
-		for _, r := range out {
-			fmt.Printf("=== %s ===\n", r.Host)
-			fmt.Printf("Status: %s\n", r.Status)
-			if r.Stdout != "" {
-				fmt.Println(r.Stdout)
-			}
-			if r.Stderr != "" {
-				fmt.Printf("STDERR: %s\n", r.Stderr)
-			}
-			fmt.Println()
-		}
+	results := runOutOfBandOnAll(ctx, oob, execTargetIDs(targets), script, timeout)
+	out, failed := collectExecResults(targets, results)
+	if err := writeExecResults(out, asJSON); err != nil {
+		return err
 	}
 
 	// A non-zero exit lets the console report the run as failed rather than
 	// leaving the agent to infer it from prose in the output.
 	if failed > 0 {
 		return fmt.Errorf("%d of %d host(s) did not succeed", failed, len(out))
+	}
+	return nil
+}
+
+func execTargetIDs(targets []provider.Instance) []string {
+	ids := make([]string, 0, len(targets))
+	for _, target := range targets {
+		ids = append(ids, target.ID)
+	}
+	return ids
+}
+
+func printExecPlan(targets []provider.Instance, oob provider.OutOfBandRunner, script string, asJSON bool) {
+	if asJSON {
+		return
+	}
+	names := make([]string, 0, len(targets))
+	for _, target := range targets {
+		names = append(names, target.Name)
+	}
+	fmt.Printf("Running on: %s\n", strings.Join(names, ", "))
+	fmt.Printf("Via: %s (control plane, no WinRM)\n", oob.OutOfBandChannel())
+	fmt.Printf("Command: %s\n\n", script)
+}
+
+func collectExecResults(
+	targets []provider.Instance,
+	results map[string]*provider.CommandResult,
+) ([]execResult, int) {
+	out := make([]execResult, 0, len(targets))
+	failed := 0
+	for _, target := range targets {
+		result := execResult{Host: target.Name, InstanceID: target.ID, Status: "no result"}
+		if commandResult := results[target.ID]; commandResult != nil {
+			result.Status = commandResult.Status
+			result.Stdout = commandResult.Stdout
+			result.Stderr = commandResult.Stderr
+		}
+		if !isCommandSuccess(result.Status) {
+			failed++
+		}
+		out = append(out, result)
+	}
+	return out, failed
+}
+
+func writeExecResults(results []execResult, asJSON bool) error {
+	if asJSON {
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(results)
+	}
+	for _, result := range results {
+		fmt.Printf("=== %s ===\n", result.Host)
+		fmt.Printf("Status: %s\n", result.Status)
+		if result.Stdout != "" {
+			fmt.Println(result.Stdout)
+		}
+		if result.Stderr != "" {
+			fmt.Printf("STDERR: %s\n", result.Stderr)
+		}
+		fmt.Println()
 	}
 	return nil
 }

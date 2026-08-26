@@ -114,7 +114,7 @@ prompt is just editing `system.md`.
 
 ## Architecture
 
-```
+```text
 console/
   frontend/   React + TypeScript + Vite SPA (@xyflow/react RangeView)
   backend/    FastAPI + a per-session LLM agent (dreadnode/rigging)
