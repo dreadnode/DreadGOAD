@@ -95,6 +95,7 @@ def map_range_status(
         instance = _match(host, instances)
         if instance is None:
             updated["status"] = "absent"
+            updated["health"] = "unknown"
             updated["ip_private"] = None
             updated["cloud_id"] = None
         else:
