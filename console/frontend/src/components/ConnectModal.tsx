@@ -14,7 +14,7 @@ export default function ConnectModal(
   const plan = buildConnectPlan(session, host)
 
   return (
-    <Modal onClose={onClose} width={620}>
+    <Modal onClose={onClose} width={620} ariaLabel={`Connect to ${host.hostname}`}>
         <div style={{
           color: 'var(--dg-brand)', fontWeight: 700, fontSize: 13, marginBottom: 4,
         }}>Connect to {host.hostname}</div>

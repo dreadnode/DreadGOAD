@@ -39,7 +39,7 @@ export function useWebSocket(
     }
     ws.onmessage = (event) => onMessageRef.current?.(event.data)
     ws.onclose = () => {
-      if (unmountedRef.current) return
+      if (unmountedRef.current || wsRef.current !== ws) return
       setStatus('disconnected')
       wsRef.current = null
       reconnectTimer.current = setTimeout(connect, 2000)

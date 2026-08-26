@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -50,7 +49,7 @@ func shellSingleQuote(s string) string {
 }
 
 func runScoreFetch(cmd *cobra.Command, _ []string) error {
-	ctx := context.Background()
+	ctx := cmd.Context()
 
 	remote, _ := cmd.Flags().GetString("remote")
 	if remote == "" {

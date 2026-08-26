@@ -370,6 +370,7 @@ def main() -> None:
         # delete
         assert client.delete(f"/api/sessions/{sid}").status_code == 200
         assert client.get(f"/api/sessions/{sid}").status_code == 404
+        assert sid not in chat_runtime.runtimes, "deleted session runtime leaked"
         print("PASS delete session")
 
         test_range_read_repairs_missing_config_hosts(client)

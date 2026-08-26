@@ -1,5 +1,6 @@
 locals {
-  name_prefix = "${var.env}-${var.instance_name}"
+  name_prefix               = "${var.env}-${var.instance_name}"
+  bootstrap_script_with_bom = "\ufeff${var.bootstrap_script}"
 
   computer_name = var.computer_name != "" ? var.computer_name : substr(replace(local.name_prefix, "_", "-"), 0, 15)
 
@@ -98,9 +99,11 @@ resource "azurerm_virtual_machine_extension" "bootstrap" {
   # Avoid -EncodedCommand: UTF-16LE → base64 bloats a 3 KB script past the
   # 8191-char CreateProcess command-line cap. Instead, base64-encode the raw
   # UTF-8 script and decode+execute it in a short stub. ASCII base64 is ~1.3×
-  # the source (vs ~2.7× for UTF-16LE base64), leaving ~4 KB of headroom.
+  # the source (vs ~2.7× for UTF-16LE base64), leaving ~4 KB of headroom. The
+  # UTF-8 BOM is required because Windows PowerShell 5.1 otherwise reads script
+  # files using the legacy system code page and corrupts non-ASCII content.
   protected_settings = jsonencode({
-    commandToExecute = "powershell.exe -ExecutionPolicy Unrestricted -Command \"[IO.File]::WriteAllBytes('C:\\dg-bootstrap.ps1',[Convert]::FromBase64String('${base64encode(var.bootstrap_script)}'));& 'C:\\dg-bootstrap.ps1'\""
+    commandToExecute = "powershell.exe -ExecutionPolicy Unrestricted -Command \"[IO.File]::WriteAllBytes('C:\\dg-bootstrap.ps1',[Convert]::FromBase64String('${base64encode(local.bootstrap_script_with_bom)}'));& 'C:\\dg-bootstrap.ps1'\""
   })
 
   tags = local.common_tags

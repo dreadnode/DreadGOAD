@@ -164,14 +164,15 @@ func confirmDestroy(cmd *cobra.Command, env, region string) error {
 	return nil
 }
 
-// infraContext builds a context with the --timeout flag applied. A zero
-// duration (or missing flag) returns a bare Background context.
+// infraActionContext builds a context with the --timeout flag applied while
+// preserving root-command signal cancellation. A zero duration returns the
+// command context unchanged.
 func infraActionContext(cmd *cobra.Command) (context.Context, context.CancelFunc) {
 	timeout, _ := cmd.Flags().GetDuration("timeout")
 	if timeout > 0 {
-		return context.WithTimeout(context.Background(), timeout)
+		return context.WithTimeout(cmd.Context(), timeout)
 	}
-	return context.Background(), func() {}
+	return cmd.Context(), func() {}
 }
 
 func runInfraAction(action string) func(*cobra.Command, []string) error {
@@ -292,7 +293,7 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 	// Checked after the fallback so the legacy layout is still accepted, and
 	// state-aware so a destroy with nothing to destroy says why (see
 	// infra_state.go) rather than pointing at a directory.
-	if err := checkInfraWorkDir(workDir, cfg.Env, region, action); err != nil {
+	if err := checkLocalInfraState(workDir, cfg.Env, region, action); err != nil {
 		return err
 	}
 

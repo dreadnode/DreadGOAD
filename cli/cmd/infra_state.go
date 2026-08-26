@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -22,13 +23,11 @@ import (
 // for a directory that would not have helped, while the real resources keep
 // billing.
 
-// hasTerraformState reports whether a working directory has ever been applied.
-//
-// Looks for either a state file or an initialised `.terraform` directory
-// anywhere beneath it — Terragrunt keeps both per-module, so a range that was
-// applied has them scattered across module subdirectories rather than at the
-// root. Any hit is enough; the question is "has anything been created here",
-// not "is every module in sync".
+// hasTerraformState reports whether a working directory contains an actual
+// Terraform state document. Terragrunt keeps local state per module, including
+// beneath .terragrunt-cache, so the search is recursive. The .terraform tree is
+// skipped because terraform init writes backend metadata named terraform.tfstate
+// there before any resource state exists.
 func hasTerraformState(dir string) bool {
 	found := false
 	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
@@ -38,12 +37,11 @@ func hasTerraformState(dir string) bool {
 		name := d.Name()
 		if d.IsDir() {
 			if name == ".terraform" {
-				found = true
-				return filepath.SkipAll
+				return filepath.SkipDir
 			}
 			return nil
 		}
-		if strings.HasSuffix(name, ".tfstate") || name == ".terraform.lock.hcl" {
+		if (strings.HasSuffix(name, ".tfstate") || strings.HasSuffix(name, ".tfstate.backup")) && isTerraformStateDocument(path) {
 			found = true
 			return filepath.SkipAll
 		}
@@ -52,11 +50,22 @@ func hasTerraformState(dir string) bool {
 	return found
 }
 
+func isTerraformStateDocument(path string) bool {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	var state struct {
+		Version int `json:"version"`
+	}
+	return json.Unmarshal(data, &state) == nil && state.Version > 0
+}
+
 // infraStateError explains a missing or empty working directory in terms of
 // what the operator can actually do next, rather than in terms of the path the
 // code happened to look for.
 //
-// ``action`` matters: an absent directory before `apply` means the environment
+// “action“ matters: an absent directory before `apply` means the environment
 // was never scaffolded, which is ordinary and fixable. The same absence before
 // `destroy` means the state is gone, which is neither.
 func infraStateError(workDir, env, region, action string, dirExists bool) error {
@@ -92,9 +101,23 @@ func infraStateError(workDir, env, region, action string, dirExists bool) error 
 		env, region, detail, workDir)
 }
 
-// checkInfraWorkDir validates a working directory for the action about to run,
-// returning nil when it is safe to proceed.
+// checkInfraWorkDir validates that a provider's rendered/scaffolded working
+// directory exists. Remote backends such as AWS S3 are deliberately not gated
+// on local state; Terragrunt initializes and reads that state from the backend.
 func checkInfraWorkDir(workDir, env, region, action string) error {
+	if _, err := os.Stat(workDir); err == nil {
+		return nil
+	}
+	return fmt.Errorf(
+		"infra working directory not found: %s\n"+
+			"Environment %q has not been scaffolded for region %q.\n"+
+			"Run 'dreadgoad infra validate' to check your setup.",
+		workDir, env, region)
+}
+
+// checkLocalInfraState adds the destroy safety gate required by Azure's local
+// backend. It must not be used for providers whose state is remote.
+func checkLocalInfraState(workDir, env, region, action string) error {
 	_, statErr := os.Stat(workDir)
 	dirExists := statErr == nil
 	if dirExists && (action != "destroy" || hasTerraformState(workDir)) {

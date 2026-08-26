@@ -78,7 +78,7 @@ type execResult struct {
 }
 
 func runExec(cmd *cobra.Command, args []string) error {
-	ctx := context.Background()
+	ctx := cmd.Context()
 	prov, cfg, err := getProvider(ctx)
 	if err != nil {
 		return err

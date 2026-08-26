@@ -8,7 +8,7 @@ export default function Modal(
       width: CSSProperties['width']
       maxHeight?: CSSProperties['maxHeight']
       zIndex?: number
-      ariaLabel?: string
+      ariaLabel: string
       borderColor?: string
       backdropPadding?: number
       backdropOpacity?: number

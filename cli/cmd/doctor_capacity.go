@@ -34,8 +34,8 @@ func azureCapacityChecks(cfg *config.Config) []doctor.CheckResult {
 	if cfg.ResolvedProvider() != "azure" {
 		return nil
 	}
-	region := cfg.Region
-	if region == "" {
+	region, err := cfg.ResolveRegion()
+	if err != nil {
 		return []doctor.CheckResult{{
 			Name:    "Azure capacity",
 			Status:  "warn",

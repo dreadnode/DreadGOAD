@@ -117,6 +117,7 @@ async def delete_session(request: Request, session_id: str) -> dict[str, t.Any]:
         await chat.cleanup_session(session_id)
         if not await service.delete_session(session_id):
             raise HTTPException(status_code=404, detail="session not found")
+        chat.release_cleanup(session_id)
     except Exception:
         chat.release_cleanup(session_id)
         raise

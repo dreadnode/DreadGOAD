@@ -346,7 +346,7 @@ function SettingsModal({ cfg, model, onModelChange, onClose, onSaved }: {
   }
 
   return (
-    <Modal onClose={onClose} width={420}>
+    <Modal onClose={onClose} width={420} ariaLabel="Settings">
         <div style={{ color: 'var(--dg-brand)', fontWeight: 700, fontSize: 13, marginBottom: 16 }}>Settings</div>
 
         {onModelChange ? (

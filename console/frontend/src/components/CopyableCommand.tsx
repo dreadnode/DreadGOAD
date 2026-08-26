@@ -23,19 +23,21 @@ export default function CopyableCommand(
   const timerRef = useRef<ReturnType<typeof setTimeout>>()
   useEffect(() => () => clearTimeout(timerRef.current), [])
 
+  const showState = (next: Exclude<CopyState, 'idle'>) => {
+    setState(next)
+    clearTimeout(timerRef.current)
+    timerRef.current = setTimeout(() => setState('idle'), 1600)
+  }
+
   const copy = (e?: React.MouseEvent) => {
     e?.stopPropagation()
-    navigator.clipboard?.writeText(value)
-      .then(() => {
-        setState('copied')
-        clearTimeout(timerRef.current)
-        timerRef.current = setTimeout(() => setState('idle'), 1600)
-      })
-      .catch(() => {
-        setState('failed')
-        clearTimeout(timerRef.current)
-        timerRef.current = setTimeout(() => setState('idle'), 1600)
-      })
+    if (!navigator.clipboard) {
+      showState('failed')
+      return
+    }
+    navigator.clipboard.writeText(value)
+      .then(() => showState('copied'))
+      .catch(() => showState('failed'))
   }
 
   const btnColor = state === 'copied' ? 'var(--dn-success)'

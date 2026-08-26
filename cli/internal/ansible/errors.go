@@ -60,9 +60,8 @@ func DetectErrorType(output string) (ErrorType, string) {
 		"Microsoft.Update.UpdateColl"):
 		return ErrWUACOM, "Windows Update COM object corrupted (0x800703FA)"
 
-	case containsAny(output, "0x8000FFFF", "8000ffff",
-		"Microsoft.PackageManagement.dll",
-		"Catastrophic failure"):
+	case strings.Contains(strings.ToLower(output), "packagemanagement") &&
+		containsAny(output, "0x8000FFFF", "8000ffff", "Catastrophic failure"):
 		return ErrPackageMgmt, "PackageManagement DLL load failure (MOTW / 0x8000FFFF)"
 
 	default:

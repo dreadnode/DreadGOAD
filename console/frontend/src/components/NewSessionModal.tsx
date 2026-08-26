@@ -302,7 +302,7 @@ export default function NewSessionModal({ cfg, onClose, onCreate }: {
   effects.push('deploy nothing — run /up in chat when you are ready')
 
   return (
-    <Modal onClose={onClose} width={460} maxHeight="86vh">
+    <Modal onClose={onClose} width={460} maxHeight="86vh" ariaLabel="New Session">
         <div style={{ color: 'var(--dg-brand)', fontWeight: 700, fontSize: 13, marginBottom: 4 }}>New Session</div>
         <div style={{ color: 'var(--dn-text-muted)', fontSize: 11, marginBottom: 16 }}>
           A session is a tab you talk to. It can create the config and environment it needs.

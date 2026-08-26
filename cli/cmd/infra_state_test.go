@@ -1,10 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/spf13/cobra"
 )
 
 func TestHasTerraformStateDetectsAppliedModules(t *testing.T) {
@@ -18,7 +22,7 @@ func TestHasTerraformStateDetectsAppliedModules(t *testing.T) {
 	if hasTerraformState(dir) {
 		t.Fatal("scaffold with no state must not read as applied")
 	}
-	if err := os.WriteFile(filepath.Join(mod, "terraform.tfstate"), []byte("{}"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(mod, "terraform.tfstate"), []byte(`{"version":4,"resources":[]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if !hasTerraformState(dir) {
@@ -26,13 +30,20 @@ func TestHasTerraformStateDetectsAppliedModules(t *testing.T) {
 	}
 }
 
-func TestHasTerraformStateDetectsInitialisedDir(t *testing.T) {
+func TestHasTerraformStateRejectsInitArtifacts(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "network", ".terraform"), 0o755); err != nil {
+	terraformDir := filepath.Join(dir, "network", ".terraform")
+	if err := os.MkdirAll(terraformDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if !hasTerraformState(dir) {
-		t.Fatal("an initialised .terraform dir must count as applied")
+	if err := os.WriteFile(filepath.Join(terraformDir, "terraform.tfstate"), []byte(`{"version":3,"backend":{}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "network", ".terraform.lock.hcl"), []byte("# providers"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if hasTerraformState(dir) {
+		t.Fatal("terraform init artifacts must not count as applied state")
 	}
 }
 
@@ -40,7 +51,7 @@ func TestHasTerraformStateDetectsInitialisedDir(t *testing.T) {
 // in Azure, but this checkout has no state for it.
 func TestDestroyWithoutStateExplainsWhyRecreatingWontHelp(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "dreadindex", "centralus")
-	err := checkInfraWorkDir(missing, "dreadindex", "centralus", "destroy")
+	err := checkLocalInfraState(missing, "dreadindex", "centralus", "destroy")
 	if err == nil {
 		t.Fatal("destroy without state must fail")
 	}
@@ -69,7 +80,7 @@ func TestDestroyOnScaffoldWithoutStateIsRefused(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "goad", "dc01"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	err := checkInfraWorkDir(dir, "test", "centralus", "destroy")
+	err := checkLocalInfraState(dir, "test", "centralus", "destroy")
 	if err == nil {
 		t.Fatal("destroy on a never-applied scaffold must fail")
 	}
@@ -81,7 +92,7 @@ func TestDestroyOnScaffoldWithoutStateIsRefused(t *testing.T) {
 // Regression guard: a first apply has no state by definition and must proceed.
 func TestApplyOnFreshScaffoldIsAllowed(t *testing.T) {
 	dir := t.TempDir()
-	if err := checkInfraWorkDir(dir, "dev", "us-west-2", "apply"); err != nil {
+	if err := checkLocalInfraState(dir, "dev", "us-west-2", "apply"); err != nil {
 		t.Fatalf("first apply must not be blocked: %v", err)
 	}
 	if err := checkInfraWorkDir(dir, "dev", "us-west-2", "plan"); err != nil {
@@ -108,10 +119,34 @@ func TestApplyOnMissingDirKeepsScaffoldGuidance(t *testing.T) {
 // Destroy proceeds normally when state is present.
 func TestDestroyWithStateProceeds(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "terraform.tfstate"), []byte("{}"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "terraform.tfstate"), []byte(`{"version":4,"resources":[]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := checkInfraWorkDir(dir, "dev", "us-west-2", "destroy"); err != nil {
+	if err := checkLocalInfraState(dir, "dev", "us-west-2", "destroy"); err != nil {
 		t.Fatalf("destroy with state must proceed: %v", err)
+	}
+}
+
+func TestRemoteBackendDestroyDoesNotRequireLocalState(t *testing.T) {
+	dir := t.TempDir()
+	if err := checkInfraWorkDir(dir, "dev", "us-west-2", "destroy"); err != nil {
+		t.Fatalf("remote backend destroy must initialize and query its backend: %v", err)
+	}
+}
+
+func TestInfraActionContextPreservesCommandCancellation(t *testing.T) {
+	parent, cancelParent := context.WithCancel(context.Background())
+	cmd := &cobra.Command{}
+	cmd.SetContext(parent)
+	cmd.Flags().Duration("timeout", time.Minute, "")
+
+	ctx, cancel := infraActionContext(cmd)
+	defer cancel()
+	cancelParent()
+
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("infra context ignored command cancellation")
 	}
 }

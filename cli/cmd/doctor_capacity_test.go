@@ -54,6 +54,24 @@ func TestCapacityChecksWarnWhenTheEnvIsNotScaffolded(t *testing.T) {
 	}
 }
 
+func TestCapacityChecksUseActiveEnvironmentRegion(t *testing.T) {
+	cfg := &config.Config{
+		Provider:    "azure",
+		Region:      "eastus",
+		Env:         "west",
+		ProjectRoot: t.TempDir(),
+		Environments: map[string]config.EnvironmentConfig{
+			"west": {Region: "westus2"},
+		},
+	}
+	cfg.Infra.Deployment = "goad-deployment"
+
+	got := azureCapacityChecks(cfg)
+	if len(got) != 1 || !strings.Contains(got[0].Message, "no scaffolding") {
+		t.Fatalf("active environment region was not resolved before the check: %+v", got)
+	}
+}
+
 func TestCapacityChecksWarnWhenNoSizesAreDeclared(t *testing.T) {
 	// A tree that exists but declares no literal size — e.g. every size is
 	// interpolated. Reporting a pass here would claim the region was checked.
