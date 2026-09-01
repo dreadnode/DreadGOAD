@@ -98,8 +98,8 @@ export default function App() {
       // so those fields never surfaced until a full page reload.
       api.listSessions().then(d => setSessions(d.sessions)).catch(() => {})
     }
-    if (ev.kind === 'command_run' && ev.phase === 'start' && typeof ev.command === 'string') {
-      setProcCmd(prev => ({ ...prev, [sid]: ev.command as string }))
+    if (ev.kind === 'command_run' && typeof ev.command === 'string') {
+      setProcCmd(prev => ({ ...prev, [sid]: ev.phase === 'start' ? ev.command as string : '' }))
     }
     if (ev.kind === 'agent_end') {
       setProcessing(prev => ({ ...prev, [sid]: false }))

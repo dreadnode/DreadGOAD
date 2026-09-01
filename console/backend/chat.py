@@ -89,9 +89,7 @@ def dispatch(app: t.Any, session_id: str, content: str) -> asyncio.Task[t.Any] |
                 await handle_message(app, session_id, content)
         except asyncio.CancelledError:
             await emit_event(
-                app,
-                session_id,
-                "agent_end",
+                app, session_id, "agent_end",
                 {"failed": False, "cancelled": True},
             )
             raise

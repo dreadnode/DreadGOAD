@@ -44,6 +44,7 @@ from console.backend.sessions import SessionService  # noqa: E402
 from dreadnode.agent.tools import FunctionCall, ToolCall  # noqa: E402
 from rigging import Message  # noqa: E402
 
+
 def setup_module(_mod: object = None) -> None:
     os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = _OWN_STATE_ROOT
 
@@ -1075,7 +1076,13 @@ async def test_cancelling_a_cloud_command_says_so_and_rereads_state() -> None:
             return {"hosts_updated": 1, "changes": []}
 
         orig_start, orig_check = command_runner.start_command, hook.run_check
+        orig_cred_check = command_runner._check_credentials
         command_runner.start_command, hook.run_check = fake_start, recording_hook
+
+        async def _cred_ok(_):  # noqa: ANN001, ANN202
+            return None
+
+        command_runner._check_credentials = _cred_ok
         try:
             task = chat.dispatch(app, sid, "/start")
             assert task is not None
@@ -1108,6 +1115,7 @@ async def test_cancelling_a_cloud_command_says_so_and_rereads_state() -> None:
             print("PASS test_cancelling_a_cloud_command_says_so_and_rereads_state")
         finally:
             command_runner.start_command, hook.run_check = orig_start, orig_check
+            command_runner._check_credentials = orig_cred_check
             await chat.cleanup_session(sid)
             await db.close()
 
@@ -1202,7 +1210,13 @@ async def test_a_wedged_refresh_cannot_hold_the_cancel_open() -> None:
 
         orig_start, orig_check = command_runner.start_command, hook.run_check
         orig_timeout = command_runner._REFRESH_TIMEOUT
+        orig_cred_check = command_runner._check_credentials
+
+        async def _cred_ok(_):  # noqa: ANN001, ANN202
+            return None
+
         command_runner.start_command, hook.run_check = fake_start, wedged_hook
+        command_runner._check_credentials = _cred_ok
         # Shortened so the test is quick; production is _REFRESH_TIMEOUT.
         command_runner._REFRESH_TIMEOUT = 0.5
         try:
@@ -1223,6 +1237,7 @@ async def test_a_wedged_refresh_cannot_hold_the_cancel_open() -> None:
         finally:
             command_runner._REFRESH_TIMEOUT = orig_timeout
             command_runner.start_command, hook.run_check = orig_start, orig_check
+            command_runner._check_credentials = orig_cred_check
             await chat.cleanup_session(sid)
             await db.close()
 
@@ -1321,6 +1336,44 @@ async def test_immediate_cancel_still_finishes_the_ui_turn() -> None:
             await db.close()
 
 
+async def test_midgeneration_cancel_emits_agent_end() -> None:
+    """Cancel via task.cancel() during generation must emit agent_end."""
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        db = await Database(str(tmp / "state.db")).connect()
+        app = types.SimpleNamespace(state=types.SimpleNamespace(db=db))
+        sid = "s-midgen-cancel"
+        await db.upsert_session({"id": sid})
+        ws = FakeWS()
+        chat.register_conn(sid, ws)
+
+        blocked = asyncio.Event()
+
+        async def block_until_cancelled(app_, sid_, content):  # noqa: ANN001
+            blocked.set()
+            await asyncio.sleep(3600)
+
+        orig = chat.handle_message
+        chat.handle_message = block_until_cancelled
+        try:
+            task = chat.dispatch(app, sid, "think about this")
+            assert task is not None
+            await blocked.wait()
+            assert chat.cancel_session(sid) is True
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+            ends = [ev for ev in ws.sent if ev["kind"] == "agent_end"]
+            assert len(ends) == 1, f"expected 1 agent_end, got {len(ends)}: {ends}"
+            assert ends[0].get("cancelled") is True, ends[0]
+            assert chat.active_turn(sid) is None
+            print("PASS test_midgeneration_cancel_emits_agent_end")
+        finally:
+            chat.handle_message = orig
+            await chat.cleanup_session(sid)
+            await db.close()
+
+
 async def test_cleanup_all_force_stops_and_awaits_stubborn_turn() -> None:
     """Shutdown cannot close the DB while an unresponsive turn is still alive."""
 
@@ -1394,6 +1447,7 @@ async def _main() -> None:
         await test_a_wedged_refresh_cannot_hold_the_cancel_open()
         await test_cancelled_read_is_not_flagged_still_running()
         await test_immediate_cancel_still_finishes_the_ui_turn()
+        await test_midgeneration_cancel_emits_agent_end()
         await test_cleanup_all_force_stops_and_awaits_stubborn_turn()
         await test_cleanup_session_evicts()
         test_cleanup_reservation_is_exclusive()
