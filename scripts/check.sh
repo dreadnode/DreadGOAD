@@ -254,9 +254,9 @@ check_ansible_env() {
         ANSIBLE_VERSION=$(python3 -m pip --disable-pip-version-check list | grep ansible-core | cut -d ' ' -f 2- | sed -e 's/ //g')
         REQUIRED_MIN="2.20.0"
         REQUIRED_MAX="2.21.0"
-        if [ "$(printf '%s\n' "$REQUIRED_MIN" "$ANSIBLE_VERSION" | sort -V | head -n1)" = "$REQUIRED_MIN" ] && \
-           [ "$(printf '%s\n' "$REQUIRED_MAX" "$ANSIBLE_VERSION" | sort -V | head -n1)" = "$ANSIBLE_VERSION" ] && \
-           [ "$ANSIBLE_VERSION" != "$REQUIRED_MAX" ]; then
+        if [ "$(printf '%s\n' "$REQUIRED_MIN" "$ANSIBLE_VERSION" | sort -V | head -n1)" = "$REQUIRED_MIN" ] \
+                                                                                                            && [ "$(printf '%s\n' "$REQUIRED_MAX" "$ANSIBLE_VERSION" | sort -V | head -n1)" = "$ANSIBLE_VERSION" ] \
+                                                                                                               && [ "$ANSIBLE_VERSION" != "$REQUIRED_MAX" ]; then
             (echo >&2 "  ${GOODTOGO} ansible-core $ANSIBLE_VERSION  is supported")
         else
             (echo >&2 "  ${ERROR} ansible-core $ANSIBLE_VERSION is not supported (need >=2.20.0,<2.21.0). Fix:")

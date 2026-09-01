@@ -233,8 +233,8 @@ func checkAnsibleVersion(provider string) CheckResult {
 
 	if major > 2 || (major == 2 && minor > 20) {
 		return CheckResult{
-			Name:   "ansible-core",
-			Status: "warn",
+			Name:    "ansible-core",
+			Status:  "warn",
 			Message: fmt.Sprintf("v%s (untested, recommend 2.20.x)", version),
 		}
 	}
