@@ -1,4 +1,3 @@
 ---
-# ansible-core >=2.19 breaks Windows module execution over AWS SSM due to
-# pipelining changes. See requirements.txt for full explanation.
-requires_ansible: ">=2.15.0,<2.19.0"
+# 2.19 breaks Windows/SSM (ansible/ansible#86397); fixed in 2.20 (PR #86619).
+requires_ansible: ">=2.20.0,<2.21.0"

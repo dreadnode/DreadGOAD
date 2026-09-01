@@ -46,7 +46,7 @@ for the full catalog, which is scoped to the full GOAD lab.
 
 ### Prerequisites
 
-- ansible-core >= 2.15, < 2.19 (the upper bound matters: 2.19 changed pipelining in ways that break the Windows modules over AWS SSM)
+- ansible-core >= 2.20, < 2.21 (2.19 breaks Windows modules over AWS SSM — [ansible/ansible#86397](https://github.com/ansible/ansible/issues/86397); fixed in 2.20)
 - Go 1.26+ (for building the CLI)
 - A supported infrastructure provider (VirtualBox, VMware, Proxmox, AWS, Azure, or Ludus)
 
