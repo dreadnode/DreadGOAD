@@ -20,8 +20,9 @@ setuptools = [{ version = "==75.3.4", python = "==3.8" },
               { version = "^84.0.0", python = ">=3.10" }]
 ansible-runner = [{ version = "==2.3.6", python = "==3.8" },
                   { version = "^2.4.0", python = ">=3.9" }]
+# 2.19 breaks Windows/SSM (ansible/ansible#86397); fixed in 2.20 (PR #86619).
 ansible-core = [{ version = "==2.12.6", python = "<3.11" },
-                { version = "==2.18.0", python = ">=3.11" }]
+                { version = ">=2.20.0,<2.21.0", python = ">=3.11" }]
 pywinrm = "^0.5.0"
 azure-identity = "^1.19.0"
 # Current Azure management SDKs require Python 3.9 or newer.

@@ -1,0 +1,467 @@
+#!/usr/bin/env bash
+# Launch the DreadGOAD Console.
+#
+#   ./dreadgoad-console                 # build frontend, serve on :24749
+#   ./dreadgoad-console --dev           # run vite dev server + backend (hot reload)
+#   ./dreadgoad-console --help          # usage and the environment variables
+#
+# Requires: python3, node/npm, and the compiled `dreadgoad` Go binary on PATH
+# (or at cli/dreadgoad) — the backend shells out to it. See design §10.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+BACKEND="$ROOT/console/backend"
+FRONTEND="$ROOT/console/frontend"
+VENV="$ROOT/.venv"
+# 24749 == 0x60AD — "GOAD" in hex (G->6, O->0). Outside the Linux
+# ephemeral range (32768-60999) so the bind never races an outbound
+# connection, and unregistered with IANA.
+PORT="${DREADGOAD_CONSOLE_PORT:-${DREADGOAD_WEBAPP_PORT:-24749}}"
+# Left empty when nothing is set: the backend owns the fallback
+# (console/backend/paths.py FALLBACK_MODEL). Repeating the literal here would
+# let the launch banner advertise a model the agent is not running.
+MODEL="${DREADGOAD_CONSOLE_MODEL:-${DREADGOAD_WEBAPP_MODEL:-}}"
+API_KEY_ENV="OPENROUTER_API_KEY"
+# --- palette ---------------------------------------------------------------
+# 256-color approximations of the app's brand tokens (console/frontend/src/index.css):
+#   202 ≈ --dg-brand #ef562f   209 ≈ --dg-interactive #ff7a52
+#   75  ≈ --dn-electric        78 ≈ --dn-success   214 ≈ --dn-warning
+# Disabled when stdout isn't a TTY or NO_COLOR is set (https://no-color.org).
+#
+# Defined above the argument loop, not below it: --help renders through this
+# palette, so it has to exist before the first thing that can print.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+	BRAND=$'\033[38;5;202m'
+	CORAL=$'\033[38;5;209m'
+	BLUE=$'\033[38;5;75m'
+	GREEN=$'\033[38;5;78m'
+	AMBER=$'\033[38;5;214m'
+	RED=$'\033[38;5;203m'
+	DIM=$'\033[38;5;244m'
+	FAINT=$'\033[38;5;240m'
+	BOLD=$'\033[1m'
+	RESET=$'\033[0m'
+else
+	BRAND=''
+	CORAL=''
+	BLUE=''
+	GREEN=''
+	AMBER=''
+	RED=''
+	DIM=''
+	FAINT=''
+	BOLD=''
+	RESET=''
+fi
+
+COLS="$(tput cols 2>/dev/null || echo 80)"
+
+# resolved_model — what a new session will actually run on.
+#
+# Asks the backend rather than repeating its fallback: paths.py is stdlib-only
+# and __init__.py is inert, so system python can import it with no venv. If
+# that fails for any reason the launcher says so instead of inventing a name,
+# because a banner that states the wrong model is worse than one that admits
+# it does not know.
+resolved_model() {
+	if [ -n "$MODEL" ]; then
+		printf '%s' "$MODEL"
+		return
+	fi
+	python3 -c 'import sys; sys.path.insert(0, sys.argv[1])
+from console.backend import paths
+print(paths.default_model())' "$ROOT" 2>/dev/null || printf 'backend default'
+}
+
+# --- help -------------------------------------------------------------------
+# Colour is passed as its own printf argument rather than embedded in the
+# format string, so %-Ns pads the visible text and the columns line up whether
+# or not the palette is active.
+help_head() { printf '\n  %s%s%s\n' "$FAINT" "$1" "$RESET"; }
+help_opt() { printf '    %s%-18s%s %s%s%s\n' "$CORAL" "$1" "$RESET" "$DIM" "$2" "$RESET"; }
+help_env() { printf '    %s%-26s%s %s%s%s\n' "$BLUE" "$1" "$RESET" "$DIM" "$2" "$RESET"; }
+# Continuation under an option, aligned to its description column. Keeps long
+# defaults off the flag line, which otherwise runs past 80 columns.
+help_cont() { printf '    %-18s %s%s%s\n' "" "$FAINT" "$1" "$RESET"; }
+
+usage() {
+	local self
+	self="$(basename "$0")"
+	# The compact wordmark, matching banner()'s narrow-terminal form — help is
+	# reference material, not a launch, so it does not get the full six-line
+	# ASCII lockup.
+	printf '\n  %s%s▰▰%s %s%sDREADGOAD%s %s%sCONSOLE%s\n' \
+		"$BOLD" "$BRAND" "$RESET" "$BOLD" "$BRAND" "$RESET" "$BOLD" "$CORAL" "$RESET"
+	printf '  %sActive Directory range control plane%s\n' "$DIM" "$RESET"
+
+	help_head "USAGE"
+	printf '    %s%s%s %s[--dev] [--model NAME] [--api-key-env VAR]%s\n' \
+		"$BOLD" "$self" "$RESET" "$CORAL" "$RESET"
+	printf '    %s%s%s %s-h | --help%s\n' "$BOLD" "$self" "$RESET" "$CORAL" "$RESET"
+
+	help_head "OPTIONS"
+	help_opt "(none)" "build the frontend and serve it on :$PORT"
+	help_opt "--dev" "vite dev server + backend, with hot reload"
+	help_opt "--model NAME" "agent model for new sessions"
+	help_cont "default: $(resolved_model)"
+	help_opt "--api-key-env VAR" "read the LLM key from VAR"
+	help_cont "default: $API_KEY_ENV"
+	help_opt "-h, --help" "show this message and exit"
+
+	help_head "ENVIRONMENT"
+	help_env "DREADGOAD_CONSOLE_PORT" "port to serve on (default 24749)"
+	help_env "DREADGOAD_CONSOLE_MODEL" "agent model (same as --model)"
+	help_env "OPENROUTER_API_KEY" "LLM key, or set one in-app via the gear icon"
+	help_env "NO_COLOR" "disable coloured output"
+
+	help_head "NOTES"
+	printf '    %sThe key itself is never taken as an argument — it would land in%s\n' "$DIM" "$RESET"
+	printf '    %sshell history and in ps output. --api-key-env names the variable%s\n' "$DIM" "$RESET"
+	printf '    %sholding it, and its value is passed to the backend.%s\n' "$DIM" "$RESET"
+	printf '\n'
+}
+
+# Parsed as a loop with an explicit reject arm. Previously this was a single
+# `[ "${1:-}" = "--dev" ]` test, so anything else — `-h`, or a typo like
+# `--Dev` — fell through silently to a full launch: venv, npm build, and a
+# second bind on an already-serving port.
+DEV=0
+
+# need_value <flag> <count> — a flag taking an argument must be told it is
+# missing. Under `set -u` a bare $2 would abort with "unbound variable", which
+# says nothing about which flag was wrong.
+need_value() {
+	if [ "$2" -lt 2 ]; then
+		printf 'dreadgoad-console: %s requires a value\n\n' "$1" >&2
+		usage >&2
+		exit 2
+	fi
+}
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+	--dev) DEV=1 ;;
+	--model)
+		need_value "$1" $#
+		MODEL="$2"
+		shift
+		;;
+	--model=*) MODEL="${1#*=}" ;;
+	--api-key-env)
+		need_value "$1" $#
+		API_KEY_ENV="$2"
+		shift
+		;;
+	--api-key-env=*) API_KEY_ENV="${1#*=}" ;;
+	-h | --help)
+		usage
+		exit 0
+		;;
+	*)
+		printf 'dreadgoad-console: unknown option: %s\n\n' "$1" >&2
+		usage >&2
+		exit 2
+		;;
+	esac
+	shift
+done
+
+# An empty value is a typo, not a request to unset. Caught here so it fails at
+# the flag rather than as a mystifying default further down.
+if [ -z "$API_KEY_ENV" ]; then
+	printf 'dreadgoad-console: --api-key-env requires a variable name\n' >&2
+	exit 2
+fi
+
+# The name is about to go through indirect expansion (${!API_KEY_ENV}), and
+# bash evaluates an array subscript inside it -- `a[$(command)]` runs the
+# command. Validate the shape before the value is ever expanded.
+#
+# The pattern deliberately mirrors _API_KEY_ENV_RE in
+# console/backend/config_routes.py, which restricts the same setting for the
+# same reason: a name like PATH or LD_PRELOAD would let this flag rewrite the
+# environment of every subprocess the console launches.
+if ! [[ "$API_KEY_ENV" =~ ^[A-Z][A-Z0-9_]*_(API_KEY|KEY|TOKEN)$ ]]; then
+	printf 'dreadgoad-console: --api-key-env must name a credential variable\n' >&2
+	printf '  expected something like OPENROUTER_API_KEY, ANTHROPIC_API_KEY or CI_TOKEN\n' >&2
+	printf '  got: %s\n' "$API_KEY_ENV" >&2
+	exit 2
+fi
+
+banner() {
+	# The wordmark is 74 cols wide; fall back to a one-liner in narrow terminals.
+	if [ "$COLS" -lt 78 ]; then
+		printf '\n  %s%s▰▰%s %sDREADGOAD%s %sCONSOLE%s\n' \
+			"$BOLD" "$BRAND" "$RESET" "$BOLD$BRAND" "$RESET" "$CORAL" "$RESET"
+		return
+	fi
+	printf '\n'
+	printf '%s%s██████╗ ██████╗ ███████╗ █████╗ ██████╗ %s%s ██████╗  ██████╗  █████╗ ██████╗ %s\n' "$BOLD" "$BRAND" "$RESET" "$CORAL" "$RESET"
+	printf '%s%s██╔══██╗██╔══██╗██╔════╝██╔══██╗██╔══██╗%s%s██╔════╝ ██╔═══██╗██╔══██╗██╔══██╗%s\n' "$BOLD" "$BRAND" "$RESET" "$CORAL" "$RESET"
+	printf '%s%s██║  ██║██████╔╝█████╗  ███████║██║  ██║%s%s██║  ███╗██║   ██║███████║██║  ██║%s\n' "$BOLD" "$BRAND" "$RESET" "$CORAL" "$RESET"
+	printf '%s%s██║  ██║██╔══██╗██╔══╝  ██╔══██║██║  ██║%s%s██║   ██║██║   ██║██╔══██║██║  ██║%s\n' "$BOLD" "$BRAND" "$RESET" "$CORAL" "$RESET"
+	printf '%s%s██████╔╝██║  ██║███████╗██║  ██║██████╔╝%s%s╚██████╔╝╚██████╔╝██║  ██║██████╔╝%s\n' "$BOLD" "$BRAND" "$RESET" "$CORAL" "$RESET"
+	printf '%s%s╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═════╝ %s%s ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚═════╝ %s\n' "$BOLD" "$BRAND" "$RESET" "$CORAL" "$RESET"
+}
+
+# field <label> <value> [color]  — aligned key/value line in the launch summary.
+field() { printf '  %s%-9s%s %s%s%s\n' "$FAINT" "$1" "$RESET" "${3:-$DIM}" "$2" "$RESET"; }
+step() { printf '\n  %s▸%s %s%s%s\n' "$BRAND" "$RESET" "$BOLD" "$1" "$RESET"; }
+warn() { printf '  %s!%s %s%s%s\n' "$AMBER" "$RESET" "$AMBER" "$1" "$RESET"; }
+fail() { printf '  %s✕%s %s%s%s\n' "$RED" "$RESET" "$RED" "$1" "$RESET"; }
+
+banner
+printf '  %sActive Directory range control plane%s %s·%s %s%s%s\n\n' \
+	"$DIM" "$RESET" "$FAINT" "$RESET" "$CORAL" \
+	"$([ "$DEV" = 1 ] && echo 'console — dev, hot reload' || echo 'console')" "$RESET"
+
+# --- environment summary ---------------------------------------------------
+if command -v node >/dev/null 2>&1; then
+	NODE_V="$(node --version 2>/dev/null || echo '?')"
+else
+	NODE_V="not found"
+fi
+PY_V="$(python3 --version 2>/dev/null | awk '{print $2}' || echo '?')"
+
+# --- dreadgoad CLI resolution ----------------------------------------------
+# Mirrors commands.resolve_bin: the repo build wins over PATH, because only it
+# has this branch's --json verbs (`lab status --json`, `health-check --json`,
+# `extension list --json`). A stale system binary silently breaks /instances,
+# /health and the ingestion hook with "unknown flag: --json", so build ours.
+REPO_BIN="$ROOT/cli/dreadgoad"
+
+cli_needs_build() {
+	# -f as well as -x: resolve_bin requires a regular file (`is_file()`), so a
+	# directory here would make the launcher and the backend disagree.
+	if [ ! -f "$REPO_BIN" ] || [ ! -x "$REPO_BIN" ]; then return 0; fi # never built
+	# Rebuild when any Go source is newer than the binary — a stale build is the
+	# same failure as no build, just harder to spot.
+	if [ -n "$(find "$ROOT/cli" -name '*.go' -newer "$REPO_BIN" -print -quit 2>/dev/null)" ]; then
+		return 0
+	fi
+	if [ "$ROOT/cli/go.mod" -nt "$REPO_BIN" ]; then
+		return 0
+	fi
+	return 1
+}
+
+CLI_BUILD=0
+if cli_needs_build; then CLI_BUILD=1; fi
+CLI_NOTE=""
+if [ "$CLI_BUILD" = 0 ]; then
+	CLI_PATH="$REPO_BIN"
+elif command -v go >/dev/null 2>&1; then
+	CLI_PATH="$REPO_BIN"
+	CLI_NOTE="  (building…)"
+elif command -v dreadgoad >/dev/null 2>&1; then
+	# No toolchain — fall back to PATH, but say so: it may predate the JSON verbs.
+	CLI_PATH="$(command -v dreadgoad)"
+	CLI_NOTE="  (system binary — go not installed)"
+else
+	CLI_PATH=""
+fi
+
+# --- credentials and model reach the backend through the environment --------
+# uvicorn is exec'd (or backgrounded) from this shell, so exporting here is how
+# --model and --api-key-env take effect. Previously MODEL was computed for the
+# banner and never exported, so the summary reported a model the backend had
+# no idea about unless the caller had already exported it themselves.
+if [ -n "$MODEL" ]; then
+	export DREADGOAD_CONSOLE_MODEL="$MODEL"
+fi
+
+# Indirect expansion, defaulted, because `set -u` aborts on an unset name.
+API_KEY_VALUE="${!API_KEY_ENV:-}"
+if [ "$API_KEY_ENV" != "OPENROUTER_API_KEY" ]; then
+	if [ -z "$API_KEY_VALUE" ]; then
+		printf '\n'
+		fail "--api-key-env named $API_KEY_ENV, but that variable is empty or unset."
+		fail "export it first, or drop the flag to use OPENROUTER_API_KEY."
+		exit 1
+	fi
+	# The backend reads OPENROUTER_API_KEY; copy the value across rather than
+	# teaching it a second variable name.
+	export OPENROUTER_API_KEY="$API_KEY_VALUE"
+fi
+
+field "root" "$ROOT"
+field "python" "$PY_V"
+field "node" "$NODE_V" "$([ "$NODE_V" = "not found" ] && echo "$RED" || echo "$DIM")"
+field "cli" "${CLI_PATH:-not found}$CLI_NOTE" "$([ -z "$CLI_PATH" ] && echo "$RED" || echo "$DIM")"
+field "model" "$(resolved_model)" "$BLUE"
+if [ -n "${OPENROUTER_API_KEY:-}" ]; then
+	field "api key" "● set ($API_KEY_ENV)" "$GREEN"
+else
+	field "api key" "○ not set — add one in-app via ⚙" "$AMBER"
+fi
+field "port" "$PORT"
+
+# --- refuse to start a second instance -------------------------------------
+# Checked before any work: without it a re-run reinstalls deps and rebuilds the
+# whole frontend before uvicorn finally fails to bind, which reads as a slow
+# hang rather than "it's already running".
+if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+	printf '\n'
+	fail "port $PORT is already in use — the console is probably already running."
+	fail "open http://localhost:$PORT, stop the running instance, or set"
+	fail "DREADGOAD_CONSOLE_PORT to a free port."
+	exit 1
+fi
+
+# --- Python venv + backend deps --------------------------------------------
+if [ ! -d "$VENV" ]; then
+	step "creating venv"
+	python3 -m venv "$VENV"
+fi
+step "installing backend deps"
+# Prefer uv (fast, and a uv-managed venv has no pip); otherwise ensure pip
+# exists and use it. This avoids assuming `$VENV/bin/pip` is present.
+if command -v uv >/dev/null 2>&1; then
+	printf '  %svia uv%s\n' "$FAINT" "$RESET"
+	uv pip install -q --python "$VENV/bin/python" -r "$BACKEND/requirements.txt"
+else
+	printf '  %svia pip%s\n' "$FAINT" "$RESET"
+	"$VENV/bin/python" -m ensurepip --upgrade >/dev/null 2>&1 || true
+	"$VENV/bin/python" -m pip install -q -r "$BACKEND/requirements.txt"
+fi
+
+# --- dreadgoad CLI binary (hard runtime dependency) ------------------------
+if [ "$CLI_BUILD" = 1 ]; then
+	if command -v go >/dev/null 2>&1; then
+		if [ -x "$REPO_BIN" ]; then
+			step "rebuilding dreadgoad CLI (sources changed)"
+		else
+			step "building dreadgoad CLI"
+		fi
+		if (cd "$ROOT/cli" && go build -o dreadgoad .); then
+			printf '  %s✓%s %s%s%s\n' "$GREEN" "$RESET" "$FAINT" "$REPO_BIN" "$RESET"
+		else
+			printf '\n'
+			fail "go build failed — see the output above."
+			fail "range commands need this binary; fix the build and re-run."
+			exit 1
+		fi
+	elif [ -n "$CLI_PATH" ]; then
+		printf '\n'
+		warn "cli/dreadgoad isn't built and 'go' isn't installed."
+		warn "falling back to $CLI_PATH — if it predates this branch,"
+		warn "/instances and /health will fail with 'unknown flag: --json'."
+	else
+		printf '\n'
+		warn "no 'dreadgoad' binary and no 'go' toolchain to build one."
+		warn "install go, or put a current dreadgoad on PATH."
+		warn "range commands will fail until then."
+	fi
+fi
+
+# ready <url-suffix> — boxed "serving on" banner.
+ready() {
+	local url="http://localhost:$PORT" line
+	# ASCII stand-in for the '·' separator so ${#line} measures display columns
+	# even where ${#…} counts bytes (bash 3.2 / non-UTF-8 locale).
+	line="  DreadGOAD Console  .  $url  "
+	local i bar=''
+	for ((i = 0; i < ${#line}; i++)); do bar+='─'; done
+	printf '\n  %s╭%s╮%s\n' "$BRAND" "$bar" "$RESET"
+	printf '  %s│%s  %s%sDreadGOAD Console%s  %s·%s  %s%s%s  %s│%s\n' \
+		"$BRAND" "$RESET" "$BOLD" "$BRAND" "$RESET" "$FAINT" "$RESET" \
+		"$BOLD$CORAL" "$url" "$RESET" "$BRAND" "$RESET"
+	printf '  %s╰%s╯%s\n\n' "$BRAND" "$bar" "$RESET"
+}
+
+if [ "$DEV" = 1 ]; then
+	step "starting vite dev server + uvicorn (--reload)"
+	ready
+
+	# Both run as background jobs, which a non-interactive shell starts with
+	# SIGINT ignored — so a terminal Ctrl-C reaching the process group does NOT
+	# stop them. The traps below are the actual teardown: this script does get the
+	# SIGINT (it's the foreground process), and answers it with SIGTERM to both
+	# trees. Same path covers `kill` of this script and either side crashing.
+	(cd "$FRONTEND" && npm install && npm run dev) &
+	VITE_PID=$!
+	"$VENV/bin/uvicorn" console.backend.server:app --reload --port "$PORT" &
+	API_PID=$!
+
+	# Signal a process and its descendants. npm → vite and uvicorn → its reloader
+	# child are grandchildren, so signalling the direct PID alone strands them.
+	# Descendants are collected *before* the parent dies — once it's gone they're
+	# reparented to init and can no longer be found from it.
+	# Invoked indirectly via traps below.
+	# shellcheck disable=SC2317,SC2329
+	kill_tree() {
+		local pid="$1" child
+		if command -v pgrep >/dev/null 2>&1; then
+			for child in $(pgrep -P "$pid" 2>/dev/null); do kill_tree "$child" "${2:-TERM}"; done
+		fi
+		kill -"${2:-TERM}" "$pid" 2>/dev/null || true
+	}
+
+	# Invoked indirectly via traps below.
+	# shellcheck disable=SC2317,SC2329
+	cleanup() {
+		trap - INT TERM EXIT # no re-entry
+		kill_tree "$VITE_PID"
+		kill_tree "$API_PID"
+		# Bounded reap (5s), then SIGKILL whatever ignored SIGTERM. Never blocks
+		# forever — a wedged child must not wedge the shutdown.
+		local i
+		for i in 1 2 3 4 5 6 7 8 9 10; do
+			kill -0 "$VITE_PID" 2>/dev/null || kill -0 "$API_PID" 2>/dev/null || break
+			sleep 0.5
+		done
+		if kill -0 "$VITE_PID" 2>/dev/null; then kill_tree "$VITE_PID" KILL; fi
+		if kill -0 "$API_PID" 2>/dev/null; then kill_tree "$API_PID" KILL; fi
+		sweep_group
+	}
+
+	# Final sweep for strands whose parent already exited — once reparented to
+	# init they're unreachable via pgrep -P, but they keep our process group.
+	# Only safe when we lead that group (an interactive shell puts this script in
+	# its own job group); if we merely inherited someone else's group — a bare
+	# `bash dreadgoad-console --dev` in CI — signalling it would hit their processes.
+	# Invoked indirectly via traps below.
+	# shellcheck disable=SC2317,SC2329
+	sweep_group() {
+		[ "$$" = "$(ps -o pgid= -p $$ 2>/dev/null | tr -d ' ')" ] || return 0
+		trap '' TERM # don't take down the sweeper
+		kill -TERM 0 2>/dev/null || true
+	}
+	# Invoked indirectly via traps below.
+	# shellcheck disable=SC2317,SC2329
+	on_signal() {
+		printf '\n  %s▸%s %sshutting down%s\n' "$BRAND" "$RESET" "$DIM" "$RESET"
+		cleanup
+		exit 0
+	}
+	trap on_signal INT TERM
+	trap cleanup EXIT
+
+	# Wait for either side to exit, then tear the other down — a crashed backend
+	# shouldn't leave a dev server behind (and vice versa). Polled rather than
+	# `wait -n`, which needs bash 4.3 (macOS ships 3.2).
+	while kill -0 "$VITE_PID" 2>/dev/null && kill -0 "$API_PID" 2>/dev/null; do
+		sleep 1
+	done
+	printf '\n'
+	if kill -0 "$API_PID" 2>/dev/null; then
+		warn "vite dev server exited — stopping the backend"
+	else
+		warn "backend exited — stopping the vite dev server"
+	fi
+	exit 1
+fi
+
+# --- Production-ish: build frontend, serve static from backend -------------
+step "building frontend"
+if ! (cd "$FRONTEND" && npm install && npm run build); then
+	printf '\n'
+	fail "frontend build failed — see the npm output above."
+	exit 1
+fi
+
+step "serving"
+ready
+# mount_frontend() is invoked by an app-factory shim so the static dir is wired.
+DREADGOAD_CONSOLE_FRONTEND_DIST="$FRONTEND/dist" \
+	exec "$VENV/bin/uvicorn" console.backend.server:app --port "$PORT"

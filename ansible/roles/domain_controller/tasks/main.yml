@@ -211,6 +211,12 @@
   failed_when: false
   changed_when: false
 
+- name: Unblock module DLLs before xDnsServer install
+  ansible.windows.win_shell: |
+    Get-ChildItem -Path 'C:\Program Files\WindowsPowerShell\Modules' -Recurse -ErrorAction SilentlyContinue |
+      Unblock-File -ErrorAction SilentlyContinue
+  when: xdnsserver_check.rc != 0
+
 - name: Install xDnsServer PowerShell module
   community.windows.win_psmodule:
     name: xDnsServer
@@ -271,6 +277,12 @@
   register: ad_dsc_check
   failed_when: false
   changed_when: false
+
+- name: Unblock module DLLs before ActiveDirectoryDSC install
+  ansible.windows.win_shell: |
+    Get-ChildItem -Path 'C:\Program Files\WindowsPowerShell\Modules' -Recurse -ErrorAction SilentlyContinue |
+      Unblock-File -ErrorAction SilentlyContinue
+  when: ad_dsc_check.rc != 0
 
 - name: Install ActiveDirectoryDSC only if needed
   community.windows.win_psmodule:

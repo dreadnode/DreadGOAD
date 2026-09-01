@@ -4,7 +4,7 @@ RUN apt-get update \
     && apt-get install -y python3-pip
 
 RUN pip install --upgrade pip
-RUN pip install ansible-core==2.12.6
+RUN pip install 'ansible-core>=2.20.0,<2.21.0'
 RUN pip install pywinrm
 
 RUN apt-get update -y && \

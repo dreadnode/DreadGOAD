@@ -1,0 +1,227 @@
+:root {
+  /* DreadGOAD brand (ported from ALFRED, retinted) */
+  --dg-brand:       #ef562f;
+  --dg-interactive: #ff7a52;  /* coral tint of the brand (was ALFRED gold #f5c842) */
+
+  /* Dreadnode palette */
+  --dn-black:       #0a0a0a;
+  --dn-bg:          #111111;
+  --dn-surface:     #1a1a1a;
+  --dn-surface-alt: #151515;
+  --dn-border:      #1f1f1f;
+  --dn-border-lt:   #2a2a2a;
+  --dn-accent:      #ef562f;
+  --dn-electric:    #4da6ff;  /* electric blue — range identity fields */
+  --dn-accent-dim:  rgba(239, 86, 47, 0.15);
+  --dn-text:        #e0e0e0;
+  --dn-text-bright: #ffffff;
+  --dn-text-muted:  #666666;
+  --dn-text-dim:    #444444;
+  --dn-success:     #3ecf6a;
+  --dn-warning:     #f0a830;
+  --dn-error:       #ef4444;
+
+  /* RangeView node metadata. The generic muted/dim tokens measure 3.0:1 and
+     1.8:1 against --dn-surface — below the 4.5:1 WCAG AA floor for small text,
+     and unreadable for data you scan character by character (IPs). These clear
+     it: label 6.5:1, value 8.4:1. */
+  --dg-node-label:  #9e9e9e;
+  --dg-node-value:  #b4b4b4;
+
+  /* Hairline between a node's identity block and its os/vm/pub detail rows.
+     It used --dn-border, which is #1f1f1f against the #1a1a1a node surface —
+     a contrast of 1.06:1, i.e. five values apart and invisible in practice.
+     The generic border tokens are tuned for panel edges against the much
+     darker page background (--dn-black), so neither works inside a node.
+     1.79:1 here: a hairline that reads as a divider without competing with
+     the text it separates, which sits at 6.5:1 and above. */
+  --dg-node-rule:   #444444;
+
+  /* Both pane headers (AGENT on the left, RANGE on the right) sit at the top of
+     the split and read as one bar, so they must be the same height. RANGE is the
+     taller of the two — its stacked label/value fields are 26px — and AGENT's
+     single line of 13px text is not, which left the two banners misaligned by a
+     few pixels. Shared here so a change to one can't silently desync the other.
+
+     26 content + 12 padding top + 12 bottom + 1 border-bottom. The border counts
+     because box-sizing is border-box globally: at 50px RANGE overshot the floor
+     to its natural 51 while AGENT sat on 50, leaving them misaligned by exactly
+     the border. */
+  --dg-pane-header-h: 51px;
+
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--dn-black);
+  color: var(--dn-text);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection { background: var(--dn-accent-dim); color: var(--dn-text-bright); }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: var(--dn-black); }
+::-webkit-scrollbar-thumb { background: var(--dn-border-lt); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--dn-text-dim); }
+
+@keyframes blink { 50% { opacity: 0; } }
+
+/* RangeView zoom/fit controls. The library ships near-white glyphs; grey them
+   so they sit back against the topology. Themed through @xyflow's own custom
+   properties rather than by overriding its selectors — the button icons are
+   `fill: currentColor`, so the *-color vars drive the glyphs too. */
+.react-flow__controls {
+  --xy-controls-button-background-color: var(--dn-surface);
+  --xy-controls-button-background-color-hover: var(--dn-border-lt);
+  --xy-controls-button-color: var(--dn-text-muted);
+  --xy-controls-button-color-hover: var(--dn-text-bright);
+  --xy-controls-button-border-color: var(--dn-border);
+  --xy-controls-box-shadow: none;
+  border: 1px solid var(--dn-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+/* Agent markdown lists. The marker inherits currentColor, so bullets rendered
+   at the body colour — near-white, the same weight as the text beside them.
+   Tinting the marker alone (::marker, not the li) keeps the item text readable
+   while the bullets read as structure. Nested levels inherit it too. */
+.markdown-body ul li::marker,
+.markdown-body ol li::marker {
+  color: var(--dg-interactive);
+}
+
+/* "Agent <verb>" indicator — a shimmer: a bright band swept left→right across
+   the label. The gradient is twice the element's width and clipped to the
+   glyphs, so animating background-position alone moves the highlight; nothing
+   is laid out or composited per frame. The verb varies per turn (agentVerbs.ts)
+   and the 200% is a percentage, so the sweep resizes with the word for free.
+
+   Position 100% seats the image's right edge at the element's right edge (the
+   bright midpoint then sits at x=0); position 0% seats its left edge at the
+   left (midpoint at x=width). So 100%→0% is the left-to-right sweep, and the
+   dim stops on either side mean the label is always legible mid-cycle. */
+.agent-working {
+  --shine-base: rgba(255, 122, 82, 0.45);  /* --dg-interactive, held back */
+  --shine-peak: #fff5f0;                   /* coral pushed to a warm white */
+  /* 100deg, not 90: the band leans, so it crosses the top of a glyph slightly
+     before the bottom and reads as a highlight travelling over the text rather
+     than a rectangle sliding behind it. Stops are kept tight (38→62) — a wider
+     ramp dilutes the peak into a general brightening. */
+  background-image: linear-gradient(
+    100deg,
+    var(--shine-base) 38%,
+    var(--shine-peak) 50%,
+    var(--shine-base) 62%
+  );
+  background-size: 200% 100%;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  /* Chrome/Safari paint -webkit-text-fill-color over `color`, so the glyphs
+     stay opaque and hide the gradient unless this is cleared too. */
+  -webkit-text-fill-color: transparent;
+  /* 3.2s, not 2.2: the sweep sits next to a 0.8s spinner, and at the faster
+     rate the two read as one busy flicker. Slower makes the shimmer the
+     background signal and the spinner the beat. */
+  animation: agent-shine 3.2s linear infinite;
+}
+@keyframes agent-shine {
+  from { background-position: 100% 0; }
+  to   { background-position: 0% 0; }
+}
+
+/* The braille spinner: one cell, frame swapped with steps(1), no transforms.
+   Kept opaque against the shimmering label — two signals, one steady and one
+   sweeping, rather than a single effect doing both jobs. The fill colour is
+   restated because the parent clears it for the gradient and it inherits. */
+.agent-working::before {
+  content: '⠋';
+  color: var(--dg-interactive);
+  -webkit-text-fill-color: var(--dg-interactive);
+  animation: braille-spin 0.8s steps(1) infinite;
+  margin-right: 6px;
+}
+@keyframes braille-spin {
+  0%   { content: '⠋'; }
+  10%  { content: '⠙'; }
+  20%  { content: '⠹'; }
+  30%  { content: '⠸'; }
+  40%  { content: '⠼'; }
+  50%  { content: '⠴'; }
+  60%  { content: '⠦'; }
+  70%  { content: '⠧'; }
+  80%  { content: '⠇'; }
+  90%  { content: '⠏'; }
+}
+
+.dg-spinner::before {
+  content: '⠋';
+  color: var(--dg-brand);
+  animation: braille-spin 0.8s steps(1) infinite;
+  font-size: 14px;
+}
+
+/* Copy-command blocks in the connect modal. Hover and focus states can't be
+   expressed inline, and a copy button that doesn't react to the pointer reads
+   as decoration. The block itself lifts too, so it's clear the whole inset is
+   one unit and where the click target sits. */
+.dg-cmd:focus-within {
+  border-color: var(--dn-electric);
+}
+.dg-copy:hover {
+  background: var(--dn-border) !important;
+  color: var(--dn-text-bright) !important;
+}
+.dg-copy:active {
+  background: var(--dn-border-lt) !important;
+}
+/* Keyboard users get the same affordance; :focus-visible so a click doesn't
+   leave a ring behind after the pointer has moved on. */
+.dg-copy:focus-visible {
+  outline: 1px solid var(--dn-electric);
+  outline-offset: -2px;
+}
+
+/* Copy-on-click header fields (see Tooltip.tsx). This class is applied to the
+   tooltip's *child* — the wrapper is display:contents and generates no box, so
+   it can be neither focused nor outlined. :focus-visible so clicking a field
+   does not leave a ring behind after the pointer moves on. */
+.dg-tip-copy {
+  cursor: pointer;
+}
+.dg-tip-copy:focus {
+  outline: none;
+}
+.dg-tip-copy:focus-visible {
+  outline: 1px solid var(--dn-electric);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+/* Respect a reduced-motion preference: keep the glyph and the label, drop both
+   animations. The gradient goes with the shimmer — frozen, it would leave the
+   bright band parked over one end of the label, reading as a rendering fault
+   rather than a deliberate still. */
+@media (prefers-reduced-motion: reduce) {
+  .agent-working {
+    background-image: none;
+    color: var(--dg-interactive);
+    -webkit-text-fill-color: var(--dg-interactive);
+    opacity: 0.6;
+    animation: none;
+  }
+  .agent-working::before {
+    animation: none;
+  }
+}

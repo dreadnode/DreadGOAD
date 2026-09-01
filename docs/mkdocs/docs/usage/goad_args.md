@@ -74,9 +74,9 @@ dreadgoad validate --plain               # disable the dashboard
 dreadgoad validate --poll 5m             # rerun every 5 minutes inside the dashboard
 dreadgoad validate --format json --output results.json
 dreadgoad health-check
-dreadgoad diagnose
 dreadgoad doctor
 dreadgoad verify-trusts
+dreadgoad exec --hosts dc02 --cmd 'Get-Service WinRM'   # control plane, works when WinRM is down
 ```
 
 ### Engagement scoreboard

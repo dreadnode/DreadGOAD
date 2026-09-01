@@ -101,9 +101,10 @@ module "jumpbox" {
 
 - The module does not create a resource group or subnet — pair it with
   `terraform-azure-net` (or any equivalent) to provide those.
-- `bootstrap_script` is base64-encoded as UTF-16LE and run via
-  `powershell.exe -EncodedCommand`, the standard contract for the Custom
-  Script Extension.
+- `bootstrap_script` is base64-encoded (ASCII), decoded to a `.ps1` file on
+  disk, and executed via `powershell.exe -Command`. This avoids the 8191-char
+  `CreateProcess` command-line limit that the old `-EncodedCommand` approach
+  (UTF-16LE base64) would hit with scripts over ~3 KB.
 - `computer_name` defaults to the first 15 characters of
   `${env}-${instance_name}` (Windows NetBIOS limit). Override it explicitly
   if your name prefix collides.

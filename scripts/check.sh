@@ -252,16 +252,19 @@ check_ansible_env() {
     ANSIBLE_CORE_CHECK=$(python3 -m pip --disable-pip-version-check list | grep -c ansible-core)
     if [ "$ANSIBLE_CORE_CHECK" -eq 1 ]; then
         ANSIBLE_VERSION=$(python3 -m pip --disable-pip-version-check list | grep ansible-core | cut -d ' ' -f 2- | sed -e 's/ //g')
-        REQUIRED_VERSION="2.12.6"
-        if [ "$(printf '%s\n' "$REQUIRED_VERSION" "$ANSIBLE_VERSION" | sort -V | head -n1)" = "$REQUIRED_VERSION" ]; then
+        REQUIRED_MIN="2.20.0"
+        REQUIRED_MAX="2.21.0"
+        if [ "$(printf '%s\n' "$REQUIRED_MIN" "$ANSIBLE_VERSION" | sort -V | head -n1)" = "$REQUIRED_MIN" ] \
+                                                                                                            && [ "$(printf '%s\n' "$REQUIRED_MAX" "$ANSIBLE_VERSION" | sort -V | head -n1)" = "$ANSIBLE_VERSION" ] \
+                                                                                                               && [ "$ANSIBLE_VERSION" != "$REQUIRED_MAX" ]; then
             (echo >&2 "  ${GOODTOGO} ansible-core $ANSIBLE_VERSION  is supported")
         else
-            (echo >&2 "  ${ERROR} $ANSIBLE_VERSION  is not supported consider doing :")
-            echo "        python3 -m pip install ansible-core==2.12.6"
+            (echo >&2 "  ${ERROR} ansible-core $ANSIBLE_VERSION is not supported (need >=2.20.0,<2.21.0). Fix:")
+            echo "        pip install 'ansible-core>=2.20.0,<2.21.0'"
         fi
     else
-        (echo >&2 "  ${ERROR} ansible-core is not installed consider doing :")
-        echo "        python3 -m pip install ansible-core==2.12.6"
+        (echo >&2 "  ${ERROR} ansible-core is not installed. Fix:")
+        echo "        pip install 'ansible-core>=2.20.0,<2.21.0'"
     fi
 
     PYWINRM_CHECK=$(python3 -m pip --disable-pip-version-check list | grep -c pywinrm)

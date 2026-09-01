@@ -46,7 +46,7 @@
         try {
           $output = repadmin /syncall /APeD 2>&1
           if ($LASTEXITCODE -ne 0) {
-            throw "repadmin exited with code $LASTEXITCODE: $output"
+            throw "repadmin exited with code ${LASTEXITCODE}: $output"
           }
           Write-Output "Replication initiated with repadmin: $output"
           return $true
@@ -92,6 +92,36 @@
   delay: 30
   vars:
     ansible_become: false
+
+# The Netlogon secure channel that backs cross-domain LDAP auth takes
+# measurably longer to establish than the trust object itself — on Azure
+# with WinRM/PSRP over Bastion it can exceed 3+ minutes after reboot.
+# Poll nltest until every peer domain's channel is healthy before
+# attempting the cross-domain group membership adds.
+- name: Wait for trust secure channel to peer domains
+  ansible.windows.win_powershell:
+    script: |
+      [CmdletBinding()] param()
+      $peers = @(
+        {% for members in domain_groups_members.values() %}
+        {% for m in members %}
+        "{{ m.split('\\')[0] }}"{% if not loop.last %},{% endif %}
+        {% endfor %}{% if not loop.last %},{% endif %}
+        {% endfor %}
+      ) | Sort-Object -Unique
+
+      foreach ($domain in $peers) {
+        $out = nltest /sc_query:$domain 2>&1
+        if ($LASTEXITCODE -ne 0) {
+          throw "Secure channel to $domain not ready (nltest exit $LASTEXITCODE): $out"
+        }
+        Write-Output "Secure channel to $domain: OK"
+      }
+  register: trust_channel_check
+  until: trust_channel_check is succeeded
+  retries: 30
+  delay: 20
+  when: domain_groups_members is defined and domain_groups_members | length > 0
 
 - name: Add cross-domain users/groups using PowerShell Direct
   ansible.windows.win_powershell:
@@ -243,6 +273,6 @@
     error_action: stop
   register: cross_domain_result
   until: cross_domain_result is succeeded
-  retries: 3
+  retries: 5
   delay: 60
   when: domain_groups_members is defined and domain_groups_members | length > 0

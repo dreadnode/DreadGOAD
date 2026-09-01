@@ -55,13 +55,14 @@ func init() {
 	envCreateCmd.Flags().String("vpc-cidr", "", "VPC/VNet CIDR block (default: auto-assigned)")
 	envCreateCmd.Flags().String("reference", "staging", "Reference environment to copy infrastructure from (default: staging for AWS, test for Azure)")
 	envCreateCmd.Flags().Bool("variant", false, "Generate randomized variant config")
+	envCreateCmd.Flags().String("variant-source", defaultVariantSource, "Base lab to generate the variant from (with --variant)")
 	envCreateCmd.Flags().Bool("force", false, "Overwrite existing environment")
 }
 
 func runEnvCreate(cmd *cobra.Command, args []string) error {
 	envName := strings.TrimSpace(args[0])
-	if envName == "" {
-		return fmt.Errorf("environment name cannot be empty")
+	if err := validateEnvName(envName); err != nil {
+		return err
 	}
 
 	cfg, err := config.Get()
@@ -83,15 +84,72 @@ func runEnvCreate(cmd *cobra.Command, args []string) error {
 	}
 	useVariant, _ := cmd.Flags().GetBool("variant")
 	force, _ := cmd.Flags().GetBool("force")
+	variantSource, _ := cmd.Flags().GetString("variant-source")
+	if strings.TrimSpace(variantSource) == "" {
+		variantSource = defaultVariantSource
+	}
 
 	if vpcCIDR == "" {
 		vpcCIDR = cfg.VpcCIDR(envName)
 	}
 
-	return scaffoldEnv(cfg, envName, region, vpcCIDR, reference, useVariant, force)
+	return scaffoldEnv(cfg, envName, region, vpcCIDR, reference, variantSource, useVariant, force)
 }
 
-func scaffoldEnv(cfg *config.Config, envName, region, vpcCIDR, reference string, useVariant, force bool) error {
+// defaultVariantSource is the base lab a variant is generated from when the
+// caller does not name one. Matches `variant generate --source`.
+const defaultVariantSource = "ad/GOAD"
+
+// variantTargetFor returns the directory `--variant` will generate into.
+//
+// Derived as <source basename>-<env> rather than a literal "GOAD-" prefix, so a
+// variant of ad/SCCM lands in ad/SCCM-<env> instead of a GOAD-named directory
+// holding an SCCM lab. For the default source this is byte-identical to the old
+// behaviour (ad/GOAD -> GOAD-<env>), so existing environments are unaffected;
+// only the sources that --variant-source newly made reachable differ.
+//
+// The target is derived rather than accepted as a flag so it cannot disagree
+// with the source and environment it belongs to — and so it matches what the
+// console writes into variant_target for the same pair.
+func variantTargetFor(projectRoot, envName, variantSource string) string {
+	source := variantSource
+	if source == "" {
+		source = defaultVariantSource
+	}
+	return filepath.Join(projectRoot, "ad", filepath.Base(source)+"-"+envName)
+}
+
+// envNameRe is what an environment name may contain. The name is not just a
+// label: it becomes a directory under infra/, the {env}-inventory filename, the
+// ad/GOAD-{env} variant tree, and part of the deployed Azure resource names.
+//
+// Dots are deliberately allowed — "3.1" and "dg-test-2.A" are real environment
+// names. They used to break variant resolution, but that was viper splitting
+// config keys on ".", fixed in config.repairDottedEnvironmentKeys rather than by
+// forbidding the character.
+var envNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// validateEnvName rejects names that would escape or corrupt the paths built
+// from them, before any directory is created.
+func validateEnvName(name string) error {
+	if name == "" {
+		return fmt.Errorf("environment name cannot be empty")
+	}
+	// Checked ahead of the pattern so traversal gets a message that names the
+	// actual problem rather than a generic "invalid character".
+	if name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		return fmt.Errorf("environment name %q would escape the project directory", name)
+	}
+	if !envNameRe.MatchString(name) {
+		return fmt.Errorf(
+			"environment name %q is not usable as a directory and file name\n"+
+				"  use letters, digits, dot, hyphen or underscore, starting with a letter or digit (e.g. 3.1, dg-test-2.A)",
+			name)
+	}
+	return nil
+}
+
+func scaffoldEnv(cfg *config.Config, envName, region, vpcCIDR, reference, variantSource string, useVariant, force bool) error {
 	provider := cfg.ResolvedProvider()
 	infraBase := cfg.InfraBasePathForProvider(provider)
 	envDir := filepath.Join(infraBase, envName)
@@ -117,13 +175,15 @@ func scaffoldEnv(cfg *config.Config, envName, region, vpcCIDR, reference string,
 	}
 	color.Green("  Copied infrastructure from %s", reference)
 
-	configPath, err := scaffoldLabConfig(cfg.ProjectRoot, envName, useVariant)
+	configPath, err := scaffoldLabConfig(cfg.ProjectRoot, envName, variantSource, useVariant)
 	if err != nil {
 		return err
 	}
 
 	invPath := filepath.Join(cfg.ProjectRoot, envName+"-inventory")
-	if err := scaffoldInventory(provider, cfg.ProjectRoot, envName, region, reference); err != nil {
+	if err := scaffoldInventory(
+		provider, cfg.ProjectRoot, envName, region, reference, variantSource, useVariant,
+	); err != nil {
 		return err
 	}
 	color.Green("  Created inventory: %s", filepath.Base(invPath))
@@ -169,12 +229,12 @@ func scaffoldHCL(provider, envDir, regionDir, envName, region, vpcCIDR string) e
 	return nil
 }
 
-func scaffoldLabConfig(projectRoot, envName string, useVariant bool) (string, error) {
+func scaffoldLabConfig(projectRoot, envName, variantSource string, useVariant bool) (string, error) {
 	if useVariant {
-		if err := generateVariantConfig(projectRoot, envName); err != nil {
+		if err := generateVariantConfig(projectRoot, envName, variantSource); err != nil {
 			return "", fmt.Errorf("generate variant config: %w", err)
 		}
-		configPath := filepath.Join(projectRoot, "ad", "GOAD-"+envName, "data")
+		configPath := filepath.Join(variantTargetFor(projectRoot, envName, variantSource), "data")
 		color.Green("  Generated variant config in %s", configPath)
 		return configPath, nil
 	}
@@ -186,7 +246,9 @@ func scaffoldLabConfig(projectRoot, envName string, useVariant bool) (string, er
 	return configPath, nil
 }
 
-func scaffoldInventory(provider, projectRoot, envName, region, reference string) error {
+func scaffoldInventory(
+	provider, projectRoot, envName, region, reference, variantSource string, useVariant bool,
+) error {
 	var err error
 	if provider == "azure" {
 		err = generateAzureInventory(projectRoot, envName, reference)
@@ -196,6 +258,44 @@ func scaffoldInventory(provider, projectRoot, envName, region, reference string)
 	if err != nil {
 		return fmt.Errorf("generate inventory: %w", err)
 	}
+	if useVariant {
+		if err := repointInventoryDomain(projectRoot, envName, variantSource); err != nil {
+			return fmt.Errorf("repoint inventory domain_name: %w", err)
+		}
+	}
+	return nil
+}
+
+// repointInventoryDomain points a variant environment's inventory at the
+// variant's own asset tree.
+//
+// The inventory is built from a reference environment or the stock provider
+// template, so it arrives carrying the BASE lab's domain_name. Playbooks
+// resolve vulnerability and security scripts as ad/{{ domain_name }}/scripts
+// (ansible/playbooks/security.yml, vulnerabilities.yml), so leaving it would
+// provision a randomized variant using the stock lab's assets — quietly, and
+// only for environments created this way.
+//
+// Rewriting in place rather than sourcing the variant's own inventory wholesale
+// is deliberate: on AWS the reference carries SSM settings (ansible_aws_ssm_*,
+// bucket) that the variant template does not have, so swapping the source would
+// trade this bug for a worse one. domain_name is the only functional difference
+// between the two.
+func repointInventoryDomain(projectRoot, envName, variantSource string) error {
+	invPath := filepath.Join(projectRoot, envName+"-inventory")
+	data, err := os.ReadFile(invPath)
+	if err != nil {
+		return err
+	}
+	target := filepath.Base(variantTargetFor(projectRoot, envName, variantSource))
+	updated := variant.RepointDomainName(string(data), target)
+	if updated == string(data) {
+		return nil
+	}
+	if err := os.WriteFile(invPath, []byte(updated), 0o644); err != nil {
+		return err
+	}
+	color.Green("  Pointed inventory domain_name at %s", target)
 	return nil
 }
 
@@ -311,7 +411,7 @@ func createEnvHCL(envDir, envName, vpcCIDR string) error {
 	content := fmt.Sprintf(`# Set common variables for the environment.
 # This is automatically pulled in by the root terragrunt.hcl configuration.
 locals {
-  deployment_name = "goad"           # Change to your deployment name
+  deployment_name = "dreadgoad"      # Change to your deployment name
   aws_account_id  = get_aws_account_id()
   env             = %q
   vpc_cidr        = %q
@@ -455,9 +555,23 @@ func resolveReferenceInventory(projectRoot, reference string) (string, error) {
 	)
 }
 
-func generateVariantConfig(projectRoot, envName string) error {
-	source := filepath.Join(projectRoot, "ad", "GOAD")
-	target := filepath.Join(projectRoot, "ad", "GOAD-"+envName)
+// generateVariantConfig builds the variant for an environment.
+//
+// “variantSource“ names the base lab to copy from — ad/GOAD by default, but
+// the repo ships several (GOAD-Light, GOAD-Mini, SCCM, NHA, DRACARYS) and they
+// differ in host count and provider support. It was previously hardcoded to
+// ad/GOAD, which made `env create --variant` unable to express any of them.
+// Relative paths resolve against the project root, matching how
+// `variant generate --source` and the config's variant_source are written.
+func generateVariantConfig(projectRoot, envName, variantSource string) error {
+	source := variantSource
+	if source == "" {
+		source = defaultVariantSource
+	}
+	if !filepath.IsAbs(source) {
+		source = filepath.Join(projectRoot, source)
+	}
+	target := variantTargetFor(projectRoot, envName, source)
 
 	gen := variant.NewGenerator(source, target, envName)
 	return gen.Run()
@@ -507,7 +621,7 @@ func createAzureEnvHCL(envDir, envName, vnetCIDR string) error {
 		return err
 	}
 	content := fmt.Sprintf(`locals {
-  deployment_name = "goad"
+  deployment_name = "dreadgoad"
   env             = %q
   vnet_cidr       = %q
 

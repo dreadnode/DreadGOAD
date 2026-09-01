@@ -28,8 +28,8 @@
 
     - name: Reboot to clear pending registry operations
       ansible.windows.win_reboot:
-        reboot_timeout: 1800
-        post_reboot_delay: 60
+        reboot_timeout: 300
+        post_reboot_delay: 30
       ignore_errors: true  # tolerate a wedged SSM poll; a genuinely dead box is caught below
 
     - name: Ensure host recovered after reboot
@@ -49,7 +49,7 @@
       ansible.windows.win_updates:
         category_names: '*'
         reboot: true
-        reboot_timeout: 1800
+        reboot_timeout: 900
       register: update_result
       retries: 5
       delay: 120

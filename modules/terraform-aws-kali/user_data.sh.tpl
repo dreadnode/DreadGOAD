@@ -36,3 +36,11 @@ apt-get -o Acquire::Retries=5 install -y --no-install-recommends \
 
 printf '%s\n' '#!/bin/sh' 'exec impacket-secretsdump "$@"' >/usr/local/bin/secretsdump.py
 chmod 0755 /usr/local/bin/secretsdump.py
+
+# The Kali marketplace image ships /home/kali owned by root:root; fix it
+# before any user-local installers run.
+chown -R kali:kali /home/kali
+
+# uv (system-wide) + Dreadnode platform CLI (user-local)
+curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/local/bin sh
+su -l kali -c 'curl -fsSL https://dreadnode.io/install.sh | bash'

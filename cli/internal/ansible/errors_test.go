@@ -108,6 +108,22 @@ func TestDetectErrorType(t *testing.T) {
 			wantMsg:  "WUA COM",
 		},
 		{
+			name:     "PackageManagement catastrophic failure",
+			output:   "Could not load Microsoft.PackageManagement.dll: Catastrophic failure (0x8000FFFF)",
+			wantType: ErrPackageMgmt,
+			wantMsg:  "PackageManagement",
+		},
+		{
+			name:     "unrelated catastrophic failure",
+			output:   "Unrelated COM operation failed: Catastrophic failure (0x8000FFFF)",
+			wantType: ErrUnclassified,
+		},
+		{
+			name:     "PackageManagement mention without matching failure",
+			output:   "Microsoft.PackageManagement.dll could not be inspected: access denied",
+			wantType: ErrUnclassified,
+		},
+		{
 			name:     "unclassified error with fatal line",
 			output:   "fatal: [DC01]: FAILED! => {\"msg\": \"some unknown error\"}",
 			wantType: ErrUnclassified,

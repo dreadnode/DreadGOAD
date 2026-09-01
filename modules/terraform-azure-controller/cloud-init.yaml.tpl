@@ -26,7 +26,7 @@ runcmd:
   # NTLM is enough for the GOAD lab; the kerberos extra pulls pykerberos
   # which needs libkrb5-dev and a C toolchain to build. Add it back via a
   # follow-up apt install + pip install if a playbook actually requires it.
-  - [bash, -lc, "/opt/ansible-venv/bin/pip install ansible-core pywinrm pypsrp"]
+  - [bash, -lc, "/opt/ansible-venv/bin/pip install 'ansible-core>=2.20.0,<2.21.0' pywinrm pypsrp"]
   - [bash, -lc, "ln -sf /opt/ansible-venv/bin/ansible /usr/local/bin/ansible"]
   - [bash, -lc, "ln -sf /opt/ansible-venv/bin/ansible-playbook /usr/local/bin/ansible-playbook"]
   - [bash, -lc, "ln -sf /opt/ansible-venv/bin/ansible-galaxy /usr/local/bin/ansible-galaxy"]

@@ -1,0 +1,1095 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import Markdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
+import type { ChatEvent, HealthCheck, Instance, SecurityCheck } from '../types'
+import type { ConnectionStatus } from '../hooks/useWebSocket'
+import { api, type CommandDef } from '../api'
+import { agentVerb } from '../agentVerbs'
+import { buildHelpLines, type HelpLineKind } from '../help'
+import ConfirmModal from './ConfirmModal'
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) { const v = n / 1_000_000; return (v >= 10 ? Math.round(v) : +v.toFixed(1)) + 'M' }
+  if (n >= 1_000) { const v = n / 1_000; return (v >= 10 ? Math.round(v) : +v.toFixed(1)) + 'k' }
+  return String(n)
+}
+
+const HEALTH_COLOR: Record<string, string> = {
+  OK: 'var(--dn-success)',
+  FAIL: 'var(--dn-error)',
+  SKIP: 'var(--dn-text-muted)',
+}
+
+function HealthReport({ ev }: { ev: ChatEvent }) {
+  const checks = ev.checks ?? []
+  const failed = ev.failed ?? 0
+  const summaryColor = failed > 0 ? 'var(--dn-error)' : 'var(--dn-success)'
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ marginBottom: 4 }}>
+        <Badge text="HEALTH" color="var(--dg-interactive)" />
+        <span style={{ color: summaryColor, fontSize: 12 }}>
+          {ev.passed ?? 0} passed · {failed} failed · {ev.skipped ?? 0} skipped
+        </span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'auto auto 1fr', gap: '2px 10px', fontSize: 11, marginLeft: 12 }}>
+        {checks.map((c: HealthCheck, i: number) => (
+          <div key={i} style={{ display: 'contents' }}>
+            <span style={{ color: HEALTH_COLOR[c.status] ?? 'var(--dn-text-muted)', fontWeight: 700 }}>{c.status}</span>
+            <span style={{ color: 'var(--dn-text-muted)' }}>{c.host}</span>
+            <span style={{ color: 'var(--dn-text-dim)', whiteSpace: 'pre-wrap' }}>
+              {c.name}{c.detail ? ` — ${c.detail}` : ''}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+const SECURITY_COLOR: Record<string, string> = {
+  OK: 'var(--dn-success)',
+  FAIL: 'var(--dn-error)',
+  WARN: 'var(--dn-warning)',
+  SKIP: 'var(--dn-text-muted)',
+}
+
+const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, info: 2 }
+
+function SecurityReport({ ev }: { ev: ChatEvent }) {
+  const checks = ev.security_checks ?? []
+  const failed = ev.failed ?? 0
+  const warned = ev.warned ?? 0
+  const summaryColor = failed > 0 ? 'var(--dn-error)' : warned > 0 ? 'var(--dn-warning)' : 'var(--dn-success)'
+  const sorted = [...checks].sort((a, b) =>
+    (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9)
+  )
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ marginBottom: 4 }}>
+        <Badge text="SECURITY" color="var(--dg-interactive)" />
+        <span style={{ color: summaryColor, fontSize: 12 }}>
+          {ev.passed ?? 0} passed · {failed} failed · {warned} warned · {ev.skipped ?? 0} skipped
+        </span>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'auto auto auto 1fr', gap: '2px 10px', fontSize: 11, marginLeft: 12 }}>
+        {sorted.map((c: SecurityCheck, i: number) => (
+          <div key={i} style={{ display: 'contents' }}>
+            <span style={{ color: SECURITY_COLOR[c.status] ?? 'var(--dn-text-muted)', fontWeight: 700 }}>{c.status}</span>
+            <span style={{ color: 'var(--dn-text-dim)', fontSize: 10 }}>{c.severity}</span>
+            <span style={{ color: 'var(--dn-text-muted)' }}>{c.resource}</span>
+            <span style={{ color: 'var(--dn-text-dim)', whiteSpace: 'pre-wrap' }}>
+              {c.name}{c.detail ? ` — ${c.detail}` : ''}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// Raw cloud power-state → dot color (mirrors the hook's _STATE normalization).
+const INSTANCE_STATE_COLOR: Record<string, string> = {
+  running: 'var(--dn-success)',
+  stopped: 'var(--dn-text-muted)',
+  deallocated: 'var(--dn-text-muted)',
+  pending: 'var(--dn-warning)',
+  starting: 'var(--dn-warning)',
+  creating: 'var(--dn-warning)',
+  terminated: 'var(--dn-error)',
+}
+
+function InstancesReport({ ev }: { ev: ChatEvent }) {
+  const instances = ev.instances ?? []
+  const total = ev.total ?? instances.length
+  const running = ev.running ?? 0
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ marginBottom: 4 }}>
+        <Badge text="INSTANCES" color="var(--dg-interactive)" />
+        <span style={{ color: 'var(--dn-text-muted)', fontSize: 12 }}>
+          {total === 0 ? 'no instances found' : `${total} total · ${running} running`}
+        </span>
+      </div>
+      {total > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: '3px 14px', fontSize: 11, marginLeft: 12 }}>
+          {instances.map((inst: Instance, i: number) => {
+            const color = INSTANCE_STATE_COLOR[(inst.state || '').toLowerCase()] ?? 'var(--dn-text-muted)'
+            return (
+              <div key={i} style={{ display: 'contents' }}>
+                <span style={{ color, whiteSpace: 'nowrap' }}>● {inst.state}</span>
+                <span style={{ color: 'var(--dn-text-bright)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{inst.name}</span>
+                <span style={{ color: 'var(--dn-text-dim)', whiteSpace: 'nowrap' }}>{inst.private_ip || '—'}</span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+const VALIDATE_STATE: Record<string, { mark: string; color: string }> = {
+  failed:  { mark: '✕', color: 'var(--dn-error)' },
+  passed:  { mark: '✓', color: 'var(--dn-success)' },
+  skipped: { mark: '·', color: 'var(--dn-text-muted)' },
+}
+
+function ValidateReport({ ev }: { ev: ChatEvent }) {
+  const cats = ev.categories ?? []
+  const failures = ev.failures ?? []
+  const failed = ev.failed ?? 0
+  // Categories that asserted nothing are noise at a glance — collapse them to a
+  // count and lead with what actually failed.
+  const shown = cats.filter(c => c.state !== 'skipped')
+  const skipped = cats.length - shown.length
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ marginBottom: 4 }}>
+        <Badge text="VALIDATE" color="var(--dg-interactive)" />
+        <span style={{ color: failed > 0 ? 'var(--dn-error)' : 'var(--dn-success)', fontSize: 12 }}>
+          {ev.passed ?? 0} passed · {failed} failed
+          {ev.warnings ? ` · ${ev.warnings} warnings` : ''}
+          <span style={{ color: 'var(--dn-text-muted)' }}> of {ev.total ?? 0} checks</span>
+        </span>
+      </div>
+
+      {failures.length > 0 && (
+        <div style={{ marginLeft: 12, marginBottom: 6, fontSize: 11 }}>
+          {failures.map((f, i) => (
+            <div key={i} style={{ display: 'flex', gap: 8 }}>
+              <span style={{ color: 'var(--dn-error)', fontWeight: 700, minWidth: 60 }}>{f.category}</span>
+              <span style={{ color: 'var(--dn-text)' }}>{f.name}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Category grid, mirroring the CLI's own summary block. */}
+      <div style={{
+        marginLeft: 12, fontSize: 11,
+        display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))',
+        gap: '1px 14px',
+      }}>
+        {shown.map(c => {
+          const s = VALIDATE_STATE[c.state] ?? VALIDATE_STATE.skipped
+          return (
+            <div key={c.category} style={{ display: 'flex', gap: 6, alignItems: 'baseline' }}>
+              <span style={{ color: s.color }}>{s.mark}</span>
+              <span style={{ color: 'var(--dn-text)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {c.category}
+              </span>
+              <span style={{ color: 'var(--dn-text-muted)', fontVariantNumeric: 'tabular-nums' }}>
+                {c.passed}/{c.total}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+      {skipped > 0 && (
+        <div style={{ marginLeft: 12, marginTop: 4, fontSize: 11, color: 'var(--dn-text-muted)' }}>
+          {skipped} {skipped === 1 ? 'category' : 'categories'} not configured for this variant
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ScrubReport({ ev }: { ev: ChatEvent }) {
+  const hosts = ev.hosts ?? []
+  const found = ev.found ?? 0
+  const dryRun = ev.mode !== 'apply'
+  // Clean hosts are the expected case; collapse them to a count so the eye
+  // lands on the ones that actually had artifacts.
+  const dirty = hosts.filter(h => h.found > 0 || h.errors.length > 0)
+  const clean = hosts.length - dirty.length
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ marginBottom: 4 }}>
+        <Badge text="SCRUB" color="var(--dg-interactive)" />
+        <span style={{ color: found > 0 ? 'var(--dn-warning)' : 'var(--dn-success)', fontSize: 12 }}>
+          {found === 0 ? 'no artifacts found' : `${found} artifact${found === 1 ? '' : 's'} found`}
+          <span style={{ color: 'var(--dn-text-muted)' }}> across {hosts.length} host{hosts.length === 1 ? '' : 's'}</span>
+        </span>
+        {dryRun && (
+          // The distinction that matters most: a dry run changed nothing.
+          <span style={{
+            marginLeft: 8, fontSize: 10, fontWeight: 700, letterSpacing: 0.5,
+            color: 'var(--dn-warning)', border: '1px solid var(--dn-warning)',
+            borderRadius: 3, padding: '0 5px', textTransform: 'uppercase',
+          }}>dry run — nothing removed</span>
+        )}
+      </div>
+
+      {dirty.length > 0 && (
+        <div style={{
+          marginLeft: 12, fontSize: 11,
+          display: 'grid', gridTemplateColumns: 'auto auto 1fr', gap: '2px 12px',
+        }}>
+          {dirty.map((h, i) => (
+            <div key={i} style={{ display: 'contents' }}>
+              <span style={{ color: 'var(--dn-text-bright)', whiteSpace: 'nowrap' }}>{h.host}</span>
+              <span style={{ color: 'var(--dn-warning)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+                {h.found} found · {h.removed} {dryRun ? 'would remove' : 'removed'}
+              </span>
+              <span style={{ color: 'var(--dn-error)' }}>
+                {h.errors.length > 0 ? h.errors.join('; ') : ''}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      {clean > 0 && (
+        <div style={{ marginLeft: 12, marginTop: 4, fontSize: 11, color: 'var(--dg-node-label)' }}>
+          {clean} host{clean === 1 ? '' : 's'} already clean
+        </div>
+      )}
+    </div>
+  )
+}
+
+function ExecReport({ ev }: { ev: ChatEvent }) {
+  const results = ev.results ?? []
+  const succeeded = ev.succeeded ?? 0
+  const total = ev.total ?? results.length
+  const allOk = succeeded === total
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div style={{ marginBottom: 4 }}>
+        <Badge text="EXEC" color="var(--dg-interactive)" />
+        <span style={{ color: allOk ? 'var(--dn-success)' : 'var(--dn-error)', fontSize: 12 }}>
+          {succeeded}/{total} succeeded
+        </span>
+      </div>
+      {results.map((r, i) => (
+        <div key={i} style={{ marginLeft: 12, marginBottom: 6, fontSize: 11 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+            <span style={{ color: 'var(--dn-text-bright)' }}>{r.host}</span>
+            {/* The CLI's convention is "Success"; "Succeeded" is Azure's raw
+                ARM state, accepted so this can't drift from the Go side. */}
+            <span style={{
+              color: ['success', 'succeeded'].includes(r.status?.toLowerCase() ?? '')
+                ? 'var(--dn-success)' : 'var(--dn-error)',
+            }}>{r.status}</span>
+          </div>
+          {/* Output is raw host text — pre-wrapped, never rendered as markdown.
+              It comes off a deliberately vulnerable range and is untrusted. */}
+          {r.stdout ? (
+            <pre style={preStyle}>{r.stdout}</pre>
+          ) : null}
+          {r.stderr ? (
+            <pre style={{ ...preStyle, color: 'var(--dn-error)' }}>{r.stderr}</pre>
+          ) : null}
+          {!r.stdout && !r.stderr ? (
+            <span style={{ color: 'var(--dg-node-label)' }}>(no output)</span>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * Elapsed turn time as `m:ss`, or `h:mm:ss` once it passes an hour — a `/up`
+ * legitimately runs for tens of minutes, so minutes alone would wrap awkwardly.
+ * Exported for testing.
+ */
+export function formatElapsed(ms: number): string {
+  const total = Math.max(Math.floor(ms / 1000), 0)
+  const hours = Math.floor(total / 3600)
+  const mins = Math.floor((total % 3600) / 60)
+  const secs = total % 60
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return hours > 0 ? `${hours}:${pad(mins)}:${pad(secs)}` : `${mins}:${pad(secs)}`
+}
+
+interface Props {
+  sessionId: string | null
+  messages: ChatEvent[]
+  status: ConnectionStatus
+  onSend: (content: string) => void
+  processing: boolean
+  /** Epoch ms the in-flight turn began; 0 when idle. Supplied by the server on
+   *  resume so the elapsed time is true across a reload. */
+  turnStartedAt: number
+  /** Seeds the flavour verb; changes once per turn. See agentVerbs.ts. */
+  verbSeed: number
+  onCancel: () => void
+  model?: string
+  onOpenSettings?: () => void
+}
+
+function Badge({ text, color }: { text: string; color: string }) {
+  return (
+    <span style={{
+      display: 'inline-block', padding: '1px 6px', borderRadius: 3,
+      background: 'var(--dn-surface)', color, fontSize: 11, marginRight: 6,
+    }}>{text}</span>
+  )
+}
+
+function toolSummary(ev: ChatEvent): string {
+  if (ev.tool) {
+    let a = ''
+    try { a = JSON.stringify(JSON.parse(ev.args || '{}')) } catch { a = ev.args || '' }
+    return `${ev.tool} ${a}`.trim()
+  }
+  return ev.command || ''
+}
+
+function Message({ ev }: { ev: ChatEvent }) {
+  switch (ev.kind) {
+    case 'user_message':
+      return (
+        <div style={{ marginBottom: 8 }}>
+          <div style={{
+            background: 'var(--dn-surface)', border: '1px solid var(--dn-border-lt)',
+            borderRadius: 6, padding: '8px 12px', display: 'inline-block', maxWidth: '90%',
+          }}>
+            <span style={{ color: 'var(--dg-interactive)', marginRight: 8 }}>&gt;</span>
+            <span style={{ color: 'var(--dn-text-bright)', whiteSpace: 'pre-wrap' }}>{ev.content}</span>
+          </div>
+        </div>
+      )
+    case 'generation':
+      return ev.content ? (
+        <div className="markdown-body" style={{ marginBottom: 8, fontSize: 13 }}>
+          <Markdown remarkPlugins={[remarkGfm]}>{ev.content}</Markdown>
+        </div>
+      ) : null
+    case 'tool_start':
+      return <div style={{ marginBottom: 6 }}><Badge text="TOOL" color="#4fc3f7" /><span style={{ color: 'var(--dn-text-muted)', fontSize: 12 }}>{toolSummary(ev)}</span></div>
+    case 'tool_end':
+      return ev.result ? <pre style={preStyle}>{ev.result}</pre> : null
+    case 'command_run':
+      if (ev.phase === 'start') {
+        return <div style={{ marginBottom: 6 }}><Badge text="CMD" color="var(--dg-brand)" /><span style={{ color: 'var(--dn-text-muted)', fontSize: 12 }}>{ev.command}</span></div>
+      }
+      // A cancel is not a failure, and "exit -2" tells an operator nothing.
+      // For anything that had already reached the cloud, "cancelled" alone was
+      // a false claim: we stop watching, the deallocate or playbook finishes
+      // anyway. Say which of the two happened.
+      return ev.cancelled
+        ? <div style={{ marginBottom: 6, fontSize: 12, color: 'var(--dn-warning)' }}>
+            {ev.still_running
+              ? 'stopped watching — the operation was already sent and will finish '
+                + 'on its own; range state re-read below'
+              : 'cancelled — stopped early, output is incomplete'}
+          </div>
+        : <div style={{ marginBottom: 6, fontSize: 12, color: ev.exit_code ? 'var(--dn-error)' : 'var(--dn-success)' }}>exit {String(ev.exit_code)}</div>
+    case 'command_progress':
+      return <div style={{ fontSize: 11, color: 'var(--dn-text-dim)', whiteSpace: 'pre-wrap' }}>{ev.line}</div>
+    case 'check_run':
+      return <div style={{ marginBottom: 6 }}><Badge text="CHECK" color="var(--dg-interactive)" /><span style={{ color: 'var(--dn-text-muted)', fontSize: 12 }}>{ev.error ? `check failed: ${String(ev.error)}` : `range verified — ${ev.hosts_updated ?? 0} host(s) updated`}</span></div>
+    case 'health_report':
+      return <HealthReport ev={ev} />
+    case 'instances_report':
+      return <InstancesReport ev={ev} />
+    case 'validate_report':
+      return <ValidateReport ev={ev} />
+    case 'scrub_report':
+      return <ScrubReport ev={ev} />
+    case 'exec_report':
+      return <ExecReport ev={ev} />
+    case 'security_report':
+      return <SecurityReport ev={ev} />
+    case 'status':
+      return <div style={{ margin: '6px 0', fontSize: 11, color: 'var(--dn-text-dim)', fontStyle: 'italic' }}>{ev.content}</div>
+    case 'error':
+      return <div style={{ marginBottom: 6 }}><Badge text="ERROR" color="var(--dn-error)" /><span style={{ color: 'var(--dn-error)', fontSize: 12 }}>{ev.message}</span></div>
+    default:
+      return null
+  }
+}
+
+// Client-side only: /help and /copy map to no CLI verb, so they live here
+// rather than in the server registry (which the agent may run).
+const HELP_COMMAND: CommandDef = {
+  name: '/help',
+  description: 'How a range run works, start to finish',
+  detail: 'read-only; shown automatically in an empty session',
+  cli: '',
+  dispatch: 'direct',
+  long_running: false,
+  takes_args: false,
+}
+
+const COPY_COMMAND: CommandDef = {
+  name: '/copy',
+  description: 'Copy last N agent messages (default 1, "all" for entire chat)',
+  detail: 'copies to clipboard; nothing is sent to the backend',
+  cli: '',
+  dispatch: 'direct',
+  long_running: false,
+  takes_args: true,
+}
+
+// Keyed off the line's declared kind, not its text. Detail paragraphs
+// often open with a command name ("/scrub deletes ..."), so styling by a
+// leading slash painted five of them as command rows.
+const HELP_LINE_COLOR: Record<HelpLineKind, string> = {
+  title: 'var(--dg-interactive)',
+  command: 'var(--dn-text-bright)',
+  detail: 'var(--dg-node-label)',
+  blank: 'transparent',
+}
+
+/** The workflow guide, rendered as a monospaced block. */
+function HelpPanel({ commands }: { commands: CommandDef[] }) {
+  const lines = useMemo(() => buildHelpLines(commands), [commands])
+  return (
+    <div style={{
+      fontFamily: 'var(--font-mono)', fontSize: 12, lineHeight: 1.6,
+      whiteSpace: 'pre-wrap', marginBottom: 12,
+    }}>
+      {lines.map((line, i) => (
+        <div key={i} style={{
+          color: HELP_LINE_COLOR[line.kind],
+          fontWeight: line.kind === 'title' ? 700 : 400,
+          marginTop: line.kind === 'title' && i > 0 ? 6 : 0,
+        }}>{line.text || ' '}</div>
+      ))}
+    </div>
+  )
+}
+
+/** A command typed but never sent, tagged with where in the transcript it fell. */
+export interface ClientOnlyEntry { text: string; after: number }
+
+/**
+ * Recall history, oldest first: everything the operator submitted, in the order
+ * they submitted it.
+ *
+ * Sent messages come back from the server as transcript events, so the
+ * transcript is the record — history then survives a reload and switches with
+ * the session for free. Client-only commands leave no event, so they are
+ * spliced back in at the transcript length they were typed at. Exported so the
+ * ordering can be tested without a DOM.
+ */
+export function mergeHistory(
+  messages: ChatEvent[], clientOnly: ClientOnlyEntry[],
+): string[] {
+  const out: string[] = []
+  for (let i = 0; i <= messages.length; i++) {
+    // Everything typed while the transcript was this long comes first...
+    for (const c of clientOnly) {
+      if (c.after === i) out.push(c.text)
+    }
+    // ...then the message at this position, if it is one the operator sent.
+    // The loop runs one past the end so trailing entries (`after` === length)
+    // are emitted; guard the read rather than duplicating the inner loop.
+    const m = messages[i]
+    if (m?.kind === 'user_message') {
+      const text = (m.content ?? '').trim()
+      if (text) out.push(text)
+    }
+  }
+  // `after` can exceed the length if the transcript was later trimmed or
+  // replaced by a shorter replay; those still belong at the end.
+  for (const c of clientOnly) {
+    if (c.after > messages.length) out.push(c.text)
+  }
+  return out
+}
+
+/**
+ * Keep the guide's transcript position inside the transcript.
+ *
+ * A resume replaces `messages` wholesale, and the replacement can be shorter
+ * than what was on screen. `helpAfter` then points past the end, where
+ * `slice(0, helpAfter)` returns everything and `slice(helpAfter)` returns
+ * nothing: the guide pins itself to the bottom and every later message stacks
+ * *above* it, until the transcript grows past the stale index and it silently
+ * jumps back into the middle.
+ *
+ * Re-anchoring to the end rather than clamping at render time is deliberate —
+ * the recorded position is meaningless once the transcript it referred to is
+ * gone, so the guide should stay where it currently is and new output should
+ * land below it. mergeHistory guards the same hazard for client-only entries.
+ *
+ * Exported so the behaviour can be checked without a DOM.
+ */
+export function reanchorHelp(helpAfter: number | null, length: number): number | null {
+  return helpAfter !== null && helpAfter > length ? length : helpAfter
+}
+
+export default function TerminalChat({ sessionId, messages, status, onSend, processing, turnStartedAt, verbSeed, onCancel, model, onOpenSettings }: Props) {
+  const [input, setInput] = useState('')
+  // Transcript position the guide was last requested at; null = never asked.
+  // An empty pane shows it regardless, so a new session opens on the workflow.
+  const [helpAfter, setHelpAfter] = useState<number | null>(null)
+  const [commands, setCommands] = useState<CommandDef[]>([])
+  // False once the command catalog fails to load: nothing can be classified,
+  // so the destructive-command confirm has to assume the worst.
+  const [catalogOk, setCatalogOk] = useState(true)
+  const [cmdHighlight, setCmdHighlight] = useState(0)
+  // Shell-style recall. `histIndex` counts back from the newest entry; null
+  // means "not browsing", and `draft` holds whatever was half-typed when
+  // browsing started so Down can put it back.
+  const [histIndex, setHistIndex] = useState<number | null>(null)
+  const [draft, setDraft] = useState('')
+  // Commands that never reach the server, so never come back as transcript
+  // events. Only /help qualifies today, but it is still something the operator
+  // typed and expects to find behind Up. `after` is the transcript length when
+  // it was typed, which is what puts it back in chronological order — appending
+  // them all to the end made a /help typed first surface as the newest entry.
+  const [clientOnly, setClientOnly] = useState<{ text: string; after: number }[]>([])
+  const endRef = useRef<HTMLDivElement>(null)
+  // The scrolling transcript container — needed to pin it to the TOP for the
+  // guide, which endRef (an anchor at the bottom) can't express.
+  const scrollRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+  const activeCmdRef = useRef<HTMLDivElement>(null)
+  const pinnedRef = useRef(true)
+  const autoScrollingRef = useRef(false)
+  const autoScrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [showJump, setShowJump] = useState(false)
+  const [pendingConfirm, setPendingConfirm] = useState<{
+    title: string; message: string; confirmLabel?: string;
+    destructive?: boolean; onConfirm: () => void;
+  } | null>(null)
+
+  const sessionTokens = useMemo(() => {
+    let inp = 0, out = 0
+    for (const ev of messages) {
+      if (ev.kind === 'generation' && ev.usage) {
+        inp += ev.usage.input_tokens || 0
+        out += ev.usage.output_tokens || 0
+      }
+    }
+    return { input: inp, output: out }
+  }, [messages])
+
+  const handleScroll = () => {
+    if (autoScrollingRef.current) return
+    const el = scrollRef.current
+    if (!el) return
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+    pinnedRef.current = atBottom
+    setShowJump(!atBottom)
+  }
+
+  // Follow the transcript only while the user is pinned to the bottom.
+  // The guide is taller than the pane, so scrolling to the end would open a new
+  // session on its last line — the reader needs its first line.
+  // autoScrollingRef suppresses handleScroll during the smooth animation so
+  // intermediate scroll positions don't unpin the view.
+  useEffect(() => {
+    if (messages.length === 0) {
+      pinnedRef.current = true
+      setShowJump(false)
+      scrollRef.current?.scrollTo({ top: 0 })
+      return
+    }
+    if (pinnedRef.current) {
+      autoScrollingRef.current = true
+      endRef.current?.scrollIntoView({ behavior: 'smooth' })
+      if (autoScrollTimer.current) clearTimeout(autoScrollTimer.current)
+      autoScrollTimer.current = setTimeout(() => { autoScrollingRef.current = false }, 600)
+    } else {
+      setShowJump(true)
+    }
+  }, [messages])
+
+  // Auto-grow the input upward as it wraps to multiple lines (like ALFRED).
+  // Reset to 'auto' first so it also shrinks back when text is deleted.
+  useEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 200)}px`
+  }, [input])
+
+  // Keep the keyboard-highlighted command scrolled into the popup's viewport
+  // (the menu is a fixed-height scroll box; arrow-nav can move past the fold).
+  useEffect(() => { activeCmdRef.current?.scrollIntoView({ block: 'nearest' }) }, [cmdHighlight])
+
+  // Park the caret at the end of a recalled entry. React restores the caret to
+  // its previous offset when a controlled value changes, so recalling a long
+  // command from a short one drops the caret into the middle of it — and the
+  // next Up then reads the caret as off the first line and moves it instead of
+  // stepping further back, stalling the recall.
+  useEffect(() => {
+    if (histIndex === null) return
+    const el = inputRef.current
+    if (!el) return
+    el.setSelectionRange(el.value.length, el.value.length)
+  }, [histIndex, input])
+
+  // The guide is per-session. This component is never remounted when tabs
+  // change (App renders one instance and swaps its props), so without this the
+  // index would carry into the next session — showing the panel where /help was
+  // never typed, and at an offset that means nothing in that transcript.
+  useEffect(() => {
+    setHelpAfter(null)
+    setPendingConfirm(null)
+    pinnedRef.current = true
+    setShowJump(false)
+  }, [sessionId])
+
+  // See reanchorHelp: a resume can hand us a shorter transcript than the one
+  // the guide's position was recorded against.
+  useEffect(() => {
+    setHelpAfter(prev => reanchorHelp(prev, messages.length))
+  }, [messages.length])
+
+  // Recall history, oldest first. Derived from the transcript rather than kept
+  // as its own list: the transcript is the server's record, so history survives
+  // a reload and switches with the session for free. Client-only commands are
+  // appended because they leave no transcript event to derive from.
+  const history = useMemo(
+    () => mergeHistory(messages, clientOnly),
+    [messages, clientOnly],
+  )
+
+  // Browsing state is meaningless against another session's history.
+  useEffect(() => {
+    setHistIndex(null)
+    setDraft('')
+    setClientOnly([])
+  }, [sessionId])
+
+  // Load the slash-command registry once for the autocomplete menu (§5.1).
+  // Sorted by name: the registry is grouped by lifecycle, but in a menu you
+  // scan for a command you already know the name of, so alphabetical wins.
+  // HELP_COMMAND is merged in client-side — it has no CLI verb, so it isn't in
+  // the server registry, but it must still be discoverable by typing "/".
+  useEffect(() => {
+    api.commands()
+      .then(r => setCommands(
+        [...r.commands, HELP_COMMAND, COPY_COMMAND].sort((a, b) => a.name.localeCompare(b.name)),
+      ))
+      .catch(() => {
+        // Falling back to help-only leaves every command unclassifiable, which
+        // matters because the destructive-command confirm below is keyed on
+        // catalog data. Recorded so that gate can fail closed rather than
+        // silently waving /destroy through.
+        setCommands([HELP_COMMAND, COPY_COMMAND])
+        setCatalogOk(false)
+      })
+  }, [])
+
+  // Autocomplete: filter to the typed `/`-token; hide once a space is typed (args).
+  // Declared before the Esc handler below, which needs to know if it's open.
+  const firstToken = input.split(' ')[0]
+  const filteredCommands = useMemo(
+    () => (input.startsWith('/') ? commands.filter(c => c.name.startsWith(firstToken)) : []),
+    [commands, input, firstToken],
+  )
+  // Hidden while browsing history: recalling a slash command refills the input
+  // with something the menu matches, the menu opens, and from then on it owns
+  // Up/Down — so recall dead-ended after exactly one step, on the commands you
+  // most want to recall. Typing anything clears histIndex and brings it back.
+  const showCmdMenu = filteredCommands.length > 0
+    && !input.includes(' ')
+    && histIndex === null
+
+  // One verb per turn. Pure in render because the seed only changes when a turn
+  // starts (App owns it per session): latching locally would re-roll the word
+  // when a tab switch flips `processing`, and drawing at random here would
+  // reshuffle it every second, since the stopwatch below re-renders this row.
+  const verb = agentVerb(verbSeed)
+
+  // Stopwatch for the current turn. Counts from the supplied start rather than
+  // from mount, so a reload mid-turn shows the true elapsed time instead of
+  // restarting at 0:00. Re-keyed when the turn changes; the interval is cleared
+  // the moment it ends, so nothing ticks while the pane is idle.
+  const [elapsed, setElapsed] = useState(0)
+  useEffect(() => {
+    if (!processing) return
+    const started = turnStartedAt || Date.now()
+    const tick = () => setElapsed(Date.now() - started)
+    tick()
+    const id = setInterval(tick, 1000)
+    return () => clearInterval(id)
+  }, [processing, turnStartedAt])
+
+  // Esc cancels the in-flight command/turn (sends {type:cancel} → SIGINT, §5.4).
+  // Suppressed while the slash-command menu is open: Esc there means "close the
+  // menu", and this document-level listener would otherwise *also* fire and kill
+  // a running command. The menu's own handler (below) can't prevent that on its
+  // own, since this listener is native and separate from React's dispatch.
+  useEffect(() => {
+    if (!processing || showCmdMenu) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [processing, showCmdMenu, onCancel])
+
+  const submit = () => {
+    const t = input.trim()
+    if (!t) return
+    // /help is client-side: it maps to no CLI verb, so it never reaches the
+    // registry or the agent. Handled before the connection guard too, so the
+    // guide is readable while disconnected or before a session exists — which
+    // is exactly when someone is most likely to need it.
+    if (t === HELP_COMMAND.name) {
+      // Remember where in the transcript it was asked for, so it renders
+      // inline at that point rather than pinned above or below everything.
+      setHelpAfter(messages.length)
+      // No transcript event will carry this one, so record it for recall here,
+      // tagged with the transcript position that keeps it in chronological order.
+      setClientOnly(prev => (
+        prev[prev.length - 1]?.text === t && prev[prev.length - 1]?.after === messages.length
+          ? prev
+          : [...prev, { text: t, after: messages.length }]
+      ))
+      setInput('')
+      setCmdHighlight(0)
+      setHistIndex(null)
+      return
+    }
+    // /copy is client-side: grab the last N generation events (or all) and
+    // write them to the clipboard. Like /help it works without a live session.
+    if (t.startsWith('/copy')) {
+      const countArg = t.slice(5).trim()
+      const all = messages.filter(m => m.kind === 'generation' && m.content)
+      const copyAll = countArg.toLowerCase() === 'all'
+      const parsed = countArg && !copyAll ? parseInt(countArg, 10) : 1
+      const count = isNaN(parsed) || parsed <= 0 ? 1 : parsed
+      const selected = copyAll ? all : all.slice(-count)
+      if (selected.length > 0) {
+        const text = selected.map(m => m.content).join('\n\n')
+        navigator.clipboard.writeText(text).catch(() => {})
+      }
+      setClientOnly(prev => (
+        prev[prev.length - 1]?.text === t && prev[prev.length - 1]?.after === messages.length
+          ? prev
+          : [...prev, { text: t, after: messages.length }]
+      ))
+      setInput('')
+      setCmdHighlight(0)
+      setHistIndex(null)
+      return
+    }
+
+    if (!sessionId || status !== 'connected' || processing) return
+
+    // A destructive command dispatched `direct` runs the instant it is sent:
+    // there is no agent turn that might question it, and nothing downstream
+    // asks either — the CLI's approval prompt is bypassed with --auto-approve
+    // because a console command has no terminal to answer it. `/destroy` is the
+    // only one today, and this was the last gap between typing it and the range
+    // being gone. Keyed on `destructive`, not `cloud_ops`: /start and /stop
+    // touch real resources too and are entirely reversible, so gating on
+    // cloud_ops would confirm those and claim they cannot be undone. Copy comes
+    // from the command's own `detail`, so it stays true for whatever is added.
+    const doSend = () => {
+      onSend(t)
+      setInput('')
+      setCmdHighlight(0)
+      setHistIndex(null)
+      setDraft('')
+    }
+
+    const spec = commands.find(c => c.name === t.split(' ')[0])
+    if (!catalogOk && t.startsWith('/')) {
+      setPendingConfirm({
+        title: 'Unverified command',
+        message: `The command list could not be loaded, so ${t.split(' ')[0]} cannot be `
+          + 'checked for whether it is destructive.\n\nRun it anyway?',
+        destructive: true,
+        onConfirm: () => { doSend(); setPendingConfirm(null) },
+      })
+      return
+    }
+    if (spec?.destructive && spec.dispatch === 'direct') {
+      setPendingConfirm({
+        title: `Run ${spec.name}?`,
+        message: `${spec.detail}\n\nThis starts immediately and cannot be undone.`,
+        destructive: true,
+        confirmLabel: 'RUN',
+        onConfirm: () => { doSend(); setPendingConfirm(null) },
+      })
+      return
+    }
+
+    doSend()
+  }
+
+  const selectCommand = (cmd: CommandDef) => {
+    // Fill the command; agent commands take args, so leave a trailing space.
+    setInput(cmd.name + ' ')
+    setCmdHighlight(0)
+    inputRef.current?.focus()
+  }
+
+  // The input is a textarea (Shift+Enter makes a new line), so Up/Down still
+  // have to move the caret inside a multi-line draft. Recall only takes over on
+  // the edge lines — the same rule a shell uses — and only with no selection,
+  // so Shift+Up extends a selection rather than swapping the text underneath it.
+  const caretOnFirstLine = (el: HTMLTextAreaElement) =>
+    el.selectionStart === el.selectionEnd
+    && !el.value.slice(0, el.selectionStart).includes('\n')
+  const caretOnLastLine = (el: HTMLTextAreaElement) =>
+    el.selectionStart === el.selectionEnd
+    && !el.value.slice(el.selectionEnd).includes('\n')
+
+  /** Step one entry further back. Returns false when there is nowhere to go. */
+  const recallOlder = (): boolean => {
+    if (history.length === 0) return false
+    if (histIndex === null) setDraft(input)
+    const next = histIndex === null ? 0 : histIndex + 1
+    if (next >= history.length) return true  // already oldest; swallow the key
+    setHistIndex(next)
+    setInput(history[history.length - 1 - next])
+    return true
+  }
+
+  /** Step forward; past the newest entry, restore the half-typed draft. */
+  const recallNewer = (): boolean => {
+    if (histIndex === null) return false
+    if (histIndex === 0) {
+      setHistIndex(null)
+      setInput(draft)
+      return true
+    }
+    const next = histIndex - 1
+    setHistIndex(next)
+    setInput(history[history.length - 1 - next])
+    return true
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (showCmdMenu) {
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setCmdHighlight(i => (i > 0 ? i - 1 : filteredCommands.length - 1))
+        return
+      }
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setCmdHighlight(i => (i < filteredCommands.length - 1 ? i + 1 : 0))
+        return
+      }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
+        e.preventDefault()
+        selectCommand(filteredCommands[cmdHighlight])
+        return
+      }
+      // stopPropagation as well as preventDefault: belt-and-braces so this Esc
+      // can never reach the document-level cancel listener.
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopPropagation()
+        setInput('')
+        return
+      }
+    }
+    // Below the menu block on purpose: while the menu is open Up/Down belong to
+    // it. The menu only opens on a leading "/", so an empty prompt — where
+    // recall is most wanted — always reaches this.
+    const el = e.currentTarget as HTMLTextAreaElement
+    if (e.key === 'ArrowUp' && !e.shiftKey && caretOnFirstLine(el)) {
+      if (recallOlder()) { e.preventDefault(); return }
+    }
+    if (e.key === 'ArrowDown' && !e.shiftKey && caretOnLastLine(el)) {
+      if (recallNewer()) { e.preventDefault(); return }
+    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--dn-bg)', borderRight: '1px solid var(--dn-border)', position: 'relative' }}>
+      {pendingConfirm && (
+        <ConfirmModal
+          title={pendingConfirm.title}
+          message={pendingConfirm.message}
+          confirmLabel={pendingConfirm.confirmLabel}
+          destructive={pendingConfirm.destructive}
+          onConfirm={pendingConfirm.onConfirm}
+          onCancel={() => setPendingConfirm(null)}
+        />
+      )}
+      {/* minHeight is shared with RangeView's header so the two pane banners
+          line up across the split — see --dg-pane-header-h in index.css. */}
+      <div style={{
+        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+        padding: '12px 16px', borderBottom: '1px solid var(--dn-border)',
+        background: 'var(--dn-black)', minHeight: 'var(--dg-pane-header-h)',
+      }}>
+        <span style={{ color: 'var(--dg-brand)', fontSize: 13, fontWeight: 700 }}>AGENT</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+          <span
+            title={status}
+            style={{
+              width: 8, height: 8, borderRadius: '50%', flexShrink: 0,
+              background: status === 'connected' ? 'var(--dn-success)'
+                : status === 'connecting' ? 'var(--dn-warning)' : 'var(--dn-error)',
+              boxShadow: status === 'connected' ? '0 0 6px var(--dn-success)' : 'none',
+            }}
+          />
+          {model && (
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={onOpenSettings}
+              onKeyDown={e => { if (e.key === 'Enter') onOpenSettings?.() }}
+              title="Change model"
+              style={{
+                color: 'var(--dg-interactive)', fontSize: 11, cursor: 'pointer',
+                textDecoration: 'underline', textDecorationStyle: 'dotted', textUnderlineOffset: 3,
+                maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}
+            >{model}</span>
+          )}
+          {(sessionTokens.input > 0 || sessionTokens.output > 0) && (
+            <span
+              style={{ fontSize: 10, whiteSpace: 'nowrap' }}
+              title={`Input: ${sessionTokens.input.toLocaleString()} tokens\nOutput: ${sessionTokens.output.toLocaleString()} tokens`}
+            ><span style={{ color: '#fff' }}>{'↑'}</span><span style={{ color: 'var(--dg-brand)' }}>{formatTokens(sessionTokens.input)}</span>{' '}<span style={{ color: '#fff' }}>{'↓'}</span><span style={{ color: 'var(--dg-brand)' }}>{formatTokens(sessionTokens.output)}</span></span>
+          )}
+        </div>
+      </div>
+      <div ref={scrollRef} onScroll={handleScroll} style={{ flex: 1, overflowY: 'auto', padding: '12px 16px', position: 'relative' }}>
+        {!sessionId && <div style={{ color: 'var(--dn-text-dim)', fontSize: 13 }}>Create or select a session to begin.</div>}
+        {/* The guide leads an empty pane, so a fresh session opens on the
+            workflow rather than a blank screen. After /help it renders at the
+            point in the transcript where it was asked for, so later output
+            still lands below it and the scroll position stays truthful. */}
+        {messages.length === 0 && <HelpPanel commands={commands} />}
+        {messages.slice(0, helpAfter ?? messages.length)
+          .map((ev, i) => <Message key={ev.seq != null ? `s${ev.seq}` : (ev._cid ?? i)} ev={ev} />)}
+        {helpAfter !== null && messages.length > 0 && <HelpPanel commands={commands} />}
+        {helpAfter !== null && messages.slice(helpAfter)
+          .map((ev, i) => <Message key={ev.seq != null ? `s${ev.seq}` : (ev._cid ?? `h${i}`)} ev={ev} />)}
+        {processing && (
+          <div style={{ display: 'flex', gap: 16, alignItems: 'baseline', marginTop: 4 }}>
+            {/* Colour and opacity live in the stylesheet, not here: the shimmer
+                paints the text with a clipped gradient, which an inline `color`
+                would override and an inline `opacity` would fade along with the
+                highlight, flattening the sweep. */}
+            <span className="agent-working" style={{
+              fontSize: 13, fontFamily: 'var(--font-mono)',
+            }}>Agent {verb}</span>
+            <span
+              // Tabular figures so the digits don't shuffle the row every tick.
+              style={{
+                color: 'var(--dg-node-label)', fontSize: 12,
+                fontFamily: 'var(--font-mono)', fontVariantNumeric: 'tabular-nums',
+              }}
+            >{formatElapsed(elapsed)}</span>
+            <span
+              role="button"
+              tabIndex={0}
+              onClick={onCancel}
+              style={{ color: 'var(--dn-text-dim)', fontSize: 12, cursor: 'pointer' }}
+            >Press Esc to cancel</span>
+          </div>
+        )}
+        <div ref={endRef} />
+      </div>
+      {showJump && (
+        <button
+          onClick={() => {
+            pinnedRef.current = true
+            autoScrollingRef.current = true
+            setShowJump(false)
+            endRef.current?.scrollIntoView({ behavior: 'smooth' })
+            if (autoScrollTimer.current) clearTimeout(autoScrollTimer.current)
+            autoScrollTimer.current = setTimeout(() => { autoScrollingRef.current = false }, 600)
+          }}
+          style={{
+            position: 'absolute', bottom: 72, left: '50%', transform: 'translateX(-50%)',
+            zIndex: 30, padding: '4px 14px', borderRadius: 12,
+            border: '1px solid var(--dn-border-lt)', background: 'var(--dn-surface)',
+            color: 'var(--dg-interactive)', fontSize: 11, cursor: 'pointer',
+            fontFamily: 'var(--font-mono)', boxShadow: '0 2px 8px rgba(0,0,0,0.4)',
+          }}
+        >↓ jump to latest</button>
+      )}
+      <div style={{ position: 'relative', borderTop: '1px solid var(--dn-border)', background: 'var(--dn-black)' }}>
+        {showCmdMenu && (
+          <div style={{
+            position: 'absolute', bottom: '100%', left: 0, right: 0, zIndex: 50,
+            background: 'var(--dn-surface)', border: '1px solid var(--dn-border)',
+            borderBottom: 'none', borderRadius: '4px 4px 0 0',
+            // Taller now that each row carries a second line — still shows ~5
+            // rows, which is what arrow-key navigation needs to feel anchored.
+            maxHeight: 300, overflowY: 'auto', fontFamily: 'var(--font-mono)', fontSize: 12,
+          }}>
+            {filteredCommands.map((cmd, i) => (
+              <div
+                key={cmd.name}
+                ref={i === cmdHighlight ? activeCmdRef : undefined}
+                // onMouseDown (not onClick) so the item is chosen before the
+                // textarea blurs, and preventDefault keeps focus in the input.
+                onMouseDown={e => { e.preventDefault(); selectCommand(cmd) }}
+                onMouseEnter={() => setCmdHighlight(i)}
+                style={{
+                  padding: '7px 12px', cursor: 'pointer', display: 'flex', gap: 8,
+                  alignItems: 'flex-start',
+                  background: i === cmdHighlight ? 'var(--dn-border)' : 'transparent',
+                }}
+              >
+                <span
+                  title={cmd.dispatch === 'agent'
+                    ? 'agent — interprets free-form arguments into CLI flags'
+                    : 'direct — runs the CLI verb as-is, no LLM involved'}
+                >{cmd.dispatch === 'agent' ? '🤖' : '⚡'}</span>
+                <span style={{ color: 'var(--dg-interactive)', minWidth: 96, flexShrink: 0 }}>
+                  {cmd.name}
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <span style={{ color: 'var(--dn-text-bright)', fontSize: 11 }}>
+                    {cmd.description}
+                  </span>
+                  {/* Second line: the consequence, then the verb it maps to.
+                      This is what stops someone running /variant on a live range. */}
+                  <span style={{ display: 'block', fontSize: 10, marginTop: 2 }}>
+                    {cmd.detail && (
+                      <span style={{ color: 'var(--dg-node-label)' }}>{cmd.detail}</span>
+                    )}
+                    {cmd.cli && (
+                      <span style={{ color: 'var(--dn-text-muted)' }}>
+                        {cmd.detail ? '  ·  ' : ''}{cmd.cli}
+                      </span>
+                    )}
+                  </span>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ display: 'flex', alignItems: 'flex-start', padding: '12px 16px' }}>
+          <span style={{ color: 'var(--dg-interactive)', marginRight: 8, fontSize: 13, lineHeight: '20px' }}>&gt;</span>
+          <textarea
+            ref={inputRef}
+            value={input}
+            rows={1}
+            disabled={!sessionId || status !== 'connected' || processing}
+            // Editing a recalled entry ends browsing: the box now holds the
+            // operator's text, so Down must not overwrite it with a draft they
+            // have already moved on from.
+            onChange={e => {
+              setInput(e.target.value)
+              setCmdHighlight(0)
+              setHistIndex(null)
+            }}
+            onKeyDown={handleKeyDown}
+            placeholder={
+              status !== 'connected'
+                ? `${status}…`
+                : !sessionId
+                  ? 'create or select a session (+ NEW) to begin'
+                  : processing
+                    ? 'wait for the current turn, or press Esc to cancel'
+                    : 'message or /command  (type / for commands)'
+            }
+            style={{
+              flex: 1, background: 'transparent', border: 'none', outline: 'none', resize: 'none',
+              color: 'var(--dn-text-bright)', fontFamily: 'var(--font-mono)', fontSize: 13,
+              lineHeight: '20px', padding: 0, margin: 0,
+              maxHeight: 200, overflowY: 'auto', display: 'block',
+            }}
+          />
+        </div>
+      </div>
+    </div>
+  )
+}
+
+const preStyle: React.CSSProperties = {
+  margin: '0 0 6px 12px', whiteSpace: 'pre-wrap', fontFamily: 'inherit',
+  fontSize: 11, color: 'var(--dn-text-muted)', maxHeight: 120, overflow: 'auto',
+}

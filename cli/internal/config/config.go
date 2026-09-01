@@ -3,14 +3,19 @@ package config
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/dreadnode/dreadgoad/internal/inventory"
 	"github.com/dreadnode/dreadgoad/internal/jsonmerge"
+	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
+	"gopkg.in/yaml.v3"
 )
 
 // ExtensionConfig holds metadata for a lab extension.
@@ -181,6 +186,9 @@ func Get() (*Config, error) {
 			initErr = fmt.Errorf("unmarshaling config: %w", err)
 			return
 		}
+		// Must run before anything reads Environments: viper mangles any
+		// environment name containing a dot.
+		repairDottedEnvironmentKeys(cfg)
 
 		if cfg.ProjectRoot == "" {
 			root, err := findProjectRoot()
@@ -370,6 +378,93 @@ func (c *Config) ActiveEnvironment() EnvironmentConfig {
 		return EnvironmentConfig{}
 	}
 	return c.Environments[c.Env]
+}
+
+// repairDottedEnvironmentKeys reloads the `environments` map straight from the
+// config file, replacing whatever viper produced for it.
+//
+// Viper splits every key on ".", so an environment named "3.1" is stored as
+// nested keys "3" → "1" and never appears in Environments under its own name.
+// The lookup in ActiveEnvironment then returns a zero EnvironmentConfig, whose
+// Variant field is false — and a variant environment silently resolves to the
+// stock lab tree instead. Nothing errors: the range deploys from the wrong lab
+// config, with machine passwords the inventory does not have, and only fails
+// much later at WinRM authentication.
+//
+// Raising viper's key delimiter out of the way would fix the lookup but break
+// the extension defaults, which are *constructed* from dotted keys
+// ("extensions.elk.playbook") and collapse into unreachable flat keys without
+// it. So the repair is scoped to this one map.
+//
+// File values win over viper's, and any environment viper resolved that the
+// file does not define — notably the built-in dev/staging/prod defaults — is
+// preserved.
+func repairDottedEnvironmentKeys(c *Config) {
+	path := viper.ConfigFileUsed()
+	if path == "" {
+		return // defaults only; nothing on disk to re-read
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		slog.Warn("could not re-read config for environment names", "path", path, "error", err)
+		return
+	}
+	// Decoded as raw maps and converted with mapstructure so the field names
+	// stay defined in exactly one place: the mapstructure tags above. A second
+	// set of yaml tags would be free to drift out of sync with them.
+	var file struct {
+		Environments map[string]map[string]any `yaml:"environments"`
+	}
+	if err := yaml.Unmarshal(data, &file); err != nil {
+		slog.Warn("could not parse config for environment names", "path", path, "error", err)
+		return
+	}
+	if len(file.Environments) == 0 {
+		return
+	}
+	if c.Environments == nil {
+		c.Environments = make(map[string]EnvironmentConfig, len(file.Environments))
+	}
+	for name, raw := range file.Environments {
+		var ec EnvironmentConfig
+		if err := mapstructure.Decode(raw, &ec); err != nil {
+			slog.Warn("could not decode environment", "env", name, "error", err)
+			continue
+		}
+		c.Environments[name] = ec
+	}
+	dropViperKeyFragments(c.Environments, file.Environments)
+}
+
+// dropViperKeyFragments removes the partial entries viper leaves behind when it
+// splits a dotted environment name.
+//
+// Reading "3.1" as environments → 3 → 1 does not just lose the real name, it
+// invents "3" as an environment in its own right. That fragment shows up in
+// `config show` as a range nobody created, and `--env 3` would quietly resolve
+// it to an all-defaults environment — the same silent wrong-config failure this
+// whole repair exists to stop.
+//
+// Only a fragment is removed: the key must be the leading segment of a dotted
+// name from the file, must not itself be named in the file, and must still hold
+// the zero value. A real environment that happens to be called "3" is defined in
+// the file and therefore kept.
+func dropViperKeyFragments(resolved map[string]EnvironmentConfig, fromFile map[string]map[string]any) {
+	for name := range fromFile {
+		i := strings.Index(name, ".")
+		if i <= 0 {
+			continue
+		}
+		fragment := name[:i]
+		if _, definedInFile := fromFile[fragment]; definedInFile {
+			continue
+		}
+		// reflect rather than ==: EnvironmentConfig carries a slice, so it is not
+		// a comparable type.
+		if existing, ok := resolved[fragment]; ok && reflect.DeepEqual(existing, EnvironmentConfig{}) {
+			delete(resolved, fragment)
+		}
+	}
 }
 
 // ResolvedVariantPaths returns absolute source/target paths for the active

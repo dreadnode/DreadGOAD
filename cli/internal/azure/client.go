@@ -67,11 +67,15 @@ type Client struct {
 
 	// SDK clients are constructed lazily once SubscriptionID is known. Guarded
 	// by sdkOnce so concurrent first-use doesn't double-build them.
-	sdkOnce   sync.Once
-	sdkErr    error
-	vmClient  *armcompute.VirtualMachinesClient
-	nicClient *armnetwork.InterfacesClient
-	rcClient  *armcompute.VirtualMachineRunCommandsClient
+	sdkOnce       sync.Once
+	sdkErr        error
+	vmClient      *armcompute.VirtualMachinesClient
+	nicClient     *armnetwork.InterfacesClient
+	rcClient      *armcompute.VirtualMachineRunCommandsClient
+	skuClient     *armcompute.ResourceSKUsClient
+	usageClient   *armcompute.UsageClient
+	nsgClient     *armnetwork.SecurityGroupsClient
+	bastionClient *armnetwork.BastionHostsClient
 }
 
 // ensureSDK populates the lazy SDK clients. Callers must guarantee that
@@ -101,9 +105,33 @@ func (c *Client) ensureSDK(ctx context.Context) error {
 			c.sdkErr = fmt.Errorf("init run-command client: %w", err)
 			return
 		}
+		sku, err := armcompute.NewResourceSKUsClient(c.SubscriptionID, c.cred, c.armOpts)
+		if err != nil {
+			c.sdkErr = fmt.Errorf("init compute SKU client: %w", err)
+			return
+		}
+		usage, err := armcompute.NewUsageClient(c.SubscriptionID, c.cred, c.armOpts)
+		if err != nil {
+			c.sdkErr = fmt.Errorf("init compute usage client: %w", err)
+			return
+		}
+		nsg, err := armnetwork.NewSecurityGroupsClient(c.SubscriptionID, c.cred, c.armOpts)
+		if err != nil {
+			c.sdkErr = fmt.Errorf("init NSG client: %w", err)
+			return
+		}
+		bastion, err := armnetwork.NewBastionHostsClient(c.SubscriptionID, c.cred, c.armOpts)
+		if err != nil {
+			c.sdkErr = fmt.Errorf("init bastion client: %w", err)
+			return
+		}
 		c.vmClient = vm
 		c.nicClient = nic
 		c.rcClient = rc
+		c.skuClient = sku
+		c.usageClient = usage
+		c.nsgClient = nsg
+		c.bastionClient = bastion
 	})
 	return c.sdkErr
 }

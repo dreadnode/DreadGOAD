@@ -1,0 +1,30 @@
+{
+  "name": "dreadgoad-console",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "test:layout": "esbuild tests/layoutSaveQueue.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/dreadgoad-layout-save-test.mjs && node node_modules/.cache/dreadgoad-layout-save-test.mjs",
+    "test:connect": "esbuild tests/connect.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/dreadgoad-connect-test.mjs && node node_modules/.cache/dreadgoad-connect-test.mjs",
+    "test:history": "esbuild tests/history.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/dreadgoad-history-test.mjs && node node_modules/.cache/dreadgoad-history-test.mjs",
+    "test:apierror": "esbuild tests/apierror.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/dreadgoad-apierror-test.mjs && node node_modules/.cache/dreadgoad-apierror-test.mjs",
+    "test:tooltip": "esbuild tests/tooltip.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/dreadgoad-tooltip-test.mjs && node node_modules/.cache/dreadgoad-tooltip-test.mjs",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@xyflow/react": "^12.3.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.0"
+  }
+}

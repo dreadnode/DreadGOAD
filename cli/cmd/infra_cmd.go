@@ -89,6 +89,11 @@ func init() {
 	infraApplyCmd.Flags().Bool("individual", false, "Apply each subdirectory individually (for module groups like goad/)")
 	infraDestroyCmd.Flags().Bool("auto-approve", false, "Skip confirmation prompt")
 
+	// Timeout for long-running actions. Zero means no limit.
+	for _, cmd := range []*cobra.Command{infraApplyCmd, infraDestroyCmd} {
+		cmd.Flags().Duration("timeout", 20*time.Minute, "Maximum wall-clock time for the operation (0 = no limit)")
+	}
+
 	// Optional-module flags. The matching DREADGOAD_ENABLE_* env vars are what
 	// the Terragrunt exclude{} blocks check; these flags set them for the child
 	// process so users don't have to.
@@ -136,6 +141,40 @@ func materializeLabConfig(cfg *config.Config) error {
 	return nil
 }
 
+// confirmDestroy prompts the operator to confirm a destructive destroy.
+// Returns nil when confirmed (or when --auto-approve is set), a non-nil
+// error to abort. This replaces the OpenTofu approval prompt, which hangs
+// on EOF in any non-interactive context (console, CI, piped input).
+func confirmDestroy(cmd *cobra.Command, env, region string) error {
+	autoApprove, _ := cmd.Flags().GetBool("auto-approve")
+	if autoApprove {
+		return nil
+	}
+	bold := color.New(color.Bold)
+	target := env
+	if region != "" {
+		target = env + "/" + region
+	}
+	_, _ = bold.Printf("Destroy will tear down all infrastructure for %s.\n", target)
+	fmt.Print("Type 'yes' to confirm: ")
+	var answer string
+	if _, err := fmt.Scanln(&answer); err != nil || answer != "yes" {
+		return fmt.Errorf("destroy cancelled")
+	}
+	return nil
+}
+
+// infraActionContext builds a context with the --timeout flag applied while
+// preserving root-command signal cancellation. A zero duration returns the
+// command context unchanged.
+func infraActionContext(cmd *cobra.Command) (context.Context, context.CancelFunc) {
+	timeout, _ := cmd.Flags().GetDuration("timeout")
+	if timeout > 0 {
+		return context.WithTimeout(cmd.Context(), timeout)
+	}
+	return cmd.Context(), func() {}
+}
+
 func runInfraAction(action string) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
 		cfg, err := config.Get()
@@ -154,6 +193,46 @@ func runInfraAction(action string) func(*cobra.Command, []string) error {
 			return runInfraActionTerraform(cmd, cfg, action)
 		}
 	}
+}
+
+// azureOptionalModules are the Azure modules that terragrunt excludes unless
+// their env var is set. Each exclude{} block uses actions = ["all"], so the
+// var governs destroy exactly as it governs apply.
+var azureOptionalModules = []struct{ flag, dir, env string }{
+	{"with-bastion", "bastion", "DREADGOAD_ENABLE_AZURE_BASTION"},
+	{"with-controller", "controller", "DREADGOAD_ENABLE_AZURE_CONTROLLER"},
+	{"with-kali", "kali", "DREADGOAD_ENABLE_AZURE_KALI"},
+}
+
+// azureModuleEnv translates the --with-* opt-in flags into the
+// DREADGOAD_ENABLE_AZURE_* variables that the terragrunt exclude{} blocks
+// read. A flag the caller never registered reads back as false here, so this
+// is the point where a caller that forgot to forward one silently loses the
+// module — see newUpInfraCommand.
+//
+// moduleRoot is the directory holding the module subdirectories, used for the
+// destroy-time fallback below.
+func azureModuleEnv(cmd *cobra.Command, action, moduleRoot string) []string {
+	var env []string
+
+	for _, m := range azureOptionalModules {
+		on, _ := cmd.Flags().GetBool(m.flag)
+		// On destroy, include every module present in the layout even when the
+		// operator did not repeat its --with-* flag. Excluding one leaves its
+		// resources standing and still billing — `up` deploys bastion and
+		// controller by default on Azure, and `infra destroy` carries no flags.
+		// Destroying a module that was never applied is a no-op against empty
+		// state, so the fallback is safe in the other direction.
+		if !on && action == "destroy" {
+			if _, err := os.Stat(filepath.Join(moduleRoot, m.dir)); err == nil {
+				on = true
+			}
+		}
+		if on {
+			env = append(env, m.env+"=true")
+		}
+	}
+	return env
 }
 
 // runInfraActionAzure handles infra commands for Azure via Terragrunt.
@@ -186,30 +265,6 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 		Debug:            cfg.Debug,
 	}
 
-	if withBastion, _ := cmd.Flags().GetBool("with-bastion"); withBastion {
-		opts.ExtraEnv = append(opts.ExtraEnv, "DREADGOAD_ENABLE_AZURE_BASTION=true")
-	}
-	if withController, _ := cmd.Flags().GetBool("with-controller"); withController {
-		opts.ExtraEnv = append(opts.ExtraEnv, "DREADGOAD_ENABLE_AZURE_CONTROLLER=true")
-	}
-	withKali, _ := cmd.Flags().GetBool("with-kali")
-	// On destroy, always include the kali module so orphaned VMs are cleaned up
-	// even if the user forgets --with-kali.
-	if !withKali && action == "destroy" {
-		kaliDir := filepath.Join(cfg.ProjectRoot, "infra", "azure", deployment, cfg.Env, region, "kali")
-		if _, err := os.Stat(kaliDir); err == nil {
-			withKali = true
-		}
-	}
-	if withKali {
-		opts.ExtraEnv = append(opts.ExtraEnv, "DREADGOAD_ENABLE_AZURE_KALI=true")
-	}
-
-	if action == "apply" || action == "destroy" {
-		autoApprove, _ := cmd.Flags().GetBool("auto-approve")
-		opts.AutoApprove = autoApprove
-	}
-
 	workDir := filepath.Join(cfg.ProjectRoot, "infra", "azure", deployment, cfg.Env, region)
 	if _, err := os.Stat(workDir); os.IsNotExist(err) {
 		// Backward-compat: the auth-validation POC layout is
@@ -218,9 +273,29 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 		legacy := filepath.Join(cfg.ProjectRoot, "infra", "azure", region)
 		if _, lerr := os.Stat(legacy); lerr == nil {
 			workDir = legacy
-		} else {
-			return fmt.Errorf("infra working directory not found: %s", workDir)
 		}
+	}
+
+	// Resolved after the legacy fallback: the destroy-time module sweep looks
+	// for module directories, so pointing it at the deployment-shaped path on
+	// a legacy layout would find none and silently orphan them.
+	opts.ExtraEnv = append(opts.ExtraEnv, azureModuleEnv(cmd, action, workDir)...)
+
+	switch action {
+	case "destroy":
+		if err := confirmDestroy(cmd, cfg.Env, region); err != nil {
+			return err
+		}
+		opts.AutoApprove = true
+	case "apply":
+		autoApprove, _ := cmd.Flags().GetBool("auto-approve")
+		opts.AutoApprove = autoApprove
+	}
+	// Checked after the fallback so the legacy layout is still accepted, and
+	// state-aware so a destroy with nothing to destroy says why (see
+	// infra_state.go) rather than pointing at a directory.
+	if err := checkLocalInfraState(workDir, cfg.Env, region, action); err != nil {
+		return err
 	}
 
 	opts.LogFile = infraLogPath(cfg, action, deployment, module)
@@ -231,7 +306,8 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 	}
 	fmt.Printf("Log: %s\n\n", opts.LogFile)
 
-	ctx := context.Background()
+	ctx, cancel := infraActionContext(cmd)
+	defer cancel()
 
 	if module != "" {
 		return runTerragruntModule(ctx, cmd, opts, workDir, module, exclude, action)
@@ -305,7 +381,13 @@ func runInfraActionAWS(cmd *cobra.Command, cfg *config.Config, action string) er
 		opts.ExtraEnv = append(opts.ExtraEnv, "DREADGOAD_ENABLE_AWS_KALI=true")
 	}
 
-	if action == "apply" || action == "destroy" {
+	switch action {
+	case "destroy":
+		if err := confirmDestroy(cmd, cfg.Env, region); err != nil {
+			return err
+		}
+		opts.AutoApprove = true
+	case "apply":
 		autoApprove, _ := cmd.Flags().GetBool("auto-approve")
 		opts.AutoApprove = autoApprove
 	}
@@ -313,8 +395,8 @@ func runInfraActionAWS(cmd *cobra.Command, cfg *config.Config, action string) er
 	basePath := filepath.Join(cfg.ProjectRoot, "infra", deployment)
 	workDir := filepath.Join(basePath, cfg.Env, region)
 
-	if _, err := os.Stat(workDir); os.IsNotExist(err) {
-		return fmt.Errorf("infra working directory not found: %s\nRun 'dreadgoad infra validate' to check your setup", workDir)
+	if err := checkInfraWorkDir(workDir, cfg.Env, region, action); err != nil {
+		return err
 	}
 
 	opts.LogFile = infraLogPath(cfg, action, deployment, module)
@@ -325,7 +407,8 @@ func runInfraActionAWS(cmd *cobra.Command, cfg *config.Config, action string) er
 	}
 	fmt.Printf("Log: %s\n\n", opts.LogFile)
 
-	ctx := context.Background()
+	ctx, cancel := infraActionContext(cmd)
+	defer cancel()
 
 	if module != "" {
 		return runTerragruntModule(ctx, cmd, opts, workDir, module, exclude, action)
@@ -361,7 +444,13 @@ func runInfraActionTerraform(cmd *cobra.Command, cfg *config.Config, action stri
 		LogFile:         infraLogPath(cfg, action, providerName, ""),
 	}
 
-	if action == "apply" || action == "destroy" {
+	switch action {
+	case "destroy":
+		if err := confirmDestroy(cmd, cfg.Env, ""); err != nil {
+			return err
+		}
+		opts.AutoApprove = true
+	case "apply":
 		autoApprove, _ := cmd.Flags().GetBool("auto-approve")
 		opts.AutoApprove = autoApprove
 	}
@@ -380,7 +469,8 @@ func runInfraActionTerraform(cmd *cobra.Command, cfg *config.Config, action stri
 	fmt.Printf("Lab: %s\n", cfg.ProxmoxLab())
 	fmt.Printf("Log: %s\n\n", opts.LogFile)
 
-	ctx := context.Background()
+	ctx, cancel := infraActionContext(cmd)
+	defer cancel()
 	return terraform.Run(ctx, opts)
 }
 

@@ -7,16 +7,11 @@ pyyaml
 boto3==1.43.80
 botocore==1.43.83
 # Ansible
-# IMPORTANT: ansible-core >=2.19 breaks Windows module execution over AWS SSM.
-# In 2.19+, the `has_pipelining` gate was removed from `is_pipelining_enabled()`,
-# causing the SSM plugin's `always_pipeline_modules=True` to force pipelining mode.
-# Since the SSM plugin never sends `in_data` to the remote host, the PowerShell
-# bootstrap_wrapper receives null input and all Windows modules fail with:
-#   "ConvertFrom-Json: Cannot bind argument to parameter 'InputObject' because it is null"
-# Pin to 2.17.x until the amazon.aws SSM plugin properly handles pipelined in_data.
-ansible-core>=2.17.0,<2.18.0
+# 2.19 breaks Windows/SSM (ansible/ansible#86397); fixed in 2.20 (PR #86619).
+ansible-core>=2.20.0,<2.21.0
 ansible_runner
 pywinrm
+pypsrp
 # AZURE
 azure-identity
 azure-mgmt-compute

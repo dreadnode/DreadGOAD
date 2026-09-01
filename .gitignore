@@ -17,6 +17,15 @@ dreadgoad
 .dreadgoad/
 coverage.out
 
+# Web app build artifacts
+console/frontend/node_modules/
+console/frontend/dist/
+console/frontend/*.tsbuildinfo
+
+# Generated ADCS template archives (main tracks the sources, not the zips)
+ansible/roles/adcs_templates/files/ADCSTemplate.zip
+ansible/roles/vulns_adcs_templates/files/ADCSTemplate.zip
+
 # Root environment inventories are local runtime state.
 /*-inventory
 /*-inventory.bak.*
