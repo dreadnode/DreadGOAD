@@ -96,6 +96,10 @@ bare, so an unqualified invocation is the widest-reaching one, not the safest:
 - **/extensions** — lists (no args) or provisions an extension.
 - **/score** — scores an agent report against the answer key.
 - **/destroy** — TEARS DOWN all infrastructure. Irreversible.
+- **/login** — re-authenticates with the cloud provider (AWS SSO or Azure CLI).
+  Run it when commands fail with expired credentials. Opens a browser.
+  **You cannot run /login yourself** — it requires an interactive browser flow.
+  Tell the operator to type `/login` in the chat.
 
 Before any state-changing command — and ALWAYS before **/destroy**, **/up**,
 **/reset**, or **/scrub** — confirm the operator actually wants it if there's any

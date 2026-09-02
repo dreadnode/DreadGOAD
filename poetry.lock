@@ -21,15 +21,15 @@ resolvelib = ">=0.5.3,<0.6.0"
 
 [[package]]
 name = "ansible-core"
-version = "2.18.0"
+version = "2.17.14"
 description = "Radically simple IT automation"
 optional = false
-python-versions = ">=3.11"
+python-versions = ">=3.10"
 groups = ["main"]
 markers = "python_version >= \"3.11\""
 files = [
-    {file = "ansible_core-2.18.0-py3-none-any.whl", hash = "sha256:d28818df3741d6cd744dab5e4ff9c658daa94ba71c8e15a12dbe9eeab30a658f"},
-    {file = "ansible_core-2.18.0.tar.gz", hash = "sha256:87fbebbfe8d961e9b153e84b4438ba3a327dbfdcd4ad05a6065d9ff5d9d02e7b"},
+    {file = "ansible_core-2.17.14-py3-none-any.whl", hash = "sha256:34a49582a57c2f2af17ede2cefd3b3602a2d55d22089f3928570d52030cafa35"},
+    {file = "ansible_core-2.17.14.tar.gz", hash = "sha256:7c17fee39f8c29d70e3282a7e9c10bd70d5cd4fd13ddffc5dcaa52adbd142ff8"},
 ]
 
 [package.dependencies]
@@ -1635,4 +1635,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.8"
-content-hash = "ce98f9ca592883382103425bb5d9dc5758d97bf21255d389a0838f657112e8ef"
+content-hash = "aa51fac115790fddf0107d37862906b7e32e7e0f40867ae9338bfa52d0139a43"

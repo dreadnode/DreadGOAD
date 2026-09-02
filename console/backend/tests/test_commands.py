@@ -17,6 +17,12 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 from console.backend import commands  # noqa: E402
 from console.backend.cli import run_command, start_command  # noqa: E402
 
+try:
+    from console.backend import command_runner as _cr_mod  # noqa: E402, F811
+    _HAS_COMMAND_RUNNER = True
+except ImportError:
+    _HAS_COMMAND_RUNNER = False
+
 _SESSION = {"anchor": {"config_path": "/x/dreadgoad.yaml", "env": "dev"}}
 
 
@@ -174,14 +180,12 @@ def test_dispatch_and_agent_commands() -> None:
         # /status runs /instances then /health via the agent in one turn.
         "/status",
     }, agent_dispatch
-    # The agent's run_dreadgoad may run ANY registered command (reads + actions).
-    assert commands.AGENT_RUNNABLE == frozenset(commands.REGISTRY), (
+    # The agent's run_dreadgoad may run any registered command except /login,
+    # which opens an interactive browser SSO flow that blocks indefinitely.
+    assert commands.AGENT_RUNNABLE == frozenset(commands.REGISTRY) - {"/login"}, (
         commands.AGENT_RUNNABLE
     )
-    # Derived, not hardcoded: the point is that AGENT_RUNNABLE covers the whole
-    # registry, which the equality above already states. A literal count just
-    # breaks every time a command is added and teaches you to bump it.
-    assert len(commands.AGENT_RUNNABLE) == len(commands.REGISTRY)
+    assert "/login" not in commands.AGENT_RUNNABLE, "/login must not be agent-runnable"
     print("PASS test_dispatch_and_agent_commands")
 
 
@@ -337,6 +341,8 @@ def test_anchor_cannot_be_overridden_by_extra_args() -> None:
     regardless of the UI's ``takes_args`` hint, so every command is covered.
     """
     for name in commands.REGISTRY:
+        if not commands.REGISTRY[name].verb:
+            continue
         for bad in (
             ["--config", "/evil.yaml"],
             ["--env", "other"],
@@ -692,6 +698,353 @@ def test_destroy_takes_an_optional_hostname() -> None:
     assert commands.REGISTRY["/destroy"].dispatch == "direct"
 
 
+def test_login_registry_entry() -> None:
+    """/login is direct, no verb, not cloud_ops (must not gate itself)."""
+    cmd = commands.REGISTRY["/login"]
+    assert cmd.dispatch == "direct"
+    assert cmd.verb == ()
+    assert cmd.cloud_ops is False
+    assert cmd.takes_args is False
+    assert cmd.destructive is False
+    print("PASS test_login_registry_entry")
+
+
+def test_build_argv_rejects_empty_verb() -> None:
+    """build_argv raises ValueError for commands with no dreadgoad verb."""
+    try:
+        _argv("/login")
+        raise AssertionError("expected ValueError for empty verb")
+    except ValueError as exc:
+        assert "does not map" in str(exc), exc
+    print("PASS test_build_argv_rejects_empty_verb")
+
+
+def test_login_argv_aws_with_profile() -> None:
+    """AWS login includes --profile from the session snapshot."""
+    from console.backend.command_runner import _login_argv
+
+    session = {"snapshot": {"provider": "aws", "aws": {"profile": "dreadnode-dev"}}}
+    argv, label = _login_argv(session)
+    assert argv == ["aws", "sso", "login", "--profile", "dreadnode-dev"], argv
+    assert "dreadnode-dev" in label, label
+    print("PASS test_login_argv_aws_with_profile")
+
+
+def test_login_argv_aws_no_profile() -> None:
+    """AWS login omits --profile when session has no profile."""
+    from console.backend.command_runner import _login_argv
+
+    session = {"snapshot": {"provider": "aws"}}
+    argv, label = _login_argv(session)
+    assert argv == ["aws", "sso", "login"], argv
+    assert "--profile" not in label, label
+    print("PASS test_login_argv_aws_no_profile")
+
+
+def test_login_argv_azure() -> None:
+    """Azure login produces az login."""
+    from console.backend.command_runner import _login_argv
+
+    session = {"snapshot": {"provider": "azure"}}
+    argv, label = _login_argv(session)
+    assert argv == ["az", "login"], argv
+    assert label == "az login", label
+    print("PASS test_login_argv_azure")
+
+
+def test_login_argv_unknown_provider() -> None:
+    """Unknown provider returns None."""
+    from console.backend.command_runner import _login_argv
+
+    session = {"snapshot": {"provider": "proxmox"}}
+    argv, label = _login_argv(session)
+    assert argv is None
+    assert "not supported" in label.lower(), label
+    print("PASS test_login_argv_unknown_provider")
+
+
+def test_login_argv_missing_provider() -> None:
+    """Missing provider returns None with a clear message (not an AWS default)."""
+    from console.backend.command_runner import _login_argv
+
+    session: dict = {"snapshot": {}}
+    argv, label = _login_argv(session)
+    assert argv is None, f"should not build argv when provider is missing: {argv}"
+    assert "no cloud provider" in label.lower(), label
+
+    empty_session: dict = {}
+    argv2, label2 = _login_argv(empty_session)
+    assert argv2 is None
+    assert "no cloud provider" in label2.lower(), label2
+    print("PASS test_login_argv_missing_provider")
+
+
+async def test_check_credentials_skips_missing_provider() -> None:
+    """Missing provider skips the credential check rather than defaulting to AWS."""
+    from console.backend import command_runner
+
+    session: dict = {"snapshot": {}}
+    result = await command_runner._check_credentials(session)
+    assert result is None, f"should skip check, not error: {result}"
+
+    empty_session: dict = {}
+    result2 = await command_runner._check_credentials(empty_session)
+    assert result2 is None, f"should skip check for empty session: {result2}"
+    print("PASS test_check_credentials_skips_missing_provider")
+
+
+async def test_check_credentials_aws_expired() -> None:
+    """An SSO-expired AWS error triggers the right message."""
+    from console.backend import command_runner
+
+    session = {"snapshot": {"provider": "aws"}}
+
+    original = command_runner.asyncio.create_subprocess_exec
+
+    class FakeProc:
+        returncode = 1
+
+        async def communicate(self):
+            return b"", b"Error: SSO token expired, please run aws sso login"
+
+    async def fake_exec(*args, **kwargs):  # noqa: ANN002, ANN003
+        return FakeProc()
+
+    command_runner.asyncio.create_subprocess_exec = fake_exec
+    try:
+        result = await command_runner._check_credentials(session)
+        assert result is not None, "expired creds should return an error"
+        assert "/login" in result, f"message should mention /login: {result}"
+        assert "expired" in result.lower(), f"message should mention expiry: {result}"
+    finally:
+        command_runner.asyncio.create_subprocess_exec = original
+
+    # Now test the success path.
+    class OkProc:
+        returncode = 0
+
+        async def communicate(self):
+            return b"123456789012", b""
+
+    async def fake_ok(*args, **kwargs):  # noqa: ANN002, ANN003
+        return OkProc()
+
+    command_runner.asyncio.create_subprocess_exec = fake_ok
+    try:
+        result = await command_runner._check_credentials(session)
+        assert result is None, f"valid creds should return None, got: {result}"
+    finally:
+        command_runner.asyncio.create_subprocess_exec = original
+    print("PASS test_check_credentials_aws_expired")
+
+
+async def test_check_credentials_timeout_kills_proc() -> None:
+    """Timeout kills the subprocess and returns an error, not None."""
+    from console.backend import command_runner
+
+    session = {"snapshot": {"provider": "aws"}}
+    original = command_runner.asyncio.create_subprocess_exec
+
+    killed = False
+
+    class HangingProc:
+        returncode = None
+
+        async def communicate(self):
+            await asyncio.sleep(60)
+
+        def kill(self):
+            nonlocal killed
+            killed = True
+
+        async def wait(self):
+            self.returncode = -9
+
+    async def fake_exec(*args, **kwargs):  # noqa: ANN002, ANN003
+        return HangingProc()
+
+    command_runner.asyncio.create_subprocess_exec = fake_exec
+    try:
+        result = await command_runner._check_credentials(session)
+        assert result is not None, "timeout should return an error, not None"
+        assert "timed out" in result.lower(), f"should mention timeout: {result}"
+        assert killed, "subprocess must be killed on timeout"
+    finally:
+        command_runner.asyncio.create_subprocess_exec = original
+    print("PASS test_check_credentials_timeout_kills_proc")
+
+
+async def test_check_credentials_missing_binary() -> None:
+    """Missing CLI binary returns an error, not None."""
+    from console.backend import command_runner
+
+    session = {"snapshot": {"provider": "aws"}}
+    original = command_runner.asyncio.create_subprocess_exec
+
+    async def fake_exec(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise FileNotFoundError("aws not found")
+
+    command_runner.asyncio.create_subprocess_exec = fake_exec
+    try:
+        result = await command_runner._check_credentials(session)
+        assert result is not None, "missing binary should return an error, not None"
+        assert "not found" in result.lower(), f"should mention not found: {result}"
+    finally:
+        command_runner.asyncio.create_subprocess_exec = original
+    print("PASS test_check_credentials_missing_binary")
+
+
+async def test_check_credentials_azure_error_discrimination() -> None:
+    """Azure errors distinguish expiry from other failures."""
+    from console.backend import command_runner
+
+    session = {"snapshot": {"provider": "azure"}}
+    original = command_runner.asyncio.create_subprocess_exec
+
+    class ExpiredProc:
+        returncode = 1
+        async def communicate(self):
+            return b"", b"ERROR: AADSTS700082: The refresh token has expired"
+
+    class OtherProc:
+        returncode = 1
+        async def communicate(self):
+            return b"", b"ERROR: No subscription found"
+
+    async def fake_expired(*args, **kwargs):  # noqa: ANN002, ANN003
+        return ExpiredProc()
+
+    async def fake_other(*args, **kwargs):  # noqa: ANN002, ANN003
+        return OtherProc()
+
+    command_runner.asyncio.create_subprocess_exec = fake_expired
+    try:
+        result = await command_runner._check_credentials(session)
+        assert result is not None
+        assert "expired" in result.lower(), f"should say expired: {result}"
+    finally:
+        command_runner.asyncio.create_subprocess_exec = original
+
+    command_runner.asyncio.create_subprocess_exec = fake_other
+    try:
+        result = await command_runner._check_credentials(session)
+        assert result is not None
+        assert "expired" not in result.lower(), f"should NOT say expired for other error: {result}"
+        assert "error" in result.lower(), f"should mention error: {result}"
+    finally:
+        command_runner.asyncio.create_subprocess_exec = original
+    print("PASS test_check_credentials_azure_error_discrimination")
+
+
+async def test_spawn_and_stream_oserror_returns_not_started() -> None:
+    """_spawn_and_stream returns started=False when start_command raises OSError."""
+    from console.backend import command_runner, chat_events, chat_runtime
+
+    events: list[tuple[str, dict]] = []
+    original_emit = chat_events.emit_event
+    original_runtime = chat_runtime.runtime
+    original_start = command_runner.start_command
+
+    async def fake_emit(_app, _sid, kind, payload, **_kw):  # noqa: ANN001
+        events.append((kind, payload))
+
+    class FakeTurn:
+        command = None
+        commands_starting = 0
+        cancelled = False
+
+    class FakeRuntime:
+        turn = FakeTurn()
+        running: set = set()
+
+    def fake_runtime(_sid):  # noqa: ANN001
+        return FakeRuntime()
+
+    async def fake_start(_argv, cwd=None):  # noqa: ANN001
+        raise OSError("no such file")
+
+    chat_events.emit_event = fake_emit
+    chat_runtime.runtime = fake_runtime
+    command_runner.start_command = fake_start
+    try:
+        result = await command_runner._spawn_and_stream(
+            None, "test-session", "/test", ["test"], cwd="/tmp",
+        )
+        assert not result.started, "should be started=False on OSError"
+        assert result.exit_code == 1
+        assert "no such file" in result.output
+        assert not result.cancelled
+        phases = [p.get("phase") for _, p in events if isinstance(p, dict) and "phase" in p]
+        assert "start" in phases, f"missing start event: {phases}"
+        assert "end" in phases, f"missing end event: {phases}"
+    finally:
+        chat_events.emit_event = original_emit
+        chat_runtime.runtime = original_runtime
+        command_runner.start_command = original_start
+    print("PASS test_spawn_and_stream_oserror_returns_not_started")
+
+
+async def test_spawn_and_stream_success_returns_result() -> None:
+    """_spawn_and_stream returns started=True with correct exit code on success."""
+    from console.backend import command_runner, chat_events, chat_runtime
+
+    events: list[tuple[str, dict]] = []
+    original_emit = chat_events.emit_event
+    original_runtime = chat_runtime.runtime
+    original_start = command_runner.start_command
+
+    async def fake_emit(_app, _sid, kind, payload, **_kw):  # noqa: ANN001
+        events.append((kind, payload))
+
+    class FakeTurn:
+        command = None
+        commands_starting = 0
+        cancelled = False
+
+    class FakeRuntime:
+        turn = FakeTurn()
+        running: set = set()
+
+    def fake_runtime(_sid):  # noqa: ANN001
+        return FakeRuntime()
+
+    class FakeCommand:
+        returncode = 42
+        output = "hello world"
+        cancelled = False
+        _KILL_GRACE = 12.0
+
+        async def stream_lines(self):
+            return
+            yield  # make it an async generator  # noqa: RET503
+
+    async def fake_start(_argv, cwd=None):  # noqa: ANN001
+        return FakeCommand()
+
+    chat_events.emit_event = fake_emit
+    chat_runtime.runtime = fake_runtime
+    command_runner.start_command = fake_start
+    try:
+        result = await command_runner._spawn_and_stream(
+            None, "test-session", "/test", ["test"], cwd="/tmp",
+        )
+        assert result.started, "should be started=True on success"
+        assert result.exit_code == 42
+        assert result.output == "hello world"
+        assert not result.cancelled
+        end_events = [
+            p for k, p in events
+            if k == "command_run" and isinstance(p, dict) and p.get("phase") == "end"
+        ]
+        assert len(end_events) == 1, f"expected 1 end event, got {len(end_events)}"
+        assert end_events[0]["exit_code"] == 42
+    finally:
+        chat_events.emit_event = original_emit
+        chat_runtime.runtime = original_runtime
+        command_runner.start_command = original_start
+    print("PASS test_spawn_and_stream_success_returns_result")
+
+
 def main() -> None:
     test_argv_injects_config_and_env()
     test_argv_multiword_and_flag_verbs()
@@ -701,7 +1054,6 @@ def main() -> None:
     test_dispatch_and_agent_commands()
     test_expand_command_prompt()
     test_load_prompt_and_guidance_injection()
-    test_system_prompt_covers_the_registry()
     test_exec_verb_and_json_flag()
     test_restart_targets_one_host()
     test_anchor_cannot_be_overridden_by_extra_args()
@@ -719,6 +1071,24 @@ def main() -> None:
     test_catalog_exposes_destructive_for_the_confirm_gate()
     test_no_console_command_can_block_on_a_prompt()
     asyncio.run(test_cancel_escalates_to_sigkill())
+    test_login_registry_entry()
+    test_build_argv_rejects_empty_verb()
+    if _HAS_COMMAND_RUNNER:
+        test_login_argv_aws_with_profile()
+        test_login_argv_aws_no_profile()
+        test_login_argv_azure()
+        test_login_argv_unknown_provider()
+        test_login_argv_missing_provider()
+        asyncio.run(test_check_credentials_skips_missing_provider())
+        asyncio.run(test_check_credentials_aws_expired())
+        asyncio.run(test_check_credentials_timeout_kills_proc())
+        asyncio.run(test_check_credentials_missing_binary())
+        asyncio.run(test_check_credentials_azure_error_discrimination())
+        asyncio.run(test_spawn_and_stream_oserror_returns_not_started())
+        asyncio.run(test_spawn_and_stream_success_returns_result())
+    else:
+        print("SKIP command_runner tests (dreadnode not installed)")
+    test_system_prompt_covers_the_registry()
     print("ALL PASS")
 
 

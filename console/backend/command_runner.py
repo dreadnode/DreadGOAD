@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shutil
 import typing as t
+from dataclasses import dataclass
 from functools import partial
 
 from . import (
@@ -27,6 +29,111 @@ from .cli import start_capture, start_command
 # Commands that mutate infra via terraform/ansible need a long graceful runway
 # before cancellation escalates to SIGKILL.
 _SLOW_CANCEL = frozenset({"/up", "/provision", "/reset", "/destroy", "/extensions"})
+
+
+@dataclass
+class _RunResult:
+    exit_code: int
+    output: str
+    cancelled: bool
+    started: bool = True
+
+
+async def _spawn_and_stream(
+    app: t.Any,
+    session_id: str,
+    name: str,
+    argv: list[str],
+    *,
+    cwd: str,
+    kill_grace: float = 12.0,
+    cloud_ops: bool = False,
+    long_running: bool = False,
+) -> _RunResult:
+    """Shared process lifecycle: emit start, spawn, stream, emit end.
+
+    Returns the result without raising on cancel — callers decide how to
+    unwind (login raises immediately; run_cli refreshes first).
+    """
+    await chat_events.emit_event(
+        app,
+        session_id,
+        "command_run",
+        {"phase": "start", "command": name, "argv": argv, "cwd": cwd},
+    )
+
+    current = chat_runtime.runtime(session_id)
+    turn = current.turn
+    if turn is not None:
+        turn.command = name
+
+    if long_running:
+        await app.state.sessions.set_status(session_id, "provisioning")
+
+    if turn is not None:
+        turn.commands_starting += 1
+    try:
+        command = await start_command(argv, cwd=cwd)
+    except OSError as exc:
+        message = f"failed to start {name}: {exc}"
+        if long_running:
+            await app.state.sessions.set_status(session_id, "error")
+        await chat_events.emit_event(app, session_id, "error", {"message": message})
+        await chat_events.emit_event(
+            app,
+            session_id,
+            "command_run",
+            {
+                "phase": "end",
+                "command": name,
+                "exit_code": 1,
+                "cancelled": False,
+                "tail": message,
+            },
+        )
+        return _RunResult(1, message, cancelled=False, started=False)
+    finally:
+        if turn is not None:
+            turn.commands_starting = max(0, turn.commands_starting - 1)
+
+    command._KILL_GRACE = kill_grace
+    if turn is not None and turn.cancelled:
+        command.cancel()
+    current.running.add(command)
+    try:
+        await _stream_output(app, session_id, name, command)
+    finally:
+        current.running.discard(command)
+
+    exit_code, output = command.returncode, command.output
+
+    if long_running:
+        await app.state.sessions.set_status(
+            session_id, final_status(name, exit_code, command.cancelled)
+        )
+
+    cancelled = command.cancelled or (
+        current.turn is not None and current.turn.cancelled
+    )
+    await chat_events.emit_event(
+        app,
+        session_id,
+        "command_run",
+        {
+            "phase": "end",
+            "command": name,
+            "exit_code": exit_code,
+            "cancelled": command.cancelled,
+            "still_running": bool(cancelled and cloud_ops),
+            "tail": output[-2000:],
+        },
+    )
+
+    # Re-check after the emit: emit_event awaits a store write and socket
+    # send, so a cancel can land inside it.
+    cancelled = cancelled or (current.turn is not None and current.turn.cancelled)
+
+    return _RunResult(exit_code, output, cancelled=cancelled)
 
 
 def parse_instances(output: str) -> list[dict[str, t.Any]] | None:
@@ -202,6 +309,135 @@ async def _prepare_extra(
     return [local, *extra[1:]]
 
 
+# ---------------------------------------------------------------------------
+# Cloud credential check + /login handler
+# ---------------------------------------------------------------------------
+
+
+def _session_provider(session: dict[str, t.Any]) -> str | None:
+    """The cloud provider recorded in the session snapshot, or None."""
+    return session.get("snapshot", {}).get("provider") or None
+
+
+def _session_aws_profile(session: dict[str, t.Any]) -> str | None:
+    """The AWS profile captured when the session was created."""
+    return session.get("snapshot", {}).get("aws", {}).get("profile")
+
+
+def _login_argv(
+    session: dict[str, t.Any],
+) -> tuple[list[str], str] | tuple[None, str]:
+    """Build the cloud CLI argv for the session's provider login flow."""
+    provider = _session_provider(session)
+    if provider is None:
+        return None, "Session has no cloud provider — cannot determine login flow."
+    if provider == "aws":
+        profile = _session_aws_profile(session)
+        argv = ["aws", "sso", "login"]
+        if profile:
+            argv.extend(["--profile", profile])
+            return argv, f"aws sso login --profile {profile}"
+        return argv, "aws sso login"
+    if provider == "azure":
+        return ["az", "login"], "az login"
+    return None, f"Login not supported for provider: {provider}"
+
+
+async def _check_credentials(session: dict[str, t.Any]) -> str | None:
+    """Fast credential verification. Returns an error message or None on success."""
+    provider = _session_provider(session)
+    if provider is None:
+        return None
+    if provider == "aws":
+        argv = [
+            "aws",
+            "sts",
+            "get-caller-identity",
+            "--query",
+            "Account",
+            "--output",
+            "text",
+        ]
+        profile = _session_aws_profile(session)
+        if profile:
+            argv.extend(["--profile", profile])
+    elif provider == "azure":
+        argv = ["az", "account", "show", "--query", "id", "-o", "tsv"]
+    else:
+        return None
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+    except FileNotFoundError:
+        return f"'{argv[0]}' not found on PATH. Install the CLI first."
+
+    try:
+        _, stderr = await asyncio.wait_for(proc.communicate(), timeout=10)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return f"Credential check timed out. Run /login to re-authenticate."
+
+    if proc.returncode == 0:
+        return None
+
+    err = stderr.decode(errors="replace").lower()
+    if provider == "aws":
+        if any(kw in err for kw in ("sso", "expired", "token", "refresh failed")):
+            return "AWS SSO session expired. Run /login to re-authenticate."
+        return "AWS credentials are invalid or missing. Run /login to re-authenticate."
+    if any(kw in err for kw in ("expired", "token", "refresh", "login", "sign in")):
+        return "Azure CLI session expired. Run /login to re-authenticate."
+    return "Azure CLI error. Run /login to re-authenticate."
+
+
+async def _run_login(
+    app: t.Any, session_id: str, session: dict[str, t.Any]
+) -> tuple[int, str]:
+    """Run the cloud provider login flow (aws sso login / az login)."""
+    argv, label = _login_argv(session)
+    if argv is None:
+        await chat_events.emit_event(app, session_id, "error", {"message": label})
+        return 1, label
+
+    binary = shutil.which(argv[0])
+    if not binary:
+        msg = f"'{argv[0]}' not found on PATH. Install the CLI first."
+        await chat_events.emit_event(app, session_id, "error", {"message": msg})
+        return 1, msg
+
+    result = await _spawn_and_stream(
+        app, session_id, "/login", argv, cwd=str(paths.repo_root()),
+    )
+
+    if not result.started:
+        return result.exit_code, result.output
+    if result.cancelled:
+        raise asyncio.CancelledError
+
+    exit_code, output = result.exit_code, result.output
+
+    if exit_code == 0:
+        verify = await _check_credentials(session)
+        if verify is None:
+            provider = _session_provider(session) or "cloud"
+            msg = f"{provider.upper()} login successful."
+        else:
+            msg = f"Login process exited OK but credentials still invalid: {verify}"
+            exit_code = 1
+    else:
+        msg = f"Login failed (exit {exit_code}). Check the output above."
+
+    await chat_events.emit_event(
+        app, session_id, "status", {"content": msg},
+    )
+    return exit_code, output
+
+
 async def _stream_output(
     app: t.Any, session_id: str, name: str, command: t.Any
 ) -> None:
@@ -349,6 +585,9 @@ async def run_cli(
         )
         return 1, "session not found"
 
+    if name == "/login":
+        return await _run_login(app, session_id, session)
+
     try:
         extra = await _prepare_extra(session, session_id, name, list(extra or []))
     except _Aborted as exc:
@@ -362,6 +601,14 @@ async def run_cli(
     except ValueError as exc:
         await chat_events.emit_event(app, session_id, "error", {"message": str(exc)})
         return 1, str(exc)
+
+    if commands.REGISTRY[name].cloud_ops:
+        cred_err = await _check_credentials(session)
+        if cred_err:
+            await chat_events.emit_event(
+                app, session_id, "error", {"message": cred_err}
+            )
+            return 1, cred_err
 
     # Where the CLI will resolve the range's files. The config path and the
     # working directory are independent inputs to the CLI (see projectroot),
@@ -394,105 +641,23 @@ async def run_cli(
     else:
         run_cwd = str(paths.repo_root())
 
-    await chat_events.emit_event(
-        app,
-        session_id,
-        "command_run",
-        {"phase": "start", "command": name, "argv": argv, "cwd": run_cwd},
-    )
-
-    current = chat_runtime.runtime(session_id)
-    turn = current.turn
-    if turn is not None:
-        turn.command = name
-
     command_spec = commands.REGISTRY[name]
-    if command_spec.long_running:
-        await app.state.sessions.set_status(session_id, "provisioning")
-
-    if turn is not None:
-        turn.commands_starting += 1
-    try:
-        command = await start_command(argv, cwd=run_cwd)
-    except OSError as exc:
-        message = f"failed to start {name}: {exc}"
-        if command_spec.long_running:
-            await app.state.sessions.set_status(session_id, "error")
-        await chat_events.emit_event(app, session_id, "error", {"message": message})
-        await chat_events.emit_event(
-            app,
-            session_id,
-            "command_run",
-            {
-                "phase": "end",
-                "command": name,
-                "exit_code": 1,
-                "cancelled": False,
-                "tail": message,
-            },
-        )
-        return 1, message
-    finally:
-        if turn is not None:
-            turn.commands_starting = max(0, turn.commands_starting - 1)
-
-    command._KILL_GRACE = 300.0 if name in _SLOW_CANCEL else 12.0
-    if turn is not None and turn.cancelled:
-        command.cancel()
-    current.running.add(command)
-    try:
-        await _stream_output(app, session_id, name, command)
-    finally:
-        current.running.discard(command)
-    exit_code, output = command.returncode, command.output
-
-    if command_spec.long_running:
-        await app.state.sessions.set_status(
-            session_id, final_status(name, exit_code, command.cancelled)
-        )
-
-    cancelled = command.cancelled or (
-        current.turn is not None and current.turn.cancelled
-    )
-    await chat_events.emit_event(
+    result = await _spawn_and_stream(
         app,
         session_id,
-        "command_run",
-        {
-            "phase": "end",
-            "command": name,
-            "exit_code": exit_code,
-            "cancelled": command.cancelled,
-            # Cancelling kills our subprocess; it does not reach into Azure or
-            # into a playbook already running on a host. Saying only "cancelled"
-            # let an operator watch a DC reboot they believed they had stopped.
-            "still_running": bool(cancelled and command_spec.cloud_ops),
-            "tail": output[-2000:],
-        },
+        name,
+        argv,
+        cwd=run_cwd,
+        kill_grace=300.0 if name in _SLOW_CANCEL else 12.0,
+        cloud_ops=command_spec.cloud_ops,
+        long_running=command_spec.long_running,
     )
 
-    # Re-check after the emit, not before. emit_event awaits a store write and a
-    # socket send, so a cancel can land inside it; deciding from the pre-emit
-    # value would let that turn carry on as if nothing had happened. The payload
-    # above keeps the value that was true when it was sent.
-    cancelled = cancelled or (current.turn is not None and current.turn.cancelled)
+    if not result.started:
+        return result.exit_code, result.output
 
-    if cancelled:
-        # Re-read the range before unwinding. The command may have changed the
-        # world on its way out, and the view would otherwise keep showing the
-        # state from before it ran — the one moment the display is most likely
-        # to be wrong is the one we were skipping.
-        #
-        # Deliberately NOT the turn-owned capture: that raises CancelledError
-        # the moment it sees turn.cancelled, so the refresh would abort before
-        # doing anything. Failure here must not replace the cancellation, so
-        # everything is swallowed except the cancel itself.
+    if result.cancelled:
         if command_spec.cloud_ops:
-            # Bounded as a whole, not just at the subprocess: the operator has
-            # already asked for this to stop, so a refresh that outlives their
-            # patience makes cancelling slower than not cancelling. Anything
-            # inside run_check can block — a wedged read, a slow store — and
-            # only a deadline around all of it is actually a guarantee.
             try:
                 payload = await asyncio.wait_for(
                     hook.run_check(
@@ -509,5 +674,5 @@ async def run_cli(
 
     payload = await hook.run_check(app, session_id, _capture_command(session_id))
     await chat_events.emit_event(app, session_id, "check_run", payload)
-    await _emit_overlays(app, session_id, name, output, exit_code)
-    return exit_code, output
+    await _emit_overlays(app, session_id, name, result.output, result.exit_code)
+    return result.exit_code, result.output

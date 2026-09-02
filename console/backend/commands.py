@@ -222,13 +222,19 @@ REGISTRY: dict[str, Command] = {
         description="List available extensions, or provision one by name",
         detail="listing is read-only; provisioning adds machines to the range",
     ),
+    "/login": Command(
+        "/login",
+        (),
+        description="Re-authenticate with the cloud provider (AWS SSO or Azure)",
+        detail="opens a browser; run when commands fail with expired credentials",
+    ),
 }
 
 # Commands the agent may run via its run_dreadgoad tool: ALL of them, so it can
 # answer questions by running reads (/instances, /health, …) and perform actions
 # from natural language. Safety for destructive commands (/destroy, /up, /reset,
 # /variant) is by prompt — the agent must confirm intent (operator's choice).
-AGENT_RUNNABLE: frozenset[str] = frozenset(REGISTRY)
+AGENT_RUNNABLE: frozenset[str] = frozenset(REGISTRY) - {"/login"}
 
 
 def command_catalog() -> list[dict[str, t.Any]]:
@@ -470,6 +476,8 @@ def build_argv(
     if name not in REGISTRY:
         raise KeyError(f"unknown command: {name}")
     cmd = REGISTRY[name]
+    if not cmd.verb:
+        raise ValueError(f"{name} does not map to a dreadgoad verb")
     anchor = session["anchor"]
     _rejects_anchor_override(list(extra_args or []))
     verb, trailing = _verb_for(cmd, list(extra_args or []))

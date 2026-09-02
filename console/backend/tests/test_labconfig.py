@@ -72,7 +72,7 @@ def test_derive_snapshot_aws_falls_back_to_source() -> None:
     assert snap["provider"] == "aws", snap
     # No variant_target → lab falls back to variant_source.
     assert snap["lab"] == "ad/GOAD", snap
-    assert snap["aws"] == {"profile": None}, snap
+    assert "aws" in snap and "profile" in snap["aws"], snap
     os.unlink(tmp.name)
     print("PASS test_derive_snapshot_aws_falls_back_to_source")
 

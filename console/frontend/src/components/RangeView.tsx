@@ -831,6 +831,7 @@ export default function RangeView(
     const rows: Array<Omit<HeaderField, 'value'> & { value?: string | null }> = [
       { label: 'env', value: session.anchor?.env },
       { label: 'cloud', value: cloud || null },
+      { label: 'profile', value: snap.aws?.profile ?? null },
       { label: 'resource group', value: snap.group },
       // An Azure subscription GUID is 36 chars — far too wide for a header
       // field, so show the leading segment with the whole value in the tooltip.

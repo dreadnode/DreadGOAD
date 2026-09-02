@@ -171,7 +171,7 @@ def derive_snapshot(config_path: str, env: str) -> dict[str, t.Any]:
     }
     # Provider-specific block (selectors only, never secrets).
     if provider == "aws":
-        snapshot["aws"] = {"profile": None}
+        snapshot["aws"] = {"profile": os.environ.get("AWS_PROFILE") or None}
     elif provider == "azure":
         # Where the range landed (subscription/resource group) is NOT here —
         # the ingestion hook learns it post-deploy and writes it to the
