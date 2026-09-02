@@ -16,6 +16,7 @@ import (
 	"slices"
 
 	"github.com/dreadnode/dreadgoad/internal/ansible"
+	daws "github.com/dreadnode/dreadgoad/internal/aws"
 	"github.com/dreadnode/dreadgoad/internal/azure"
 	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/dreadnode/dreadgoad/internal/doctor"
@@ -180,10 +181,13 @@ func preflightChecks(ctx context.Context, cfg *config.Config, limit string) erro
 		return fmt.Errorf("inventory bootstrap failed: %w", err)
 	}
 
-	// AWS-specific preflight: sync inventory instance IDs and generate
-	// IP mappings. Skipped for non-SSM providers (Ludus, Proxmox, etc.)
-	// where the inventory is managed manually.
+	// AWS-specific preflight: ensure the SSM transfer bucket exists, sync
+	// inventory instance IDs, and generate IP mappings. Skipped for non-SSM
+	// providers (Ludus, Proxmox, etc.) where none of this applies.
 	if isSSMInventory(cfg) {
+		if err := ensureSSMBucket(ctx, cfg); err != nil {
+			slog.Warn("SSM bucket check failed", "error", err)
+		}
 		if err := ensureInventorySynced(ctx, cfg); err != nil {
 			slog.Warn("inventory sync check failed", "error", err)
 		}
@@ -569,6 +573,31 @@ func bootstrapFromExample(invPath string) error {
 	}
 	slog.Info("bootstrapped inventory from example template", "path", invPath)
 	return nil
+}
+
+// ensureSSMBucket creates the S3 bucket the Ansible SSM connection plugin
+// uses to transfer files, if it does not already exist.
+func ensureSSMBucket(ctx context.Context, cfg *config.Config) error {
+	parsed, err := inv.Parse(cfg.InventoryPath())
+	if err != nil {
+		return fmt.Errorf("parse inventory: %w", err)
+	}
+	bucket := parsed.SSMBucketName()
+	if bucket == "" {
+		return nil
+	}
+	region := parsed.Region()
+	if region == "" {
+		region, err = cfg.ResolveRegion()
+		if err != nil {
+			return err
+		}
+	}
+	client, err := daws.NewClient(ctx, region, "")
+	if err != nil {
+		return err
+	}
+	return client.EnsureSSMBucket(ctx, bucket)
 }
 
 // ensureInventorySynced compares inventory instance IDs against live EC2

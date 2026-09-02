@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/dreadnode/dreadgoad/internal/config"
@@ -166,14 +168,19 @@ func scaffoldEnv(cfg *config.Config, envName, region, vpcCIDR, reference, varian
 
 	printEnvSummary(provider, envName, region, vpcCIDR, reference, useVariant)
 
-	if err := scaffoldHCL(provider, envDir, regionDir, envName, region, vpcCIDR); err != nil {
+	hostFilter := labHostKeys(cfg.ProjectRoot, variantSource)
+
+	if err := scaffoldHCL(provider, envDir, regionDir, envName, region, vpcCIDR, hostFilter); err != nil {
 		return err
 	}
-
-	if err := copyInfrastructure(refRegionDir, regionDir); err != nil {
+	if err := copyInfrastructure(refRegionDir, regionDir, hostFilter); err != nil {
 		return fmt.Errorf("copy infrastructure: %w", err)
 	}
-	color.Green("  Copied infrastructure from %s", reference)
+	if hostFilter != nil {
+		color.Green("  Copied infrastructure from %s (filtered to %d hosts)", reference, len(hostFilter))
+	} else {
+		color.Green("  Copied infrastructure from %s", reference)
+	}
 
 	configPath, err := scaffoldLabConfig(cfg.ProjectRoot, envName, variantSource, useVariant)
 	if err != nil {
@@ -206,9 +213,9 @@ func printEnvSummary(provider, envName, region, vpcCIDR, reference string, useVa
 	fmt.Println()
 }
 
-func scaffoldHCL(provider, envDir, regionDir, envName, region, vpcCIDR string) error {
+func scaffoldHCL(provider, envDir, regionDir, envName, region, vpcCIDR string, hostFilter map[string]bool) error {
 	if provider == "azure" {
-		if err := createAzureEnvHCL(envDir, envName, vpcCIDR); err != nil {
+		if err := createAzureEnvHCL(envDir, envName, vpcCIDR, hostFilter); err != nil {
 			return fmt.Errorf("create env.hcl: %w", err)
 		}
 		color.Green("  Created env.hcl (Azure)")
@@ -434,7 +441,38 @@ func createRegionHCL(regionDir, region string) error {
 	return os.WriteFile(filepath.Join(regionDir, "region.hcl"), []byte(content), 0o644)
 }
 
-func copyInfrastructure(srcRegionDir, dstRegionDir string) error {
+// labHostKeys reads the host role keys (dc01, dc02, …) from a lab source's
+// config.json. Returns nil if the source cannot be read — callers treat nil as
+// "copy everything" so the scaffolding degrades to the old behavior rather than
+// failing for labs that don't follow the standard layout.
+func labHostKeys(projectRoot, variantSource string) map[string]bool {
+	source := variantSource
+	if source == "" {
+		source = defaultVariantSource
+	}
+	if !filepath.IsAbs(source) {
+		source = filepath.Join(projectRoot, source)
+	}
+	data, err := os.ReadFile(filepath.Join(source, "data", "config.json"))
+	if err != nil {
+		return nil
+	}
+	var cfg struct {
+		Lab struct {
+			Hosts map[string]json.RawMessage `json:"hosts"`
+		} `json:"lab"`
+	}
+	if json.Unmarshal(data, &cfg) != nil {
+		return nil
+	}
+	hosts := make(map[string]bool, len(cfg.Lab.Hosts))
+	for k := range cfg.Lab.Hosts {
+		hosts[k] = true
+	}
+	return hosts
+}
+
+func copyInfrastructure(srcRegionDir, dstRegionDir string, hostFilter map[string]bool) error {
 	return filepath.WalkDir(srcRegionDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -453,6 +491,15 @@ func copyInfrastructure(srcRegionDir, dstRegionDir string) error {
 				return filepath.SkipDir
 			}
 			return nil
+		}
+
+		// Skip host directories that the target lab doesn't define.
+		// Host dirs live at goad/<host>/ — exactly two path segments.
+		if hostFilter != nil && d.IsDir() {
+			parts := strings.Split(relPath, string(filepath.Separator))
+			if len(parts) == 2 && parts[0] == "goad" && !hostFilter[parts[1]] {
+				return filepath.SkipDir
+			}
 		}
 
 		dstPath := filepath.Join(dstRegionDir, relPath)
@@ -610,9 +657,20 @@ func deriveAzureSubnets(vnetCIDR string) (azureSubnets, error) {
 	}, nil
 }
 
+// azureInstanceSize returns the Azure VM size for a host role.
+// dc02 gets extra memory for the recurring attack-simulation tasks.
+func azureInstanceSize(role string) string {
+	if role == "dc02" {
+		return "Standard_D4s_v3"
+	}
+	return "Standard_D2s_v3"
+}
+
 // createAzureEnvHCL writes an Azure-specific env.hcl with VNet, bastion,
 // controller, and kali subnet CIDRs auto-derived from the VNet CIDR.
-func createAzureEnvHCL(envDir, envName, vnetCIDR string) error {
+// hostFilter determines which hosts appear in goad_instance_sizes; nil means
+// the full 5-host GOAD topology.
+func createAzureEnvHCL(envDir, envName, vnetCIDR string, hostFilter map[string]bool) error {
 	subnets, err := deriveAzureSubnets(vnetCIDR)
 	if err != nil {
 		return err
@@ -620,19 +678,30 @@ func createAzureEnvHCL(envDir, envName, vnetCIDR string) error {
 	if err := os.MkdirAll(envDir, 0o755); err != nil {
 		return err
 	}
+
+	hosts := hostFilter
+	if hosts == nil {
+		hosts = map[string]bool{"dc01": true, "dc02": true, "dc03": true, "srv02": true, "srv03": true}
+	}
+	// Build the instance_sizes map in sorted order for deterministic output.
+	sorted := make([]string, 0, len(hosts))
+	for h := range hosts {
+		sorted = append(sorted, h)
+	}
+	sort.Strings(sorted)
+	var sizeLines strings.Builder
+	for _, h := range sorted {
+		fmt.Fprintf(&sizeLines, "    %-5s = %q\n", h, azureInstanceSize(h))
+	}
+
 	content := fmt.Sprintf(`locals {
   deployment_name = "dreadgoad"
   env             = %q
   vnet_cidr       = %q
 
-  # DC02 runs the recurring attack-simulation tasks and needs additional memory.
+  # DC02 gets extra memory for the recurring attack-simulation tasks.
   goad_instance_sizes = {
-    dc01  = "Standard_D2s_v3"
-    dc02  = "Standard_D4s_v3"
-    dc03  = "Standard_D2s_v3"
-    srv02 = "Standard_D2s_v3"
-    srv03 = "Standard_D2s_v3"
-  }
+%s  }
 
   bastion_sku               = "Standard"
   bastion_subnet_cidr       = %q
@@ -647,7 +716,7 @@ func createAzureEnvHCL(envDir, envName, vnetCIDR string) error {
   kali_ssh_source_address_prefix = %q
   kali_instance_size             = "Standard_D2s_v3"
 }
-`, envName, vnetCIDR, subnets.Bastion, subnets.Controller, subnets.Bastion,
+`, envName, vnetCIDR, sizeLines.String(), subnets.Bastion, subnets.Controller, subnets.Bastion,
 		subnets.Kali, subnets.Bastion)
 	return os.WriteFile(filepath.Join(envDir, "env.hcl"), []byte(content), 0o644)
 }

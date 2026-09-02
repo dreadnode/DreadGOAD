@@ -32,6 +32,9 @@ type Options struct {
 	ExcludeDirs      string
 	LogFile          string
 	Debug            bool
+	// BackendBootstrap tells Terragrunt to auto-provision the remote-state
+	// backend (S3 bucket / DynamoDB table) when it doesn't exist yet.
+	BackendBootstrap bool
 	// ExtraEnv is appended to the child process environment in KEY=VALUE form.
 	// Used by callers that need to set Terragrunt feature toggles (e.g. the
 	// Azure Bastion module's DREADGOAD_ENABLE_AZURE_BASTION gate) without
@@ -88,6 +91,9 @@ func RunAll(ctx context.Context, opts Options) error {
 	}
 	if opts.NonInteractive {
 		args = append(args, "--non-interactive")
+	}
+	if opts.BackendBootstrap {
+		args = append(args, "--backend-bootstrap")
 	}
 	args = append(args, "--", opts.Action)
 	if opts.Action == "init" {
@@ -213,6 +219,9 @@ func buildArgs(opts Options) []string {
 	}
 	if opts.NonInteractive {
 		args = append(args, "--non-interactive")
+	}
+	if opts.BackendBootstrap {
+		args = append(args, "--backend-bootstrap")
 	}
 	return args
 }

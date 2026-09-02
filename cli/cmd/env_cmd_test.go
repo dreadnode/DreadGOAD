@@ -139,7 +139,7 @@ func TestDeriveAzureSubnets(t *testing.T) {
 
 func TestCreateAzureEnvHCLSetsGOADInstanceSizes(t *testing.T) {
 	envDir := t.TempDir()
-	if err := createAzureEnvHCL(envDir, "memory-test", "10.8.0.0/16"); err != nil {
+	if err := createAzureEnvHCL(envDir, "memory-test", "10.8.0.0/16", nil); err != nil {
 		t.Fatalf("createAzureEnvHCL() error = %v", err)
 	}
 

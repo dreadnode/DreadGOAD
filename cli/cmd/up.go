@@ -25,7 +25,8 @@ var (
 	upFromPlaybook string
 	upInfraModule  string
 	upInfraExclude string
-	upWithKali     bool
+	upWithKali          bool
+	upBackendBootstrap  bool
 )
 
 var upCmd = &cobra.Command{
@@ -70,6 +71,7 @@ func init() {
 	upCmd.Flags().StringVar(&upInfraModule, "module", "", "Target a specific infra module (default: all)")
 	upCmd.Flags().StringVar(&upInfraExclude, "exclude", "", "Exclude infra modules (comma-separated)")
 	upCmd.Flags().BoolVar(&upWithKali, "with-kali", false, "Also deploy the optional Kali Linux attack box")
+	upCmd.Flags().BoolVar(&upBackendBootstrap, "backend-bootstrap", false, "Auto-create remote-state backend (S3 bucket / DynamoDB table)")
 }
 
 type upStep struct {
@@ -301,6 +303,7 @@ func newUpInfraCommand(ctx context.Context, providerName string) *cobra.Command 
 	synth.Flags().Bool("with-bastion", needsTunnel, "")
 	synth.Flags().Bool("with-controller", needsTunnel, "")
 	synth.Flags().Bool("with-kali", upWithKali, "")
+	synth.Flags().Bool("backend-bootstrap", upBackendBootstrap, "")
 	synth.Flags().Duration("timeout", 0, "")
 	synth.SetContext(ctx)
 	return synth

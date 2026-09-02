@@ -11,7 +11,9 @@ import (
 	"strings"
 	"time"
 
+	daws "github.com/dreadnode/dreadgoad/internal/aws"
 	"github.com/dreadnode/dreadgoad/internal/config"
+	inv "github.com/dreadnode/dreadgoad/internal/inventory"
 	"github.com/dreadnode/dreadgoad/internal/ludus"
 	"github.com/dreadnode/dreadgoad/internal/provider"
 	"github.com/dreadnode/dreadgoad/internal/terraform"
@@ -88,6 +90,11 @@ func init() {
 	infraApplyCmd.Flags().Bool("auto-approve", false, "Skip confirmation prompt")
 	infraApplyCmd.Flags().Bool("individual", false, "Apply each subdirectory individually (for module groups like goad/)")
 	infraDestroyCmd.Flags().Bool("auto-approve", false, "Skip confirmation prompt")
+
+	// Backend bootstrap: let Terragrunt auto-create the remote state bucket/table.
+	for _, cmd := range []*cobra.Command{infraInitCmd, infraApplyCmd} {
+		cmd.Flags().Bool("backend-bootstrap", false, "Auto-create remote-state backend (S3 bucket / DynamoDB table) if it doesn't exist")
+	}
 
 	// Timeout for long-running actions. Zero means no limit.
 	for _, cmd := range []*cobra.Command{infraApplyCmd, infraDestroyCmd} {
@@ -256,12 +263,15 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 		return fmt.Errorf("azure region not configured: pass --region (e.g. --region centralus) or set 'region' in dreadgoad.yaml")
 	}
 
+	backendBootstrapAz, _ := cmd.Flags().GetBool("backend-bootstrap")
+
 	opts := terragrunt.Options{
 		Action:           action,
 		TerragruntBinary: cfg.Infra.TerragruntBinary,
 		TerraformBinary:  cfg.Infra.TerraformBinary,
 		NonInteractive:   true,
 		ExcludeDirs:      exclude,
+		BackendBootstrap: backendBootstrapAz,
 		Debug:            cfg.Debug,
 	}
 
@@ -359,12 +369,15 @@ func runInfraActionAWS(cmd *cobra.Command, cfg *config.Config, action string) er
 		return err
 	}
 
+	backendBootstrap, _ := cmd.Flags().GetBool("backend-bootstrap")
+
 	opts := terragrunt.Options{
 		Action:           action,
 		TerragruntBinary: cfg.Infra.TerragruntBinary,
 		TerraformBinary:  cfg.Infra.TerraformBinary,
 		NonInteractive:   true,
 		ExcludeDirs:      exclude,
+		BackendBootstrap: backendBootstrap,
 		Debug:            cfg.Debug,
 	}
 
@@ -415,7 +428,44 @@ func runInfraActionAWS(cmd *cobra.Command, cfg *config.Config, action string) er
 	}
 
 	opts.WorkDir = workDir
-	return terragrunt.RunAll(ctx, opts)
+	if err := terragrunt.RunAll(ctx, opts); err != nil {
+		return err
+	}
+
+	if action == "destroy" {
+		if err := deleteSSMBucket(ctx, cfg); err != nil {
+			slog.Warn("SSM bucket cleanup failed", "error", err)
+		}
+	}
+	return nil
+}
+
+// deleteSSMBucket removes the S3 bucket the Ansible SSM connection plugin
+// used for file transfer. Called after a successful infra destroy.
+func deleteSSMBucket(ctx context.Context, cfg *config.Config) error {
+	parsed, err := inv.Parse(cfg.InventoryPath())
+	if err != nil {
+		return nil
+	}
+	if !parsed.IsSSM() {
+		return nil
+	}
+	bucket := parsed.SSMBucketName()
+	if bucket == "" {
+		return nil
+	}
+	region := parsed.Region()
+	if region == "" {
+		region, err = cfg.ResolveRegion()
+		if err != nil {
+			return err
+		}
+	}
+	client, err := daws.NewClient(ctx, region, "")
+	if err != nil {
+		return err
+	}
+	return client.DeleteSSMBucket(ctx, bucket)
 }
 
 // runInfraActionTerraform handles infra commands for Proxmox (and other
