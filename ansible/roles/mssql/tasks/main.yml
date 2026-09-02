@@ -42,6 +42,53 @@
     force_dependent_services: true
     state: started
 
+# Port and firewall config runs unconditionally so prebaked AMIs
+# (which skip install.yml) get static port 1433.
+- name: Set static TCP port 1433
+  ansible.windows.win_regedit:
+    path: 'HKLM:\Software\Microsoft\Microsoft SQL Server\{{ mssql_version_key }}.{{ sql_instance_name }}\MSSQLServer\SuperSocketNetLib\Tcp\IPAll'
+    name: TcpPort
+    data: '1433'
+  register: tcp_port_reg
+
+- name: Clear dynamic TCP port
+  ansible.windows.win_regedit:
+    path: 'HKLM:\Software\Microsoft\Microsoft SQL Server\{{ mssql_version_key }}.{{ sql_instance_name }}\MSSQLServer\SuperSocketNetLib\Tcp\IPAll'
+    name: TcpDynamicPorts
+    data: ''
+  register: tcp_dynamic_reg
+
+- name: Firewall | Allow MSSQL through Firewall
+  ansible.windows.win_dsc:
+    resource_name: xFirewall
+    Name: "Access for MSSQL (TCP-In)"
+    Ensure: present
+    Enabled: True
+    Profile: "Domain"
+    Direction: "Inbound"
+    Localport: "1433"
+    Protocol: "TCP"
+    Description: "Opens the listener port for MSSQL"
+
+- name: Firewall | Allow MSSQL discover through Firewall
+  ansible.windows.win_dsc:
+    resource_name: xFirewall
+    Name: "Access for MSSQL (UDP-In)"
+    Ensure: present
+    Enabled: True
+    Profile: "Domain"
+    Direction: "Inbound"
+    Localport: "1434"
+    Protocol: "UDP"
+    Description: "Opens the discover port for MSSQL"
+
+- name: Restart MSSQL to apply port changes
+  ansible.windows.win_service:
+    name: "{{ mssql_service_name }}"
+    force_dependent_services: true
+    state: restarted
+  when: tcp_port_reg.changed or tcp_dynamic_reg.changed
+
 - name: Wait for port 1433 to become open
   ansible.windows.win_wait_for:
     port: 1433

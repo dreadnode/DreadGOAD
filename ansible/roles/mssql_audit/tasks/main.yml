@@ -3,8 +3,24 @@
 # Enables auditing for impersonation and linked server activity detection
 # Assumes MSSQL Express is already installed
 
-- name: Set MSSQL connection string
+- name: Locate sqlcmd binary
+  ansible.windows.win_shell: |
+    $candidates = @(
+      "C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\170\Tools\Binn\SQLCMD.EXE",
+      "C:\Program Files\Microsoft SQL Server\Client SDK\ODBC\180\Tools\Binn\SQLCMD.EXE"
+    )
+    foreach ($p in $candidates) {
+      if (Test-Path $p) { Write-Output $p; exit 0 }
+    }
+    $found = Get-Command sqlcmd -ErrorAction SilentlyContinue
+    if ($found) { Write-Output $found.Source; exit 0 }
+    Write-Error "sqlcmd not found"; exit 1
+  register: sqlcmd_lookup
+  changed_when: false
+
+- name: Set MSSQL connection variables
   ansible.builtin.set_fact:
+    mssql_sqlcmd: "{{ sqlcmd_lookup.stdout | trim }}"
     mssql_connection_str: "-S localhost\\SQLEXPRESS -E"
 
 - name: Create audit directory
@@ -21,7 +37,7 @@
 # Enable login auditing at the instance level (works for all editions)
 - name: Enable SQL Server login auditing (all successful and failed logins)
   ansible.windows.win_shell: |
-    SqlCmd {{ mssql_connection_str }} -Q "EXEC xp_instance_regwrite N'HKEY_LOCAL_MACHINE', N'Software\Microsoft\MSSQLServer\MSSQLServer', N'AuditLevel', REG_DWORD, 3"
+    & "{{ mssql_sqlcmd }}" {{ mssql_connection_str }} -Q "EXEC xp_instance_regwrite N'HKEY_LOCAL_MACHINE', N'Software\Microsoft\MSSQLServer\MSSQLServer', N'AuditLevel', REG_DWORD, 3"
 
 # Create Extended Events session for security monitoring
 # This works in SQL Server Express and captures impersonation/linked server activity
@@ -90,12 +106,12 @@
     );
     "@
 
-    SqlCmd {{ mssql_connection_str }} -Q "$sql"
+    & "{{ mssql_sqlcmd }}" {{ mssql_connection_str }} -Q "$sql"
   when: mssql_enable_xevents
 
 - name: Start Extended Events session
   ansible.windows.win_shell: |
-    SqlCmd {{ mssql_connection_str }} -Q "ALTER EVENT SESSION [{{ mssql_xevents_session_name }}] ON SERVER STATE = START;"
+    & "{{ mssql_sqlcmd }}" {{ mssql_connection_str }} -Q "ALTER EVENT SESSION [{{ mssql_xevents_session_name }}] ON SERVER STATE = START;"
   when: mssql_enable_xevents
 
 # Create event source for SQL audit events
