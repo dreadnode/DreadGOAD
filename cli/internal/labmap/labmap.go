@@ -34,7 +34,8 @@ type HostConfig struct {
 	Security    []string                   `json:"security"`
 	UseLAPS     bool                       `json:"use_laps"`
 	MSSQL       *MSSQLConfig               `json:"mssql"`
-	LocalGroups map[string][]string        `json:"local_groups"`
+	LocalGroups        map[string][]string        `json:"local_groups"`
+	VulnsADCSTemplates []string                   `json:"vulns_adcs_templates"`
 }
 
 // MSSQLLinkedServer holds the data source address for a linked SQL Server.
@@ -386,6 +387,29 @@ func (m *LabMap) ADCSDCRole(adcsRole string) string {
 		}
 	}
 	return ""
+}
+
+// ADCSConfiguredTemplates returns the set of ADCS template names declared
+// across all hosts.  It reads from both the new-style vulns_vars.adcs_templates
+// dict and the old-style vulns_adcs_templates list.
+func (m *LabMap) ADCSConfiguredTemplates() map[string]bool {
+	out := make(map[string]bool)
+	for _, hc := range m.HostConfigs {
+		// New style: vulns_vars.adcs_templates (dict keyed by template name).
+		if raw, ok := hc.VulnsVars["adcs_templates"]; ok {
+			var templates map[string]json.RawMessage
+			if err := json.Unmarshal(raw, &templates); err == nil {
+				for name := range templates {
+					out[strings.ToUpper(name)] = true
+				}
+			}
+		}
+		// Old style: vulns_adcs_templates (list of template names).
+		for _, name := range hc.VulnsADCSTemplates {
+			out[strings.ToUpper(name)] = true
+		}
+	}
+	return out
 }
 
 // CAWebEnrollment returns true if any domain has CA web enrollment enabled.

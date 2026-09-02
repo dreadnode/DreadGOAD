@@ -635,7 +635,11 @@ func (v *Validator) checkADCSPublishedTemplates(ctx context.Context, w io.Writer
 	for _, t := range tmpls.Templates {
 		published[strings.ToLower(strings.TrimSpace(t))] = true
 	}
+	configured := v.lab.ADCSConfiguredTemplates()
 	for _, tmpl := range []string{"ESC1", "ESC2", "ESC3", "ESC3-CRA", "ESC4", "ESC13"} {
+		if !configured[strings.ToUpper(tmpl)] {
+			continue
+		}
 		if published[strings.ToLower(tmpl)] {
 			v.addResult(w, "PASS", "ADCS", fmt.Sprintf("Template %s published on %s CA", tmpl, hostLabel), "")
 		} else {
@@ -2415,6 +2419,12 @@ func (v *Validator) adcsTemplateDCs() []string {
 	return out
 }
 
+// hasADCSTemplate returns true if the variant's config.json declares the named
+// template (e.g. "ESC1") in any host's vulns_vars.adcs_templates.
+func (v *Validator) hasADCSTemplate(name string) bool {
+	return v.lab.ADCSConfiguredTemplates()[strings.ToUpper(name)]
+}
+
 // checkADCSESC1 verifies the ESC1 template has CT_FLAG_ENROLLEE_SUPPLIES_SUBJECT
 // (msPKI-Certificate-Name-Flag bit 0x1) set.
 func (v *Validator) checkADCSESC1(ctx context.Context, w io.Writer) {
@@ -2423,6 +2433,10 @@ func (v *Validator) checkADCSESC1(ctx context.Context, w io.Writer) {
 	dcs := v.adcsTemplateDCs()
 	if len(dcs) == 0 || len(v.lab.ADCSHosts()) == 0 {
 		v.addResult(w, "SKIP", "ADCS-ESC1", "No ADCS configured for this lab", "")
+		return
+	}
+	if !v.hasADCSTemplate("ESC1") {
+		v.addResult(w, "SKIP", "ADCS-ESC1", "ESC1 template not in variant config", "")
 		return
 	}
 
@@ -2475,6 +2489,10 @@ func (v *Validator) checkADCSESC2(ctx context.Context, w io.Writer) {
 		v.addResult(w, "SKIP", "ADCS-ESC2", "No ADCS configured for this lab", "")
 		return
 	}
+	if !v.hasADCSTemplate("ESC2") {
+		v.addResult(w, "SKIP", "ADCS-ESC2", "ESC2 template not in variant config", "")
+		return
+	}
 
 	for _, dcRole := range dcs {
 		dc := strings.ToUpper(dcRole)
@@ -2507,6 +2525,10 @@ func (v *Validator) checkADCSESC3(ctx context.Context, w io.Writer) {
 	dcs := v.adcsTemplateDCs()
 	if len(dcs) == 0 || len(v.lab.ADCSHosts()) == 0 {
 		v.addResult(w, "SKIP", "ADCS-ESC3", "No ADCS configured for this lab", "")
+		return
+	}
+	if !v.hasADCSTemplate("ESC3") && !v.hasADCSTemplate("ESC3-CRA") {
+		v.addResult(w, "SKIP", "ADCS-ESC3", "ESC3 template not in variant config", "")
 		return
 	}
 
@@ -2546,6 +2568,10 @@ func (v *Validator) checkADCSESC4(ctx context.Context, w io.Writer) {
 
 	if len(v.lab.ADCSHosts()) == 0 {
 		v.addResult(w, "SKIP", "ADCS-ESC4", "No ADCS configured for this lab", "")
+		return
+	}
+	if !v.hasADCSTemplate("ESC4") {
+		v.addResult(w, "SKIP", "ADCS-ESC4", "ESC4 template not in variant config", "")
 		return
 	}
 
@@ -2664,6 +2690,10 @@ func (v *Validator) checkADCSESC9(ctx context.Context, w io.Writer) {
 
 	if len(v.lab.ADCSHosts()) == 0 {
 		v.addResult(w, "SKIP", "ADCS-ESC9", "No ADCS configured for this lab", "")
+		return
+	}
+	if !v.hasADCSTemplate("ESC9") {
+		v.addResult(w, "SKIP", "ADCS-ESC9", "ESC9 template not in variant config", "")
 		return
 	}
 

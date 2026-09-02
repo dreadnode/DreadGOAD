@@ -131,6 +131,31 @@ func assertLen(t *testing.T, what string, got, want int) {
 	}
 }
 
+func TestADCSConfiguredTemplates(t *testing.T) {
+	lab := loadLab(t, "GOAD-Light")
+
+	templates := lab.ADCSConfiguredTemplates()
+	if !templates["ESC1"] {
+		t.Errorf("GOAD-Light should have ESC1 in configured templates, got %v", templates)
+	}
+	for _, absent := range []string{"ESC2", "ESC3", "ESC4", "ESC9", "ESC13"} {
+		if templates[absent] {
+			t.Errorf("GOAD-Light should NOT have %s in configured templates", absent)
+		}
+	}
+}
+
+func TestADCSConfiguredTemplatesOldStyle(t *testing.T) {
+	lab := loadLab(t, "GOAD")
+
+	templates := lab.ADCSConfiguredTemplates()
+	for _, want := range []string{"ESC1", "ESC2", "ESC3", "ESC4", "ESC9"} {
+		if !templates[want] {
+			t.Errorf("GOAD base should have %s from vulns_adcs_templates, got %v", want, templates)
+		}
+	}
+}
+
 func assertNonEmpty(t *testing.T, what string, got int) {
 	t.Helper()
 	if got == 0 {
