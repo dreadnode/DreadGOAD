@@ -1,3 +1,10 @@
+SCOPE-RANGE:
+  - scope-base.yml
+  - scope-services.yml
+  - scope-data-storage.yml
+  - scope-dev-web.yml
+  - scope-kali.yml
+
 NHA:
   - build.yml
   - ad-servers.yml

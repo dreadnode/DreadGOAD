@@ -194,9 +194,12 @@ func checkAnsibleVersion(provider string) CheckResult {
 			Message: "ansible-core not found. Install: pip install 'ansible-core>=2.17.0,<2.18.0'",
 		}
 	}
+	return classifyAnsibleVersion(string(out), provider)
+}
 
+func classifyAnsibleVersion(output, provider string) CheckResult {
 	re := regexp.MustCompile(`(\d+)\.(\d+)\.(\d+)`)
-	m := re.FindStringSubmatch(string(out))
+	m := re.FindStringSubmatch(output)
 	if m == nil {
 		return CheckResult{Name: "ansible-core", Status: "fail", Message: "could not parse version"}
 	}
@@ -206,19 +209,11 @@ func checkAnsibleVersion(provider string) CheckResult {
 	version := fmt.Sprintf("%s.%s.%s", m[1], m[2], m[3])
 
 	if major > 2 || (major == 2 && minor >= 19) {
-		if provider == "azure" {
-			return CheckResult{
-				Name:   "ansible-core",
-				Status: "warn",
-				Message: fmt.Sprintf("v%s detected. Versions >=2.19 break Windows SSM (AWS) "+
-					"but work fine with Azure WinRM/PSRP", version),
-			}
-		}
 		return CheckResult{
 			Name:   "ansible-core",
 			Status: "fail",
-			Message: fmt.Sprintf("v%s detected. Versions >=2.19 break Windows SSM. "+
-				"Fix: pip install 'ansible-core>=2.17.0,<2.18.0'", version),
+			Message: fmt.Sprintf("v%s detected for %s. This collection requires ansible-core <2.19; "+
+				"Fix: pip install 'ansible-core>=2.17.0,<2.18.0'", version, provider),
 		}
 	}
 

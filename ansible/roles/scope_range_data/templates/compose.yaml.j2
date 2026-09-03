@@ -1,0 +1,62 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: scope-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: rangeadmin
+      POSTGRES_PASSWORD: ScopePostgres2026!
+      POSTGRES_DB: business
+    ports:
+      - "5432:5432"
+    volumes:
+      - /srv/range/postgres:/var/lib/postgresql/data
+      - /opt/scope-range/data/init/init-postgres.sh:/docker-entrypoint-initdb.d/10-range.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rangeadmin -d business"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  mariadb:
+    image: mariadb:11.4
+    container_name: scope-mariadb
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: ScopeMariaRoot2026!
+      MARIADB_DATABASE: wordpress
+      MARIADB_USER: wordpress
+      MARIADB_PASSWORD: ScopeWordPress2026!
+    ports:
+      - "3306:3306"
+    volumes:
+      - /srv/range/mariadb:/var/lib/mysql
+      - /opt/scope-range/data/init/init-mariadb.sql:/docker-entrypoint-initdb.d/10-range.sql:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  mongodb:
+    image: mongo:8.0
+    container_name: scope-mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: rangeadmin
+      MONGO_INITDB_ROOT_PASSWORD: ScopeMongo2026!
+    ports:
+      - "27017:27017"
+    volumes:
+      - /srv/range/mongodb:/data/db
+      - /opt/scope-range/data/init/init-mongo.js:/docker-entrypoint-initdb.d/10-range.js:ro
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: scope-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "ScopeRedis2026!"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - /srv/range/redis:/data

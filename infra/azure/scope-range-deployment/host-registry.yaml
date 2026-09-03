@@ -1,0 +1,55 @@
+version: "1.0"
+deployment: "scope-range"
+default_region: "centralus"
+
+hosts:
+  web01:
+    terragrunt_path: "hosts/web01"
+    hostname: "web01"
+    friendly_name: "Web applications"
+    role: "Web"
+    private_ip: "10.50.10.20"
+    instance_size: "Standard_D4s_v3"
+    os_disk_size_gb: 64
+    data_disk_size_gb: 100
+    services: ["nginx", "wordpress", "nextcloud"]
+  data01:
+    terragrunt_path: "hosts/data01"
+    hostname: "data01"
+    friendly_name: "Databases"
+    role: "Data"
+    private_ip: "10.50.10.30"
+    instance_size: "Standard_D8s_v3"
+    os_disk_size_gb: 64
+    data_disk_size_gb: 200
+    services: ["postgresql", "mariadb", "mongodb", "redis"]
+  dev01:
+    terragrunt_path: "hosts/dev01"
+    hostname: "dev01"
+    friendly_name: "Development services"
+    role: "Development"
+    private_ip: "10.50.10.40"
+    instance_size: "Standard_D4s_v3"
+    os_disk_size_gb: 64
+    data_disk_size_gb: 150
+    services: ["gitea", "gitea-actions", "jenkins", "registry"]
+  storage01:
+    terragrunt_path: "hosts/storage01"
+    hostname: "storage01"
+    friendly_name: "Storage services"
+    role: "Storage"
+    private_ip: "10.50.10.50"
+    instance_size: "Standard_D4s_v3"
+    os_disk_size_gb: 64
+    data_disk_size_gb: 300
+    services: ["garage", "samba", "nfs", "sftp", "rsync"]
+  services01:
+    terragrunt_path: "hosts/services01"
+    hostname: "services01"
+    friendly_name: "Infrastructure services"
+    role: "InfrastructureServices"
+    private_ip: "10.50.10.60"
+    instance_size: "Standard_D4s_v3"
+    os_disk_size_gb: 64
+    data_disk_size_gb: 100
+    services: ["bind9", "openldap", "rabbitmq", "postfix", "dovecot"]

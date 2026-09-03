@@ -1,0 +1,21 @@
+---
+- name: Restart BIND
+  ansible.builtin.service:
+    name: bind9
+    state: restarted
+
+- name: Restart Postfix
+  ansible.builtin.service:
+    name: postfix
+    state: restarted
+
+- name: Restart Dovecot
+  ansible.builtin.service:
+    name: dovecot
+    state: restarted
+
+- name: Restart queue worker
+  ansible.builtin.systemd:
+    name: scope-queue-worker
+    state: restarted
+    daemon_reload: true

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/dreadnode/dreadgoad/internal/provider"
 	"github.com/dreadnode/dreadgoad/internal/validate"
 	"github.com/spf13/cobra"
@@ -125,6 +126,13 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	opts, err := validateOptsFromFlags(cmd)
 	if err != nil {
 		return err
+	}
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
+	if cfg.ResolvedLab() == "SCOPE-RANGE" {
+		return fmt.Errorf("GOAD vulnerability validation does not apply to SCOPE-RANGE; rerun 'dreadgoad provision --plays scope-kali.yml' for its end-to-end service checks")
 	}
 
 	fmt.Println("==========================================")

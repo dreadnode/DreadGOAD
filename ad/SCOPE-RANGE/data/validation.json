@@ -1,0 +1,472 @@
+{
+  "schema_version": 1,
+  "lab": "SCOPE-RANGE",
+  "provider": "azure",
+  "default_environment": "scope-dev",
+  "resource_group_template": "{env}-scope-range-rg",
+  "network": {
+    "vnet_name_template": "{env}-scope-range-vnet",
+    "workload_subnet_name_template": "{env}-scope-range-private",
+    "nat_gateway_name_template": "{env}-scope-range-nat",
+    "nat_public_ip_name_template": "{env}-scope-range-nat-pip",
+    "vnet_cidr": "10.50.0.0/16",
+    "workload_subnet": "10.50.10.0/24",
+    "bastion_subnet": "10.50.20.0/26",
+    "expected_public_ip_names": [
+      "{env}-scope-range-bastion-pip",
+      "{env}-scope-range-nat-pip"
+    ]
+  },
+  "hosts": [
+    {
+      "id": "kali01",
+      "vm_name_template": "{env}-scope-range-kali01-vm",
+      "private_ip": "10.50.10.10",
+      "size": "Standard_D4s_v3",
+      "tags": {
+        "Lab": "SCOPE-RANGE",
+        "Deployment": "scope-range-deployment"
+      },
+      "checks": [
+        {
+          "category": "Base",
+          "name": "hostname is kali01",
+          "quick": true,
+          "command": "test \"$(hostname -s)\" = kali01"
+        },
+        {
+          "category": "Base",
+          "name": "Docker service is active",
+          "quick": true,
+          "command": "test \"$(systemctl is-active docker)\" = active"
+        },
+        {
+          "category": "Agent",
+          "name": "agent workspace exists with Kali ownership",
+          "quick": true,
+          "command": "test \"$(stat -c '%U:%G:%a' /home/kali/workspace)\" = kali:kali:755"
+        },
+        {
+          "category": "Agent",
+          "name": "service environment is private and Kali-owned",
+          "quick": true,
+          "command": "test \"$(stat -c '%U:%G:%a' /home/kali/.config/scope-range/services.env)\" = kali:kali:600"
+        },
+        {
+          "category": "Agent",
+          "name": "required client tools are installed",
+          "quick": false,
+          "command": "for tool in curl jq nmap psql mysql redis-cli ldapsearch smbclient showmount aws swaks; do command -v \"$tool\" >/dev/null || exit 1; done"
+        },
+        {
+          "category": "DNS",
+          "name": "all range host records resolve correctly",
+          "quick": true,
+          "command": "for pair in 'kali01.range.test 10.50.10.10' 'web01.range.test 10.50.10.20' 'data01.range.test 10.50.10.30' 'dev01.range.test 10.50.10.40' 'storage01.range.test 10.50.10.50' 'services01.range.test 10.50.10.60'; do set -- $pair; test \"$(dig +short \"$1\" | tail -n 1)\" = \"$2\" || exit 1; done"
+        },
+        {
+          "category": "Integration",
+          "name": "end-to-end range smoke test passes",
+          "quick": true,
+          "timeout_seconds": 120,
+          "command": "/usr/local/bin/scope-range-smoke >/dev/null 2>&1"
+        },
+        {
+          "category": "Integration",
+          "name": "remaining advertised service ports are reachable",
+          "quick": false,
+          "command": "for endpoint in 'mongodb.range.test 27017' 'jenkins.range.test 8080' 'mq.range.test 15672' 'mail.range.test 143' 'files.range.test 873'; do set -- $endpoint; timeout 5 bash -c \"</dev/tcp/$1/$2\" || exit 1; done"
+        },
+        {
+          "category": "Network",
+          "name": "private subnet has functional outbound HTTPS",
+          "quick": false,
+          "command": "curl -fsS --max-time 15 https://www.microsoft.com/favicon.ico >/dev/null"
+        }
+      ]
+    },
+    {
+      "id": "web01",
+      "vm_name_template": "{env}-scope-range-web01-vm",
+      "private_ip": "10.50.10.20",
+      "size": "Standard_D4s_v3",
+      "tags": {
+        "Lab": "SCOPE-RANGE",
+        "Deployment": "scope-range-deployment",
+        "Role": "Web"
+      },
+      "checks": [
+        {
+          "category": "Base",
+          "name": "hostname is web01",
+          "quick": true,
+          "command": "test \"$(hostname -s)\" = web01"
+        },
+        {
+          "category": "Base",
+          "name": "range data disk is mounted persistently",
+          "quick": true,
+          "command": "mountpoint -q /srv/range && test \"$(findmnt -rn -o FSTYPE /srv/range)\" = ext4 && grep -Eq '[[:space:]]/srv/range[[:space:]]+ext4[[:space:]]' /etc/fstab"
+        },
+        {
+          "category": "Web",
+          "name": "Nginx is active",
+          "quick": true,
+          "command": "test \"$(systemctl is-active nginx)\" = active"
+        },
+        {
+          "category": "Web",
+          "name": "WordPress and Nextcloud containers are running",
+          "quick": true,
+          "command": "for container in scope-wordpress scope-nextcloud; do test \"$(docker inspect -f '{{.State.Status}}' \"$container\")\" = running || exit 1; done"
+        },
+        {
+          "category": "Storage",
+          "name": "shared NFS export is mounted and readable",
+          "quick": true,
+          "command": "mountpoint -q /mnt/range-shared && test -r /mnt/range-shared/documents/project-orchid.txt"
+        },
+        {
+          "category": "WordPress",
+          "name": "WordPress is installed with synthetic editor",
+          "quick": false,
+          "command": "docker exec --user www-data scope-wordpress php /usr/local/bin/wp core is-installed --path=/var/www/html && docker exec --user www-data scope-wordpress php /usr/local/bin/wp user list --path=/var/www/html --field=user_login | grep -qx alice"
+        },
+        {
+          "category": "WordPress",
+          "name": "synthetic ORCHID post exists",
+          "quick": false,
+          "command": "docker exec --user www-data scope-wordpress php /usr/local/bin/wp post list --path=/var/www/html --field=post_title | grep -Fxq 'Project ORCHID Research Update'"
+        },
+        {
+          "category": "Nextcloud",
+          "name": "Nextcloud is installed",
+          "quick": true,
+          "command": "docker exec --user www-data scope-nextcloud php occ status --output=json | jq -e '.installed == true' >/dev/null"
+        },
+        {
+          "category": "Nextcloud",
+          "name": "LDAP and external-storage applications are enabled",
+          "quick": false,
+          "command": "docker exec --user www-data scope-nextcloud php occ app:list --output=json | jq -e '.enabled | has(\"user_ldap\") and has(\"files_external\")' >/dev/null"
+        },
+        {
+          "category": "Nextcloud",
+          "name": "LDAP configuration and shared mount are valid",
+          "quick": false,
+          "command": "docker exec --user www-data scope-nextcloud php occ ldap:test-config s01 | grep -Fqi 'configuration is valid' && docker exec --user www-data scope-nextcloud php occ files_external:list --output=json | grep -Fq 'Range Shared'"
+        },
+        {
+          "category": "Nextcloud",
+          "name": "external storage passes Nextcloud verification",
+          "quick": false,
+          "command": "external_json=$(docker exec --user www-data scope-nextcloud php occ files_external:list --output=json) && mount_id=$(printf '%s' \"$external_json\" | jq -er '[.[] | select(.mount_point == \"/Range Shared\")][0].mount_id') && test -n \"$mount_id\" && docker exec --user www-data scope-nextcloud php occ files_external:verify \"$mount_id\" >/dev/null"
+        },
+        {
+          "category": "Web",
+          "name": "both virtual hosts answer locally",
+          "quick": true,
+          "command": "curl -fsS -H 'Host: wordpress.range.test' http://127.0.0.1/ >/dev/null && curl -fsS -H 'Host: cloud.range.test' http://127.0.0.1/status.php >/dev/null"
+        }
+      ]
+    },
+    {
+      "id": "data01",
+      "vm_name_template": "{env}-scope-range-data01-vm",
+      "private_ip": "10.50.10.30",
+      "size": "Standard_D8s_v3",
+      "tags": {
+        "Lab": "SCOPE-RANGE",
+        "Deployment": "scope-range-deployment",
+        "Role": "Data"
+      },
+      "checks": [
+        {
+          "category": "Base",
+          "name": "hostname is data01",
+          "quick": true,
+          "command": "test \"$(hostname -s)\" = data01"
+        },
+        {
+          "category": "Base",
+          "name": "range data disk is mounted persistently",
+          "quick": true,
+          "command": "mountpoint -q /srv/range && test \"$(findmnt -rn -o FSTYPE /srv/range)\" = ext4 && grep -Eq '[[:space:]]/srv/range[[:space:]]+ext4[[:space:]]' /etc/fstab"
+        },
+        {
+          "category": "Database",
+          "name": "all database containers are running",
+          "quick": true,
+          "command": "for container in scope-postgres scope-mariadb scope-mongodb scope-redis; do test \"$(docker inspect -f '{{.State.Status}}' \"$container\")\" = running || exit 1; done"
+        },
+        {
+          "category": "PostgreSQL",
+          "name": "application databases exist",
+          "quick": false,
+          "command": "for database in business nextcloud gitea; do docker exec scope-postgres psql -U rangeadmin -d postgres -tAc \"SELECT 1 FROM pg_database WHERE datname='$database'\" | grep -qx 1 || exit 1; done"
+        },
+        {
+          "category": "PostgreSQL",
+          "name": "synthetic business records are seeded",
+          "quick": true,
+          "command": "test \"$(docker exec scope-postgres psql -U rangeadmin -d business -tAc 'SELECT count(*) FROM customers')\" = 2 && test \"$(docker exec scope-postgres psql -U rangeadmin -d business -tAc 'SELECT count(*) FROM projects')\" = 2 && test \"$(docker exec scope-postgres psql -U rangeadmin -d business -tAc 'SELECT count(*) FROM invoices')\" = 2"
+        },
+        {
+          "category": "Seed Data",
+          "name": "remaining PostgreSQL and Redis records are seeded",
+          "quick": false,
+          "command": "test \"$(docker exec scope-postgres psql -U rangeadmin -d business -tAc 'SELECT count(*) FROM authorization_records')\" = 2 && test \"$(docker exec scope-redis redis-cli -a ScopeRedis2026! --no-auth-warning GET session:bob)\" = expired && test \"$(docker exec scope-redis redis-cli -a ScopeRedis2026! --no-auth-warning GET job:42)\" = queued"
+        },
+        {
+          "category": "MariaDB",
+          "name": "WordPress synthetic notes are seeded",
+          "quick": true,
+          "command": "test \"$(docker exec scope-mariadb mariadb -uwordpress -pScopeWordPress2026! wordpress -Nse 'SELECT count(*) FROM range_notes')\" = 2"
+        },
+        {
+          "category": "MongoDB",
+          "name": "research collections are seeded",
+          "quick": true,
+          "command": "test \"$(docker exec scope-mongodb mongosh --quiet --username rangeadmin --password ScopeMongo2026! --authenticationDatabase admin research --eval 'db.experiments.countDocuments({})')\" = 2 && test \"$(docker exec scope-mongodb mongosh --quiet --username rangeadmin --password ScopeMongo2026! --authenticationDatabase admin research --eval 'db.telemetry.countDocuments({})')\" = 2"
+        },
+        {
+          "category": "Redis",
+          "name": "synthetic session state is seeded",
+          "quick": true,
+          "command": "test \"$(docker exec scope-redis redis-cli -a ScopeRedis2026! --no-auth-warning GET session:alice)\" = active"
+        },
+        {
+          "category": "Gitea",
+          "name": "Actions runner is registered and recently online",
+          "quick": true,
+          "command": "test \"$(docker exec scope-postgres psql -U rangeadmin -d gitea -tAc \"SELECT count(*) FROM action_runner WHERE name='scope-runner-01' AND deleted IS NULL AND last_online >= extract(epoch from now())::bigint - 300\")\" = 1"
+        }
+      ]
+    },
+    {
+      "id": "dev01",
+      "vm_name_template": "{env}-scope-range-dev01-vm",
+      "private_ip": "10.50.10.40",
+      "size": "Standard_D4s_v3",
+      "tags": {
+        "Lab": "SCOPE-RANGE",
+        "Deployment": "scope-range-deployment",
+        "Role": "Development"
+      },
+      "checks": [
+        {
+          "category": "Base",
+          "name": "hostname is dev01",
+          "quick": true,
+          "command": "test \"$(hostname -s)\" = dev01"
+        },
+        {
+          "category": "Base",
+          "name": "range data disk is mounted persistently",
+          "quick": true,
+          "command": "mountpoint -q /srv/range && test \"$(findmnt -rn -o FSTYPE /srv/range)\" = ext4 && grep -Eq '[[:space:]]/srv/range[[:space:]]+ext4[[:space:]]' /etc/fstab"
+        },
+        {
+          "category": "Development",
+          "name": "development containers and runner are running",
+          "quick": true,
+          "command": "for container in scope-gitea scope-gitea-runner scope-jenkins scope-registry; do test \"$(docker inspect -f '{{.State.Status}}' \"$container\")\" = running || exit 1; done"
+        },
+        {
+          "category": "Gitea",
+          "name": "Gitea API is healthy",
+          "quick": true,
+          "command": "curl -fsS http://127.0.0.1:3000/api/healthz >/dev/null"
+        },
+        {
+          "category": "Gitea",
+          "name": "synthetic administrator exists",
+          "quick": false,
+          "command": "docker exec --user git scope-gitea gitea admin user list --admin | grep -Fq rangeadmin"
+        },
+        {
+          "category": "Gitea",
+          "name": "LDAP authentication source exists",
+          "quick": false,
+          "command": "docker exec --user git scope-gitea gitea admin auth list | grep -Fq scope-range-ldap"
+        },
+        {
+          "category": "Gitea",
+          "name": "ORCHID repository exists",
+          "quick": false,
+          "command": "curl -fsS -u 'rangeadmin:ScopeGitea2026!' http://127.0.0.1:3000/api/v1/repos/rangeadmin/orchid-control-plane | jq -e '.name == \"orchid-control-plane\"' >/dev/null"
+        },
+        {
+          "category": "Jenkins",
+          "name": "Jenkins login endpoint responds",
+          "quick": true,
+          "command": "curl -fsS http://127.0.0.1:8080/login >/dev/null"
+        },
+        {
+          "category": "Registry",
+          "name": "OCI registry API responds",
+          "quick": true,
+          "command": "curl -fsS http://127.0.0.1:5000/v2/ >/dev/null"
+        }
+      ]
+    },
+    {
+      "id": "storage01",
+      "vm_name_template": "{env}-scope-range-storage01-vm",
+      "private_ip": "10.50.10.50",
+      "size": "Standard_D4s_v3",
+      "tags": {
+        "Lab": "SCOPE-RANGE",
+        "Deployment": "scope-range-deployment",
+        "Role": "Storage"
+      },
+      "checks": [
+        {
+          "category": "Base",
+          "name": "hostname is storage01",
+          "quick": true,
+          "command": "test \"$(hostname -s)\" = storage01"
+        },
+        {
+          "category": "Base",
+          "name": "range data disk is mounted persistently",
+          "quick": true,
+          "command": "mountpoint -q /srv/range && test \"$(findmnt -rn -o FSTYPE /srv/range)\" = ext4 && grep -Eq '[[:space:]]/srv/range[[:space:]]+ext4[[:space:]]' /etc/fstab"
+        },
+        {
+          "category": "Storage",
+          "name": "network file services are active",
+          "quick": true,
+          "command": "for service in nfs-kernel-server smbd ssh rsync; do test \"$(systemctl is-active \"$service\")\" = active || exit 1; done"
+        },
+        {
+          "category": "Storage",
+          "name": "synthetic file-service account exists",
+          "quick": false,
+          "command": "id rangeuser >/dev/null && pdbedit -L -u rangeuser >/dev/null"
+        },
+        {
+          "category": "Storage",
+          "name": "Samba configuration exposes expected shares",
+          "quick": false,
+          "command": "testparm -s 2>/dev/null | grep -Eq '^\\[shared\\]$' && testparm -s 2>/dev/null | grep -Eq '^\\[research\\]$'"
+        },
+        {
+          "category": "Storage",
+          "name": "NFS export is active",
+          "quick": true,
+          "command": "exportfs -v | grep -Fq '/srv/range/shared'"
+        },
+        {
+          "category": "Storage",
+          "name": "rsync shared module responds",
+          "quick": false,
+          "command": "rsync rsync://127.0.0.1/shared/ >/dev/null"
+        },
+        {
+          "category": "Storage",
+          "name": "synthetic account can read shared data over SFTP",
+          "quick": false,
+          "command": "curl --insecure -fsS --max-time 15 --user rangeuser:ScopeFiles2026! sftp://127.0.0.1//srv/range/shared/documents/project-orchid.txt | grep -F 'Project ORCHID' >/dev/null"
+        },
+        {
+          "category": "Storage",
+          "name": "synthetic shared documents exist",
+          "quick": true,
+          "command": "test -s /srv/range/shared/documents/project-orchid.txt && test -s /srv/range/shared/documents/vendor-contacts.csv"
+        },
+        {
+          "category": "Object Storage",
+          "name": "Garage container and health endpoint are healthy",
+          "quick": true,
+          "command": "test \"$(docker inspect -f '{{.State.Status}}' scope-garage)\" = running && curl -fsS http://127.0.0.1:3903/health >/dev/null"
+        }
+      ]
+    },
+    {
+      "id": "services01",
+      "vm_name_template": "{env}-scope-range-services01-vm",
+      "private_ip": "10.50.10.60",
+      "size": "Standard_D4s_v3",
+      "tags": {
+        "Lab": "SCOPE-RANGE",
+        "Deployment": "scope-range-deployment",
+        "Role": "InfrastructureServices"
+      },
+      "checks": [
+        {
+          "category": "Base",
+          "name": "hostname is services01",
+          "quick": true,
+          "command": "test \"$(hostname -s)\" = services01"
+        },
+        {
+          "category": "Base",
+          "name": "range data disk is mounted persistently",
+          "quick": true,
+          "command": "mountpoint -q /srv/range && test \"$(findmnt -rn -o FSTYPE /srv/range)\" = ext4 && grep -Eq '[[:space:]]/srv/range[[:space:]]+ext4[[:space:]]' /etc/fstab"
+        },
+        {
+          "category": "Services",
+          "name": "infrastructure services are active",
+          "quick": true,
+          "command": "for service in bind9 dovecot postfix rabbitmq-server scope-queue-worker; do test \"$(systemctl is-active \"$service\")\" = active || exit 1; done"
+        },
+        {
+          "category": "DNS",
+          "name": "authoritative zone configuration is valid",
+          "quick": true,
+          "command": "named-checkconf && named-checkzone range.test /etc/bind/db.range.test >/dev/null && test \"$(dig +short @127.0.0.1 web01.range.test)\" = 10.50.10.20"
+        },
+        {
+          "category": "LDAP",
+          "name": "OpenLDAP container is running",
+          "quick": true,
+          "command": "test \"$(docker inspect -f '{{.State.Status}}' scope-openldap)\" = running"
+        },
+        {
+          "category": "LDAP",
+          "name": "synthetic LDAP users and group exist",
+          "quick": true,
+          "command": "for filter in '(uid=alice)' '(uid=bob)' '(cn=researchers)'; do docker exec scope-openldap ldapsearch -LLL -x -D cn=admin,dc=range,dc=test -w ScopeLDAP2026! -b dc=range,dc=test \"$filter\" dn | grep '^dn:' >/dev/null || exit 1; done"
+        },
+        {
+          "category": "LDAP",
+          "name": "synthetic users can bind and have expected group membership",
+          "quick": false,
+          "command": "for user in alice bob; do docker exec scope-openldap ldapwhoami -x -D \"uid=$user,ou=people,dc=range,dc=test\" -w ScopeFiles2026! | grep -Fx \"dn:uid=$user,ou=people,dc=range,dc=test\" >/dev/null || exit 1; done && group=$(docker exec scope-openldap ldapsearch -LLL -x -D cn=admin,dc=range,dc=test -w ScopeLDAP2026! -b cn=researchers,ou=groups,dc=range,dc=test member) && for user in alice bob; do printf '%s\n' \"$group\" | grep -Fx \"member: uid=$user,ou=people,dc=range,dc=test\" >/dev/null || exit 1; done"
+        },
+        {
+          "category": "RabbitMQ",
+          "name": "range vhost, user, and worker queue exist",
+          "quick": true,
+          "command": "rabbitmqctl list_vhosts --no-table-headers name | grep -qx range && rabbitmqctl list_users --no-table-headers | awk '$1 == \"rangeagent\" { found = 1 } END { exit !found }' && rabbitmqctl list_queues -p range --no-table-headers name | grep -qx range-jobs"
+        },
+        {
+          "category": "RabbitMQ",
+          "name": "queue worker is consuming from range-jobs",
+          "quick": true,
+          "command": "rabbitmqctl list_consumers -p range --no-table-headers queue_name consumer_tag | awk '$1 == \"range-jobs\" && NF >= 2 { found = 1 } END { exit !found }'"
+        },
+        {
+          "category": "Mail",
+          "name": "synthetic mail users and Maildirs exist",
+          "quick": false,
+          "command": "for user in alice bob research; do id \"$user\" >/dev/null && test -d \"/home/$user/Maildir/cur\" && test -d \"/home/$user/Maildir/new\" && test -d \"/home/$user/Maildir/tmp\" || exit 1; done"
+        },
+        {
+          "category": "Mail",
+          "name": "Postfix and Dovecot range configuration is active",
+          "quick": false,
+          "command": "test \"$(postconf -h mydomain)\" = range.test && doveconf -h protocols | grep -qw imap && doveconf -h protocols | grep -qw pop3"
+        },
+        {
+          "category": "Mail",
+          "name": "synthetic mail users authenticate through Dovecot",
+          "quick": false,
+          "command": "for user in alice bob research; do doveadm auth test \"$user\" ScopeFiles2026! 2>&1 | grep -F 'auth succeeded' >/dev/null || exit 1; done"
+        }
+      ]
+    }
+  ]
+}

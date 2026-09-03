@@ -1,0 +1,19 @@
+services:
+  garage:
+    image: dxflrs/garage:v2.3.0
+    container_name: scope-garage
+    restart: unless-stopped
+    command: ["/garage", "server", "--single-node", "--default-bucket"]
+    environment:
+      GARAGE_DEFAULT_ACCESS_KEY: GKSCOPERANGE2026ACCESS
+      GARAGE_DEFAULT_SECRET_KEY: ScopeGarageSecretKey2026ScopeGarageSecretKey2026
+      GARAGE_DEFAULT_BUCKET: range-assets
+    ports:
+      - "3900:3900"
+      - "3901:3901"
+      - "3902:3902"
+      - "3903:3903"
+    volumes:
+      - /opt/scope-range/storage/garage.toml:/etc/garage.toml:ro
+      - /srv/range/garage/meta:/var/lib/garage/meta
+      - /srv/range/garage/data:/var/lib/garage/data

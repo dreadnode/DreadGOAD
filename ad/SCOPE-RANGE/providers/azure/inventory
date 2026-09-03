@@ -1,0 +1,41 @@
+[all:vars]
+ansible_connection=ssh
+ansible_user=scopeadmin
+ansible_python_interpreter=/usr/bin/python3
+ansible_ssh_private_key_file=~/.dreadgoad/keys/azure-scope-dev-scope-range-admin
+ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+range_domain=range.test
+range_dns_server=10.50.10.60
+
+[scope_range]
+kali01 ansible_host=10.50.10.10 ansible_user=kali
+web01 ansible_host=10.50.10.20
+data01 ansible_host=10.50.10.30
+dev01 ansible_host=10.50.10.40
+storage01 ansible_host=10.50.10.50
+services01 ansible_host=10.50.10.60
+
+[service_hosts]
+web01
+data01
+dev01
+storage01
+services01
+
+[attack_box]
+kali01
+
+[web]
+web01
+
+[data]
+data01
+
+[development]
+dev01
+
+[storage]
+storage01
+
+[infrastructure_services]
+services01

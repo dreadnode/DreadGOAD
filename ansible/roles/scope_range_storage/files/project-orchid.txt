@@ -1,0 +1,3 @@
+Project ORCHID is preparing a limited research release for Northstar Research.
+Alice owns the technical review. Bob owns the billing and archive handoff.
+Working material is synthetic and intended only for SCOPE-RANGE exercises.

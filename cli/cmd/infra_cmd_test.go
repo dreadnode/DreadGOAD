@@ -18,6 +18,31 @@ func TestMaterializeLabConfigAllowsMissingOptionalConfig(t *testing.T) {
 	}
 }
 
+func TestMaterializeLabConfigUsesActiveLab(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "ad", "SCOPE-RANGE", "data")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := []byte(`{"scope":true}`)
+	if err := os.WriteFile(filepath.Join(dataDir, "config.json"), want, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{ProjectRoot: root, Env: "scope-dev", Lab: "SCOPE-RANGE"}
+	if err := materializeLabConfig(cfg); err != nil {
+		t.Fatalf("materializeLabConfig() error: %v", err)
+	}
+	destination := filepath.Join(dataDir, "scope-dev-config.json")
+	got, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("materialized config = %s, want %s", got, want)
+	}
+}
+
 func TestMaterializeLabConfigSurfacesResolutionFailure(t *testing.T) {
 	root := t.TempDir()
 	dataDir := filepath.Join(root, "ad", "GOAD", "data")
@@ -164,5 +189,45 @@ func TestMaterializeLabConfigReportsWriteFailure(t *testing.T) {
 	err := materializeLabConfig(cfg)
 	if err == nil || !strings.Contains(err.Error(), "write lab config") {
 		t.Fatalf("materializeLabConfig() error = %v, want write error", err)
+	}
+}
+
+func TestRunInfraValidateAzureScopeRange(t *testing.T) {
+	root := t.TempDir()
+	cfg := &config.Config{
+		ProjectRoot: root,
+		Env:         "scope-dev",
+		Environments: map[string]config.EnvironmentConfig{
+			"scope-dev": {
+				Lab:        "SCOPE-RANGE",
+				Provider:   "azure",
+				Deployment: "scope-range-deployment",
+				Region:     "centralus",
+			},
+		},
+	}
+	base := filepath.Join(root, "infra", "azure", "scope-range-deployment", "scope-dev", "centralus")
+	units := []string{
+		"access", "network", "bastion", "kali",
+		"hosts/data01", "hosts/dev01", "hosts/services01", "hosts/storage01", "hosts/web01",
+	}
+	for _, unit := range units {
+		dir := filepath.Join(base, unit)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "terragrunt.hcl"), []byte("# test\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := runInfraValidateAzure(cfg); err != nil {
+		t.Fatalf("runInfraValidateAzure() error: %v", err)
+	}
+	if err := os.Remove(filepath.Join(base, "kali", "terragrunt.hcl")); err != nil {
+		t.Fatal(err)
+	}
+	if err := runInfraValidateAzure(cfg); err == nil || !strings.Contains(err.Error(), "missing units: kali") {
+		t.Fatalf("missing Kali error = %v", err)
 	}
 }

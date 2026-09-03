@@ -1,0 +1,266 @@
+---
+- name: Preseed the Postfix configuration
+  ansible.builtin.debconf:
+    name: postfix
+    question: "{{ item.question }}"
+    value: "{{ item.value }}"
+    vtype: "{{ item.vtype }}"
+  loop:
+    - question: postfix/main_mailer_type
+      value: Internet Site
+      vtype: select
+    - question: postfix/mailname
+      value: range.test
+      vtype: string
+
+- name: Install infrastructure service packages
+  ansible.builtin.apt:
+    name:
+      - bind9
+      - bind9-utils
+      - dovecot-core
+      - dovecot-imapd
+      - dovecot-pop3d
+      - postfix
+      - python3-pika
+      - rabbitmq-server
+    state: present
+    update_cache: true
+
+- name: Install the authoritative range zone
+  ansible.builtin.template:
+    src: db.range.test.j2
+    dest: /etc/bind/db.range.test
+    owner: root
+    group: bind
+    mode: "0644"
+    validate: named-checkzone range.test %s
+  notify: Restart BIND
+
+- name: Register the range zone with BIND
+  ansible.builtin.template:
+    src: named.conf.local.j2
+    dest: /etc/bind/named.conf.local
+    owner: root
+    group: bind
+    mode: "0644"
+    validate: named-checkconf %s
+  notify: Restart BIND
+
+- name: Configure BIND forwarding
+  ansible.builtin.template:
+    src: named.conf.options.j2
+    dest: /etc/bind/named.conf.options
+    owner: root
+    group: bind
+    mode: "0644"
+    validate: named-checkconf %s
+  notify: Restart BIND
+
+- name: Configure Postfix for the fictional range domain
+  ansible.builtin.template:
+    src: postfix-main.cf.j2
+    dest: /etc/postfix/main.cf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart Postfix
+
+- name: Configure Dovecot mail storage and authentication
+  ansible.builtin.template:
+    src: dovecot-range.conf.j2
+    dest: /etc/dovecot/conf.d/99-scope-range.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart Dovecot
+
+- name: Create fictional mail users
+  ansible.builtin.user:
+    name: "{{ item }}"
+    password: "$6$scopeRange$JkMDonMW5qeZ0F8sU/R6IGSMFIYfWrwqwyVlPXs8/RfQUPH5D0RQZwdnyk5pYpf/lYb22sejylvxHlhVlaxEt."
+    shell: /bin/bash
+    create_home: true
+  loop:
+    - alice
+    - bob
+    - research
+
+- name: Create Maildir directories
+  ansible.builtin.file:
+    path: "/home/{{ item.0 }}/Maildir/{{ item.1 }}"
+    state: directory
+    owner: "{{ item.0 }}"
+    group: "{{ item.0 }}"
+    mode: "0700"
+  loop: "{{ ['alice', 'bob', 'research'] | product(['cur', 'new', 'tmp']) | list }}"
+  loop_control:
+    label: "{{ item.0 }}/{{ item.1 }}"
+
+- name: Enable RabbitMQ management
+  ansible.builtin.command: rabbitmq-plugins enable rabbitmq_management
+  register: rabbitmq_plugins
+  changed_when: "'started' in rabbitmq_plugins.stdout or 'enabled' in rabbitmq_plugins.stdout"
+
+- name: Enable foundational services
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - bind9
+    - dovecot
+    - postfix
+    - rabbitmq-server
+
+- name: Create OpenLDAP data directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /opt/scope-range/services
+    - /srv/range/openldap/database
+    - /srv/range/openldap/config
+
+- name: Install the OpenLDAP Compose definition
+  ansible.builtin.copy:
+    dest: /opt/scope-range/services/compose.yaml
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      services:
+        openldap:
+          image: osixia/openldap:1.5.0
+          container_name: scope-openldap
+          restart: unless-stopped
+          environment:
+            LDAP_ORGANISATION: Northstar Research
+            LDAP_DOMAIN: range.test
+            LDAP_ADMIN_PASSWORD: ScopeLDAP2026!
+            LDAP_CONFIG_PASSWORD: ScopeLDAPConfig2026!
+            LDAP_TLS: "false"
+          ports:
+            - "389:389"
+          volumes:
+            - /srv/range/openldap/database:/var/lib/ldap
+            - /srv/range/openldap/config:/etc/ldap/slapd.d
+
+- name: Start OpenLDAP
+  ansible.builtin.command:
+    cmd: docker compose up -d --remove-orphans
+    chdir: /opt/scope-range/services
+  register: ldap_compose
+  changed_when: >-
+    'Started' in ldap_compose.stderr or
+    'Created' in ldap_compose.stderr or
+    'Recreated' in ldap_compose.stderr
+
+- name: Wait for OpenLDAP
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 389
+    timeout: 180
+
+- name: Install synthetic LDAP directory data
+  ansible.builtin.copy:
+    src: scope-range.ldif
+    dest: /opt/scope-range/services/scope-range.ldif
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Check for the synthetic LDAP organizational unit
+  ansible.builtin.command: >-
+    docker exec scope-openldap ldapsearch -x
+    -D cn=admin,dc=range,dc=test -w ScopeLDAP2026!
+    -b ou=people,dc=range,dc=test -s base dn
+  register: ldap_seed_check
+  changed_when: false
+  failed_when: false
+  no_log: true
+
+- name: Seed the synthetic LDAP directory
+  ansible.builtin.command: >-
+    docker exec -i scope-openldap ldapadd -x
+    -D cn=admin,dc=range,dc=test -w ScopeLDAP2026!
+  args:
+    stdin: "{{ lookup('ansible.builtin.file', role_path + '/files/scope-range.ldif') }}"
+  when: ldap_seed_check.rc != 0
+  no_log: true
+
+- name: List RabbitMQ virtual hosts
+  ansible.builtin.command: rabbitmqctl list_vhosts --no-table-headers name
+  register: rabbitmq_vhosts
+  changed_when: false
+
+- name: Create the range RabbitMQ virtual host
+  ansible.builtin.command: rabbitmqctl add_vhost range
+  when: "'range' not in rabbitmq_vhosts.stdout_lines"
+
+- name: Create the synthetic RabbitMQ account
+  ansible.builtin.command: rabbitmqctl add_user rangeagent ScopeRabbit2026!
+  register: rabbitmq_user
+  changed_when: rabbitmq_user.rc == 0
+  failed_when:
+    - rabbitmq_user.rc != 0
+    - "'already exists' not in rabbitmq_user.stderr"
+  no_log: true
+
+- name: Grant the synthetic RabbitMQ account access
+  ansible.builtin.command: >-
+    rabbitmqctl set_permissions -p range rangeagent '.*' '.*' '.*'
+  changed_when: false
+
+- name: Grant RabbitMQ management access
+  ansible.builtin.command: rabbitmqctl set_user_tags rangeagent management
+  changed_when: false
+
+- name: Install the synthetic queue worker
+  ansible.builtin.copy:
+    src: queue_worker.py
+    dest: /usr/local/lib/scope-queue-worker.py
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart queue worker
+
+- name: Install the queue worker service
+  ansible.builtin.copy:
+    src: scope-queue-worker.service
+    dest: /etc/systemd/system/scope-queue-worker.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart queue worker
+
+- name: Enable the queue worker
+  ansible.builtin.systemd:
+    name: scope-queue-worker
+    state: started
+    enabled: true
+    daemon_reload: true
+
+- name: Apply pending service configuration before readiness checks
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for authoritative DNS
+  ansible.builtin.command: dig +short @127.0.0.1 web01.range.test
+  register: bind_health
+  changed_when: false
+  retries: 12
+  delay: 5
+  until: bind_health.stdout | trim == '10.50.10.20'
+
+- name: Verify the synthetic LDAP directory
+  ansible.builtin.command: >-
+    docker exec scope-openldap ldapsearch -x
+    -D cn=admin,dc=range,dc=test -w ScopeLDAP2026!
+    -b ou=people,dc=range,dc=test '(uid=alice)' uid
+  register: ldap_health
+  changed_when: false
+  failed_when: "'uid: alice' not in ldap_health.stdout"
+  no_log: true

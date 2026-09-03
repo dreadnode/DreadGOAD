@@ -41,18 +41,22 @@ No modules.
 | <a name="input_additional_tags"></a> [additional\_tags](#input\_additional\_tags) | Tags applied to every resource. | `map(string)` | `{}` | no |
 | <a name="input_admin_ssh_public_key"></a> [admin\_ssh\_public\_key](#input\_admin\_ssh\_public\_key) | SSH public key authorised on the Kali VM. When null, the module generates an ephemeral ed25519 keypair and writes the private key to ephemeral\_key\_output\_path. | `string` | `null` | no |
 | <a name="input_admin_username"></a> [admin\_username](#input\_admin\_username) | Local admin username for the Kali VM. | `string` | `"kali"` | no |
+| <a name="input_computer_name"></a> [computer\_name](#input\_computer\_name) | Optional guest hostname. Defaults to the generated Azure name. | `string` | `""` | no |
 | <a name="input_deployment_name"></a> [deployment\_name](#input\_deployment\_name) | Name of the deployment (e.g. "goad"). | `string` | n/a | yes |
 | <a name="input_env"></a> [env](#input\_env) | Environment name (e.g. test, staging). | `string` | n/a | yes |
 | <a name="input_ephemeral_key_output_path"></a> [ephemeral\_key\_output\_path](#input\_ephemeral\_key\_output\_path) | Filesystem path to write the generated private key when admin\_ssh\_public\_key is null. Required in that case; ignored when an explicit public key is supplied. | `string` | `null` | no |
+| <a name="input_instance_name"></a> [instance\_name](#input\_instance\_name) | Logical Kali host name used in Azure resource names. | `string` | `"kali"` | no |
 | <a name="input_instance_size"></a> [instance\_size](#input\_instance\_size) | Azure VM size. D2s\_v3 (2 vCPU, 8 GB) handles concurrent attack tooling comfortably. | `string` | `"Standard_D2s_v3"` | no |
 | <a name="input_kali_subnet_cidr"></a> [kali\_subnet\_cidr](#input\_kali\_subnet\_cidr) | CIDR for the Kali attack box's dedicated subnet. /28 is plenty for one VM. | `string` | `"10.8.4.0/28"` | no |
 | <a name="input_location"></a> [location](#input\_location) | Azure region. | `string` | n/a | yes |
 | <a name="input_os_disk_size_gb"></a> [os\_disk\_size\_gb](#input\_os\_disk\_size\_gb) | Size of the OS disk in GB. 32 is enough for stock Kali tooling. | `number` | `32` | no |
 | <a name="input_os_disk_storage_account_type"></a> [os\_disk\_storage\_account\_type](#input\_os\_disk\_storage\_account\_type) | Storage account type for the OS disk. | `string` | `"StandardSSD_LRS"` | no |
 | <a name="input_plan"></a> [plan](#input\_plan) | Marketplace plan terms for the Kali image. Must be accepted per-subscription via `az vm image terms accept --publisher kali-linux --offer kali --plan <sku>`. | <pre>object({<br/>    name      = string<br/>    product   = string<br/>    publisher = string<br/>  })</pre> | <pre>{<br/>  "name": "kali-2026-2",<br/>  "product": "kali",<br/>  "publisher": "kali-linux"<br/>}</pre> | no |
+| <a name="input_private_ip_address"></a> [private\_ip\_address](#input\_private\_ip\_address) | Optional static private IPv4 address. Dynamic allocation is used when null. | `string` | `null` | no |
 | <a name="input_resource_group_name"></a> [resource\_group\_name](#input\_resource\_group\_name) | Resource group the Kali VM and its NIC/NSG/subnet are deployed into. | `string` | n/a | yes |
 | <a name="input_source_image"></a> [source\_image](#input\_source\_image) | Marketplace image reference. Defaults to the latest Kali Linux release. | <pre>object({<br/>    publisher = string<br/>    offer     = string<br/>    sku       = string<br/>    version   = string<br/>  })</pre> | <pre>{<br/>  "offer": "kali",<br/>  "publisher": "kali-linux",<br/>  "sku": "kali-2026-2",<br/>  "version": "latest"<br/>}</pre> | no |
 | <a name="input_ssh_source_address_prefix"></a> [ssh\_source\_address\_prefix](#input\_ssh\_source\_address\_prefix) | Source allowed to reach the Kali box on TCP 22. Defaults to the AzureBastionSubnet CIDR. | `string` | `"10.8.2.0/26"` | no |
+| <a name="input_subnet_id"></a> [subnet\_id](#input\_subnet\_id) | Optional existing subnet for Kali. When null, the module creates a dedicated subnet and NSG. | `string` | `null` | no |
 | <a name="input_virtual_network_name"></a> [virtual\_network\_name](#input\_virtual\_network\_name) | VNet name where the Kali subnet will be created. | `string` | n/a | yes |
 
 ## Outputs
@@ -61,11 +65,11 @@ No modules.
 | ---- | ----------- |
 | <a name="output_admin_username"></a> [admin\_username](#output\_admin\_username) | Local admin username for the Kali VM. |
 | <a name="output_computer_name"></a> [computer\_name](#output\_computer\_name) | Linux hostname assigned to the Kali attack box. |
-| <a name="output_nsg_id"></a> [nsg\_id](#output\_nsg\_id) | NSG ID gating the Kali subnet. |
+| <a name="output_nsg_id"></a> [nsg\_id](#output\_nsg\_id) | Dedicated Kali NSG ID, or null when an existing subnet is used. |
 | <a name="output_private_ip"></a> [private\_ip](#output\_private\_ip) | Private IP address of the Kali VM's NIC. |
 | <a name="output_ssh_private_key_path"></a> [ssh\_private\_key\_path](#output\_ssh\_private\_key\_path) | Filesystem path to the generated private key when the module created an ephemeral keypair; null when an explicit admin\_ssh\_public\_key was supplied. |
 | <a name="output_ssh_public_key_openssh"></a> [ssh\_public\_key\_openssh](#output\_ssh\_public\_key\_openssh) | OpenSSH-formatted public key authorised on the Kali VM. |
-| <a name="output_subnet_id"></a> [subnet\_id](#output\_subnet\_id) | Subnet ID created for the Kali attack box. |
+| <a name="output_subnet_id"></a> [subnet\_id](#output\_subnet\_id) | Subnet ID used by the Kali attack box. |
 | <a name="output_vm_id"></a> [vm\_id](#output\_vm\_id) | Azure VM resource ID for the Kali attack box. |
 | <a name="output_vm_name"></a> [vm\_name](#output\_vm\_name) | Azure VM resource name for the Kali attack box. |
 <!-- END_TF_DOCS -->

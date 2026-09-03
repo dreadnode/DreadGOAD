@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -220,8 +221,18 @@ func buildArgs(opts RunOptions, cfg *config.Config) []string {
 		args = append(args, "--forks", fmt.Sprintf("%d", opts.Forks))
 	}
 
-	for k, v := range opts.ExtraVars {
-		args = append(args, "-e", k+"="+v)
+	if len(opts.ExtraVars) > 0 {
+		// A JSON object is a single argv value, so spaces and nested quoting in
+		// connection options (notably SSH ProxyCommand) reach Ansible intact.
+		// Passing each value as key=value makes Ansible's extra-vars parser split
+		// shell-like strings and can turn a valid "-o ProxyCommand=..." into a
+		// malformed SSH invocation.
+		encoded, err := json.Marshal(opts.ExtraVars)
+		if err != nil {
+			// map[string]string cannot contain values that encoding/json rejects.
+			panic(fmt.Sprintf("encode Ansible extra vars: %v", err))
+		}
+		args = append(args, "-e", string(encoded))
 	}
 
 	return args

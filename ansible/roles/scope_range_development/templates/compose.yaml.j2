@@ -1,0 +1,48 @@
+services:
+  gitea:
+    image: gitea/gitea:1.22.6
+    container_name: scope-gitea
+    restart: unless-stopped
+    environment:
+      GITEA__database__DB_TYPE: postgres
+      GITEA__database__HOST: 10.50.10.30:5432
+      GITEA__database__NAME: gitea
+      GITEA__database__USER: rangeadmin
+      GITEA__database__PASSWD: ScopePostgres2026!
+      GITEA__server__DOMAIN: git.range.test
+      GITEA__server__ROOT_URL: http://git.range.test:3000/
+      GITEA__server__SSH_DOMAIN: git.range.test
+      GITEA__security__INSTALL_LOCK: "true"
+      GITEA__service__DISABLE_REGISTRATION: "false"
+      GITEA__actions__ENABLED: "true"
+    ports:
+      - "3000:3000"
+      - "2222:22"
+    volumes:
+      - /srv/range/gitea:/data
+
+  jenkins:
+    image: jenkins/jenkins:2.479.3-lts-jdk17
+    container_name: scope-jenkins
+    restart: unless-stopped
+    environment:
+      JAVA_OPTS: -Djenkins.install.runSetupWizard=false
+      JENKINS_OPTS: >-
+        --argumentsRealm.passwd.rangeadmin=ScopeJenkins2026!
+        --argumentsRealm.roles.rangeadmin=admin
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    volumes:
+      - /srv/range/jenkins:/var/jenkins_home
+
+  registry:
+    image: registry:2.8.3
+    container_name: scope-registry
+    restart: unless-stopped
+    environment:
+      REGISTRY_STORAGE_DELETE_ENABLED: "true"
+    ports:
+      - "5000:5000"
+    volumes:
+      - /srv/range/registry:/var/lib/registry

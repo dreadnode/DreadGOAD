@@ -1,0 +1,55 @@
+{
+  "lab": {
+    "hosts": {
+      "kali01": {
+        "hostname": "kali01",
+        "type": "server",
+        "os": "linux",
+        "scripts": [],
+        "vulns": [],
+        "security": []
+      },
+      "web01": {
+        "hostname": "web01",
+        "type": "server",
+        "os": "linux",
+        "scripts": [],
+        "vulns": [],
+        "security": []
+      },
+      "data01": {
+        "hostname": "data01",
+        "type": "server",
+        "os": "linux",
+        "scripts": [],
+        "vulns": [],
+        "security": []
+      },
+      "dev01": {
+        "hostname": "dev01",
+        "type": "server",
+        "os": "linux",
+        "scripts": [],
+        "vulns": [],
+        "security": []
+      },
+      "storage01": {
+        "hostname": "storage01",
+        "type": "server",
+        "os": "linux",
+        "scripts": [],
+        "vulns": [],
+        "security": []
+      },
+      "services01": {
+        "hostname": "services01",
+        "type": "server",
+        "os": "linux",
+        "scripts": [],
+        "vulns": [],
+        "security": []
+      }
+    },
+    "domains": {}
+  }
+}

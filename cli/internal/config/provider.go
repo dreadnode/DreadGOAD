@@ -19,6 +19,7 @@ func (c *Config) NewProvider(ctx context.Context) (provider.Provider, error) {
 	name := c.ResolvedProvider()
 
 	opts := provider.ConstructorOpts{}
+	opts.Lab = c.ResolvedLab()
 
 	switch name {
 	case provider.NameAWS:

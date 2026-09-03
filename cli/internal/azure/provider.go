@@ -3,6 +3,7 @@ package azure
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +22,7 @@ func init() {
 		return &AzureProvider{
 			client:        client,
 			env:           opts.Env,
+			lab:           opts.Lab,
 			inventoryPath: opts.InventoryPath,
 		}, nil
 	})
@@ -39,6 +41,7 @@ func init() {
 type AzureProvider struct {
 	client        *Client
 	env           string
+	lab           string
 	inventoryPath string
 
 	winrmOnce sync.Once
@@ -67,7 +70,7 @@ func (p *AzureProvider) DiscoverInstances(ctx context.Context, env string) ([]pr
 	if err != nil {
 		return nil, err
 	}
-	return toProviderInstances(instances), nil
+	return filterProviderInstancesByLab(toProviderInstances(instances), p.lab), nil
 }
 
 func (p *AzureProvider) DiscoverAllInstances(ctx context.Context, env string) ([]provider.Instance, error) {
@@ -75,16 +78,38 @@ func (p *AzureProvider) DiscoverAllInstances(ctx context.Context, env string) ([
 	if err != nil {
 		return nil, err
 	}
-	return toProviderInstances(instances), nil
+	return filterProviderInstancesByLab(toProviderInstances(instances), p.lab), nil
 }
 
 func (p *AzureProvider) FindInstanceByHostname(ctx context.Context, env, hostname string) (*provider.Instance, error) {
-	inst, err := p.client.FindInstanceByHostname(ctx, env, hostname)
+	instances, err := p.DiscoverAllInstances(ctx, env)
 	if err != nil {
 		return nil, err
 	}
-	pi := toProviderInstance(*inst)
-	return &pi, nil
+	wanted := strings.ToUpper(hostname)
+	for i := range instances {
+		if strings.Contains(strings.ToUpper(instances[i].Name), wanted) {
+			return &instances[i], nil
+		}
+	}
+	return nil, fmt.Errorf("instance not found for hostname %s in lab %s", hostname, p.lab)
+}
+
+// filterProviderInstancesByLab keeps legacy GOAD discovery unchanged because
+// older deployments used several non-canonical Lab tag values. New labs use
+// their exact selected name, which prevents lifecycle commands from crossing
+// deployment boundaries when environments overlap.
+func filterProviderInstancesByLab(instances []provider.Instance, lab string) []provider.Instance {
+	if lab == "" || strings.EqualFold(lab, "GOAD") {
+		return instances
+	}
+	out := make([]provider.Instance, 0, len(instances))
+	for _, instance := range instances {
+		if strings.EqualFold(instance.Tags["Lab"], lab) {
+			out = append(out, instance)
+		}
+	}
+	return out
 }
 
 func (p *AzureProvider) StartInstances(ctx context.Context, ids []string) error {

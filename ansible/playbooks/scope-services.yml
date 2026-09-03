@@ -1,0 +1,52 @@
+---
+- name: Configure SCOPE-RANGE infrastructure services
+  hosts: infrastructure_services
+  become: true
+  gather_facts: true
+  roles:
+    - role: dreadnode.goad.scope_range_services
+
+- name: Activate SCOPE-RANGE DNS after BIND is healthy
+  hosts: scope_range
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Wait for the range DNS server
+      ansible.builtin.wait_for:
+        host: "{{ range_dns_server }}"
+        port: 53
+        timeout: 120
+
+    - name: Create systemd-resolved override directory
+      ansible.builtin.file:
+        path: /etc/systemd/resolved.conf.d
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Configure range DNS with Azure fallback
+      ansible.builtin.copy:
+        dest: /etc/systemd/resolved.conf.d/scope-range.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Resolve]
+          DNS={{ range_dns_server }}
+          FallbackDNS=168.63.129.16
+          Domains=~range.test
+      notify: Restart systemd-resolved
+
+    - name: Apply DNS configuration before validation
+      ansible.builtin.meta: flush_handlers
+
+    - name: Resolve the authoritative web host record
+      ansible.builtin.command: getent hosts web01.range.test
+      changed_when: false
+
+  handlers:
+    - name: Restart systemd-resolved
+      ansible.builtin.service:
+        name: systemd-resolved
+        state: restarted

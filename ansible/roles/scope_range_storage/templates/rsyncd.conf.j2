@@ -1,0 +1,11 @@
+uid = rangeuser
+gid = rangeuser
+use chroot = no
+max connections = 8
+log file = /var/log/rsyncd.log
+
+[shared]
+path = /srv/range/shared
+comment = SCOPE-RANGE shared files
+read only = false
+list = true

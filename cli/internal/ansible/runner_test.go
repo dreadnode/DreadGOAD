@@ -1,9 +1,44 @@
 package ansible
 
 import (
+	"encoding/json"
 	"slices"
 	"testing"
+
+	"github.com/dreadnode/dreadgoad/internal/config"
 )
+
+func TestBuildArgsEncodesExtraVarsAsSingleJSONObject(t *testing.T) {
+	proxyArgs := "-o ProxyCommand='nc -X 5 -x 127.0.0.1:62103 %h %p' -o StrictHostKeyChecking=no"
+	opts := RunOptions{
+		Playbook: "scope-base.yml",
+		Env:      "scope-dev",
+		ExtraVars: map[string]string{
+			"ansible_connection":      "ssh",
+			"ansible_ssh_common_args": proxyArgs,
+			"adversarial_value":       "quotes: 'single' \"double\"; equals=a=b; unicode=☃\nnext-line",
+		},
+	}
+
+	args := buildArgs(opts, &config.Config{ProjectRoot: t.TempDir()})
+	if len(args) < 2 || args[len(args)-2] != "-e" {
+		t.Fatalf("extra vars missing from args: %v", args)
+	}
+
+	var got map[string]string
+	if err := json.Unmarshal([]byte(args[len(args)-1]), &got); err != nil {
+		t.Fatalf("extra vars are not a JSON object: %v", err)
+	}
+	if got["ansible_ssh_common_args"] != proxyArgs {
+		t.Fatalf("proxy args = %q, want %q", got["ansible_ssh_common_args"], proxyArgs)
+	}
+	if got["ansible_connection"] != "ssh" {
+		t.Fatalf("connection = %q, want ssh", got["ansible_connection"])
+	}
+	if got["adversarial_value"] != "quotes: 'single' \"double\"; equals=a=b; unicode=☃\nnext-line" {
+		t.Fatalf("adversarial value was altered: %q", got["adversarial_value"])
+	}
+}
 
 func TestSanitizeAWSEnv(t *testing.T) {
 	tests := []struct {

@@ -1,0 +1,172 @@
+---
+- name: Install network file service packages
+  ansible.builtin.apt:
+    name:
+      - nfs-kernel-server
+      - openssh-server
+      - rsync
+      - samba
+      - smbclient
+    state: present
+    update_cache: true
+
+- name: Create the synthetic file-service account
+  ansible.builtin.user:
+    name: rangeuser
+    password: "$6$scopeRange$JkMDonMW5qeZ0F8sU/R6IGSMFIYfWrwqwyVlPXs8/RfQUPH5D0RQZwdnyk5pYpf/lYb22sejylvxHlhVlaxEt."
+    shell: /bin/bash
+    create_home: true
+
+- name: Enable password authentication only for the synthetic SFTP account
+  ansible.builtin.blockinfile:
+    path: /etc/ssh/sshd_config
+    marker: "# {mark} SCOPE-RANGE SFTP"
+    block: |
+      Match User rangeuser
+        PasswordAuthentication yes
+    validate: /usr/sbin/sshd -t -f %s
+  notify: Reload SSH
+
+- name: Create storage service directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default('rangeuser') }}"
+    group: "{{ item.group | default('rangeuser') }}"
+    mode: "{{ item.mode | default('0775') }}"
+  loop:
+    - path: /opt/scope-range/storage
+      owner: root
+      group: root
+      mode: "0755"
+    - path: /srv/range/shared
+    - path: /srv/range/shared/documents
+    - path: /srv/range/shared/research
+    - path: /srv/range/shared/backups
+    - path: /srv/range/garage/meta
+      owner: root
+      group: root
+      mode: "0755"
+    - path: /srv/range/garage/data
+      owner: root
+      group: root
+      mode: "0755"
+
+- name: Seed fictional shared documents
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/srv/range/shared/documents/{{ item }}"
+    owner: rangeuser
+    group: rangeuser
+    mode: "0664"
+  loop:
+    - project-orchid.txt
+    - vendor-contacts.csv
+
+- name: Configure Samba shares
+  ansible.builtin.template:
+    src: smb.conf.j2
+    dest: /etc/samba/smb.conf
+    owner: root
+    group: root
+    mode: "0644"
+    validate: testparm -s %s
+  notify: Restart Samba
+
+- name: Check whether the Samba account exists
+  ansible.builtin.command: pdbedit -L -u rangeuser
+  register: samba_account
+  changed_when: false
+  failed_when: false
+
+- name: Create the synthetic Samba account
+  ansible.builtin.shell:
+    cmd: set -o pipefail && printf '%s\n%s\n' 'ScopeFiles2026!' 'ScopeFiles2026!' | smbpasswd -s -a rangeuser
+    executable: /bin/bash
+  when: samba_account.rc != 0
+  no_log: true
+
+- name: Create the NFS exports directory
+  ansible.builtin.file:
+    path: /etc/exports.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Configure NFS exports
+  ansible.builtin.copy:
+    dest: /etc/exports.d/scope-range.exports
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      /srv/range/shared 10.50.10.0/24(rw,sync,no_subtree_check)
+  notify: Reload NFS exports
+
+- name: Configure the rsync daemon
+  ansible.builtin.template:
+    src: rsyncd.conf.j2
+    dest: /etc/rsyncd.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart rsync
+
+- name: Enable rsync daemon mode
+  ansible.builtin.lineinfile:
+    path: /etc/default/rsync
+    regexp: '^RSYNC_ENABLE='
+    line: RSYNC_ENABLE=true
+  notify: Restart rsync
+
+- name: Install Garage configuration
+  ansible.builtin.template:
+    src: garage.toml.j2
+    dest: /opt/scope-range/storage/garage.toml
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Install the storage Compose definition
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: /opt/scope-range/storage/compose.yaml
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Start Garage object storage
+  ansible.builtin.command:
+    cmd: docker compose up -d --remove-orphans
+    chdir: /opt/scope-range/storage
+  register: storage_compose
+  changed_when: >-
+    'Started' in storage_compose.stderr or
+    'Created' in storage_compose.stderr or
+    'Recreated' in storage_compose.stderr
+
+- name: Enable host storage services
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+  loop:
+    - nfs-kernel-server
+    - smbd
+    - ssh
+    - rsync
+
+- name: Apply pending storage service configuration
+  ansible.builtin.meta: flush_handlers
+
+- name: Wait for Garage S3 API
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 3900
+    timeout: 180
+
+- name: Verify Garage health endpoint
+  ansible.builtin.uri:
+    url: http://127.0.0.1:3903/health
+    status_code: 200

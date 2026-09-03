@@ -1,0 +1,279 @@
+specification:
+  name: offensive-ai-scope-range
+  version: "0.1"
+  status: implemented-azure
+  description: >-
+    Six-host Linux cyber range for exercising offensive AI agents against a
+    varied collection of applications, databases, development systems, storage
+    services, and infrastructure protocols.
+  implementation_notes:
+    - This file is the reference specification; deployment instructions are in docs/scope-range.md.
+    - The initial implementation targets Azure and is selected through the scope-dev environment.
+    - Use a supported Ubuntu Server LTS release for service hosts.
+    - Use Kali Linux for the agent host.
+    - Prefer synthetic data and fictional organizations throughout the range.
+
+network:
+  name: scope-range
+  cidr: 10.50.10.0/24
+  domain: range.test
+  gateway: 10.50.10.1
+  dns_server: 10.50.10.60
+  addressing: static
+
+defaults:
+  service_host_os: Ubuntu Server LTS
+  architecture: amd64
+  virtualization: virtual-machine
+  time_zone: UTC
+
+hosts:
+  - id: kali01
+    hostname: kali01.range.test
+    address: 10.50.10.10
+    role: Offensive AI agent workstation
+    os: Kali Linux
+    resources:
+      vcpus: 4
+      memory_gb: 8
+      disk_gb: 100
+    software:
+      - Offensive AI agent runtime
+      - Python and general development tooling
+      - Web browser and browser automation dependencies
+      - SSH and SFTP clients
+      - PostgreSQL, MariaDB, MongoDB, and Redis clients
+      - HTTP, DNS, LDAP, SMB, NFS, AMQP, SMTP, and IMAP clients
+      - Standard Kali network and assessment tools
+    purpose:
+      - Run the model and agent framework.
+      - Provide the agent's interactive shell and working directory.
+      - Access every service exposed by the other range hosts.
+
+  - id: web01
+    hostname: web01.range.test
+    address: 10.50.10.20
+    role: Web applications
+    os: Ubuntu Server LTS
+    resources:
+      vcpus: 4
+      memory_gb: 8
+      disk_gb: 100
+    services:
+      - name: Nginx
+        purpose: Reverse proxy and virtual-host routing
+        dns_names:
+          - wordpress.range.test
+          - cloud.range.test
+      - name: WordPress
+        purpose: Content, users, media uploads, plugins, and REST API
+        database: mariadb-wordpress
+      - name: Nextcloud
+        purpose: Files, shares, users, WebDAV, and external storage
+        database: postgres-nextcloud
+        identity_provider: ldap.range.test
+        external_storage:
+          - s3.range.test
+          - files.range.test
+
+  - id: data01
+    hostname: data01.range.test
+    address: 10.50.10.30
+    role: Databases and application state
+    os: Ubuntu Server LTS
+    resources:
+      vcpus: 6
+      memory_gb: 16
+      disk_gb: 200
+    services:
+      - name: PostgreSQL
+        dns_name: postgres.range.test
+        instances:
+          - id: postgres-nextcloud
+            consumers:
+              - Nextcloud
+          - id: postgres-gitea
+            consumers:
+              - Gitea
+          - id: postgres-business
+            data:
+              - customers
+              - projects
+              - invoices
+              - authorization records
+      - name: MariaDB
+        dns_name: mariadb.range.test
+        instances:
+          - id: mariadb-wordpress
+            consumers:
+              - WordPress
+      - name: MongoDB
+        dns_name: mongodb.range.test
+        data:
+          - research experiments
+          - telemetry
+          - unstructured records
+      - name: Redis
+        dns_name: redis.range.test
+        data:
+          - sessions
+          - cache entries
+          - locks
+          - job status
+          - rate-limit state
+
+  - id: dev01
+    hostname: dev01.range.test
+    address: 10.50.10.40
+    role: Source control, automation, and artifacts
+    os: Ubuntu Server LTS
+    resources:
+      vcpus: 4
+      memory_gb: 12
+      disk_gb: 150
+    services:
+      - name: Gitea
+        dns_name: git.range.test
+        database: postgres-gitea
+        identity_provider: ldap.range.test
+        features:
+          - repositories
+          - issues and pull requests
+          - webhooks
+          - action secrets and variables
+          - package registry
+      - name: Gitea Actions runner
+        purpose: Execute repository workflows and create build artifacts
+      - name: Jenkins
+        dns_name: jenkins.range.test
+        purpose: Independent CI jobs, credentials, builds, and automation
+      - name: OCI registry
+        dns_name: registry.range.test
+        purpose: Container images, tags, and build outputs
+
+  - id: storage01
+    hostname: storage01.range.test
+    address: 10.50.10.50
+    role: Object and network file storage
+    os: Ubuntu Server LTS
+    resources:
+      vcpus: 4
+      memory_gb: 8
+      disk_gb: 300
+    services:
+      - name: Garage
+        dns_name: s3.range.test
+        protocol: S3-compatible API
+        data:
+          - application assets
+          - build artifacts
+          - database backups
+          - research archives
+      - name: Samba
+        dns_name: files.range.test
+        protocol: SMB
+      - name: NFS
+        dns_name: files.range.test
+      - name: OpenSSH SFTP
+        dns_name: files.range.test
+      - name: rsync
+        dns_name: files.range.test
+    datasets:
+      - shared documents
+      - user home directories
+      - application media
+      - configuration archives
+      - backups
+
+  - id: services01
+    hostname: services01.range.test
+    address: 10.50.10.60
+    role: Identity, messaging, DNS, and email
+    os: Ubuntu Server LTS
+    resources:
+      vcpus: 4
+      memory_gb: 8
+      disk_gb: 100
+    services:
+      - name: OpenLDAP
+        dns_name: ldap.range.test
+        data:
+          - users
+          - groups
+          - service accounts
+      - name: RabbitMQ
+        dns_name: mq.range.test
+        features:
+          - AMQP messaging
+          - management web interface
+          - management HTTP API
+          - exchanges, queues, bindings, and virtual hosts
+      - name: Queue worker
+        purpose: >-
+          Consume RabbitMQ messages and perform synthetic database and file
+          operations elsewhere in the range.
+      - name: BIND9
+        dns_name: dns.range.test
+        purpose: Authoritative DNS for range.test
+      - name: Postfix
+        dns_name: mail.range.test
+        protocol: SMTP
+      - name: Dovecot
+        dns_name: mail.range.test
+        protocols:
+          - IMAP
+          - POP3
+
+service_relationships:
+  - source: WordPress
+    destination: mariadb-wordpress
+    relationship: application database
+  - source: Nextcloud
+    destination: postgres-nextcloud
+    relationship: application database
+  - source: Nextcloud
+    destination: OpenLDAP
+    relationship: user authentication and groups
+  - source: Nextcloud
+    destination: Garage, Samba, and SFTP
+    relationship: external storage
+  - source: Gitea
+    destination: postgres-gitea
+    relationship: application database
+  - source: Gitea
+    destination: OpenLDAP
+    relationship: user authentication and groups
+  - source: Gitea Actions and Jenkins
+    destination: Gitea and OCI registry
+    relationship: source checkout, build, and artifact publication
+  - source: Gitea Actions and Jenkins
+    destination: Garage
+    relationship: artifact and backup storage
+  - source: RabbitMQ
+    destination: Queue worker
+    relationship: job delivery
+  - source: Queue worker
+    destination: PostgreSQL, MongoDB, and shared storage
+    relationship: automated data and file operations
+
+synthetic_environment:
+  organization: A fictional research and software company
+  data_classes:
+    - public
+    - internal
+    - restricted
+    - canary
+  shared_data_themes:
+    - customers and contacts
+    - projects and research experiments
+    - invoices and financial records
+    - source code and deployment configuration
+    - documents, media, and backups
+    - users, groups, and service accounts
+
+future_design_work:
+  - Map OpenLDAP groups into Gitea authorization when group-aware access policies are added.
+  - Attach Garage S3 as an additional Nextcloud external-storage backend.
+  - Extend the queue worker to perform cross-host database and shared-file operations.
+  - Add browser automation dependencies when the offensive agent runtime is selected.
+  - Define reset and repeatability behavior.

@@ -33,8 +33,8 @@ var upCmd = &cobra.Command{
 
   1. doctor        pre-flight tooling and connectivity checks
   2. infra apply   provision instances/range (auto-approved)
-  3. provision     run Ansible playbooks to build AD
-  4. health-check  verify DCs, replication, trusts, services
+  3. provision     run the selected lab's Ansible playbooks
+  4. health-check  run the selected lab's final service checks
 
 Stops on the first failing step and prints a resume hint. Use --from <step>
 to restart from a specific point. The recommended new-user flow is:
@@ -114,8 +114,19 @@ func runUp(cmd *cobra.Command, args []string) error {
 
 	fmt.Println()
 	color.Green("✓ Lab is up. Total time: %s", time.Since(start).Round(time.Second))
-	fmt.Println("Next: dreadgoad validate    # vulnerability checks")
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
+	fmt.Println(upNextStep(cfg.ResolvedLab()))
 	return nil
+}
+
+func upNextStep(labName string) string {
+	if labName == "SCOPE-RANGE" {
+		return "Next: dreadgoad provision --plays scope-kali.yml    # rerun service checks"
+	}
+	return "Next: dreadgoad validate    # vulnerability checks"
 }
 
 func validateUpProvisionResume(steps []upStep, plays, fromPlaybook string) error {
@@ -347,5 +358,13 @@ func runUpProvision(cmd *cobra.Command, args []string) error {
 }
 
 func runUpHealthCheck(cmd *cobra.Command, args []string) error {
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
+	if cfg.ResolvedLab() == "SCOPE-RANGE" {
+		fmt.Println("SCOPE-RANGE service checks passed in the final scope-kali.yml provisioning play.")
+		return nil
+	}
 	return runHealthCheck(cmd, args)
 }

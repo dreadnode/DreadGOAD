@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 	"time"
 
@@ -25,6 +26,9 @@ type ExtensionConfig struct {
 
 // EnvironmentConfig holds per-environment settings.
 type EnvironmentConfig struct {
+	Lab               string   `mapstructure:"lab"`
+	Provider          string   `mapstructure:"provider"`
+	Deployment        string   `mapstructure:"deployment"`
 	Variant           bool     `mapstructure:"variant"`
 	VariantSource     string   `mapstructure:"variant_source"`
 	VariantTarget     string   `mapstructure:"variant_target"`
@@ -91,6 +95,7 @@ func (l LudusConfig) SSHTarget() string {
 // Config holds all CLI configuration.
 type Config struct {
 	Env             string                       `mapstructure:"env"`
+	Lab             string                       `mapstructure:"lab"`
 	Provider        string                       `mapstructure:"provider"`
 	Region          string                       `mapstructure:"region"`
 	InstanceProfile string                       `mapstructure:"instance_profile"`
@@ -126,6 +131,18 @@ var (
 // not consume the GOAD lab config, while still surfacing other resolution
 // failures such as malformed overlays or cache write errors.
 var ErrLabConfigNotFound = errors.New("lab config not found")
+
+var validLabName = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
+
+// ValidateLabName rejects names that could escape ad/<lab> or produce
+// ambiguous filesystem paths. Existing lab names such as GOAD-Light remain
+// valid while separators, dots, and whitespace are deliberately excluded.
+func ValidateLabName(name string) error {
+	if !validLabName.MatchString(name) {
+		return fmt.Errorf("invalid lab name %q: use letters, numbers, underscores, and hyphens", name)
+	}
+	return nil
+}
 
 // SetRegionOverride records a region supplied explicitly via --region, so it
 // takes precedence over the active environment's configured region. Call it
@@ -189,6 +206,11 @@ func Get() (*Config, error) {
 				return
 			}
 			cfg.ProjectRoot = root
+		}
+
+		if err := ValidateLabName(cfg.ResolvedLab()); err != nil {
+			initErr = err
+			return
 		}
 
 		if cfg.LogDir == "" {
@@ -284,7 +306,7 @@ func (c *Config) labConfigDataDir() string {
 			}
 		}
 	}
-	return filepath.Join(c.ProjectRoot, "ad", "GOAD", "data")
+	return filepath.Join(c.LabPath(), "data")
 }
 
 // mergedConfigPath merges base + overlay and caches the result. Returns
@@ -372,6 +394,23 @@ func (c *Config) ActiveEnvironment() EnvironmentConfig {
 	return c.Environments[c.Env]
 }
 
+// ResolvedLab returns the active lab name. Per-environment selection wins over
+// the top-level setting; GOAD remains the backward-compatible default.
+func (c *Config) ResolvedLab() string {
+	if lab := c.ActiveEnvironment().Lab; lab != "" {
+		return lab
+	}
+	if c.Lab != "" {
+		return c.Lab
+	}
+	return "GOAD"
+}
+
+// LabPath returns the root directory for the active lab definition.
+func (c *Config) LabPath() string {
+	return filepath.Join(c.ProjectRoot, "ad", c.ResolvedLab())
+}
+
 // ResolvedVariantPaths returns absolute source/target paths for the active
 // environment's variant config. Returns empty strings if variant is false.
 func (c *Config) ResolvedVariantPaths() (source, target string) {
@@ -450,10 +489,25 @@ func (c *Config) VpcCIDR(envName string) string {
 
 // ResolvedProvider returns the provider name, defaulting to "aws" for backward compatibility.
 func (c *Config) ResolvedProvider() string {
+	if provider := c.ActiveEnvironment().Provider; provider != "" {
+		return provider
+	}
 	if c.Provider == "" {
 		return "aws"
 	}
 	return c.Provider
+}
+
+// ResolvedDeployment returns the Terragrunt deployment selected by the active
+// environment, falling back to the global infrastructure setting.
+func (c *Config) ResolvedDeployment() string {
+	if deployment := c.ActiveEnvironment().Deployment; deployment != "" {
+		return deployment
+	}
+	if c.Infra.Deployment != "" {
+		return c.Infra.Deployment
+	}
+	return "goad-deployment"
 }
 
 // IsAWS returns true if the configured provider is AWS.
@@ -461,9 +515,22 @@ func (c *Config) IsAWS() bool {
 	return c.ResolvedProvider() == "aws"
 }
 
-// ResolveRegion returns the AWS region for the active environment, or an
+// ResolvedRegion returns the effective cloud region for the active environment.
+// An explicit flag/environment override wins, followed by the environment and
+// then the top-level fallback.
+func (c *Config) ResolvedRegion() string {
+	if c.regionOverride != "" {
+		return c.regionOverride
+	}
+	if r := c.ActiveEnvironment().Region; r != "" {
+		return r
+	}
+	return c.Region
+}
+
+// ResolveRegion returns the cloud region for the active environment, or an
 // actionable error if none is set. This is the single source of truth for
-// region resolution: every command that needs to talk to AWS should call it
+// region resolution: every command that needs to talk to a cloud should call it
 // (or ResolveRegionWithInventory) rather than hardcoding a default.
 //
 // Region is a property of the lab, not of the CLI — staging and prod live in
@@ -472,16 +539,11 @@ func (c *Config) IsAWS() bool {
 // environment's region, then the top-level region as a fallback for
 // environments that don't declare one.
 func (c *Config) ResolveRegion() (string, error) {
-	if c.regionOverride != "" {
-		return c.regionOverride, nil
+	region := c.ResolvedRegion()
+	if region == "" {
+		return "", fmt.Errorf("cloud region not configured for env %q: set 'environments.%s.region' or 'region' in dreadgoad.yaml, export DREADGOAD_REGION, or pass --region", c.Env, c.Env)
 	}
-	if r := c.ActiveEnvironment().Region; r != "" {
-		return r, nil
-	}
-	if c.Region == "" {
-		return "", fmt.Errorf("AWS region not configured for env %q: set 'environments.%s.region' or 'region' in dreadgoad.yaml, export DREADGOAD_REGION, or pass --region", c.Env, c.Env)
-	}
-	return c.Region, nil
+	return region, nil
 }
 
 // ResolveRegionWithInventory resolves the AWS region for talking to a deployed
@@ -498,14 +560,14 @@ func (c *Config) ResolveRegionWithInventory(inv *inventory.Inventory) (string, e
 
 // InfraBasePath returns the base path for a deployment's infra directory.
 func (c *Config) InfraBasePath() string {
-	return filepath.Join(c.ProjectRoot, "infra", c.Infra.Deployment)
+	return filepath.Join(c.ProjectRoot, "infra", c.ResolvedDeployment())
 }
 
 // InfraBasePathForProvider returns the base infra directory for the given provider.
 // Azure uses infra/azure/{deployment}; other providers use infra/{deployment}.
 func (c *Config) InfraBasePathForProvider(provider string) string {
 	if provider == "azure" {
-		return filepath.Join(c.ProjectRoot, "infra", "azure", c.Infra.Deployment)
+		return filepath.Join(c.ProjectRoot, "infra", "azure", c.ResolvedDeployment())
 	}
 	return c.InfraBasePath()
 }

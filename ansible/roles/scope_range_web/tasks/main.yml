@@ -1,0 +1,312 @@
+---
+- name: Install web and NFS client packages
+  ansible.builtin.apt:
+    name:
+      - nfs-common
+      - nginx
+    state: present
+    update_cache: true
+
+- name: Create web application directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner | default('root') }}"
+    group: "{{ item.group | default('root') }}"
+    mode: "0755"
+  loop:
+    - path: /opt/scope-range/web
+    - path: /srv/range/wordpress
+      owner: "33"
+      group: "33"
+    - path: /srv/range/nextcloud
+      owner: "33"
+      group: "33"
+
+- name: Check whether the shared storage export is mounted
+  ansible.builtin.command: mountpoint -q /mnt/range-shared
+  register: range_shared_mount
+  changed_when: false
+  failed_when: false
+
+- name: Create the local NFS mountpoint when needed
+  ansible.builtin.file:
+    path: /mnt/range-shared
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: range_shared_mount.rc != 0
+
+- name: Mount the shared storage export
+  ansible.posix.mount:
+    path: /mnt/range-shared
+    src: storage01.range.test:/srv/range/shared
+    fstype: nfs
+    opts: rw,_netdev,nofail
+    state: mounted
+
+- name: Install the web application Compose definition
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: /opt/scope-range/web/compose.yaml
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Install the pinned WordPress CLI
+  ansible.builtin.get_url:
+    url: https://github.com/wp-cli/wp-cli/releases/download/v2.11.0/wp-cli-2.11.0.phar
+    dest: /opt/scope-range/web/wp-cli.phar
+    owner: root
+    group: root
+    mode: "0555"
+
+- name: Install Nginx virtual hosts
+  ansible.builtin.template:
+    src: scope-range.conf.j2
+    dest: /etc/nginx/sites-available/scope-range.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart Nginx
+
+- name: Enable Nginx virtual hosts
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/scope-range.conf
+    dest: /etc/nginx/sites-enabled/scope-range.conf
+    state: link
+  notify: Restart Nginx
+
+- name: Disable the default Nginx site
+  ansible.builtin.file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: Restart Nginx
+
+- name: Start web applications
+  ansible.builtin.command:
+    cmd: docker compose up -d --remove-orphans
+    chdir: /opt/scope-range/web
+  register: web_compose
+  changed_when: >-
+    'Started' in web_compose.stderr or
+    'Created' in web_compose.stderr or
+    'Recreated' in web_compose.stderr
+
+- name: Wait for web application ports
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ item }}"
+    timeout: 300
+  loop:
+    - 8080
+    - 8081
+
+- name: Check whether WordPress is installed
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - --user
+      - www-data
+      - scope-wordpress
+      - php
+      - /usr/local/bin/wp
+      - core
+      - is-installed
+      - --path=/var/www/html
+  register: wordpress_installed
+  changed_when: false
+  failed_when: false
+
+- name: Install the synthetic WordPress site
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - --user
+      - www-data
+      - scope-wordpress
+      - php
+      - /usr/local/bin/wp
+      - core
+      - install
+      - --path=/var/www/html
+      - --url=http://wordpress.range.test
+      - --title=Northstar Research Notes
+      - --admin_user=rangeadmin
+      - --admin_password=ScopeWordPressAdmin2026!
+      - --admin_email=rangeadmin@range.test
+      - --skip-email
+  when: wordpress_installed.rc != 0
+  no_log: true
+
+- name: List WordPress users
+  ansible.builtin.command: >-
+    docker exec --user www-data scope-wordpress php /usr/local/bin/wp
+    user list --path=/var/www/html --field=user_login
+  register: wordpress_users
+  changed_when: false
+
+- name: Create the fictional WordPress editor
+  ansible.builtin.command: >-
+    docker exec --user www-data scope-wordpress php /usr/local/bin/wp
+    user create alice alice@range.test --path=/var/www/html
+    --role=editor --user_pass=ScopeFiles2026!
+  when: "'alice' not in wordpress_users.stdout_lines"
+  no_log: true
+
+- name: List WordPress post titles
+  ansible.builtin.command: >-
+    docker exec --user www-data scope-wordpress php /usr/local/bin/wp
+    post list --path=/var/www/html --field=post_title
+  register: wordpress_posts
+  changed_when: false
+
+- name: Publish synthetic WordPress content
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - --user
+      - www-data
+      - scope-wordpress
+      - php
+      - /usr/local/bin/wp
+      - post
+      - create
+      - --path=/var/www/html
+      - --post_title=Project ORCHID Research Update
+      - --post_content=The synthetic ORCHID program is entering its archive and partner-review phase.
+      - --post_status=publish
+  when: "'Project ORCHID Research Update' not in wordpress_posts.stdout_lines"
+
+- name: Wait for Nextcloud installation
+  ansible.builtin.command: docker exec --user www-data scope-nextcloud php occ status --output=json
+  register: nextcloud_status
+  changed_when: false
+  retries: 30
+  delay: 10
+  until: >-
+    nextcloud_status.rc == 0 and
+    (nextcloud_status.stdout | from_json).installed | default(false)
+
+- name: Check whether Nextcloud external storage is enabled
+  ansible.builtin.command: >-
+    docker exec --user www-data scope-nextcloud php occ app:list --output=json
+  register: nextcloud_apps
+  changed_when: false
+
+- name: Enable Nextcloud external storage
+  ansible.builtin.command: >-
+    docker exec --user www-data scope-nextcloud php occ app:enable files_external
+  when: "'files_external' not in (nextcloud_apps.stdout | from_json).enabled"
+
+- name: Check Nextcloud external mounts
+  ansible.builtin.command: >-
+    docker exec --user www-data scope-nextcloud php occ files_external:list --output=json
+  register: nextcloud_mounts
+  changed_when: false
+
+- name: Attach shared range storage to Nextcloud
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - --user
+      - www-data
+      - scope-nextcloud
+      - php
+      - occ
+      - files_external:create
+      - /Range Shared
+      - local
+      - null::null
+      - --config
+      - datadir=/mnt/range-shared
+  when: "'Range Shared' not in nextcloud_mounts.stdout"
+
+- name: Enable the Nextcloud LDAP integration application
+  ansible.builtin.command: >-
+    docker exec --user www-data scope-nextcloud php occ app:enable user_ldap
+  register: nextcloud_ldap_app
+  changed_when: >-
+    'enabled' in nextcloud_ldap_app.stdout and
+    'already enabled' not in nextcloud_ldap_app.stdout
+
+- name: Inspect Nextcloud LDAP configurations
+  ansible.builtin.command: >-
+    docker exec --user www-data scope-nextcloud php occ ldap:show-config --output=json
+  register: nextcloud_ldap_config
+  changed_when: false
+  failed_when: false
+
+- name: Create the Nextcloud LDAP configuration
+  ansible.builtin.command: >-
+    docker exec --user www-data scope-nextcloud php occ ldap:create-empty-config
+  when: "'s01' not in nextcloud_ldap_config.stdout"
+
+- name: Configure Nextcloud LDAP integration
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - --user
+      - www-data
+      - scope-nextcloud
+      - php
+      - occ
+      - ldap:set-config
+      - s01
+      - "{{ item.option }}"
+      - "{{ item.value }}"
+  loop:
+    - option: ldapHost
+      value: ldap://10.50.10.60
+    - option: ldapPort
+      value: "389"
+    - option: ldapAgentName
+      value: cn=admin,dc=range,dc=test
+    - option: ldapAgentPassword
+      value: ScopeLDAP2026!
+    - option: ldapBase
+      value: dc=range,dc=test
+    - option: ldapBaseUsers
+      value: ou=people,dc=range,dc=test
+    - option: ldapBaseGroups
+      value: ou=groups,dc=range,dc=test
+    - option: ldapUserFilter
+      value: (objectClass=inetOrgPerson)
+    - option: ldapLoginFilter
+      value: (|(uid=%uid)(mail=%uid))
+    - option: ldapGroupFilter
+      value: (objectClass=groupOfNames)
+  changed_when: false
+  no_log: true
+
+- name: Verify Nextcloud LDAP connectivity
+  ansible.builtin.command: >-
+    docker exec --user www-data scope-nextcloud php occ ldap:test-config s01
+  register: nextcloud_ldap_health
+  changed_when: false
+  failed_when: "'configuration is valid' not in nextcloud_ldap_health.stdout"
+
+- name: Apply pending Nginx configuration
+  ansible.builtin.meta: flush_handlers
+
+- name: Verify the WordPress virtual host
+  ansible.builtin.uri:
+    url: http://127.0.0.1/
+    headers:
+      Host: wordpress.range.test
+    status_code:
+      - 200
+      - 302
+
+- name: Verify the Nextcloud virtual host
+  ansible.builtin.uri:
+    url: http://127.0.0.1/status.php
+    headers:
+      Host: cloud.range.test
+    status_code: 200

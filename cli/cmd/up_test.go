@@ -241,6 +241,15 @@ func TestUpDoctorFailureDoesNotRecommendBypass(t *testing.T) {
 	}
 }
 
+func TestUpNextStepMatchesLabValidation(t *testing.T) {
+	if got := upNextStep("SCOPE-RANGE"); !strings.Contains(got, "scope-kali.yml") || strings.Contains(got, "dreadgoad validate") {
+		t.Fatalf("SCOPE-RANGE next step = %q, want service checks only", got)
+	}
+	if got := upNextStep("GOAD"); !strings.Contains(got, "dreadgoad validate") {
+		t.Fatalf("GOAD next step = %q, want vulnerability validation", got)
+	}
+}
+
 func assertStringFlag(t *testing.T, cmd *cobra.Command, name, want string) {
 	t.Helper()
 	got, err := cmd.Flags().GetString(name)

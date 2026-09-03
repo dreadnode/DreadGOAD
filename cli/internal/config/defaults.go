@@ -32,6 +32,7 @@ var RebootPlaybooks = []string{
 
 func setDefaults() {
 	viper.SetDefault("env", "staging")
+	viper.SetDefault("lab", "GOAD")
 	viper.SetDefault("region", "")
 	viper.SetDefault("instance_profile", "")
 	viper.SetDefault("debug", false)

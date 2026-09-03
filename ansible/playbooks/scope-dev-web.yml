@@ -1,0 +1,14 @@
+---
+- name: Configure SCOPE-RANGE development services
+  hosts: development
+  become: true
+  gather_facts: true
+  roles:
+    - role: dreadnode.goad.scope_range_development
+
+- name: Configure SCOPE-RANGE web applications
+  hosts: web
+  become: true
+  gather_facts: true
+  roles:
+    - role: dreadnode.goad.scope_range_web

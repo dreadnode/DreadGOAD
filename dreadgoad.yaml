@@ -44,6 +44,12 @@ idle_timeout: 1200
 
 # Per-environment settings
 environments:
+  scope-dev:
+    lab: SCOPE-RANGE
+    provider: azure
+    deployment: scope-range-deployment
+    region: centralus
+    vpc_cidr: "10.50.0.0/16"
   dev:
     variant: true
     variant_source: ad/GOAD

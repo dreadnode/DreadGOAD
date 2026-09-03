@@ -88,7 +88,7 @@ func resolvePlaybooks(cfg *config.Config, playsFlag, fromFlag string) ([]string,
 	if playsFlag != "" {
 		playbooks = strings.Split(playsFlag, ",")
 	} else {
-		playbooks = lab.PlaybooksForLab(cfg.ProjectRoot, "", cfg.Playbooks)
+		playbooks = lab.PlaybooksForLab(cfg.ProjectRoot, cfg.ResolvedLab(), cfg.Playbooks)
 	}
 
 	if fromFlag == "" {
@@ -223,8 +223,8 @@ func bootstrapFromProviderTemplate(invPath string, cfg *config.Config) error {
 		}
 	}
 	if templatePath == "" {
-		labName := "GOAD"
-		if providerName == "proxmox" {
+		labName := cfg.ResolvedLab()
+		if providerName == "proxmox" && labName == "GOAD" {
 			labName = cfg.ProxmoxLab()
 		}
 		templatePath = filepath.Join(cfg.ProjectRoot, "ad", labName, "providers", providerName, "inventory")
@@ -605,6 +605,21 @@ func startAzureSOCKSTunnel(ctx context.Context, cfg *config.Config) (closableTun
 		return nil, nil, fmt.Errorf("provider is not azure (got %T)", prov)
 	}
 
+	if cfg.ResolvedLab() == "SCOPE-RANGE" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil, nil, fmt.Errorf("resolve home directory for scope-range SSH key: %w", err)
+		}
+		keyPath := filepath.Join(home, ".dreadgoad", "keys", fmt.Sprintf("azure-%s-scope-range-admin", cfg.Env))
+		fmt.Println("Opening Azure Bastion → Kali → SOCKS5 chain for Linux range provisioning...")
+		tunnel, err := azure.StartScopeProvisionTunnel(ctx, azProv.Client(), cfg.Env, keyPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		fmt.Printf("  SOCKS5 proxy: %s\n", tunnel.ProxyURL())
+		return tunnel, scopeProvisionVars(keyPath, tunnel.SOCKSAddr()), nil
+	}
+
 	fmt.Println("Opening Azure Bastion → controller → SOCKS5 chain for WinRM access...")
 	tunnel, err := azure.StartProvisionTunnel(ctx, azProv.Client(), cfg.Env)
 	if err != nil {
@@ -621,6 +636,15 @@ func startAzureSOCKSTunnel(ctx context.Context, cfg *config.Config) (closableTun
 		"ansible_port":                 "5985",
 	}
 	return tunnel, vars, nil
+}
+
+func scopeProvisionVars(keyPath, socksAddr string) map[string]string {
+	return map[string]string{
+		"ansible_connection":           "ssh",
+		"ansible_remote_tmp":           "/tmp/.ansible-scope",
+		"ansible_ssh_private_key_file": keyPath,
+		"ansible_ssh_common_args":      fmt.Sprintf("-o ProxyCommand='nc -X 5 -x %s %%h %%p' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", socksAddr),
+	}
 }
 
 // startLudusSOCKSTunnel preserves the original Ludus-in-SSH-mode behavior:

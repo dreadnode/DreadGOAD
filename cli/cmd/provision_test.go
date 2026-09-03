@@ -321,6 +321,19 @@ func TestApplyExtraVarsWithoutUserVarsIsPassthrough(t *testing.T) {
 	}
 }
 
+func TestScopeProvisionVarsOverrideWindowsRemoteTemp(t *testing.T) {
+	got := scopeProvisionVars("/tmp/scope-key", "127.0.0.1:62103")
+	if got["ansible_remote_tmp"] != "/tmp/.ansible-scope" {
+		t.Fatalf("remote tmp = %q, want Linux /tmp path", got["ansible_remote_tmp"])
+	}
+	if !strings.Contains(got["ansible_ssh_common_args"], "127.0.0.1:62103 %h %p") {
+		t.Fatalf("SSH common args do not contain SOCKS endpoint: %q", got["ansible_ssh_common_args"])
+	}
+	if got["ansible_ssh_private_key_file"] != "/tmp/scope-key" {
+		t.Fatalf("private key = %q, want /tmp/scope-key", got["ansible_ssh_private_key_file"])
+	}
+}
+
 func TestSortedPairsIsStable(t *testing.T) {
 	got := sortedPairs(map[string]string{"b": "2", "a": "1", "c": "3"})
 	want := []string{"a=1", "b=2", "c=3"}

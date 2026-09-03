@@ -1,0 +1,132 @@
+---
+- name: Install agent workstation clients and tooling
+  ansible.builtin.apt:
+    name:
+      - amqp-tools
+      - awscli
+      - curl
+      - default-mysql-client
+      - dnsutils
+      - git
+      - jq
+      - ldap-utils
+      - nfs-common
+      - nmap
+      - pipx
+      - postgresql-client
+      - python3
+      - python3-venv
+      - redis-tools
+      - rsync
+      - s3cmd
+      - smbclient
+      - swaks
+    state: present
+    update_cache: true
+
+- name: Create the agent workspace
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: kali
+    group: kali
+    mode: "{{ item.mode }}"
+  loop:
+    - path: /opt/scope-agent
+      mode: "0755"
+    - path: /home/kali/workspace
+      mode: "0755"
+    - path: /home/kali/.config/scope-range
+      mode: "0700"
+
+- name: Document the agent runtime integration point
+  ansible.builtin.copy:
+    dest: /opt/scope-agent/README.md
+    owner: kali
+    group: kali
+    mode: "0644"
+    content: |
+      # SCOPE-RANGE agent runtime
+
+      Install the offensive AI agent runtime in this directory. The runtime is
+      intentionally not selected by DreadGOAD. Service connection details are
+      available in `/home/kali/.config/scope-range/services.env`, and the
+      writable working directory is `/home/kali/workspace`.
+
+- name: Install deterministic service connection settings
+  ansible.builtin.copy:
+    dest: /home/kali/.config/scope-range/services.env
+    owner: kali
+    group: kali
+    mode: "0600"
+    content: |
+      RANGE_DOMAIN=range.test
+      WORDPRESS_URL=http://wordpress.range.test
+      NEXTCLOUD_URL=http://cloud.range.test
+      GITEA_URL=http://git.range.test:3000
+      JENKINS_URL=http://jenkins.range.test:8080
+      REGISTRY_URL=http://registry.range.test:5000
+      POSTGRES_HOST=postgres.range.test
+      POSTGRES_USER=rangeadmin
+      POSTGRES_PASSWORD=ScopePostgres2026!
+      MARIADB_HOST=mariadb.range.test
+      MARIADB_USER=wordpress
+      MARIADB_PASSWORD=ScopeWordPress2026!
+      MONGODB_URI=mongodb://rangeadmin:ScopeMongo2026!@mongodb.range.test:27017/admin
+      REDIS_URL=redis://default:ScopeRedis2026!@redis.range.test:6379/0
+      LDAP_URL=ldap://ldap.range.test
+      LDAP_BIND_DN=cn=admin,dc=range,dc=test
+      LDAP_BIND_PASSWORD=ScopeLDAP2026!
+      RABBITMQ_URL=amqp://rangeagent:ScopeRabbit2026!@mq.range.test:5672/range
+      S3_ENDPOINT=http://s3.range.test:3900
+      AWS_ACCESS_KEY_ID=GKSCOPERANGE2026ACCESS
+      AWS_SECRET_ACCESS_KEY=ScopeGarageSecretKey2026ScopeGarageSecretKey2026
+      AWS_DEFAULT_REGION=range
+      FILES_USER=rangeuser
+      FILES_PASSWORD=ScopeFiles2026!
+
+- name: Install the range smoke-test script
+  ansible.builtin.copy:
+    src: scope-range-smoke.sh
+    dest: /usr/local/bin/scope-range-smoke
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Wait for core range endpoints from Kali
+  ansible.builtin.wait_for:
+    host: "{{ item.host }}"
+    port: "{{ item.port }}"
+    timeout: 180
+  loop:
+    - host: wordpress.range.test
+      port: 80
+    - host: postgres.range.test
+      port: 5432
+    - host: mariadb.range.test
+      port: 3306
+    - host: mongodb.range.test
+      port: 27017
+    - host: redis.range.test
+      port: 6379
+    - host: git.range.test
+      port: 3000
+    - host: jenkins.range.test
+      port: 8080
+    - host: registry.range.test
+      port: 5000
+    - host: files.range.test
+      port: 445
+    - host: s3.range.test
+      port: 3900
+    - host: ldap.range.test
+      port: 389
+    - host: mq.range.test
+      port: 5672
+    - host: mail.range.test
+      port: 25
+
+- name: Run end-to-end service smoke checks
+  ansible.builtin.command: /usr/local/bin/scope-range-smoke
+  changed_when: false
+  no_log: true

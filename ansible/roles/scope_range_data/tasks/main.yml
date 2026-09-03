@@ -1,0 +1,91 @@
+---
+- name: Create database service directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /opt/scope-range/data
+    - /opt/scope-range/data/init
+    - /srv/range/postgres
+    - /srv/range/mariadb
+    - /srv/range/redis
+
+- name: Create the MongoDB data directory with its runtime ownership
+  ansible.builtin.file:
+    path: /srv/range/mongodb
+    state: directory
+    owner: "999"
+    group: root
+    mode: "0755"
+
+- name: Install database initialization assets
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "/opt/scope-range/data/init/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "{{ item.mode }}"
+  loop:
+    - src: init-postgres.sh
+      dest: init-postgres.sh
+      mode: "0755"
+    - src: init-mariadb.sql
+      dest: init-mariadb.sql
+      mode: "0644"
+    - src: init-mongo.js
+      dest: init-mongo.js
+      mode: "0644"
+
+- name: Install the database Compose definition
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: /opt/scope-range/data/compose.yaml
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Start database services
+  ansible.builtin.command:
+    cmd: docker compose up -d --remove-orphans
+    chdir: /opt/scope-range/data
+  register: database_compose
+  changed_when: >-
+    'Started' in database_compose.stderr or
+    'Created' in database_compose.stderr or
+    'Recreated' in database_compose.stderr
+
+- name: Wait for database ports
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ item }}"
+    timeout: 180
+  loop:
+    - 5432
+    - 3306
+    - 27017
+    - 6379
+
+- name: Seed synthetic Redis state
+  ansible.builtin.command: >-
+    docker exec scope-redis redis-cli -a ScopeRedis2026!
+    MSET session:alice active session:bob expired job:42 queued
+  register: redis_seed
+  changed_when: "'OK' in redis_seed.stdout"
+  no_log: true
+
+- name: Verify PostgreSQL is ready
+  ansible.builtin.command: docker exec scope-postgres pg_isready -U rangeadmin
+  changed_when: false
+
+- name: Verify MongoDB is ready
+  ansible.builtin.command: >-
+    docker exec scope-mongodb mongosh --quiet
+    --username rangeadmin --password ScopeMongo2026!
+    --authenticationDatabase admin --eval 'db.runCommand({ ping: 1 }).ok'
+  register: mongodb_health
+  changed_when: false
+  failed_when: mongodb_health.stdout | trim != '1'
+  no_log: true

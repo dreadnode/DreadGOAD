@@ -1,0 +1,22 @@
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "sqlite"
+replication_factor = 1
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "10.50.10.50:3901"
+rpc_secret = "928f4fbf997f3053270ac460e85cf56b5f3f77ffef21c4e584081643313b4ba1"
+
+[s3_api]
+s3_region = "range"
+api_bind_addr = "[::]:3900"
+root_domain = ".s3.range.test"
+
+[s3_web]
+bind_addr = "[::]:3902"
+root_domain = ".web.range.test"
+index = "index.html"
+
+[admin]
+api_bind_addr = "[::]:3903"
+admin_token = "ScopeGarageAdmin2026"
+metrics_token = "ScopeGarageMetrics2026"

@@ -1,0 +1,27 @@
+$TTL 300
+@ IN SOA services01.range.test. admin.range.test. (
+  2026082301 300 60 86400 300
+)
+@          IN NS services01.range.test.
+kali01     IN A 10.50.10.10
+web01      IN A 10.50.10.20
+wordpress  IN A 10.50.10.20
+cloud      IN A 10.50.10.20
+data01     IN A 10.50.10.30
+postgres   IN A 10.50.10.30
+mariadb    IN A 10.50.10.30
+mongodb    IN A 10.50.10.30
+redis      IN A 10.50.10.30
+dev01      IN A 10.50.10.40
+git        IN A 10.50.10.40
+jenkins    IN A 10.50.10.40
+registry   IN A 10.50.10.40
+storage01  IN A 10.50.10.50
+s3         IN A 10.50.10.50
+files      IN A 10.50.10.50
+services01 IN A 10.50.10.60
+dns        IN A 10.50.10.60
+ldap       IN A 10.50.10.60
+mq         IN A 10.50.10.60
+mail       IN A 10.50.10.60
+@          IN MX 10 mail.range.test.

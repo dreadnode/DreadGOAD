@@ -115,7 +115,7 @@ func materializeLabConfig(cfg *config.Config) error {
 		return fmt.Errorf("resolve lab config: %w", err)
 	}
 
-	dataDir := filepath.Join(cfg.ProjectRoot, "ad", "GOAD", "data")
+	dataDir := filepath.Join(cfg.LabPath(), "data")
 	expected := filepath.Join(dataDir, cfg.Env+"-config.json")
 
 	if resolved == expected {
@@ -172,9 +172,9 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 	exclude, _ := cmd.Flags().GetString("exclude")
 	deployment := resolveDeployment(cmd, cfg)
 
-	region := cfg.Region
-	if region == "" {
-		return fmt.Errorf("azure region not configured: pass --region (e.g. --region centralus) or set 'region' in dreadgoad.yaml")
+	region, err := cfg.ResolveRegion()
+	if err != nil {
+		return fmt.Errorf("resolve Azure region: %w", err)
 	}
 
 	opts := terragrunt.Options{
@@ -535,9 +535,7 @@ func runInfraValidate(cmd *cobra.Command, args []string) error {
 	case "proxmox":
 		return runInfraValidateProxmox(cfg)
 	case "azure":
-		fmt.Println("Azure validation: structural validation is AWS-specific; skipping.")
-		fmt.Println("Run 'az account show' to confirm CLI auth and 'terragrunt init' to validate the module.")
-		return nil
+		return runInfraValidateAzure(cfg)
 	}
 
 	deployment := resolveDeployment(cmd, cfg)
@@ -554,6 +552,52 @@ func runInfraValidate(cmd *cobra.Command, args []string) error {
 	if !result.OK() {
 		return fmt.Errorf("validation failed")
 	}
+	return nil
+}
+
+func runInfraValidateAzure(cfg *config.Config) error {
+	if cfg.ResolvedLab() != "SCOPE-RANGE" {
+		fmt.Println("Azure validation: structural validation is only defined for SCOPE-RANGE; skipping.")
+		fmt.Println("Run 'az account show' to confirm CLI auth and 'terragrunt hcl validate' for the deployment tree.")
+		return nil
+	}
+
+	region, err := cfg.ResolveRegion()
+	if err != nil {
+		return fmt.Errorf("resolve Azure region: %w", err)
+	}
+	workDir := filepath.Join(
+		cfg.ProjectRoot,
+		"infra",
+		"azure",
+		cfg.ResolvedDeployment(),
+		cfg.Env,
+		region,
+	)
+	requiredUnits := []string{
+		"access",
+		"network",
+		"bastion",
+		"kali",
+		"hosts/data01",
+		"hosts/dev01",
+		"hosts/services01",
+		"hosts/storage01",
+		"hosts/web01",
+	}
+	var missing []string
+	for _, unit := range requiredUnits {
+		path := filepath.Join(workDir, unit, "terragrunt.hcl")
+		if info, statErr := os.Stat(path); statErr != nil || info.IsDir() {
+			missing = append(missing, unit)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("SCOPE-RANGE Azure deployment is incomplete in %s; missing units: %s", workDir, strings.Join(missing, ", "))
+	}
+
+	color.Green("SCOPE-RANGE Azure deployment structure is complete (%s/%s).", cfg.Env, region)
+	fmt.Println("Run './scripts/validate-scope-range.sh' for Terraform, Terragrunt, Ansible, and Go validation.")
 	return nil
 }
 
@@ -859,7 +903,7 @@ func resolveDeployment(cmd *cobra.Command, cfg *config.Config) string {
 	if d, _ := cmd.Flags().GetString("deployment"); d != "" {
 		return d
 	}
-	return cfg.Infra.Deployment
+	return cfg.ResolvedDeployment()
 }
 
 func printIndividualResults(results []terragrunt.Result) error {

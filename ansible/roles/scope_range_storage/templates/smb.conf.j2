@@ -1,0 +1,18 @@
+[global]
+  workgroup = RANGE
+  server string = SCOPE-RANGE file services
+  map to guest = Bad User
+  min protocol = SMB2
+
+[shared]
+  path = /srv/range/shared
+  browsable = yes
+  writable = yes
+  guest ok = yes
+  force user = rangeuser
+
+[research]
+  path = /srv/range/shared/research
+  browsable = yes
+  writable = yes
+  valid users = rangeuser

@@ -97,11 +97,11 @@ func runLabStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(instances) == 0 {
-		fmt.Printf("No GOAD instances found for env=%s\n", cfg.Env)
+		fmt.Printf("No %s instances found for env=%s\n", cfg.ResolvedLab(), cfg.Env)
 		return nil
 	}
 
-	fmt.Printf("GOAD Lab Status (%s, provider: %s)\n", cfg.Env, prov.Name())
+	fmt.Printf("%s Lab Status (%s, provider: %s)\n", cfg.ResolvedLab(), cfg.Env, prov.Name())
 	fmt.Printf("%-40s %-24s %-15s %s\n", "NAME", "ID", "STATE", "PRIVATE IP")
 	fmt.Println(strings.Repeat("-", 95))
 
@@ -140,7 +140,7 @@ func runLabAction(action string) func(*cobra.Command, []string) error {
 		}
 
 		if len(instances) == 0 {
-			return fmt.Errorf("no GOAD instances found for env=%s", cfg.Env)
+			return fmt.Errorf("no %s instances found for env=%s", cfg.ResolvedLab(), cfg.Env)
 		}
 
 		var ids []string

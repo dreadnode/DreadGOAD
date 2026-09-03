@@ -1,0 +1,78 @@
+---
+- name: Set the expected hostname
+  ansible.builtin.hostname:
+    name: "{{ inventory_hostname }}"
+
+- name: Install common Linux and container tooling
+  ansible.builtin.apt:
+    name:
+      - ca-certificates
+      - curl
+      - dnsutils
+      - docker.io
+      - "{{ 'docker-compose' if ansible_distribution == 'Kali' else 'docker-compose-v2' }}"
+      - git
+      - jq
+      - netcat-openbsd
+      - python3
+      - python3-apt
+      - rsync
+      - unzip
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Enable Docker
+  ansible.builtin.service:
+    name: docker
+    state: started
+    enabled: true
+
+- name: Permit the management user to run Docker
+  ansible.builtin.user:
+    name: "{{ ansible_user }}"
+    groups: docker
+    append: true
+
+- name: Create range application directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /opt/scope-range
+    - /srv/range
+
+- name: Check for the Azure data disk
+  ansible.builtin.stat:
+    path: /dev/disk/azure/scsi1/lun0
+  register: scope_data_disk
+
+- name: Format the Azure data disk when present
+  community.general.filesystem:
+    fstype: ext4
+    dev: /dev/disk/azure/scsi1/lun0
+  when: scope_data_disk.stat.exists
+
+- name: Mount the range data disk
+  ansible.posix.mount:
+    path: /srv/range
+    src: /dev/disk/azure/scsi1/lun0
+    fstype: ext4
+    opts: defaults,nofail
+    state: mounted
+  when: scope_data_disk.stat.exists
+
+- name: Publish deterministic bootstrap host mappings
+  ansible.builtin.blockinfile:
+    path: /etc/hosts
+    marker: "# {mark} SCOPE-RANGE"
+    block: |
+      10.50.10.10 kali01 kali01.range.test
+      10.50.10.20 web01 web01.range.test wordpress.range.test cloud.range.test
+      10.50.10.30 data01 data01.range.test postgres.range.test mariadb.range.test mongodb.range.test redis.range.test
+      10.50.10.40 dev01 dev01.range.test git.range.test jenkins.range.test registry.range.test
+      10.50.10.50 storage01 storage01.range.test s3.range.test files.range.test
+      10.50.10.60 services01 services01.range.test dns.range.test ldap.range.test mq.range.test mail.range.test

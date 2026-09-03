@@ -1,0 +1,33 @@
+services:
+  wordpress:
+    image: wordpress:6.7.2-php8.3-apache
+    container_name: scope-wordpress
+    restart: unless-stopped
+    environment:
+      WORDPRESS_DB_HOST: 10.50.10.30:3306
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: ScopeWordPress2026!
+      WORDPRESS_DB_NAME: wordpress
+    ports:
+      - "127.0.0.1:8080:80"
+    volumes:
+      - /srv/range/wordpress:/var/www/html
+      - /opt/scope-range/web/wp-cli.phar:/usr/local/bin/wp:ro
+
+  nextcloud:
+    image: nextcloud:30.0.5-apache
+    container_name: scope-nextcloud
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: 10.50.10.30
+      POSTGRES_DB: nextcloud
+      POSTGRES_USER: rangeadmin
+      POSTGRES_PASSWORD: ScopePostgres2026!
+      NEXTCLOUD_ADMIN_USER: rangeadmin
+      NEXTCLOUD_ADMIN_PASSWORD: ScopeNextcloud2026!
+      NEXTCLOUD_TRUSTED_DOMAINS: cloud.range.test 10.50.10.20
+    ports:
+      - "127.0.0.1:8081:80"
+    volumes:
+      - /srv/range/nextcloud:/var/www/html
+      - /mnt/range-shared:/mnt/range-shared

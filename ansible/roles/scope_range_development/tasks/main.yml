@@ -1,0 +1,180 @@
+---
+- name: Create development service directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - /opt/scope-range/development
+    - /srv/range/gitea
+    - /srv/range/gitea-runner
+    - /srv/range/registry
+
+- name: Allow Jenkins to own its data directory
+  ansible.builtin.file:
+    path: /srv/range/jenkins
+    state: directory
+    owner: "1000"
+    group: "1000"
+    mode: "0755"
+
+- name: Install the development Compose definition
+  ansible.builtin.template:
+    src: compose.yaml.j2
+    dest: /opt/scope-range/development/compose.yaml
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Start development services
+  ansible.builtin.command:
+    cmd: docker compose up -d --remove-orphans
+    chdir: /opt/scope-range/development
+  register: development_compose
+  changed_when: >-
+    'Started' in development_compose.stderr or
+    'Created' in development_compose.stderr or
+    'Recreated' in development_compose.stderr
+
+- name: Wait for development service ports
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: "{{ item }}"
+    timeout: 240
+  loop:
+    - 3000
+    - 5000
+    - 8080
+
+- name: Check for the synthetic Gitea administrator
+  ansible.builtin.command: >-
+    docker exec --user git scope-gitea
+    gitea admin user list --admin
+  register: gitea_admins
+  changed_when: false
+
+- name: Create the synthetic Gitea administrator
+  ansible.builtin.command: >-
+    docker exec --user git scope-gitea
+    gitea admin user create
+    --username rangeadmin
+    --password ScopeGitea2026!
+    --email rangeadmin@range.test
+    --admin --must-change-password=false
+  when: "'rangeadmin' not in gitea_admins.stdout"
+  no_log: true
+
+- name: Wait for the range LDAP service from the development host
+  ansible.builtin.wait_for:
+    host: ldap.range.test
+    port: 389
+    timeout: 120
+
+- name: List Gitea external authentication sources
+  ansible.builtin.command: >-
+    docker exec --user git scope-gitea
+    gitea admin auth list
+  register: gitea_auth_sources
+  changed_when: false
+
+- name: Connect Gitea authentication to the range LDAP directory
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - --user
+      - git
+      - scope-gitea
+      - gitea
+      - admin
+      - auth
+      - add-ldap-simple
+      - --name
+      - scope-range-ldap
+      - --security-protocol
+      - unencrypted
+      - --host
+      - ldap.range.test
+      - --port
+      - "389"
+      - --user-dn
+      - uid=%s,ou=people,dc=range,dc=test
+      - --user-filter
+      - "(&(objectClass=inetOrgPerson)(uid=%s))"
+      - --username-attribute
+      - uid
+      - --surname-attribute
+      - sn
+      - --email-attribute
+      - mail
+  when: >-
+    gitea_auth_sources.stdout
+    is not search('(?m)^\s*\d+\s+scope-range-ldap\s+')
+
+- name: Confirm the Gitea LDAP source exists
+  ansible.builtin.command: >-
+    docker exec --user git scope-gitea
+    gitea admin auth list
+  register: gitea_auth_sources_after
+  changed_when: false
+  failed_when: >-
+    gitea_auth_sources_after.stdout
+    is not search('(?m)^\s*\d+\s+scope-range-ldap\s+')
+
+- name: Create the fictional Gitea repository
+  ansible.builtin.uri:
+    url: http://127.0.0.1:3000/api/v1/user/repos
+    method: POST
+    user: rangeadmin
+    password: ScopeGitea2026!
+    force_basic_auth: true
+    body_format: json
+    body:
+      name: orchid-control-plane
+      description: Synthetic automation and service configuration for Project ORCHID
+      private: false
+    status_code:
+      - 201
+      - 409
+  no_log: true
+
+- name: Check for the Gitea Actions runner
+  ansible.builtin.command: docker inspect scope-gitea-runner
+  register: gitea_runner
+  changed_when: false
+  failed_when: false
+
+- name: Register and start the Gitea Actions runner
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      token="$(docker exec --user git scope-gitea gitea actions generate-runner-token)"
+      docker run -d \
+        --name scope-gitea-runner \
+        --restart unless-stopped \
+        -e GITEA_INSTANCE_URL=http://10.50.10.40:3000 \
+        -e GITEA_RUNNER_REGISTRATION_TOKEN="$token" \
+        -e GITEA_RUNNER_NAME=scope-runner-01 \
+        -v /srv/range/gitea-runner:/data \
+        -v /var/run/docker.sock:/var/run/docker.sock \
+        gitea/act_runner:0.2.11
+    executable: /bin/bash
+  when: gitea_runner.rc != 0
+  no_log: true
+
+- name: Verify Gitea API health
+  ansible.builtin.uri:
+    url: http://127.0.0.1:3000/api/healthz
+    status_code: 200
+
+- name: Verify the OCI registry
+  ansible.builtin.uri:
+    url: http://127.0.0.1:5000/v2/
+    status_code: 200
+
+- name: Verify Jenkins is serving HTTP
+  ansible.builtin.uri:
+    url: http://127.0.0.1:8080/login
+    status_code: 200

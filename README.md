@@ -31,6 +31,7 @@ DreadGOAD extends the upstream GOAD project with:
 | [SCCM](ad/SCCM/) | 4 | 1 | 1 | MECM/SCCM attack scenarios |
 | [NHA](ad/NHA/) | 5 | 2 | 2 | Ninja Hacker Academy -- challenge mode |
 | [DRACARYS](ad/DRACARYS/) | 3 | 1 | 1 | Training challenge variant |
+| [SCOPE-RANGE](ad/SCOPE-RANGE/) | 6 | 0 | 0 | Linux service range for offensive AI agent scope testing |
 | [TEMPLATE](ad/TEMPLATE/) | 2 | 1 | 1 | Scaffold for authoring your own lab |
 
 Vulnerability coverage varies by lab. The full GOAD lab is the richest, planting
@@ -97,6 +98,7 @@ Create a randomized copy of any lab with unique names but identical attack paths
 - [Validation guide](docs/validation.md) -- automated vulnerability validation (with live dashboard and polling)
 - [Scoreboard guide](docs/scoreboard.md) -- live engagement status board (answer key + agent report verification)
 - [Provider guides](docs/mkdocs/docs/providers/) -- VirtualBox, VMware, Proxmox, AWS, Azure, Ludus
+- [SCOPE-RANGE on Azure](docs/scope-range.md) -- six-host Linux service range deployment and operation
 - [AWS AMI build & deploy workflow](docs/mkdocs/docs/providers/aws-ami-workflow.md) -- end-to-end warpgate + Terragrunt + Ansible
 - [Extension guides](docs/mkdocs/docs/extensions/) -- ELK, Exchange, Wazuh, hardened workstation
 - [Architecture diagram](docs/architecture.svg)
