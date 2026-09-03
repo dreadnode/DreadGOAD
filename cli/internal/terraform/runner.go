@@ -28,6 +28,15 @@ type Options struct {
 
 // Run executes a single terraform command.
 func Run(ctx context.Context, opts Options) error {
+	if opts.Action != "init" {
+		initOpts := opts
+		initOpts.Action = "init"
+		initOpts.AutoApprove = false
+		if err := Run(ctx, initOpts); err != nil {
+			return fmt.Errorf("pre-%s init -upgrade: %w", opts.Action, err)
+		}
+	}
+
 	args := buildArgs(opts)
 
 	slog.Info("running terraform",

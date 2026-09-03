@@ -13,6 +13,7 @@ environments for penetration testing and security research.
 DreadGOAD extends the upstream GOAD project with:
 
 - **Go CLI (`dreadgoad`)** -- single binary for provisioning, health checks, trust verification, and vulnerability validation
+- **Web console (`dreadgoad-console`)** -- agentic chat UI for building, managing, and validating lab ranges with a live topology view
 - **AWS infrastructure automation** -- Terragrunt/Terraform modules for deploying labs in AWS with SSM-based management (no open ports)
 - **Modular extension system** -- plug-in extensions for ELK, Exchange, Wazuh, Guacamole, and more
 - **Variant generator** -- create graph-isomorphic lab copies with randomized entity names while preserving all attack paths
@@ -90,6 +91,7 @@ Create a randomized copy of any lab with unique names but identical attack paths
 
 ## Documentation
 
+- [Console guide](console/README.md) -- web UI quick start, commands, and environment variables
 - [CLI reference](docs/cli.md) -- command index plus Viper-based config, environment variables, and per-environment settings
 - [Domains and users](docs/domains-and-users.md) -- full network topology, credentials, and attack paths
 - [Vulnerability catalog](docs/GOAD-vulnerabilities-comprehensive.md) -- 50+ vulnerabilities in the full GOAD lab, with exploitation techniques
@@ -109,6 +111,7 @@ DreadGOAD/
 ├── ad/                    # Lab definitions (GOAD, GOAD-Light, MINILAB, SCCM, NHA, ...)
 ├── ansible/               # Ansible collection with 120+ roles and custom modules
 ├── cli/                   # Go CLI source (dreadgoad), including the variant generator
+├── console/               # Web console -- agentic chat + live range topology (Python/TypeScript)
 ├── docs/                  # Documentation and architecture diagrams
 ├── extensions/            # Pluggable lab extensions (ELK, Exchange, Wazuh, ...)
 ├── infra/                 # Terragrunt configurations for AWS deployments

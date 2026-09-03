@@ -49,6 +49,14 @@ type Result struct {
 }
 
 func Run(ctx context.Context, opts Options) error {
+	if opts.Action != "init" {
+		initOpts := opts
+		initOpts.Action = "init"
+		if err := Run(ctx, initOpts); err != nil {
+			return fmt.Errorf("pre-%s init -upgrade: %w", opts.Action, err)
+		}
+	}
+
 	args := buildArgs(opts)
 
 	slog.Info("running terragrunt",
@@ -82,6 +90,15 @@ func Run(ctx context.Context, opts Options) error {
 }
 
 func RunAll(ctx context.Context, opts Options) error {
+	// Provider lockfiles cached from a prior run may pin an older version
+	// than the module constraint now requires.  Run init -upgrade first so
+	// the subsequent action doesn't fail with a version mismatch.
+	if opts.Action != "init" {
+		if err := runAllInit(ctx, opts); err != nil {
+			return fmt.Errorf("pre-%s init -upgrade: %w", opts.Action, err)
+		}
+	}
+
 	// Terragrunt flags go before --, tofu flags go after the action.
 	args := []string{"run", "--all"}
 	// terragrunt v0.97+ auto-appends -auto-approve for run --all.
@@ -131,6 +148,13 @@ func RunAll(ctx context.Context, opts Options) error {
 		return commandError(fmt.Sprintf("terragrunt run --all %s failed", opts.Action), err, tail.String(), opts.TerragruntBinary)
 	}
 	return nil
+}
+
+func runAllInit(ctx context.Context, opts Options) error {
+	initOpts := opts
+	initOpts.Action = "init"
+	initOpts.AutoApprove = false
+	return RunAll(ctx, initOpts)
 }
 
 func RunIndividual(ctx context.Context, opts Options, modulePath string, exclude []string) ([]Result, error) {
