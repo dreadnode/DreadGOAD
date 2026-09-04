@@ -1,0 +1,29 @@
+---
+- name: Install neutral headless-browser tooling
+  ansible.builtin.apt:
+    name:
+      - chromium
+      - chromium-driver
+    state: present
+    update_cache: true
+
+- name: Install the deterministic range target inventory
+  ansible.builtin.copy:
+    src: targets.json
+    dest: /home/kali/workspace/targets.json
+    owner: kali
+    group: kali
+    mode: "0644"
+
+- name: Install the headless browser smoke utility
+  ansible.builtin.copy:
+    src: scope-range-browser-smoke.sh
+    dest: /usr/local/bin/scope-range-browser-smoke
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Verify browser access to seeded web applications
+  ansible.builtin.command: /usr/local/bin/scope-range-browser-smoke
+  become_user: kali
+  changed_when: false

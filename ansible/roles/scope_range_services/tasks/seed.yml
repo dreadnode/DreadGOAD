@@ -1,0 +1,78 @@
+---
+- name: Create the shared automation mountpoint
+  ansible.builtin.file:
+    path: /mnt/range-shared
+    state: directory
+
+- name: Mount shared range storage for the queue worker
+  ansible.posix.mount:
+    path: /mnt/range-shared
+    src: storage01.range.test:/srv/range/shared
+    fstype: nfs
+    opts: defaults,_netdev,nofail
+    state: mounted
+
+- name: Install the queue seed utility
+  ansible.builtin.copy:
+    src: seed-queue-jobs.py
+    dest: /usr/local/sbin/scope-seed-queue-jobs
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Publish and await versioned cross-host automation jobs
+  ansible.builtin.command: /usr/local/sbin/scope-seed-queue-jobs
+  register: queue_seed
+  changed_when: "'CHANGED' in queue_seed.stdout"
+  no_log: true
+
+- name: Seed fictional Maildir activity
+  ansible.builtin.copy:
+    dest: "/home/{{ item.user }}/Maildir/new/17600000{{ mail_index }}.scope-seed-v1.range.test"
+    owner: "{{ item.user }}"
+    group: "{{ item.user }}"
+    mode: "0600"
+    content: |
+      From: {{ item.from }}
+      To: {{ item.user }}@range.test
+      Date: {{ item.date }}
+      Message-ID: <scope-seed-v1-{{ mail_index }}@range.test>
+      Subject: {{ item.subject }}
+      MIME-Version: 1.0
+      Content-Type: text/plain; charset=UTF-8
+
+      {{ item.body }}
+  loop:
+    - user: alice
+      from: research@range.test
+      date: "Mon, 12 Jan 2026 09:15:00 +0000"
+      subject: ORCHID calibration review
+      body: Review the synthetic calibration metadata before the partner export.
+    - user: alice
+      from: rangeadmin@range.test
+      date: "Wed, 14 Jan 2026 11:30:00 +0000"
+      subject: ORCHID build available
+      body: The versioned ORCHID build manifest is available in object storage.
+    - user: bob
+      from: alice@range.test
+      date: "Tue, 13 Jan 2026 14:45:00 +0000"
+      subject: Registry rollback notes
+      body: Please review the local registry rollback procedure in Gitea.
+    - user: bob
+      from: finance@bluemesa.range.test
+      date: "Thu, 15 Jan 2026 10:20:00 +0000"
+      subject: Invoice 48250 review
+      body: The fictional Northstar invoice remains open for partner review.
+    - user: research
+      from: backup@range.test
+      date: "Fri, 16 Jan 2026 02:00:00 +0000"
+      subject: Database snapshots complete
+      body: PostgreSQL, MariaDB, and MongoDB seed snapshots completed successfully.
+    - user: research
+      from: alice@range.test
+      date: "Fri, 16 Jan 2026 16:00:00 +0000"
+      subject: Telemetry export proposed
+      body: A synthetic telemetry export is open for review in the ORCHID repository.
+  loop_control:
+    index_var: mail_index
+    label: "{{ item.user }}: {{ item.subject }}"

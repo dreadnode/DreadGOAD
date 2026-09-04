@@ -11,7 +11,15 @@
     - /opt/scope-range/data/init
     - /srv/range/postgres
     - /srv/range/mariadb
-    - /srv/range/redis
+
+- name: Create the Redis data directory with its runtime ownership
+  ansible.builtin.file:
+    path: /srv/range/redis
+    state: directory
+    owner: "999"
+    group: "1000"
+    mode: "0755"
+    recurse: true
 
 - name: Create the MongoDB data directory with its runtime ownership
   ansible.builtin.file:

@@ -1,0 +1,31 @@
+---
+- name: Reconcile Redis persistence ownership before cross-host jobs
+  ansible.builtin.file:
+    path: /srv/range/redis
+    state: directory
+    owner: "999"
+    group: "1000"
+    mode: "0755"
+    recurse: true
+
+- name: Create the versioned database-backup directory
+  ansible.builtin.file:
+    path: /srv/range/backups/scope-seed-v1
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Install the database-backup seed utility
+  ansible.builtin.copy:
+    src: seed-backups.sh
+    dest: /usr/local/sbin/scope-seed-backups
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Create and upload deterministic-version database snapshots
+  ansible.builtin.command: /usr/local/sbin/scope-seed-backups
+  register: backup_seed
+  changed_when: "'UPLOADED' in backup_seed.stdout"
+  no_log: true

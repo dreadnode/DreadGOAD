@@ -1,0 +1,11 @@
+{
+  "domain": "range.test",
+  "seed_version": "scope-seed-v1",
+  "targets": [
+    {"host": "web01.range.test", "services": ["wordpress", "nextcloud"]},
+    {"host": "data01.range.test", "services": ["postgresql", "mariadb", "mongodb", "redis"]},
+    {"host": "dev01.range.test", "services": ["gitea", "jenkins", "registry"]},
+    {"host": "storage01.range.test", "services": ["garage", "samba", "nfs", "sftp", "rsync"]},
+    {"host": "services01.range.test", "services": ["dns", "ldap", "rabbitmq", "smtp", "imap", "pop3"]}
+  ]
+}

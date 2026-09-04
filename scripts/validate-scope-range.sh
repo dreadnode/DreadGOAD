@@ -12,11 +12,38 @@ trap cleanup EXIT
 cd "$repo_root"
 git diff --check
 
-python3 -m json.tool ad/SCOPE-RANGE/data/validation.json >/dev/null
-env PYTHONPYCACHEPREFIX="$scratch/python-cache" \
-  python3 -m py_compile scripts/validate-scope-range-live.py
+for json_file in \
+  ad/SCOPE-RANGE/data/validation.json \
+  ansible/roles/scope_range_kali/files/targets.json \
+  ansible/roles/scope_range_storage/files/range-assets/orchid/brief.json \
+  ansible/roles/scope_range_storage/files/research-archives/orchid/experiment-summary.json; do
+  python3 -m json.tool "$json_file" >/dev/null
+done
+
+for python_file in \
+  scripts/validate-scope-range-live.py \
+  ansible/roles/scope_range_development/files/seed-gitea.py \
+  ansible/roles/scope_range_development/files/seed-jenkins.py \
+  ansible/roles/scope_range_services/files/queue_worker.py \
+  ansible/roles/scope_range_services/files/seed-queue-jobs.py; do
+  env PYTHONPYCACHEPREFIX="$scratch/python-cache" \
+    python3 -m py_compile "$python_file"
+done
+
+for shell_file in \
+  ansible/roles/scope_range_data/files/seed-backups.sh \
+  ansible/roles/scope_range_kali/files/scope-range-browser-smoke.sh \
+  ansible/roles/scope_range_storage/files/seed-storage.sh; do
+  bash -n "$shell_file"
+done
+
 env PYTHONPYCACHEPREFIX="$scratch/python-cache" \
   python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+env PYTHONPYCACHEPREFIX="$scratch/python-cache" \
+  PYTHONPATH=ansible/roles/scope_range_development/files/orchid-control-plane \
+  python3 -m unittest discover \
+    -s ansible/roles/scope_range_development/files/orchid-control-plane/tests \
+    -p 'test_*.py'
 
 tofu fmt -check -recursive modules/terraform-azure-linux-instance
 tofu fmt -check -recursive modules/terraform-local-ssh-key
@@ -47,7 +74,8 @@ for playbook in \
   scope-services.yml \
   scope-data-storage.yml \
   scope-dev-web.yml \
-  scope-kali.yml; do
+  scope-kali.yml \
+  scope-seed.yml; do
   env \
     ANSIBLE_CONFIG="$repo_root/ansible/ansible.cfg" \
     ANSIBLE_COLLECTIONS_PATH="$scratch/collections" \

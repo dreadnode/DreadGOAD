@@ -4,6 +4,7 @@ SCOPE-RANGE:
   - scope-data-storage.yml
   - scope-dev-web.yml
   - scope-kali.yml
+  - scope-seed.yml
 
 NHA:
   - build.yml

@@ -1,0 +1,95 @@
+---
+- name: Create the versioned development seed directory
+  ansible.builtin.file:
+    path: /opt/scope-range/development/seed/orchid-control-plane
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Install the deterministic ORCHID repository source
+  ansible.builtin.copy:
+    src: orchid-control-plane/
+    dest: /opt/scope-range/development/seed/orchid-control-plane/
+    owner: root
+    group: root
+    mode: preserve
+
+- name: Install the Gitea seed utility
+  ansible.builtin.copy:
+    src: seed-gitea.py
+    dest: /usr/local/sbin/scope-seed-gitea
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Seed Gitea collaboration history and build output
+  ansible.builtin.command: /usr/local/sbin/scope-seed-gitea
+  register: gitea_seed
+  changed_when: "'CHANGED' in gitea_seed.stdout"
+  no_log: true
+
+- name: Install the pinned Jenkins seed plugin manifest
+  ansible.builtin.copy:
+    src: jenkins-plugins.txt
+    dest: /srv/range/jenkins/scope-seed-plugins.txt
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Check whether the pinned Jenkins credentials-binding plugin is installed
+  ansible.builtin.command: >-
+    docker exec --user jenkins scope-jenkins sh -c
+    'jenkins-plugin-cli
+    --plugin-download-directory /var/jenkins_home/plugins --list 2>/dev/null |
+    grep -Fx "credentials-binding 728.v902a_273b_8947"'
+  register: jenkins_seed_plugin
+  changed_when: false
+  failed_when: false
+
+- name: Install the pinned Jenkins credentials-binding plugin
+  ansible.builtin.command: >-
+    docker exec --interactive --user jenkins scope-jenkins
+    jenkins-plugin-cli
+    --plugin-download-directory /var/jenkins_home/plugins
+    --plugin-file /var/jenkins_home/scope-seed-plugins.txt
+    --latest=false
+  when: jenkins_seed_plugin.rc != 0
+  register: jenkins_plugin_install
+  changed_when: jenkins_plugin_install.rc == 0
+
+- name: Restart Jenkins after installing seed plugins
+  ansible.builtin.command: docker restart scope-jenkins
+  when: jenkins_plugin_install is changed
+  changed_when: true
+
+- name: Wait for Jenkins after seed plugin installation
+  ansible.builtin.uri:
+    url: http://127.0.0.1:8080/login
+    status_code: 200
+  register: jenkins_seed_ready
+  retries: 60
+  delay: 5
+  until: jenkins_seed_ready.status == 200
+
+- name: Install the Jenkins seed job configuration
+  ansible.builtin.copy:
+    src: orchid-nightly-export.xml
+    dest: /opt/scope-range/development/orchid-nightly-export.xml
+    owner: root
+    group: root
+    mode: "0600"
+
+- name: Install the Jenkins seed utility
+  ansible.builtin.copy:
+    src: seed-jenkins.py
+    dest: /usr/local/sbin/scope-seed-jenkins
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Seed Jenkins credentials, job, and successful build
+  ansible.builtin.command: /usr/local/sbin/scope-seed-jenkins
+  register: jenkins_seed
+  changed_when: "'CHANGED' in jenkins_seed.stdout"
+  no_log: true

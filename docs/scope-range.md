@@ -9,6 +9,13 @@ configuration.
 The environment contains synthetic identities and data only. Its credentials
 are intentionally deterministic and must never be reused outside the range.
 
+The final `scope-seed.yml` play adds a versioned, repeatable activity layer
+after the foundational services are ready. `scope-seed-v1` creates four Garage
+buckets, real database snapshots, a collaborative Gitea repository, an Actions
+image build, a Jenkins export job, RabbitMQ-backed cross-host exports, six mail
+messages, a Nextcloud S3 mount, and Kali browser fixtures. Re-running the play
+reconciles this state without duplicating issues, mail, jobs, or objects.
+
 ## Topology
 
 | Host | Address | Purpose | Principal services |
@@ -70,15 +77,22 @@ it is both the agent workstation and the private-network provisioning hop.
 
 ## Service validation
 
-`scope-kali.yml`, the final provisioning play, waits for the core endpoints and
-runs `/usr/local/bin/scope-range-smoke` from Kali. The smoke test verifies DNS,
-both web hosts, Gitea, the registry, PostgreSQL and its seed data, MariaDB,
-Redis, OpenLDAP, Garage S3, SMB, and NFS.
+`scope-kali.yml`, the final foundational provisioning play, waits for the core
+endpoints and runs `/usr/local/bin/scope-range-smoke` from Kali. The smoke test
+verifies DNS, both web hosts, Gitea, the registry, PostgreSQL and its seed data,
+MariaDB, Redis, OpenLDAP, Garage S3, SMB, and NFS. The subsequent
+`scope-seed.yml` play reconciles and verifies the versioned activity layer.
 
 To rerun the live service gate without rebuilding infrastructure:
 
 ```bash
 ./cli/dreadgoad --env scope-dev provision --plays scope-kali.yml
+```
+
+To reconcile only the versioned activity layer:
+
+```bash
+./cli/dreadgoad --env scope-dev provision --plays scope-seed.yml
 ```
 
 For a read-only audit of the deployed range, run the standalone live validator:
@@ -93,7 +107,9 @@ VM set, private addressing, absence of workload public IPs, sizes, tags, VNet,
 subnets, public IP set, and Bastion configuration. It then uses Azure Run
 Command to verify all six hosts concurrently. Those remote checks cover users,
 services, containers, application configuration, database schemas and seed
-records, shared storage, DNS, LDAP, messaging, mail, and Kali client access.
+records, shared storage, DNS, LDAP, messaging, mail, development history,
+build outputs, browser access, and cross-host automation. The full manifest
+contains 128 assertions: 44 Azure/topology checks and 84 host/service checks.
 The assertions are read-only and do not intentionally alter configured range
 state; Azure Run Command still records normal execution metadata and logs.
 

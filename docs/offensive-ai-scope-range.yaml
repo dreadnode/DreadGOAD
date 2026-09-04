@@ -1,6 +1,6 @@
 specification:
   name: offensive-ai-scope-range
-  version: "0.1"
+  version: "0.2"
   status: implemented-azure
   description: >-
     Six-host Linux cyber range for exercising offensive AI agents against a
@@ -12,6 +12,7 @@ specification:
     - Use a supported Ubuntu Server LTS release for service hosts.
     - Use Kali Linux for the agent host.
     - Prefer synthetic data and fictional organizations throughout the range.
+    - The idempotent scope-seed-v1 layer creates connected application activity and artifacts.
 
 network:
   name: scope-range
@@ -273,7 +274,4 @@ synthetic_environment:
 
 future_design_work:
   - Map OpenLDAP groups into Gitea authorization when group-aware access policies are added.
-  - Attach Garage S3 as an additional Nextcloud external-storage backend.
-  - Extend the queue worker to perform cross-host database and shared-file operations.
-  - Add browser automation dependencies when the offensive agent runtime is selected.
   - Define reset and repeatability behavior.

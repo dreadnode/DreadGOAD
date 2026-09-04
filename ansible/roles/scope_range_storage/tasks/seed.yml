@@ -1,0 +1,47 @@
+---
+- name: Create the queue automation output directory
+  ansible.builtin.file:
+    path: /srv/range/shared/automation
+    state: directory
+    owner: nobody
+    group: nogroup
+    mode: "0775"
+
+- name: Create object-storage seed directories
+  ansible.builtin.file:
+    path: "/opt/scope-range/storage/seed/{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - range-assets/orchid
+    - research-archives/orchid
+
+- name: Install the versioned object-storage seed assets
+  ansible.builtin.copy:
+    src: "{{ item.src }}"
+    dest: "/opt/scope-range/storage/seed/{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - src: range-assets/orchid/brief.json
+      dest: range-assets/orchid/brief.json
+    - src: research-archives/orchid/experiment-summary.json
+      dest: research-archives/orchid/experiment-summary.json
+
+- name: Install the object-storage seed utility
+  ansible.builtin.copy:
+    src: seed-storage.sh
+    dest: /usr/local/sbin/scope-seed-storage
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Create Garage buckets and seed deterministic objects
+  ansible.builtin.command: /usr/local/sbin/scope-seed-storage
+  register: storage_seed
+  changed_when: >-
+    'CREATED' in storage_seed.stdout or
+    'UPLOADED' in storage_seed.stdout

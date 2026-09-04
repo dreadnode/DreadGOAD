@@ -127,7 +127,7 @@ class ManifestTests(unittest.TestCase):
             set(hosts),
             {"kali01", "web01", "data01", "dev01", "storage01", "services01"},
         )
-        self.assertEqual(sum(len(host["checks"]) for host in hosts.values()), 62)
+        self.assertEqual(sum(len(host["checks"]) for host in hosts.values()), 84)
         self.assertTrue(
             all(
                 validator.select_host_checks(host, True)["checks"]
@@ -147,6 +147,14 @@ class ManifestTests(unittest.TestCase):
                 "synthetic users can bind and have expected group membership",
                 "queue worker is consuming from range-jobs",
                 "synthetic mail users authenticate through Dovecot",
+                "headless browser reaches seeded web applications",
+                "seeded Garage object is readable through WebDAV",
+                "all versioned queue jobs have completion markers",
+                "ORCHID issue tracking fixtures are exact",
+                "seeded credentials and successful export build are retained",
+                "three database backups are usable",
+                "three cross-host exports contain versioned data",
+                "six versioned collaboration messages are present",
             }.issubset(check_names)
         )
         persistent_mounts = [

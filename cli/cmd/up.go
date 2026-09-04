@@ -363,7 +363,7 @@ func runUpHealthCheck(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if cfg.ResolvedLab() == "SCOPE-RANGE" {
-		fmt.Println("SCOPE-RANGE service checks passed in the final scope-kali.yml provisioning play.")
+		fmt.Println("SCOPE-RANGE foundational and versioned seed checks passed during provisioning.")
 		return nil
 	}
 	return runHealthCheck(cmd, args)

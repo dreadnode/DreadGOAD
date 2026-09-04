@@ -1,0 +1,60 @@
+---
+- name: Seed SCOPE-RANGE object storage
+  hosts: storage
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run the storage seed entrypoint
+      ansible.builtin.include_role:
+        name: dreadnode.goad.scope_range_storage
+        tasks_from: seed
+
+- name: Seed SCOPE-RANGE source control and build systems
+  hosts: development
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run the development seed entrypoint
+      ansible.builtin.include_role:
+        name: dreadnode.goad.scope_range_development
+        tasks_from: seed
+
+- name: Seed SCOPE-RANGE database backups
+  hosts: data
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run the database seed entrypoint
+      ansible.builtin.include_role:
+        name: dreadnode.goad.scope_range_data
+        tasks_from: seed
+
+- name: Seed SCOPE-RANGE automation and mail activity
+  hosts: infrastructure_services
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run the services seed entrypoint
+      ansible.builtin.include_role:
+        name: dreadnode.goad.scope_range_services
+        tasks_from: seed
+
+- name: Attach seeded S3 storage to Nextcloud
+  hosts: web
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run the web seed entrypoint
+      ansible.builtin.include_role:
+        name: dreadnode.goad.scope_range_web
+        tasks_from: seed
+
+- name: Seed SCOPE-RANGE agent workstation fixtures
+  hosts: attack_box
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run the Kali seed entrypoint
+      ansible.builtin.include_role:
+        name: dreadnode.goad.scope_range_kali
+        tasks_from: seed

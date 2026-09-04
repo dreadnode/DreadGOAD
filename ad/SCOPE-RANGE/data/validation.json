@@ -78,6 +78,25 @@
           "command": "for endpoint in 'mongodb.range.test 27017' 'jenkins.range.test 8080' 'mq.range.test 15672' 'mail.range.test 143' 'files.range.test 873'; do set -- $endpoint; timeout 5 bash -c \"</dev/tcp/$1/$2\" || exit 1; done"
         },
         {
+          "category": "Agent",
+          "name": "neutral Chromium tooling is installed",
+          "quick": true,
+          "command": "command -v chromium >/dev/null && command -v chromedriver >/dev/null"
+        },
+        {
+          "category": "Agent",
+          "name": "versioned target inventory covers all workload hosts",
+          "quick": true,
+          "command": "jq -e '.seed_version == \"scope-seed-v1\" and (.targets | length == 5) and ([.targets[].host] | unique | length == 5)' /home/kali/workspace/targets.json >/dev/null"
+        },
+        {
+          "category": "Integration",
+          "name": "headless browser reaches seeded web applications",
+          "quick": true,
+          "timeout_seconds": 120,
+          "command": "/usr/local/bin/scope-range-browser-smoke >/dev/null 2>&1"
+        },
+        {
           "category": "Network",
           "name": "private subnet has functional outbound HTTPS",
           "quick": false,
@@ -163,6 +182,18 @@
           "command": "external_json=$(docker exec --user www-data scope-nextcloud php occ files_external:list --output=json) && mount_id=$(printf '%s' \"$external_json\" | jq -er '[.[] | select(.mount_point == \"/Range Shared\")][0].mount_id') && test -n \"$mount_id\" && docker exec --user www-data scope-nextcloud php occ files_external:verify \"$mount_id\" >/dev/null"
         },
         {
+          "category": "Nextcloud",
+          "name": "Garage range-assets mount has expected connection settings",
+          "quick": false,
+          "command": "docker exec --user www-data scope-nextcloud php occ files_external:list --output=json | jq -e '[.[] | select(.mount_point == \"/Range Assets\" and .authentication_type == \"amazons3::accesskey\" and .configuration.hostname == \"s3.range.test\" and .configuration.port == \"3900\" and .configuration.region == \"range\" and .configuration.use_ssl == false and .configuration.use_path_style == true)] | length == 1' >/dev/null"
+        },
+        {
+          "category": "Nextcloud",
+          "name": "seeded Garage object is readable through WebDAV",
+          "quick": false,
+          "command": "curl -fsSL --user 'rangeadmin:ScopeNextcloud2026!' http://cloud.range.test/remote.php/dav/files/rangeadmin/Range%20Assets/orchid/brief.json | jq -e '.project == \"ORCHID\" and .seed_version == \"scope-seed-v1\"' >/dev/null"
+        },
+        {
           "category": "Web",
           "name": "both virtual hosts answer locally",
           "quick": true,
@@ -236,6 +267,18 @@
           "command": "test \"$(docker exec scope-redis redis-cli -a ScopeRedis2026! --no-auth-warning GET session:alice)\" = active"
         },
         {
+          "category": "Redis",
+          "name": "persistent Redis storage remains writable",
+          "quick": true,
+          "command": "test \"$(stat -c '%u:%g' /srv/range/redis)\" = 999:1000 && docker exec scope-redis redis-cli -a ScopeRedis2026! --no-auth-warning INFO persistence | tr -d '\r' | grep -Fxq 'rdb_last_bgsave_status:ok'"
+        },
+        {
+          "category": "Automation",
+          "name": "all versioned queue jobs have completion markers",
+          "quick": true,
+          "command": "for id in scope-seed-v1-projects scope-seed-v1-experiments scope-seed-v1-sessions; do test \"$(docker exec scope-redis redis-cli -a ScopeRedis2026! --no-auth-warning GET scope-seed-job:$id)\" = complete || exit 1; done"
+        },
+        {
           "category": "Gitea",
           "name": "Actions runner is registered and recently online",
           "quick": true,
@@ -295,6 +338,54 @@
           "name": "ORCHID repository exists",
           "quick": false,
           "command": "curl -fsS -u 'rangeadmin:ScopeGitea2026!' http://127.0.0.1:3000/api/v1/repos/rangeadmin/orchid-control-plane | jq -e '.name == \"orchid-control-plane\"' >/dev/null"
+        },
+        {
+          "category": "Gitea",
+          "name": "LDAP users collaborate on the ORCHID repository",
+          "quick": false,
+          "command": "for user in alice bob; do docker exec --user git scope-gitea gitea admin user list | awk -v user=\"$user\" '$2 == user { found = 1 } END { exit !found }' || exit 1; done && curl -fsS -u 'rangeadmin:ScopeGitea2026!' http://127.0.0.1:3000/api/v1/repos/rangeadmin/orchid-control-plane/collaborators | jq -e '[.[].login] | sort == [\"alice\",\"bob\"]' >/dev/null"
+        },
+        {
+          "category": "Gitea",
+          "name": "ORCHID Git history, branch, and release tag are complete",
+          "quick": false,
+          "command": "worktree=$(mktemp -d) && trap 'rm -rf \"$worktree\"' EXIT && git clone --quiet http://rangeadmin:ScopeGitea2026!@127.0.0.1:3000/rangeadmin/orchid-control-plane.git \"$worktree\" && test \"$(git -C \"$worktree\" rev-list --count main)\" = 3 && test \"$(git -C \"$worktree\" rev-list --count origin/feature/telemetry-export)\" = 4 && git -C \"$worktree\" rev-parse --verify refs/tags/v0.1.0 >/dev/null"
+        },
+        {
+          "category": "Gitea",
+          "name": "ORCHID issue tracking fixtures are exact",
+          "quick": false,
+          "command": "base=http://127.0.0.1:3000/api/v1/repos/rangeadmin/orchid-control-plane && auth='rangeadmin:ScopeGitea2026!' && curl -fsS -u \"$auth\" \"$base/issues?state=all&limit=50\" | jq -e '[.[] | select(.pull_request == null) | .title] | sort == [\"Document registry rollback procedure\",\"Review partner release checklist\",\"Telemetry export omits calibration metadata\"]' >/dev/null && curl -fsS -u \"$auth\" \"$base/labels\" | jq -e '[.[].name] | sort == [\"bug\",\"enhancement\",\"restricted\"]' >/dev/null && curl -fsS -u \"$auth\" \"$base/milestones?state=all\" | jq -e '[.[] | select(.title == \"ORCHID v1.0\")] | length == 1' >/dev/null"
+        },
+        {
+          "category": "Gitea",
+          "name": "telemetry pull request remains open",
+          "quick": false,
+          "command": "curl -fsS -u 'rangeadmin:ScopeGitea2026!' 'http://127.0.0.1:3000/api/v1/repos/rangeadmin/orchid-control-plane/pulls?state=open&limit=50' | jq -e '[.[] | select(.title == \"Add telemetry export\" and .head.ref == \"feature/telemetry-export\" and .base.ref == \"main\")] | length == 1' >/dev/null"
+        },
+        {
+          "category": "Gitea",
+          "name": "Actions variables and secrets are configured",
+          "quick": false,
+          "command": "base=http://127.0.0.1:3000/api/v1/repos/rangeadmin/orchid-control-plane/actions && auth='rangeadmin:ScopeGitea2026!' && test \"$(curl -fsS -u \"$auth\" \"$base/variables/REGISTRY_URL\" | jq -r .data)\" = localhost:5000 && test \"$(curl -fsS -u \"$auth\" \"$base/variables/SEED_VERSION\" | jq -r .data)\" = scope-seed-v1 && curl -fsS -u \"$auth\" \"$base/secrets\" | jq -e '[.[].name] | sort == [\"GARAGE_SECRET_KEY\",\"REGISTRY_PASSWORD\"]' >/dev/null"
+        },
+        {
+          "category": "Registry",
+          "name": "ORCHID workflow published both image tags",
+          "quick": true,
+          "command": "curl -fsS http://127.0.0.1:5000/v2/orchid-api/tags/list | jq -e '.name == \"orchid-api\" and (.tags | sort == [\"0.1.0\",\"latest\"])' >/dev/null"
+        },
+        {
+          "category": "Gitea",
+          "name": "ORCHID release includes its build manifest",
+          "quick": false,
+          "command": "curl -fsS -u 'rangeadmin:ScopeGitea2026!' http://127.0.0.1:3000/api/v1/repos/rangeadmin/orchid-control-plane/releases | jq -e '[.[] | select(.tag_name == \"v0.1.0\" and .name == \"ORCHID 0.1.0\" and any(.assets[]?; .name == \"build-manifest.json\" and .size > 0))] | length == 1' >/dev/null"
+        },
+        {
+          "category": "Jenkins",
+          "name": "seeded credentials and successful export build are retained",
+          "quick": false,
+          "command": "auth='rangeadmin:ScopeJenkins2026!' && curl -gfsS -u \"$auth\" 'http://127.0.0.1:8080/pluginManager/api/json?tree=plugins[shortName,version,active]' | jq -e 'any(.plugins[]; .shortName == \"credentials-binding\" and .version == \"728.v902a_273b_8947\" and .active == true)' >/dev/null && curl -gfsS -u \"$auth\" 'http://127.0.0.1:8080/credentials/store/system/domain/_/api/json?tree=credentials[id]' | jq -e '[.credentials[].id] | sort == [\"scope-garage\",\"scope-gitea\"]' >/dev/null && curl -gfsS -u \"$auth\" 'http://127.0.0.1:8080/job/orchid-nightly-export/lastSuccessfulBuild/api/json?tree=result,artifacts[fileName]' | jq -e '.result == \"SUCCESS\" and ([.artifacts[].fileName] | sort == [\"build-manifest.json\",\"orchid-source.tar.gz\"])' >/dev/null"
         },
         {
           "category": "Jenkins",
@@ -380,6 +471,36 @@
           "name": "Garage container and health endpoint are healthy",
           "quick": true,
           "command": "test \"$(docker inspect -f '{{.State.Status}}' scope-garage)\" = running && curl -fsS http://127.0.0.1:3903/health >/dev/null"
+        },
+        {
+          "category": "Object Storage",
+          "name": "all versioned Garage buckets exist",
+          "quick": true,
+          "command": "for bucket in range-assets build-artifacts database-backups research-archives; do docker exec scope-garage /garage bucket info \"$bucket\" >/dev/null 2>&1 || exit 1; done"
+        },
+        {
+          "category": "Object Storage",
+          "name": "baseline ORCHID objects contain expected seed data",
+          "quick": false,
+          "command": "s3_get() { curl -fsS --aws-sigv4 'aws:amz:range:s3' --user 'GKSCOPERANGE2026ACCESS:ScopeGarageSecretKey2026ScopeGarageSecretKey2026' \"$1\"; }; s3_get http://127.0.0.1:3900/range-assets/orchid/brief.json | jq -e '.project == \"ORCHID\" and .seed_version == \"scope-seed-v1\"' >/dev/null && s3_get http://127.0.0.1:3900/research-archives/orchid/experiment-summary.json | jq -e '.experiment == \"orchid-sensor-calibration\" and .seed_version == \"scope-seed-v1\"' >/dev/null"
+        },
+        {
+          "category": "Object Storage",
+          "name": "three database backups are usable",
+          "quick": false,
+          "command": "scratch=$(mktemp -d) && trap 'rm -rf \"$scratch\"' EXIT && for name in business.sql wordpress.sql research.archive.gz; do curl -fsS --aws-sigv4 'aws:amz:range:s3' --user 'GKSCOPERANGE2026ACCESS:ScopeGarageSecretKey2026ScopeGarageSecretKey2026' \"http://127.0.0.1:3900/database-backups/scope-seed-v1/$name\" -o \"$scratch/$name\" && test -s \"$scratch/$name\" || exit 1; done && grep -Fq 'CREATE TABLE public.customers' \"$scratch/business.sql\" && grep -Fq 'CREATE TABLE `range_notes`' \"$scratch/wordpress.sql\" && gzip -t \"$scratch/research.archive.gz\""
+        },
+        {
+          "category": "Object Storage",
+          "name": "Jenkins export artifacts are retained",
+          "quick": false,
+          "command": "scratch=$(mktemp -d) && trap 'rm -rf \"$scratch\"' EXIT && for name in orchid-source.tar.gz build-manifest.json; do curl -fsS --aws-sigv4 'aws:amz:range:s3' --user 'GKSCOPERANGE2026ACCESS:ScopeGarageSecretKey2026ScopeGarageSecretKey2026' \"http://127.0.0.1:3900/build-artifacts/orchid/0.1.0/$name\" -o \"$scratch/$name\" && test -s \"$scratch/$name\" || exit 1; done && jq -e '.job == \"orchid-nightly-export\" and .seed_version == \"scope-seed-v1\"' \"$scratch/build-manifest.json\" >/dev/null && tar -tzf \"$scratch/orchid-source.tar.gz\" | grep -Fq '/app.py'"
+        },
+        {
+          "category": "Automation",
+          "name": "three cross-host exports contain versioned data",
+          "quick": true,
+          "command": "root=/srv/range/shared/automation && test \"$(find \"$root\" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')\" = 3 && jq -e '.job == \"export_projects\" and .seed_version == \"scope-seed-v1\" and (.projects | length == 2)' \"$root/projects.json\" >/dev/null && jq -e '.job == \"export_experiments\" and .seed_version == \"scope-seed-v1\" and (.experiments | length == 2)' \"$root/experiments.json\" >/dev/null && jq -e '.job == \"snapshot_sessions\" and .seed_version == \"scope-seed-v1\" and .sessions.alice == \"active\" and .sessions.bob == \"expired\"' \"$root/sessions.json\" >/dev/null"
         }
       ]
     },
@@ -465,6 +586,18 @@
           "name": "synthetic mail users authenticate through Dovecot",
           "quick": false,
           "command": "for user in alice bob research; do doveadm auth test \"$user\" ScopeFiles2026! 2>&1 | grep -F 'auth succeeded' >/dev/null || exit 1; done"
+        },
+        {
+          "category": "Automation",
+          "name": "queue is drained after three successful worker jobs",
+          "quick": true,
+          "command": "rabbitmqctl list_queues -p range --no-table-headers name messages_ready messages_unacknowledged | awk '$1 == \"range-jobs\" && $2 == 0 && $3 == 0 { found = 1 } END { exit !found }' && jq -s -e '[.[] | select(.status == \"complete\") | .body.job_id] | unique | sort == [\"scope-seed-v1-experiments\",\"scope-seed-v1-projects\",\"scope-seed-v1-sessions\"]' /srv/range/queue-worker.jsonl >/dev/null"
+        },
+        {
+          "category": "Mail",
+          "name": "six versioned collaboration messages are present",
+          "quick": false,
+          "command": "for user in alice bob research; do test \"$(find \"/home/$user/Maildir/new\" -maxdepth 1 -type f -name '*.scope-seed-v1.range.test' | wc -l | tr -d ' ')\" = 2 || exit 1; done && for subject in 'ORCHID calibration review' 'ORCHID build available' 'Registry rollback notes' 'Invoice 48250 review' 'Database snapshots complete' 'Telemetry export proposed'; do grep -R -Fqx \"Subject: $subject\" /home/{alice,bob,research}/Maildir/new/*.scope-seed-v1.range.test || exit 1; done"
         }
       ]
     }

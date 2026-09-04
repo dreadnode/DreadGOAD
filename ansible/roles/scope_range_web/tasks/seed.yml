@@ -1,0 +1,57 @@
+---
+- name: Inspect Nextcloud seed external mounts
+  ansible.builtin.command: >-
+    docker exec --user www-data scope-nextcloud
+    php occ files_external:list --output=json
+  register: nextcloud_seed_mounts
+  changed_when: false
+
+- name: Attach Garage range assets to Nextcloud
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - --user
+      - www-data
+      - scope-nextcloud
+      - php
+      - occ
+      - files_external:create
+      - /Range Assets
+      - amazons3
+      - amazons3::accesskey
+      - --config
+      - bucket=range-assets
+      - --config
+      - hostname=s3.range.test
+      - --config
+      - port=3900
+      - --config
+      - region=range
+      - --config
+      - use_ssl=false
+      - --config
+      - use_path_style=true
+      - --config
+      - key=GKSCOPERANGE2026ACCESS
+      - --config
+      - secret=ScopeGarageSecretKey2026ScopeGarageSecretKey2026
+  when: "'Range Assets' not in nextcloud_seed_mounts.stdout"
+  no_log: true
+
+- name: Read the Garage mount identifier
+  ansible.builtin.shell:
+    cmd: >-
+      set -o pipefail &&
+      docker exec --user www-data scope-nextcloud
+      php occ files_external:list --output=json |
+      jq -er '[.[] | select(.mount_point == "/Range Assets")][0].mount_id'
+    executable: /bin/bash
+  register: nextcloud_garage_mount
+  changed_when: false
+
+- name: Verify the seeded Garage external mount
+  ansible.builtin.command: >-
+    docker exec --user www-data scope-nextcloud
+    php occ files_external:verify {{ nextcloud_garage_mount.stdout | trim }}
+  changed_when: false
