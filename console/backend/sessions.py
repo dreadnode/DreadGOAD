@@ -12,12 +12,13 @@ import contextlib
 import os
 import re
 import shutil
+import stat
 import typing as t
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import configstore, labconfig, scaffold
+from . import configstore, labconfig, paths, scaffold
 from .db import Database
 
 
@@ -67,7 +68,12 @@ class SessionService:
     ) -> None:
         self.db = db
         self.repo_root = str(repo_root)
-        self.sessions_root = Path(sessions_root)
+        self.sessions_root = paths.ensure_private_dir(sessions_root)
+        for child in self.sessions_root.iterdir():
+            # Repair only real directories. Never follow an unexpected symlink
+            # while tightening modes on state left by an older console.
+            if stat.S_ISDIR(child.lstat().st_mode):
+                paths.ensure_private_dir(child)
 
     async def create_session(
         self,
@@ -82,8 +88,7 @@ class SessionService:
         sid = "s-" + uuid.uuid4().hex[:8]
         lbl = label or default_label(config_path, env, snap)
         dirname = f"{_slug(label or env)}-{sid[2:]}"
-        sdir = self.sessions_root / dirname
-        sdir.mkdir(parents=True, exist_ok=True)
+        sdir = paths.ensure_private_dir(self.sessions_root / dirname)
 
         session = {
             "id": sid,

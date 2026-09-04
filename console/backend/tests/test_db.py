@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import os
 import pathlib
+import stat
 import sys
 import tempfile
 
@@ -259,6 +260,59 @@ async def test_prune_events() -> None:
         os.unlink(db_path)
 
 
+async def test_database_files_are_private_and_existing_mode_is_repaired() -> None:
+    """DB, WAL and SHM stay user-only even under a permissive umask."""
+    with tempfile.TemporaryDirectory() as d:
+        path = pathlib.Path(d) / "state.db"
+        old_umask = os.umask(0)
+        try:
+            db = await Database(str(path)).connect()
+        finally:
+            os.umask(old_umask)
+        try:
+            await db.upsert_session({"id": "s-private"})
+            candidates = [
+                path,
+                pathlib.Path(str(path) + "-wal"),
+                pathlib.Path(str(path) + "-shm"),
+            ]
+            assert all(candidate.exists() for candidate in candidates), candidates
+            for candidate in candidates:
+                mode = stat.S_IMODE(candidate.stat().st_mode)
+                assert mode == 0o600, (candidate, oct(mode))
+        finally:
+            await db.close()
+
+        path.chmod(0o666)
+        repaired = await Database(str(path)).connect()
+        try:
+            assert stat.S_IMODE(path.stat().st_mode) == 0o600
+        finally:
+            await repaired.close()
+    print("PASS test_database_files_are_private_and_existing_mode_is_repaired")
+
+
+async def test_database_refuses_symlink_path() -> None:
+    """Mode repair must not follow a state.db symlink to another file."""
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        target = root / "unrelated"
+        target.write_text("leave me alone")
+        target.chmod(0o644)
+        link = root / "state.db"
+        link.symlink_to(target)
+
+        try:
+            await Database(str(link)).connect()
+            raise AssertionError("expected a symlink database path to be refused")
+        except OSError as exc:
+            assert "non-regular SQLite state file" in str(exc), exc
+
+        assert target.read_text() == "leave me alone"
+        assert stat.S_IMODE(target.stat().st_mode) == 0o644
+    print("PASS test_database_refuses_symlink_path")
+
+
 async def _main() -> None:
     await test_session_and_range_crud()
     await test_event_seq_and_replay()
@@ -267,6 +321,8 @@ async def _main() -> None:
     await test_layout_revision_protects_against_stale_range_writes()
     await test_delete_session_cascades_thread_meta()
     await test_prune_events()
+    await test_database_files_are_private_and_existing_mode_is_repaired()
+    await test_database_refuses_symlink_path()
     print("ALL PASS")
 
 

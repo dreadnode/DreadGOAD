@@ -117,6 +117,7 @@ async def replay(app: t.Any, session_id: str) -> None:
         return
     ws = current.conn
     turn = current.turn
+    approval = current.pending_approval
     await ws.send_text(
         json.dumps(
             {
@@ -126,6 +127,7 @@ async def replay(app: t.Any, session_id: str) -> None:
                 "active": turn is not None,
                 "started_at": turn.started_at if turn else None,
                 "command": turn.command if turn else None,
+                "approval": approval.public() if approval else None,
             }
         )
     )

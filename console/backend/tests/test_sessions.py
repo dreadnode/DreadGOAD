@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import os
 import pathlib
+import stat
 import sys
 import tempfile
 
@@ -71,6 +72,10 @@ async def test_create_attach_session() -> None:
 
             # working dir created
             assert os.path.isdir(got["session_dir"]), "session dir not created"
+            assert (
+                stat.S_IMODE(pathlib.Path(got["session_dir"]).stat().st_mode) == 0o700
+            )
+            assert stat.S_IMODE(svc.sessions_root.stat().st_mode) == 0o700
 
             # range seeded from ad/GOAD/data/config.json (variant_target=ad/GOAD)
             rng = await svc.db.get_range(sid)
@@ -87,6 +92,30 @@ async def test_create_attach_session() -> None:
             print("PASS test_create_attach_session")
         finally:
             await svc.db.close()
+
+
+async def test_service_repairs_existing_session_directory_modes() -> None:
+    """Startup tightens real legacy session dirs without following symlinks."""
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        root = tmp / "sessions"
+        legacy = root / "legacy-session"
+        unrelated = tmp / "unrelated"
+        legacy.mkdir(parents=True)
+        unrelated.mkdir()
+        legacy.chmod(0o755)
+        unrelated.chmod(0o755)
+        (root / "unexpected-link").symlink_to(unrelated)
+
+        db = await Database(str(tmp / "state.db")).connect()
+        try:
+            svc = SessionService(db, repo_root=str(_REPO), sessions_root=root)
+            assert stat.S_IMODE(svc.sessions_root.stat().st_mode) == 0o700
+            assert stat.S_IMODE(legacy.stat().st_mode) == 0o700
+            assert stat.S_IMODE(unrelated.stat().st_mode) == 0o755
+        finally:
+            await db.close()
+    print("PASS test_service_repairs_existing_session_directory_modes")
 
 
 async def test_delete_session_removes_dir_and_rows() -> None:
@@ -343,6 +372,7 @@ async def test_create_config_session_rolls_back_on_failure() -> None:
 
 async def _main() -> None:
     await test_create_attach_session()
+    await test_service_repairs_existing_session_directory_modes()
     await test_delete_session_removes_dir_and_rows()
     await test_delete_refuses_working_dir_outside_session_root()
     await test_create_new_env_writes_yaml_and_backs_up()

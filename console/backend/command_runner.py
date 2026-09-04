@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from functools import partial
 
 from . import (
+    approvals,
     chat_events,
     chat_runtime,
     commands,
@@ -49,6 +50,7 @@ async def _spawn_and_stream(
     kill_grace: float = 12.0,
     cloud_ops: bool = False,
     long_running: bool = False,
+    approval_id: str | None = None,
 ) -> _RunResult:
     """Shared process lifecycle: emit start, spawn, stream, emit end.
 
@@ -59,7 +61,13 @@ async def _spawn_and_stream(
         app,
         session_id,
         "command_run",
-        {"phase": "start", "command": name, "argv": argv, "cwd": cwd},
+        {
+            "phase": "start",
+            "command": name,
+            "argv": argv,
+            "cwd": cwd,
+            **({"approval_id": approval_id} if approval_id else {}),
+        },
     )
 
     current = chat_runtime.runtime(session_id)
@@ -89,6 +97,7 @@ async def _spawn_and_stream(
                 "exit_code": 1,
                 "cancelled": False,
                 "tail": message,
+                **({"approval_id": approval_id} if approval_id else {}),
             },
         )
         return _RunResult(1, message, cancelled=False, started=False)
@@ -126,6 +135,7 @@ async def _spawn_and_stream(
             "cancelled": command.cancelled,
             "still_running": bool(cancelled and cloud_ops),
             "tail": output[-2000:],
+            **({"approval_id": approval_id} if approval_id else {}),
         },
     )
 
@@ -380,7 +390,7 @@ async def _check_credentials(session: dict[str, t.Any]) -> str | None:
     except asyncio.TimeoutError:
         proc.kill()
         await proc.wait()
-        return f"Credential check timed out. Run /login to re-authenticate."
+        return "Credential check timed out. Run /login to re-authenticate."
 
     if proc.returncode == 0:
         return None
@@ -411,7 +421,11 @@ async def _run_login(
         return 1, msg
 
     result = await _spawn_and_stream(
-        app, session_id, "/login", argv, cwd=str(paths.repo_root()),
+        app,
+        session_id,
+        "/login",
+        argv,
+        cwd=str(paths.repo_root()),
     )
 
     if not result.started:
@@ -433,7 +447,10 @@ async def _run_login(
         msg = f"Login failed (exit {exit_code}). Check the output above."
 
     await chat_events.emit_event(
-        app, session_id, "status", {"content": msg},
+        app,
+        session_id,
+        "status",
+        {"content": msg},
     )
     return exit_code, output
 
@@ -641,6 +658,16 @@ async def run_cli(
     else:
         run_cwd = str(paths.repo_root())
 
+    # Gate only after all validation and read-only preflight work, leaving no
+    # mutable preparation between approval of the exact argv and process spawn.
+    approved, approval_id = await approvals.require(app, session_id, name, argv)
+    if not approved:
+        return (
+            2,
+            f"{name} was not run because the operator denied or did not approve it; "
+            "do not retry.",
+        )
+
     command_spec = commands.REGISTRY[name]
     result = await _spawn_and_stream(
         app,
@@ -651,6 +678,7 @@ async def run_cli(
         kill_grace=300.0 if name in _SLOW_CANCEL else 12.0,
         cloud_ops=command_spec.cloud_ops,
         long_running=command_spec.long_running,
+        approval_id=approval_id,
     )
 
     if not result.started:

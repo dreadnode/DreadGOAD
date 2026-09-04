@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import stat
 import sys
 import tempfile
 
@@ -271,6 +272,7 @@ def test_state_root_migrates_legacy_dir() -> None:
             try:
                 root = paths.state_root()
                 assert root == repo / ".dreadgoad" / "console", root
+                assert stat.S_IMODE(root.stat().st_mode) == 0o700
                 assert (root / "state.db").read_text() == "session data", "data moved"
                 assert not legacy.exists(), "legacy dir should be gone after the move"
 
@@ -283,6 +285,59 @@ def test_state_root_migrates_legacy_dir() -> None:
             if v is not None:
                 os.environ[k] = v
     print("PASS test_state_root_migrates_legacy_dir")
+
+
+def test_state_directories_are_private_and_existing_mode_is_repaired() -> None:
+    """Every console-owned directory is 0700 regardless of umask/history."""
+    from console.backend import paths
+
+    saved = os.environ.get("DREADGOAD_CONSOLE_STATE_ROOT")
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            root = pathlib.Path(d) / "state"
+            root.mkdir(mode=0o777)
+            root.chmod(0o777)
+            os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = str(root)
+
+            old_umask = os.umask(0)
+            try:
+                directories = [
+                    paths.state_root(),
+                    paths.sessions_root(),
+                    paths.configs_root(),
+                    paths.session_dir("example-session"),
+                ]
+            finally:
+                os.umask(old_umask)
+
+            for directory in directories:
+                mode = stat.S_IMODE(directory.stat().st_mode)
+                assert mode == 0o700, (directory, oct(mode))
+    finally:
+        os.environ.pop("DREADGOAD_CONSOLE_STATE_ROOT", None)
+        if saved is not None:
+            os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = saved
+    print("PASS test_state_directories_are_private_and_existing_mode_is_repaired")
+
+
+def test_private_directory_helper_refuses_symlink() -> None:
+    """Permission repair must not chmod a symlink target outside state."""
+    from console.backend import paths
+
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        target = root / "unrelated"
+        target.mkdir()
+        target.chmod(0o755)
+        link = root / "state"
+        link.symlink_to(target)
+        try:
+            paths.ensure_private_dir(link)
+            raise AssertionError("expected a symlink state directory to be refused")
+        except OSError as exc:
+            assert "non-directory console state path" in str(exc), exc
+        assert stat.S_IMODE(target.stat().st_mode) == 0o755
+    print("PASS test_private_directory_helper_refuses_symlink")
 
 
 def test_derive_snapshot_prefers_env_region_over_file_region() -> None:
@@ -559,6 +614,8 @@ if __name__ == "__main__":
     test_merge_reseed_preserves_state_and_adds_nodes()
     test_env_setting_prefers_new_name_accepts_legacy()
     test_state_root_migrates_legacy_dir()
+    test_state_directories_are_private_and_existing_mode_is_repaired()
+    test_private_directory_helper_refuses_symlink()
     test_derive_snapshot_prefers_env_region_over_file_region()
     test_create_config_writes_a_usable_file()
     test_create_config_refuses_to_overwrite()

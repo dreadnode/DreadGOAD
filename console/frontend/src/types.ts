@@ -132,6 +132,11 @@ export interface ChatEvent {
   command?: string
   exit_code?: number
   cancelled?: boolean
+  approval_id?: string
+  decision?: string
+  detail?: string
+  argv?: string[]
+  approval?: ApprovalRequest | null
   /** Cancelled, but the work it started is still finishing outside this
    *  process (a cloud lifecycle op, a playbook already running on a host). */
   still_running?: boolean
@@ -158,4 +163,12 @@ export interface ChatEvent {
   usage?: { input_tokens?: number; output_tokens?: number }
   events?: ChatEvent[]
   [key: string]: unknown
+}
+
+export interface ApprovalRequest {
+  approval_id: string
+  command: string
+  argv: string[]
+  detail: string
+  requested_at: string
 }

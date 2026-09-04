@@ -15,10 +15,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sqlite3
+import stat
 import typing as t
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from pathlib import Path
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
@@ -43,6 +46,46 @@ CREATE TABLE IF NOT EXISTS meta (
     value TEXT NOT NULL
 );
 """
+
+_PRIVATE_FILE_MODE = 0o600
+
+
+def _lock_down_regular_file(path: Path) -> None:
+    """Restrict an existing SQLite file after rejecting non-regular paths."""
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        return
+    if not stat.S_ISREG(mode):
+        raise OSError(f"refusing non-regular SQLite state file: {path}")
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise OSError(f"refusing non-regular SQLite state file: {path}")
+        os.fchmod(fd, _PRIVATE_FILE_MODE)
+    finally:
+        os.close(fd)
+
+
+def _prepare_database_file(path: Path) -> None:
+    """Create a private DB inode or repair an existing DB and its sidecars."""
+    try:
+        mode = path.lstat().st_mode
+    except FileNotFoundError:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(path, flags, _PRIVATE_FILE_MODE)
+        os.close(fd)
+    else:
+        if not stat.S_ISREG(mode):
+            raise OSError(f"refusing non-regular SQLite state file: {path}")
+        _lock_down_regular_file(path)
+
+    # WAL/SHM files inherit the main database's mode when SQLite creates them.
+    # Repair stale sidecars left by an older, permissive console before opening.
+    for suffix in ("-wal", "-shm"):
+        _lock_down_regular_file(Path(str(path) + suffix))
 
 
 def _utcnow() -> str:
@@ -73,15 +116,24 @@ class Database:
         return self
 
     def _connect(self) -> None:
-        conn = sqlite3.connect(self._path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        # NORMAL: durable across an app crash; a power/OS crash may lose only the
-        # last commit. Fine for this local tool; use FULL for strict durability.
-        conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA foreign_keys=ON")
-        conn.executescript(_SCHEMA)
-        conn.commit()
+        path = Path(self._path)
+        _prepare_database_file(path)
+        conn = sqlite3.connect(path)
+        try:
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            # NORMAL: durable across an app crash; a power/OS crash may lose only the
+            # last commit. Fine for this local tool; use FULL for strict durability.
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA foreign_keys=ON")
+            conn.executescript(_SCHEMA)
+            conn.commit()
+            # Defense in depth for sidecars retained from an unclean shutdown.
+            for candidate in (path, Path(str(path) + "-wal"), Path(str(path) + "-shm")):
+                _lock_down_regular_file(candidate)
+        except BaseException:
+            conn.close()
+            raise
         self._conn = conn
 
     async def close(self) -> None:

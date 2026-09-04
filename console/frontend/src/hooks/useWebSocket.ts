@@ -19,7 +19,13 @@ export function useWebSocket(
   onOpenRef.current = onOpen
 
   const send = useCallback((data: string) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) wsRef.current.send(data)
+    if (wsRef.current?.readyState !== WebSocket.OPEN) return false
+    try {
+      wsRef.current.send(data)
+      return true
+    } catch {
+      return false
+    }
   }, [])
 
   const connect = useCallback(() => {

@@ -8,6 +8,7 @@ State lives under the gitignored ``.dreadgoad/console/`` runtime root:
 from __future__ import annotations
 
 import os
+import stat
 from pathlib import Path
 
 _ENV_PREFIX = "DREADGOAD_CONSOLE_"
@@ -21,6 +22,23 @@ _LEGACY_ENV_PREFIX = "DREADGOAD_WEBAPP_"
 # three owners: change any one and the launcher prints a default the agent
 # is not using.
 FALLBACK_MODEL = "openrouter/anthropic/claude-sonnet-5"
+PRIVATE_DIR_MODE = 0o700
+
+
+def ensure_private_dir(path: str | Path) -> Path:
+    """Create ``path`` and restrict it to the current OS user.
+
+    ``mode=`` protects a newly created directory even under a permissive umask;
+    ``chmod`` repairs directories created by older console versions.
+    Permission failures propagate so the console never silently stores state in
+    a location it failed to make private.
+    """
+    directory = Path(path)
+    directory.mkdir(parents=True, exist_ok=True, mode=PRIVATE_DIR_MODE)
+    if not stat.S_ISDIR(directory.lstat().st_mode):
+        raise OSError(f"refusing non-directory console state path: {directory}")
+    directory.chmod(PRIVATE_DIR_MODE)
+    return directory
 
 
 def setting(name: str, default: str | None = None) -> str | None:
@@ -84,8 +102,7 @@ def state_root() -> Path:
                 legacy.rename(root)
             except OSError:
                 pass
-    root.mkdir(parents=True, exist_ok=True)
-    return root
+    return ensure_private_dir(root)
 
 
 def db_path() -> Path:
@@ -95,9 +112,7 @@ def db_path() -> Path:
 
 def sessions_root() -> Path:
     """``.dreadgoad/console/sessions/`` — per-session working dirs live here."""
-    root = state_root() / "sessions"
-    root.mkdir(parents=True, exist_ok=True)
-    return root
+    return ensure_private_dir(state_root() / "sessions")
 
 
 def configs_root() -> Path:
@@ -116,16 +131,12 @@ def configs_root() -> Path:
     root to somewhere outside the repo breaks that second property;
     ``projectroot.preflight`` detects it and warns rather than failing silently.
     """
-    root = state_root() / "configs"
-    root.mkdir(parents=True, exist_ok=True)
-    return root
+    return ensure_private_dir(state_root() / "configs")
 
 
 def session_dir(dirname: str) -> Path:
     """Working dir for a session (``<slug>-<shortid>``), created if missing."""
-    d = sessions_root() / dirname
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    return ensure_private_dir(sessions_root() / dirname)
 
 
 # Allow overriding the DB path in tests via env var.

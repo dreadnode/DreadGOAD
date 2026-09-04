@@ -15,6 +15,28 @@ from datetime import datetime, timezone
 
 
 @dataclass(slots=True)
+class PendingApproval:
+    """One exact command waiting for an operator decision."""
+
+    id: str
+    command: str
+    argv: tuple[str, ...]
+    detail: str
+    requested_at: str
+    decision: asyncio.Future[bool]
+
+    def public(self) -> dict[str, t.Any]:
+        """Browser-safe representation used by live events and reconnects."""
+        return {
+            "approval_id": self.id,
+            "command": self.command,
+            "argv": list(self.argv),
+            "detail": self.detail,
+            "requested_at": self.requested_at,
+        }
+
+
+@dataclass(slots=True)
 class TurnState:
     """Typed ownership state for one admitted chat turn."""
 
@@ -37,6 +59,7 @@ class SessionRuntime:
     conn: t.Any = None
     turn: TurnState | None = None
     running: set[t.Any] = field(default_factory=set)
+    pending_approval: PendingApproval | None = None
     # Kept true after deletion so stale WebSockets cannot recreate orphan data.
     closing: bool = False
 
@@ -66,6 +89,7 @@ def discard_if_idle(session_id: str, current: SessionRuntime) -> None:
         and current.conn is None
         and current.turn is None
         and not current.running
+        and current.pending_approval is None
         and not current.closing
         and runtimes.get(session_id) is current
     ):
@@ -81,7 +105,12 @@ def active_turn(session_id: str) -> TurnState | None:
 def begin_cleanup(session_id: str) -> bool:
     """Atomically reserve an idle session against new turn dispatch."""
     current = runtime(session_id)
-    if current.closing or current.turn is not None or current.running:
+    if (
+        current.closing
+        or current.turn is not None
+        or current.running
+        or current.pending_approval is not None
+    ):
         return False
     current.closing = True
     return True
@@ -125,8 +154,12 @@ def cancel_session(session_id: str) -> bool:
         return False
     turn = current.turn
     running = tuple(current.running)
-    if turn is None and not running:
+    approval = current.pending_approval
+    if turn is None and not running and approval is None:
         return False
+
+    if approval is not None and not approval.decision.done():
+        approval.decision.set_result(False)
 
     if turn is not None:
         turn.cancelled = True
@@ -181,6 +214,10 @@ async def cleanup_session(session_id: str, *, timeout: float = 15.0) -> None:
     current.conn = None
     current.turn = None
     current.running.clear()
+    approval = current.pending_approval
+    if approval is not None and not approval.decision.done():
+        approval.decision.set_result(False)
+    current.pending_approval = None
     if not current.closing:
         runtimes.pop(session_id, None)
 

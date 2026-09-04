@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import re
+import typing as t
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from . import chat
+from . import approvals, chat
 
 router = APIRouter()
 
@@ -31,7 +32,7 @@ def ws_origin_allowed(origin: str | None) -> bool:
 
 def parse_ws_message(
     raw: str,
-) -> tuple[dict[str, str] | None, str | None, str | None]:
+) -> tuple[dict[str, t.Any] | None, str | None, str | None]:
     """Validate a client frame and return message, error, and safe session id."""
     if len(raw) > WS_MAX_MESSAGE_CHARS:
         return None, "message is too large", None
@@ -54,12 +55,14 @@ def parse_ws_message(
     if not isinstance(raw_type, str):
         return None, "type must be a string", session_id
     message_type = raw_type
-    if message_type not in {"message", "resume", "cancel"}:
+    if message_type not in {"message", "resume", "cancel", "approval"}:
         return None, f"unknown message type: {message_type}", session_id
 
     allowed = {"session_id", "type"}
     if message_type == "message":
         allowed.add("content")
+    elif message_type == "approval":
+        allowed.update({"approval_id", "decision"})
     unexpected = sorted(set(value) - allowed)
     if unexpected:
         return (
@@ -79,6 +82,15 @@ def parse_ws_message(
         if len(content) > WS_MAX_CONTENT_CHARS:
             return None, "content is too large", session_id
         message["content"] = content
+    elif message_type == "approval":
+        approval_id = value.get("approval_id")
+        if not isinstance(approval_id, str) or not approval_id.strip():
+            return None, "approval_id must be a non-empty string", session_id
+        decision = value.get("decision")
+        if decision not in {"confirm", "deny"}:
+            return None, "decision must be 'confirm' or 'deny'", session_id
+        message["approval_id"] = approval_id.strip()
+        message["decision"] = decision
     return message, None, session_id
 
 
@@ -109,6 +121,21 @@ async def ws_chat(websocket: WebSocket) -> None:
                 continue
             if message["type"] == "cancel":
                 chat.cancel_session(session_id)
+                continue
+            if message["type"] == "approval":
+                approval_error = approvals.resolve(
+                    session_id,
+                    message["approval_id"],
+                    message["decision"] == "confirm",
+                )
+                if approval_error is not None:
+                    await chat.emit_event(
+                        app,
+                        session_id,
+                        "error",
+                        {"message": approval_error},
+                        persist=False,
+                    )
                 continue
 
             if chat.session_closing(session_id):

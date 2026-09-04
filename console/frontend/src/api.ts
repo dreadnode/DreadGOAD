@@ -142,7 +142,7 @@ export interface CommandDef {
   dispatch: 'direct' | 'agent'
   long_running: boolean
   takes_args: boolean
-  /** Cannot be undone. The UI confirms before running a `direct` one. */
+  /** Cannot be undone; useful for warnings and backend approval presentation. */
   destructive?: boolean
 }
 

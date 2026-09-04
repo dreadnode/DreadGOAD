@@ -9,6 +9,7 @@ with ``cwd = repo root`` (see runner in cli.py).
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import shutil
 import typing as t
@@ -62,9 +63,8 @@ class Command:
     cloud_ops: bool = False
     # Cannot be undone. Distinct from cloud_ops, which only says the command
     # touches real resources: /start and /stop do that and are entirely
-    # reversible. This is the property that earns a confirmation, and only
-    # matters for `direct` commands — an agent-dispatched one gets a turn in
-    # which the operator can still say no.
+    # reversible. This remains catalog metadata for UI warnings; backend
+    # approval policy is explicit in approvals.REQUIRED_COMMANDS.
     destructive: bool = False
     description: str = ""  # what it does, one line, in the autocomplete menu
     # The consequence an operator needs *before* pressing enter: what it costs,
@@ -242,7 +242,8 @@ REGISTRY: dict[str, Command] = {
 # Concrete commands the agent may run via its run_dreadgoad tool. Composite
 # console conveniences such as /status have no CLI verb and are expanded into
 # their concrete commands before the model turn; /login is operator-only.
-# Safety for destructive commands (/destroy, /up, /reset, /variant) is by prompt.
+# Ambiguous destructive intent is handled by the prompt. The backend separately
+# enforces exact, single-use approval for /up and /destroy.
 AGENT_RUNNABLE: frozenset[str] = frozenset(
     name for name, command in REGISTRY.items() if command.verb and name != "/login"
 )
@@ -266,11 +267,9 @@ def command_catalog() -> list[dict[str, t.Any]]:
             "dispatch": c.dispatch,
             "long_running": c.long_running,
             "takes_args": c.takes_args,
-            # Irreversible. The UI confirms before running one that is also
-            # ``direct``: those execute the moment they are sent, with no agent
-            # turn to question them and no prompt underneath — the CLI's own
-            # approval is bypassed with --auto-approve because a console command
-            # has no terminal to answer it.
+            # Irreversible. The backend approval boundary currently covers
+            # /destroy and /up; this remains useful catalog metadata for UI copy
+            # and for warning about future commands before they are gated.
             "destructive": c.destructive,
         }
         for name, c in REGISTRY.items()
@@ -453,6 +452,71 @@ _SCOPE_LONG_FLAGS = frozenset(
 # CLI builds even though the current root flag has no config shorthand.
 _SCOPE_SHORT_FLAGS = frozenset({"-c", "-e", "-p", "-d"})
 
+_EXEC_VALUE_FLAGS = frozenset({"--hosts", "--cmd", "--timeout"})
+_EXEC_MAX_SCRIPT_CHARS = 16_384
+_EXEC_MAX_HOSTS = 20
+_EXEC_MAX_TIMEOUT_SECONDS = 30 * 60
+_DURATION_PART_RE = re.compile(r"(\d+(?:\.\d+)?)(ms|s|m|h)")
+
+
+def _duration_seconds(value: str) -> float | None:
+    """Parse the ordinary subset of Go duration syntax accepted by /exec."""
+    position = 0
+    total = 0.0
+    scales = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0}
+    for match in _DURATION_PART_RE.finditer(value):
+        if match.start() != position:
+            return None
+        total += float(match.group(1)) * scales[match.group(2)]
+        position = match.end()
+    return total if position == len(value) and total > 0 else None
+
+
+def _validate_exec_args(extra: list[str]) -> None:
+    """Bound /exec's intentionally powerful inputs without inspecting scripts."""
+    values: dict[str, str] = {}
+    index = 0
+    while index < len(extra):
+        token = extra[index]
+        if "=" in token:
+            flag, value = token.split("=", 1)
+            index += 1
+        else:
+            flag = token
+            if flag not in _EXEC_VALUE_FLAGS:
+                raise ValueError(f"refusing unsupported /exec argument: {token!r}")
+            if index + 1 >= len(extra):
+                raise ValueError(f"{flag} requires a value")
+            value = extra[index + 1]
+            index += 2
+        if flag not in _EXEC_VALUE_FLAGS:
+            raise ValueError(f"refusing unsupported /exec flag: {flag!r}")
+        if flag in values:
+            raise ValueError(f"refusing duplicate /exec flag: {flag}")
+        if not value.strip():
+            raise ValueError(f"{flag} must not be empty")
+        values[flag] = value
+
+    for required in ("--hosts", "--cmd"):
+        if required not in values:
+            raise ValueError(f"/exec requires {required}")
+
+    hosts = [host.strip() for host in values["--hosts"].split(",")]
+    if any(not host for host in hosts):
+        raise ValueError("--hosts contains an empty host name")
+    if len(hosts) > _EXEC_MAX_HOSTS:
+        raise ValueError(f"/exec accepts at most {_EXEC_MAX_HOSTS} hosts")
+    if len(values["--cmd"]) > _EXEC_MAX_SCRIPT_CHARS:
+        raise ValueError(f"/exec script exceeds {_EXEC_MAX_SCRIPT_CHARS} characters")
+
+    timeout = values.get("--timeout")
+    if timeout is not None:
+        seconds = _duration_seconds(timeout)
+        if seconds is None:
+            raise ValueError("--timeout must be a positive duration such as 30s or 5m")
+        if seconds > _EXEC_MAX_TIMEOUT_SECONDS:
+            raise ValueError("--timeout may not exceed 30m")
+
 
 def _scope_override_flag(arg: str) -> str | None:
     """Return the scope selector encoded in one argv token, if any."""
@@ -505,6 +569,8 @@ def build_argv(
         raise ValueError(f"{name} does not map to a dreadgoad verb")
     anchor = session["anchor"]
     _rejects_anchor_override(list(extra_args or []))
+    if name == "/exec":
+        _validate_exec_args(list(extra_args or []))
     verb, trailing = _verb_for(cmd, list(extra_args or []))
     return [
         resolve_bin(repo_root),

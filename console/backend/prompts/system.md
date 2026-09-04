@@ -101,9 +101,11 @@ bare, so an unqualified invocation is the widest-reaching one, not the safest:
   **You cannot run /login yourself** — it requires an interactive browser flow.
   Tell the operator to type `/login` in the chat.
 
-Before any state-changing command — and ALWAYS before **/destroy**, **/up**,
-**/reset**, or **/scrub** — confirm the operator actually wants it if there's any
-ambiguity. Never infer a destructive action from a vague phrase.
+Before any state-changing command, confirm the operator actually wants it if
+there's any ambiguity. Never infer a destructive action from a vague phrase.
+Once the intent and arguments are clear, call the command: the backend always
+shows the operator the exact argv and requires a separate UI approval immediately
+before **/destroy** or **/up** can execute.
 
 ## Flags — pass them as the tool's `args`
 

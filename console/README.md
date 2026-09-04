@@ -51,6 +51,11 @@ environment name), and drive it with `/` commands or plain text.
 | `DREADGOAD_CONSOLE_DB` | `<state_root>/state.db` | Override the DB path |
 | `DREADGOAD_CONSOLE_FRONTEND_DIST` | — | Static SPA dir (set by the launcher) |
 
+The state root and session/config directories are restricted to the console user
+(`0700`), and the SQLite database and sidecars use `0600`. Startup repairs modes
+left by older console versions and fails rather than silently accepting a state
+location it cannot make private.
+
 ## Commands
 
 A message is either a slash-command or free text. The **dispatch** column says
@@ -92,6 +97,13 @@ using the variant at ad/GOAD-foo`). Direct `/start`, `/stop` and `/destroy`
 accept an optional hostname, `/scrub` accepts cleanup flags or `dry`, and
 `/login` takes no arguments and selects the provider/profile from the session.
 
+`/up` and `/destroy` are mechanically approval-gated in the backend. Immediately
+before execution, the UI shows the exact command arguments; press **C** to confirm
+or **D** to deny (the buttons work too). An approval is bound to that session and
+exact argv, is single-use, survives a reconnect while pending, and expires after
+five minutes. Denial, expiry, session deletion/shutdown cleanup, and backend
+errors all fail closed without starting the command.
+
 ### What the agent may run
 
 The agent's tool can reach every concrete backend command in the table except
@@ -99,15 +111,19 @@ The agent's tool can reach every concrete backend command in the table except
 act on a request in plain English. The composite `/status` command is expanded
 into `/instances` and `/health` before the model turn; `/status` itself is not a
 tool command. The client-only `/help` and `/copy` commands are also unavailable.
-Confirmation before something destructive is a prompt-level guarantee, not a
-mechanical one — that is an operator's choice, and it is the reason `system.md`
-matters.
+The `/up` and `/destroy` approval boundary is enforced mechanically in the
+backend, regardless of whether the command came from typed input or an agent tool
+call. Other state-changing commands retain their documented prompt-level safety
+guidance.
 
 Two limits *are* mechanical. The agent picks a command name and arguments; it
 never picks the program, so it cannot invoke `az`, `aws`, `terraform` or a
 shell. And `--config`/`--env` come from the session anchor and are rejected in
 any supplied argument: cobra resolves repeated flags last-wins, so an appended
 `--config other.yaml` would otherwise retarget the run at a different range.
+`/exec` additionally accepts only one each of `--hosts`, `--cmd`, and optional
+`--timeout`; it rejects unknown or duplicate flags, empty values, more than 20
+targets, scripts over 16 KiB, and timeouts over 30 minutes.
 
 ## Prompts
 

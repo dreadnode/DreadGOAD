@@ -36,6 +36,7 @@ def setup_module(_mod: object = None) -> None:
 def teardown_module(_mod: object = None) -> None:
     _restore_env()
 
+
 try:
     import pytest  # noqa: E402
 
@@ -470,12 +471,17 @@ def test_ws_origin_allowed() -> None:
 
 
 def test_parse_ws_message_validation() -> None:
-    """Only the three bounded protocol shapes reach the chat runtime."""
+    """Only the bounded chat and approval protocol shapes reach the runtime."""
     valid = (
         ('{"session_id":"s-1","content":" hello "}', "message", "hello"),
         ('{"type":"message","session_id":"s-1","content":"hello"}', "message", "hello"),
         ('{"type":"resume","session_id":"s-1"}', "resume", None),
         ('{"type":"cancel","session_id":"s-1"}', "cancel", None),
+        (
+            '{"type":"approval","session_id":"s-1","approval_id":"a-1","decision":"confirm"}',
+            "approval",
+            None,
+        ),
     )
     for raw, expected_type, expected_content in valid:
         message, error, session_id = parse_ws_message(raw)
@@ -494,6 +500,11 @@ def test_parse_ws_message_validation() -> None:
         ('{"session_id":"s-1","content":7}', "content must"),
         ('{"session_id":"s-1","content":"  "}', "must not be empty"),
         ('{"session_id":"s-1","type":"cancel","content":"x"}', "unexpected field"),
+        ('{"session_id":"s-1","type":"approval","decision":"confirm"}', "approval_id"),
+        (
+            '{"session_id":"s-1","type":"approval","approval_id":"a-1","decision":"maybe"}',
+            "decision must",
+        ),
         (
             json.dumps(
                 {

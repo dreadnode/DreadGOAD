@@ -318,7 +318,6 @@ def test_exec_verb_and_json_flag() -> None:
     """/exec always carries --json, and the agent's flags pass through."""
     # The console adds --json so summarize_exec can parse; the agent is told
     # NOT to pass it, so forgetting it must not degrade the output.
-    assert _argv("/exec")[5:] == ["exec", "--json"]
     assert _argv("/exec", ["--hosts", "dc02", "--cmd", "Get-Service WinRM"])[5:] == [
         "exec",
         "--json",
@@ -333,6 +332,38 @@ def test_exec_verb_and_json_flag() -> None:
     # /diagnose is gone — it was a broken playbook, replaced by /exec.
     assert "/diagnose" not in commands.REGISTRY
     print("PASS test_exec_verb_and_json_flag")
+
+
+def test_exec_args_are_structurally_bounded() -> None:
+    """Only documented /exec flags and reasonable resource bounds pass."""
+    valid = _argv(
+        "/exec",
+        ["--hosts=dc01,dc02", "--cmd=Get-Service WinRM", "--timeout", "1m30s"],
+    )
+    assert valid[-3:] == ["--cmd=Get-Service WinRM", "--timeout", "1m30s"]
+
+    bad_cases = (
+        ([], "requires --hosts"),
+        (["--hosts", "dc01"], "requires --cmd"),
+        (["--hosts", "dc01", "--cmd", "x", "--json"], "unsupported"),
+        (["--hosts", "dc01", "--hosts", "dc02", "--cmd", "x"], "duplicate"),
+        (["--hosts", "dc01,,dc02", "--cmd", "x"], "empty host"),
+        (["--hosts", ",".join(f"h{i}" for i in range(21)), "--cmd", "x"], "at most"),
+        (["--hosts", "dc01", "--cmd", "x" * 16_385], "exceeds"),
+        (["--hosts", "dc01", "--cmd", "x", "--timeout", "31m"], "30m"),
+        (
+            ["--hosts", "dc01", "--cmd", "x", "--timeout", "forever"],
+            "positive duration",
+        ),
+    )
+    for args, expected in bad_cases:
+        try:
+            _argv("/exec", args)
+        except ValueError as exc:
+            assert expected in str(exc), (args, exc)
+        else:
+            raise AssertionError(f"unsafe /exec args accepted: {args!r}")
+    print("PASS test_exec_args_are_structurally_bounded")
 
 
 def test_restart_targets_one_host() -> None:
@@ -405,8 +436,9 @@ def test_anchor_cannot_be_overridden_by_extra_args() -> None:
             else:
                 raise AssertionError(f"{name} accepted {bad!r} — range escape")
 
-    # Legitimate args that merely start with the same letters still work.
-    assert "--configure" in _argv("/exec", ["--configure", "x"])
+    # The scope detector itself must not confuse a longer flag with --config.
+    # /exec's separate allowlist still rejects --configure as unsupported.
+    assert commands._scope_override_flag("--configure") is None
     assert _argv("/scrub", ["--purge-ad"])[5:] == [
         "score",
         "reset",
@@ -414,7 +446,7 @@ def test_anchor_cannot_be_overridden_by_extra_args() -> None:
         "--purge-ad",
     ]
     # And the anchor still leads the argv.
-    assert _argv("/exec", ["--hosts", "dc02"])[1:5] == [
+    assert _argv("/exec", ["--hosts", "dc02", "--cmd", "Get-Service"])[1:5] == [
         "--config",
         "/x/dreadgoad.yaml",
         "--env",
@@ -644,15 +676,15 @@ def test_no_console_command_can_block_on_a_prompt() -> None:
 
 
 def test_catalog_exposes_destructive_for_the_confirm_gate() -> None:
-    """The UI confirms before a direct destructive command; it needs the flag.
+    """The UI receives reliable metadata for destructive-command warnings.
 
     `destructive` is deliberately NOT `cloud_ops`. /start and /stop touch real
     cloud resources and are entirely reversible — gating on cloud_ops would put
     a confirmation on both and tell the operator they cannot be undone, which is
-    false. Irreversibility is the property that earns the prompt.
+    false. Irreversibility is the property represented by this field.
 
-    Exposed through the catalog because the alternative is hardcoding "/destroy"
-    in the component, and then the next destructive command ships ungated.
+    The backend approval policy is deliberately separate and exact; this catalog
+    field remains useful for cancellation warnings and command descriptions.
     """
     catalog = {c["name"]: c for c in commands.command_catalog()}
     assert len(catalog) == len(commands.REGISTRY)
@@ -671,12 +703,11 @@ def test_catalog_exposes_destructive_for_the_confirm_gate() -> None:
             f"{name} is reversible; confirming it would claim otherwise"
         )
 
-    # Anything else that becomes direct + destructive inherits the confirm, and
-    # its `detail` becomes the prompt text — so it has to read correctly.
-    gated = {
+    # Currently /destroy is the only direct command marked irreversible.
+    destructive_direct = {
         n for n, e in catalog.items() if e["destructive"] and e["dispatch"] == "direct"
     }
-    assert gated == {"/destroy"}, gated
+    assert destructive_direct == {"/destroy"}, destructive_direct
 
 
 def test_start_stop_take_an_optional_hostname() -> None:
@@ -1105,6 +1136,7 @@ def main() -> None:
     test_console_readme_covers_command_catalog()
     test_load_prompt_and_guidance_injection()
     test_exec_verb_and_json_flag()
+    test_exec_args_are_structurally_bounded()
     test_restart_targets_one_host()
     test_anchor_cannot_be_overridden_by_extra_args()
     test_exec_guidance_states_the_dangerous_parts()

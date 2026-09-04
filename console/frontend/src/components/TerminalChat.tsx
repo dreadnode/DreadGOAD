@@ -317,6 +317,7 @@ interface Props {
   onCancel: () => void
   model?: string
   onOpenSettings?: () => void
+  confirmationBlocked?: boolean
 }
 
 function Badge({ text, color }: { text: string; color: string }) {
@@ -513,7 +514,7 @@ export function reanchorHelp(helpAfter: number | null, length: number): number |
   return helpAfter !== null && helpAfter > length ? length : helpAfter
 }
 
-export default function TerminalChat({ sessionId, messages, status, onSend, processing, turnStartedAt, verbSeed, onCancel, model, onOpenSettings }: Props) {
+export default function TerminalChat({ sessionId, messages, status, onSend, processing, turnStartedAt, verbSeed, onCancel, model, onOpenSettings, confirmationBlocked }: Props) {
   const [input, setInput] = useState('')
   // Transcript position the guide was last requested at; null = never asked.
   // An empty pane shows it regardless, so a new session opens on the workflow.
@@ -765,15 +766,11 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
 
     if (!sessionId || status !== 'connected' || processing) return
 
-    // A destructive command dispatched `direct` runs the instant it is sent:
-    // there is no agent turn that might question it, and nothing downstream
-    // asks either — the CLI's approval prompt is bypassed with --auto-approve
-    // because a console command has no terminal to answer it. `/destroy` is the
-    // only one today, and this was the last gap between typing it and the range
-    // being gone. Keyed on `destructive`, not `cloud_ops`: /start and /stop
-    // touch real resources too and are entirely reversible, so gating on
-    // cloud_ops would confirm those and claim they cannot be undone. Copy comes
-    // from the command's own `detail`, so it stays true for whatever is added.
+    // High-consequence commands are approved by the backend after it has built
+    // the exact argv. Do not pre-confirm them here: that would produce two
+    // dialogs and, more importantly, would still not authorize the server-side
+    // operation. The catalog-failure check below remains a local fail-closed
+    // guard for slash commands the client cannot classify.
     const doSend = () => {
       onSend(t)
       setInput('')
@@ -782,7 +779,6 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
       setDraft('')
     }
 
-    const spec = commands.find(c => c.name === t.split(' ')[0])
     if (!catalogOk && t.startsWith('/')) {
       setPendingConfirm({
         title: 'Unverified command',
@@ -793,17 +789,6 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
       })
       return
     }
-    if (spec?.destructive && spec.dispatch === 'direct') {
-      setPendingConfirm({
-        title: `Run ${spec.name}?`,
-        message: `${spec.detail}\n\nThis starts immediately and cannot be undone.`,
-        destructive: true,
-        confirmLabel: 'RUN',
-        onConfirm: () => { doSend(); setPendingConfirm(null) },
-      })
-      return
-    }
-
     doSend()
   }
 
@@ -891,7 +876,7 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--dn-bg)', borderRight: '1px solid var(--dn-border)', position: 'relative' }}>
-      {pendingConfirm && (
+      {!confirmationBlocked && pendingConfirm && (
         <ConfirmModal
           title={pendingConfirm.title}
           message={pendingConfirm.message}

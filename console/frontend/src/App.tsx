@@ -7,7 +7,7 @@ import NewSessionModal from './components/NewSessionModal'
 import { Field, btnStyle } from './components/FormFields'
 import { useWebSocket } from './hooks/useWebSocket'
 import { api, type AppConfig } from './api'
-import type { ChatEvent, Session } from './types'
+import type { ApprovalRequest, ChatEvent, Session } from './types'
 
 const MIN_W = 320
 const DEFAULT_RATIO = 0.45
@@ -43,6 +43,7 @@ export default function App() {
     title: string; message: string; confirmLabel?: string;
     destructive?: boolean; onConfirm: () => void;
   } | null>(null)
+  const [pendingApprovals, setPendingApprovals] = useState<Record<string, ApprovalRequest>>({})
 
   const sessionsRef = useRef<Session[]>([])
   const resumedRef = useRef<Set<string>>(new Set())
@@ -74,6 +75,34 @@ export default function App() {
         // Fall back to now if the timestamp is unusable, so the timer starts
         // from zero rather than rendering a nonsense duration.
         return { ...prev, [sid]: running ? (Number.isNaN(at) ? Date.now() : at) : 0 }
+      })
+      setPendingApprovals(prev => {
+        const next = { ...prev }
+        if (ev.approval) next[sid] = ev.approval
+        else delete next[sid]
+        return next
+      })
+      return
+    }
+    if (ev.kind === 'approval_required' && ev.approval_id && ev.command && ev.argv) {
+      setPendingApprovals(prev => ({
+        ...prev,
+        [sid]: {
+          approval_id: ev.approval_id as string,
+          command: ev.command as string,
+          argv: ev.argv as string[],
+          detail: ev.detail || '',
+          requested_at: '',
+        },
+      }))
+      return
+    }
+    if (ev.kind === 'approval_resolved' && ev.approval_id) {
+      setPendingApprovals(prev => {
+        if (prev[sid]?.approval_id !== ev.approval_id) return prev
+        const next = { ...prev }
+        delete next[sid]
+        return next
       })
       return
     }
@@ -188,11 +217,39 @@ export default function App() {
   }, [activeId])
 
   const closeSession = useCallback(async (id: string) => {
-    await api.deleteSession(id).catch(() => {})
+    try {
+      await api.deleteSession(id)
+    } catch {
+      // The backend rejects deletion while a turn or approval is active. Keep
+      // the tab and approval visible so the operator can resolve it safely.
+      return
+    }
     setSessions(prev => prev.filter(s => s.id !== id))
     setMsgs(prev => { const n = { ...prev }; delete n[id]; return n })
+    setPendingApprovals(prev => { const n = { ...prev }; delete n[id]; return n })
     if (activeId === id) setActiveId(null)
   }, [activeId])
+
+  const approval = Object.entries(pendingApprovals)[0]
+  const approvalSession = approval
+    ? sessions.find(session => session.id === approval[0])?.label || approval[0]
+    : null
+  const resolveApproval = useCallback((sid: string, request: ApprovalRequest, decision: 'confirm' | 'deny') => {
+    const sent = send(JSON.stringify({
+      type: 'approval',
+      session_id: sid,
+      approval_id: request.approval_id,
+      decision,
+    }))
+    if (!sent) return false
+    setPendingApprovals(prev => {
+      if (prev[sid]?.approval_id !== request.approval_id) return prev
+      const next = { ...prev }
+      delete next[sid]
+      return next
+    })
+    return true
+  }, [send])
 
   // --- resizer ---
   const onDrag = useCallback((e: React.MouseEvent) => {
@@ -210,10 +267,22 @@ export default function App() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', position: 'fixed', inset: 0, background: 'var(--dn-black)' }}>
-      {showNew && cfg && (
+      {approval && (
+        <ConfirmModal
+          title={`Run ${approval[1].command}?`}
+          message={`Session: ${approvalSession}\n${approval[1].detail}`}
+          codeLabel="Exact command"
+          commandArgv={approval[1].argv}
+          confirmLabel="CONFIRM"
+          destructive
+          onConfirm={() => resolveApproval(approval[0], approval[1], 'confirm')}
+          onCancel={() => resolveApproval(approval[0], approval[1], 'deny')}
+        />
+      )}
+      {!approval && showNew && cfg && (
         <NewSessionModal cfg={cfg} onClose={() => setShowNew(false)} onCreate={createSession} />
       )}
-      {showSettings && cfg && (
+      {!approval && showSettings && cfg && (
         <SettingsModal
           cfg={cfg}
           model={sessions.find(s => s.id === activeId)?.model}
@@ -222,7 +291,7 @@ export default function App() {
           onSaved={() => { setShowSettings(false); api.config().then(setCfg).catch(() => {}) }}
         />
       )}
-      {pendingConfirm && (
+      {!approval && pendingConfirm && (
         <ConfirmModal
           title={pendingConfirm.title}
           message={pendingConfirm.message}
@@ -308,6 +377,7 @@ export default function App() {
               onCancel={onCancel}
               model={sessions.find(s => s.id === activeId)?.model}
               onOpenSettings={() => setShowSettings(true)}
+              confirmationBlocked={Boolean(approval)}
             />
           </div>
           <div onMouseDown={onDrag} style={{ width: 4, cursor: 'col-resize', background: 'var(--dn-border)', flexShrink: 0 }} />

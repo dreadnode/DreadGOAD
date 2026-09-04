@@ -21,8 +21,10 @@ Guidance:
   health-check. For "just redo infra", run `dreadgoad infra apply` directly instead.
   Map the operator's step name to the four valid values above; if theirs doesn't
   match, ask.
-- `/up` deploys real cloud infra and costs money — if the range may already be up
-  or the request is ambiguous, confirm intent before running.
+- `/up` deploys real cloud infra and costs money. If the request is ambiguous,
+  clarify it first. Once intent and arguments are clear, call the command; the
+  backend separately shows the exact argv and requires operator approval before
+  it executes.
 - When adding a component to an already-running range (e.g. `--with-kali` on a
   healthy range), ALWAYS pass `--limit` to scope provisioning to the new host.
   Infra apply is idempotent regardless, but without `--limit` every Ansible

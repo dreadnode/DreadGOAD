@@ -144,8 +144,9 @@ def _make_run_dreadgoad(app: t.Any, session_id: str, run_cli: RunCli):  # noqa: 
     to answer questions, actions to perform them. Composite console commands and
     interactive login are excluded. Everything routes through the shared pipeline
     so agent-initiated ops get streaming/status/hook/cancel like operator-typed
-    ones. Guardrails for destructive commands are by prompt (the agent confirms
-    intent).
+    ones. The prompt requires clarification of ambiguous destructive intent;
+    the shared runner additionally enforces exact backend approval for /up and
+    /destroy regardless of whether the agent or operator initiated them.
     """
 
     @tool(catch=True)
