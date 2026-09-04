@@ -69,31 +69,39 @@ loop.
 | `/score` | `score` | 🤖 agent | Fetch an agent report off the attack box and score it |
 | `/exec` | `exec --json` | 🤖 agent | Run a script on named hosts via the cloud control plane |
 | `/restart` | `lab restart-vm` | 🤖 agent | Reboot one host, leaving the rest of the range up |
+| `/status` | `lab status --json`, then `health-check --json` | 🤖 agent | Cloud power state and host health in one pass |
 | `/instances` | `lab status --json` | ⚡ direct | Cloud power state |
 | `/health` | `health-check --json` | ⚡ direct | Per-host AD health (rendered as a table) |
+| `/secure` | `security-check --json` | ⚡ direct | Network security posture |
 | `/validate` | `validate` | ⚡ direct | Vuln-config correctness |
-| `/start` | `lab start` | ⚡ direct | Power on |
-| `/stop` | `lab stop` | ⚡ direct | Power off |
+| `/start [host]` | `lab start` / `lab start-vm` | ⚡ direct | Power on the range or one VM |
+| `/stop [host]` | `lab stop` / `lab stop-vm` | ⚡ direct | Power off the range or one VM |
 | `/scrub` | `score reset` | ⚡ direct | Clean agent artifacts (add `dry` to preview) |
-| `/destroy` | `infra destroy` | ⚡ direct | Tear down infra (operator-only) |
+| `/destroy [host]` | `infra destroy` / `lab destroy-vm` | ⚡ direct | Tear down the range or one VM (operator-confirmed) |
+| `/login` | provider login flow | ⚡ direct | Re-authenticate with AWS SSO or Azure |
+| `/help` | — | browser | Show the range workflow guide |
+| `/copy` | — | browser | Copy all or part of the conversation |
 
-`/help` is a sixteenth command that runs nothing: it prints the range workflow
-end to end and is what an empty chat pane shows, so a new session opens on the
-guide rather than a blank screen. It is client-side — it maps to no CLI verb,
-and the agent cannot "run" it.
+The `/help` and `/copy` commands are client-side only. `/help` is what an empty
+chat pane shows, so a new session opens on the guide rather than a blank screen.
+Neither command maps to a CLI verb or is available to the agent.
 
 Config/env are injected from the session — you never pass `--config`/`--env`.
 Agent commands accept free-form text the agent interprets into flags (e.g. `/up
-using the variant at ad/GOAD-foo`); of the direct commands only `/scrub` takes
-an argument.
+using the variant at ad/GOAD-foo`). Direct `/start`, `/stop` and `/destroy`
+accept an optional hostname, `/scrub` accepts cleanup flags or `dry`, and
+`/login` takes no arguments and selects the provider/profile from the session.
 
 ### What the agent may run
 
-The agent's tool can reach **every command in the table**, direct ones included,
-so it can answer a question by running a read and act on a request in plain
-English. Confirmation before something destructive is a prompt-level guarantee,
-not a mechanical one — that is an operator's choice, and it is the reason
-`system.md` matters.
+The agent's tool can reach every concrete backend command in the table except
+`/login`, direct ones included, so it can answer a question by running a read and
+act on a request in plain English. The composite `/status` command is expanded
+into `/instances` and `/health` before the model turn; `/status` itself is not a
+tool command. The client-only `/help` and `/copy` commands are also unavailable.
+Confirmation before something destructive is a prompt-level guarantee, not a
+mechanical one — that is an operator's choice, and it is the reason `system.md`
+matters.
 
 Two limits *are* mechanical. The agent picks a command name and arguments; it
 never picks the program, so it cannot invoke `az`, `aws`, `terraform` or a

@@ -42,6 +42,13 @@ class Command:
     dispatch: str = "direct"  # "direct" (deterministic) | "agent"
     long_running: bool = False  # streamed + guarded cancel (§5.4)
     takes_args: bool = False
+    # Agent-dispatched composite commands do not map to one CLI verb. List the
+    # concrete run_dreadgoad commands the prompt may use so its constraints do
+    # not contradict the command-specific guidance.
+    agent_commands: tuple[str, ...] = ()
+    # Whether a direct command's bounded output summary may be added to model
+    # context. Authentication output is deliberately excluded.
+    record_output: bool = True
     # Whether the command asks the cloud (or a host) to change something.
     #
     # Cancelling one of these does NOT undo it. Killing our subprocess ends the
@@ -162,6 +169,7 @@ REGISTRY: dict[str, Command] = {
         (),
         dispatch="agent",
         long_running=True,
+        agent_commands=("/instances", "/health"),
         description="Cloud power state + host-level health in one pass",
         detail="read-only; runs /instances then /health and summarizes",
     ),
@@ -225,16 +233,19 @@ REGISTRY: dict[str, Command] = {
     "/login": Command(
         "/login",
         (),
+        record_output=False,
         description="Re-authenticate with the cloud provider (AWS SSO or Azure)",
         detail="opens a browser; run when commands fail with expired credentials",
     ),
 }
 
-# Commands the agent may run via its run_dreadgoad tool: ALL of them, so it can
-# answer questions by running reads (/instances, /health, …) and perform actions
-# from natural language. Safety for destructive commands (/destroy, /up, /reset,
-# /variant) is by prompt — the agent must confirm intent (operator's choice).
-AGENT_RUNNABLE: frozenset[str] = frozenset(REGISTRY) - {"/login"}
+# Concrete commands the agent may run via its run_dreadgoad tool. Composite
+# console conveniences such as /status have no CLI verb and are expanded into
+# their concrete commands before the model turn; /login is operator-only.
+# Safety for destructive commands (/destroy, /up, /reset, /variant) is by prompt.
+AGENT_RUNNABLE: frozenset[str] = frozenset(
+    name for name, command in REGISTRY.items() if command.verb and name != "/login"
+)
 
 
 def command_catalog() -> list[dict[str, t.Any]]:
@@ -279,6 +290,20 @@ def expand_command_prompt(name: str, extra: list[str]) -> str:
     freeform = " ".join(extra) if extra else "(no extra arguments given)"
     guidance = load_prompt(name.lstrip("/"))
     guidance_block = f"\n\n## Command-specific guidance\n{guidance}" if guidance else ""
+    if cmd.agent_commands:
+        steps = ", then ".join(
+            f"command={tool_name!r} with args=[]" for tool_name in cmd.agent_commands
+        )
+        return (
+            f"The operator invoked the {name} command — {cmd.description}.\n\n"
+            f"This is a composite console command, not a runnable dreadgoad command. "
+            f"Use only the `run_dreadgoad` tool and run exactly these steps in order: "
+            f"{steps}. Do NOT call command={name!r}, do not use any other command, "
+            f"and NEVER use raw cloud CLI (aws/az/terraform). The range "
+            f"(config/env) is fixed by the tool; don't pass --config/--env."
+            f"{guidance_block}\n\n"
+            f"Operator's request: {name} {freeform}"
+        )
     return (
         f"The operator invoked the {name} command — {cmd.description}.\n\n"
         f"Run it using the `run_dreadgoad` tool with command={name!r}. Do NOT use "

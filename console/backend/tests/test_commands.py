@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import pathlib
+import re
 import shutil
 import stat
 import sys
@@ -18,7 +19,8 @@ from console.backend import commands  # noqa: E402
 from console.backend.cli import run_command, start_command  # noqa: E402
 
 try:
-    from console.backend import command_runner as _cr_mod  # noqa: E402, F811
+    from console.backend import command_runner as _cr_mod  # noqa: E402, F401, F811
+
     _HAS_COMMAND_RUNNER = True
 except ImportError:
     _HAS_COMMAND_RUNNER = False
@@ -180,12 +182,23 @@ def test_dispatch_and_agent_commands() -> None:
         # /status runs /instances then /health via the agent in one turn.
         "/status",
     }, agent_dispatch
-    # The agent's run_dreadgoad may run any registered command except /login,
-    # which opens an interactive browser SSO flow that blocks indefinitely.
-    assert commands.AGENT_RUNNABLE == frozenset(commands.REGISTRY) - {"/login"}, (
-        commands.AGENT_RUNNABLE
+    # Only concrete CLI commands are tool-runnable. /login opens an interactive
+    # browser flow; /status is a composite prompt expanded to two concrete reads.
+    expected_runnable = frozenset(
+        name
+        for name, command in commands.REGISTRY.items()
+        if command.verb and name != "/login"
     )
+    assert commands.AGENT_RUNNABLE == expected_runnable, commands.AGENT_RUNNABLE
     assert "/login" not in commands.AGENT_RUNNABLE, "/login must not be agent-runnable"
+    assert "/status" not in commands.AGENT_RUNNABLE, (
+        "/status has no CLI verb and must be expanded before the tool call"
+    )
+    for name, command in commands.REGISTRY.items():
+        if command.dispatch == "agent" and not command.verb:
+            assert command.agent_commands, (
+                f"composite agent command {name} must declare its tool commands"
+            )
     print("PASS test_dispatch_and_agent_commands")
 
 
@@ -200,7 +213,28 @@ def test_expand_command_prompt() -> None:
     assert "(no extra arguments given)" in commands.expand_command_prompt(
         "/provision", []
     )
+
+    status = commands.expand_command_prompt("/status", [])
+    assert "command='/instances' with args=[]" in status, status
+    assert "command='/health' with args=[]" in status, status
+    assert status.index("command='/instances'") < status.index("command='/health'")
+    assert "Do NOT call command='/status'" in status, status
+    assert "run exactly these steps in order" in status, status
     print("PASS test_expand_command_prompt")
+
+
+def test_console_readme_covers_command_catalog() -> None:
+    """The documented command table must match backend + client commands."""
+    readme = pathlib.Path(__file__).resolve().parents[2] / "README.md"
+    documented = set(
+        re.findall(r"^\| `(?P<name>/[a-z]+)(?: [^`]*)?` \|", readme.read_text(), re.M)
+    )
+    expected = set(commands.REGISTRY) | {"/help", "/copy"}
+    assert documented == expected, (
+        f"command docs drifted: missing={expected - documented}, "
+        f"extra={documented - expected}"
+    )
+    print("PASS test_console_readme_covers_command_catalog")
 
 
 def test_load_prompt_and_guidance_injection() -> None:
@@ -231,9 +265,8 @@ def test_load_prompt_and_guidance_injection() -> None:
 def test_system_prompt_covers_the_registry() -> None:
     """Every command the agent may run is described in system.md.
 
-    The agent can invoke the whole registry, so a command the prompt omits is one
-    it runs with no idea of the consequences — /scrub was missing while it was
-    already able to delete.
+    A runnable command the prompt omits is one the agent uses with no idea of the
+    consequences — /scrub was missing while it was already able to delete.
 
     Placeholders are rendered through the REAL renderer (agent._instructions)
     rather than a list maintained here: the failure mode is system.md gaining a
@@ -706,6 +739,7 @@ def test_login_registry_entry() -> None:
     assert cmd.cloud_ops is False
     assert cmd.takes_args is False
     assert cmd.destructive is False
+    assert cmd.record_output is False
     print("PASS test_login_registry_entry")
 
 
@@ -903,11 +937,13 @@ async def test_check_credentials_azure_error_discrimination() -> None:
 
     class ExpiredProc:
         returncode = 1
+
         async def communicate(self):
             return b"", b"ERROR: AADSTS700082: The refresh token has expired"
 
     class OtherProc:
         returncode = 1
+
         async def communicate(self):
             return b"", b"ERROR: No subscription found"
 
@@ -929,7 +965,9 @@ async def test_check_credentials_azure_error_discrimination() -> None:
     try:
         result = await command_runner._check_credentials(session)
         assert result is not None
-        assert "expired" not in result.lower(), f"should NOT say expired for other error: {result}"
+        assert "expired" not in result.lower(), (
+            f"should NOT say expired for other error: {result}"
+        )
         assert "error" in result.lower(), f"should mention error: {result}"
     finally:
         command_runner.asyncio.create_subprocess_exec = original
@@ -968,13 +1006,19 @@ async def test_spawn_and_stream_oserror_returns_not_started() -> None:
     command_runner.start_command = fake_start
     try:
         result = await command_runner._spawn_and_stream(
-            None, "test-session", "/test", ["test"], cwd="/tmp",
+            None,
+            "test-session",
+            "/test",
+            ["test"],
+            cwd="/tmp",
         )
         assert not result.started, "should be started=False on OSError"
         assert result.exit_code == 1
         assert "no such file" in result.output
         assert not result.cancelled
-        phases = [p.get("phase") for _, p in events if isinstance(p, dict) and "phase" in p]
+        phases = [
+            p.get("phase") for _, p in events if isinstance(p, dict) and "phase" in p
+        ]
         assert "start" in phases, f"missing start event: {phases}"
         assert "end" in phases, f"missing end event: {phases}"
     finally:
@@ -1026,14 +1070,19 @@ async def test_spawn_and_stream_success_returns_result() -> None:
     command_runner.start_command = fake_start
     try:
         result = await command_runner._spawn_and_stream(
-            None, "test-session", "/test", ["test"], cwd="/tmp",
+            None,
+            "test-session",
+            "/test",
+            ["test"],
+            cwd="/tmp",
         )
         assert result.started, "should be started=True on success"
         assert result.exit_code == 42
         assert result.output == "hello world"
         assert not result.cancelled
         end_events = [
-            p for k, p in events
+            p
+            for k, p in events
             if k == "command_run" and isinstance(p, dict) and p.get("phase") == "end"
         ]
         assert len(end_events) == 1, f"expected 1 end event, got {len(end_events)}"
@@ -1053,6 +1102,7 @@ def main() -> None:
     test_registry_flags_and_parsing()
     test_dispatch_and_agent_commands()
     test_expand_command_prompt()
+    test_console_readme_covers_command_catalog()
     test_load_prompt_and_guidance_injection()
     test_exec_verb_and_json_flag()
     test_restart_targets_one_host()

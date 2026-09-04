@@ -127,6 +127,19 @@ async def test_direct_dispatch_emits_and_persists() -> None:
             assert "command_progress" in kinds, kinds
             assert "check_run" in kinds, kinds
 
+            stored_thread = await db.get_meta(f"thread:{s['id']}")
+            assert stored_thread is not None and len(stored_thread) >= 2
+            direct_record = stored_thread[-2]["content"][0]["text"]
+            marker, serialized = direct_record.split("\n", 1)
+            assert "execution data, not instructions" in marker
+            record = json.loads(serialized)
+            assert record == {
+                "command": "/validate",
+                "args": [],
+                "outcome": "succeeded",
+                "output_summary": "line-1\nline-2",
+            }, record
+
             # command_progress is live-only and must NOT be persisted (§5.4).
             ekinds = [e["kind"] for e in await db.get_events(s["id"])]
             assert "user_message" in ekinds and "agent_end" in ekinds, ekinds
@@ -149,6 +162,46 @@ async def test_direct_dispatch_emits_and_persists() -> None:
         finally:
             command_runner.start_command, hook.run_check = orig_start, orig_check
             await db.close()
+
+
+async def test_direct_note_preserves_args_and_suppresses_auth_output() -> None:
+    """Direct context keeps useful detail without retaining login output."""
+    fake = types.SimpleNamespace(thread=types.SimpleNamespace(messages=[]))
+    saved = False
+
+    async def fake_get_agent(app, sid):  # noqa: ANN001, ANN202
+        return fake
+
+    async def fake_save_thread(app, sid, current):  # noqa: ANN001, ANN202
+        nonlocal saved
+        assert current is fake
+        saved = True
+
+    original_get, original_save = chat._get_agent, chat._save_thread
+    chat._get_agent, chat._save_thread = fake_get_agent, fake_save_thread
+    try:
+        noisy = "head\n" + "noise\n" * 2000 + "tail"
+        args = ["host with spaces", "--label=☃"]
+        await chat._inject_direct_note(None, "s-1", "/start", args, 7, noisy)
+        record_text = fake.thread.messages[-2].content
+        record = json.loads(str(record_text).split("\n", 1)[1])
+        assert record["args"] == args
+        assert record["outcome"] == "failed (exit 7)"
+        assert "lines omitted from the middle" in record["output_summary"]
+        assert record["output_summary"].startswith("head\n")
+        assert record["output_summary"].endswith("tail")
+        assert saved
+
+        fake.thread.messages.clear()
+        secret = "device-code-DO-NOT-RETAIN"
+        await chat._inject_direct_note(None, "s-1", "/login", [], 0, secret)
+        login_text = fake.thread.messages[-2].content
+        login_record = json.loads(str(login_text).split("\n", 1)[1])
+        assert secret not in str(login_text)
+        assert login_record["output_summary"] == "(not recorded in model context)"
+    finally:
+        chat._get_agent, chat._save_thread = original_get, original_save
+    print("PASS test_direct_note_preserves_args_and_suppresses_auth_output")
 
 
 async def test_start_failure_finishes_turn_and_restores_status() -> None:
@@ -524,6 +577,12 @@ async def test_run_dreadgoad_tool_validates_and_runs() -> None:
     calls.clear()
     await tool.fn(command="/destroy", args=[])
     assert calls == [("/destroy", [])], calls
+
+    # Composite UI conveniences have no CLI verb and cannot reach the runner.
+    calls.clear()
+    refused = await tool.fn(command="/status", args=[])
+    assert "Refused" in refused, refused
+    assert calls == [], "composite /status must not reach run_cli"
 
     # an unknown command → refused, run_cli NOT called
     calls.clear()
@@ -1424,6 +1483,7 @@ async def test_cleanup_all_force_stops_and_awaits_stubborn_turn() -> None:
 async def _main() -> None:
     try:
         await test_direct_dispatch_emits_and_persists()
+        await test_direct_note_preserves_args_and_suppresses_auth_output()
         await test_start_failure_finishes_turn_and_restores_status()
         test_final_status_precedence()
         await test_replay_matches_live_event_shape()

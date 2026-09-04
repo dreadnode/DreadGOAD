@@ -140,11 +140,12 @@ def _instructions(session: dict[str, t.Any]) -> str:
 def _make_run_dreadgoad(app: t.Any, session_id: str, run_cli: RunCli):  # noqa: ANN202
     """Build the session-bound run_dreadgoad tool.
 
-    The agent may run ANY registered dreadgoad command (validated against
-    ``commands.AGENT_RUNNABLE``) — reads to answer questions, actions to perform
-    them. Everything routes through the shared pipeline so agent-initiated ops get
-    streaming/status/hook/cancel like operator-typed ones. Guardrails for
-    destructive commands are by prompt (the agent confirms intent).
+    The agent may run any concrete command in ``commands.AGENT_RUNNABLE`` — reads
+    to answer questions, actions to perform them. Composite console commands and
+    interactive login are excluded. Everything routes through the shared pipeline
+    so agent-initiated ops get streaming/status/hook/cancel like operator-typed
+    ones. Guardrails for destructive commands are by prompt (the agent confirms
+    intent).
     """
 
     @tool(catch=True)
@@ -171,7 +172,7 @@ def _make_run_dreadgoad(app: t.Any, session_id: str, run_cli: RunCli):  # noqa: 
         """
         if command not in commands.AGENT_RUNNABLE:
             return (
-                f"Refused: {command!r} is not a known dreadgoad command. "
+                f"Refused: {command!r} is not runnable through this tool. "
                 f"Valid commands: {sorted(commands.AGENT_RUNNABLE)}."
             )
         # An operator cancel reaches us as CancelledError, raised deliberately by
