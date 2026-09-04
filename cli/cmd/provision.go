@@ -539,12 +539,13 @@ func provisionPlaybooks(ctx context.Context, cfg *config.Config, playbooks []str
 
 	for i, playbook := range playbooks {
 		opts := ansible.RetryOptions{
-			Playbook:  playbook,
-			Env:       cfg.Env,
-			Limit:     limit,
-			Debug:     cfg.Debug,
-			LogFile:   logFile,
-			ExtraVars: runVars,
+			Playbook:      playbook,
+			Env:           cfg.Env,
+			Limit:         limit,
+			RetryAllHosts: retryAllHosts(playbook),
+			Debug:         cfg.Debug,
+			LogFile:       logFile,
+			ExtraVars:     runVars,
 		}
 		retry.apply(&opts)
 
@@ -573,6 +574,13 @@ func provisionPlaybooks(ctx context.Context, cfg *config.Config, playbooks []str
 	fmt.Printf("Full log: %s\n", logFile)
 	fmt.Println("===============================================")
 	return nil
+}
+
+// retryAllHosts identifies multi-host workflows whose later plays may never
+// execute after an earlier single-host play fails. Retrying only the failed
+// host could otherwise return success while silently skipping those plays.
+func retryAllHosts(playbook string) bool {
+	return filepath.Base(playbook) == "scope-seed.yml"
 }
 
 // maybeStartSOCKSTunnel selects a provider-appropriate SOCKS5 tunnel for

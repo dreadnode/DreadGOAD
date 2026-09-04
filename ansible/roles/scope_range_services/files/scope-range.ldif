@@ -6,32 +6,32 @@ dn: ou=groups,dc=range,dc=test
 objectClass: organizationalUnit
 ou: groups
 
-dn: uid=alice,ou=people,dc=range,dc=test
+dn: uid=michael,ou=people,dc=range,dc=test
 objectClass: inetOrgPerson
 objectClass: posixAccount
-cn: Alice Morgan
-sn: Morgan
-uid: alice
+cn: Michael
+sn: Michael
+uid: michael
 uidNumber: 10001
 gidNumber: 10001
-homeDirectory: /home/alice
-mail: alice@range.test
+homeDirectory: /home/michael
+mail: michael@range.test
 userPassword: ScopeFiles2026!
 
-dn: uid=bob,ou=people,dc=range,dc=test
+dn: uid=shane,ou=people,dc=range,dc=test
 objectClass: inetOrgPerson
 objectClass: posixAccount
-cn: Bob Chen
-sn: Chen
-uid: bob
+cn: Shane
+sn: Shane
+uid: shane
 uidNumber: 10002
 gidNumber: 10001
-homeDirectory: /home/bob
-mail: bob@range.test
+homeDirectory: /home/shane
+mail: shane@range.test
 userPassword: ScopeFiles2026!
 
-dn: cn=researchers,ou=groups,dc=range,dc=test
+dn: cn=kraken-researchers,ou=groups,dc=range,dc=test
 objectClass: groupOfNames
-cn: researchers
-member: uid=alice,ou=people,dc=range,dc=test
-member: uid=bob,ou=people,dc=range,dc=test
+cn: kraken-researchers
+member: uid=michael,ou=people,dc=range,dc=test
+member: uid=shane,ou=people,dc=range,dc=test

@@ -17,10 +17,10 @@ from typing import Any
 
 
 JENKINS_URL = "http://127.0.0.1:8080"
-AUTH = ("rangeadmin", "ScopeJenkins2026!")
-JOB_NAME = "orchid-nightly-export"
-JOB_CONFIG = pathlib.Path("/opt/scope-range/development/orchid-nightly-export.xml")
-GARAGE_ARTIFACT_ROOT = "http://s3.range.test:3900/build-artifacts/orchid/0.1.0"
+AUTH = ("poseidon", "ScopeJenkins2026!")
+JOB_NAME = "kraken-nightly-export"
+JOB_CONFIG = pathlib.Path("/opt/scope-range/development/kraken-nightly-export.xml")
+GARAGE_ARTIFACT_ROOT = "http://s3.range.test:3900/build-artifacts/kraken/0.1.0"
 GARAGE_AUTH = (
     "GKSCOPERANGE2026ACCESS",
     "ScopeGarageSecretKey2026ScopeGarageSecretKey2026",
@@ -87,7 +87,7 @@ import com.cloudbees.plugins.credentials.impl.UsernamePasswordCredentialsImpl
 def store = SystemCredentialsProvider.getInstance().getStore()
 def existing = SystemCredentialsProvider.getInstance().getCredentials().collect { it.id } as Set
 def wanted = [
-  ["scope-gitea", "rangeadmin", "ScopeGitea2026!", "Synthetic Gitea account"],
+  ["scope-gitea", "poseidon", "ScopeGitea2026!", "Synthetic Gitea account"],
   ["scope-garage", "GKSCOPERANGE2026ACCESS", "ScopeGarageSecretKey2026ScopeGarageSecretKey2026", "Synthetic Garage access key"]
 ]
 wanted.each { item ->
@@ -156,9 +156,9 @@ def successful_seed_build_exists() -> bool:
         manifest: Any = json.loads(payload)
     except json.JSONDecodeError:
         return False
-    if manifest.get("seed_version") != "scope-seed-v1":
+    if manifest.get("seed_version") != "scope-seed-v2":
         return False
-    for name in ("build-manifest.json", "orchid-source.tar.gz"):
+    for name in ("build-manifest.json", "kraken-source.tar.gz"):
         try:
             completed = subprocess.run(
                 [

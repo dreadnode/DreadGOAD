@@ -242,7 +242,9 @@ def load_manifest(path: pathlib.Path) -> dict[str, Any]:
         if host_id in seen_hosts:
             raise ValueError(f"duplicate host id: {host_id}")
         seen_hosts.add(host_id)
-        validate_name_template(vm_template, f"host {host_id} vm_name_template")
+        vm_template = validate_name_template(
+            vm_template, f"host {host_id} vm_name_template"
+        )
         if vm_template in seen_vm_templates:
             raise ValueError(f"duplicate VM template: {vm_template}")
         seen_vm_templates.add(vm_template)
@@ -352,9 +354,13 @@ def validate_infrastructure(
         )
         return results, runnable
 
-    vm_by_name = {
-        vm.get("name"): vm for vm in vms if isinstance(vm, dict) and vm.get("name")
-    }
+    vm_by_name: dict[str, dict[str, Any]] = {}
+    for vm in vms:
+        if not isinstance(vm, dict):
+            continue
+        vm_name = vm.get("name")
+        if isinstance(vm_name, str) and vm_name:
+            vm_by_name[vm_name] = vm
     expected_names = {
         render_template(host["vm_name_template"], env) for host in manifest["hosts"]
     }

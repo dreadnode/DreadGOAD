@@ -59,11 +59,11 @@
   ansible.builtin.command: >-
     docker exec --user git scope-gitea
     gitea admin user create
-    --username rangeadmin
+    --username poseidon
     --password ScopeGitea2026!
-    --email rangeadmin@range.test
+    --email poseidon@range.test
     --admin --must-change-password=false
-  when: "'rangeadmin' not in gitea_admins.stdout"
+  when: "'poseidon' not in gitea_admins.stdout"
   no_log: true
 
 - name: Wait for the range LDAP service from the development host
@@ -127,13 +127,13 @@
   ansible.builtin.uri:
     url: http://127.0.0.1:3000/api/v1/user/repos
     method: POST
-    user: rangeadmin
+    user: poseidon
     password: ScopeGitea2026!
     force_basic_auth: true
     body_format: json
     body:
-      name: orchid-control-plane
-      description: Synthetic automation and service configuration for Project ORCHID
+      name: kraken-control-plane
+      description: Synthetic automation and service configuration for Project KRAKEN
       private: false
     status_code:
       - 201

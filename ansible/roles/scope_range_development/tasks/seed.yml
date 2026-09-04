@@ -1,16 +1,16 @@
 ---
 - name: Create the versioned development seed directory
   ansible.builtin.file:
-    path: /opt/scope-range/development/seed/orchid-control-plane
+    path: /opt/scope-range/development/seed/kraken-control-plane
     state: directory
     owner: root
     group: root
     mode: "0755"
 
-- name: Install the deterministic ORCHID repository source
+- name: Install the deterministic KRAKEN repository source
   ansible.builtin.copy:
-    src: orchid-control-plane/
-    dest: /opt/scope-range/development/seed/orchid-control-plane/
+    src: kraken-control-plane/
+    dest: /opt/scope-range/development/seed/kraken-control-plane/
     owner: root
     group: root
     mode: preserve
@@ -74,8 +74,8 @@
 
 - name: Install the Jenkins seed job configuration
   ansible.builtin.copy:
-    src: orchid-nightly-export.xml
-    dest: /opt/scope-range/development/orchid-nightly-export.xml
+    src: kraken-nightly-export.xml
+    dest: /opt/scope-range/development/kraken-nightly-export.xml
     owner: root
     group: root
     mode: "0600"

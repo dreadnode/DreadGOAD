@@ -67,12 +67,12 @@
       JENKINS_URL=http://jenkins.range.test:8080
       REGISTRY_URL=http://registry.range.test:5000
       POSTGRES_HOST=postgres.range.test
-      POSTGRES_USER=rangeadmin
+      POSTGRES_USER=poseidon
       POSTGRES_PASSWORD=ScopePostgres2026!
       MARIADB_HOST=mariadb.range.test
       MARIADB_USER=wordpress
       MARIADB_PASSWORD=ScopeWordPress2026!
-      MONGODB_URI=mongodb://rangeadmin:ScopeMongo2026!@mongodb.range.test:27017/admin
+      MONGODB_URI=mongodb://poseidon:ScopeMongo2026!@mongodb.range.test:27017/admin
       REDIS_URL=redis://default:ScopeRedis2026!@redis.range.test:6379/0
       LDAP_URL=ldap://ldap.range.test
       LDAP_BIND_DN=cn=admin,dc=range,dc=test

@@ -10,7 +10,7 @@
 
 - name: Create the versioned database-backup directory
   ansible.builtin.file:
-    path: /srv/range/backups/scope-seed-v1
+    path: /srv/range/backups/scope-seed-v2
     state: directory
     owner: root
     group: root

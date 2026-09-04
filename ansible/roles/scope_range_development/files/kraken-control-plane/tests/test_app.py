@@ -1,4 +1,4 @@
-"""Tests for the synthetic ORCHID status service."""
+"""Tests for the synthetic KRAKEN status service."""
 
 import unittest
 
@@ -12,9 +12,10 @@ class StatusPayloadTests(unittest.TestCase):
         self.assertEqual(
             status_payload(),
             {
-                "project": "ORCHID",
-                "seed_version": "scope-seed-v1",
-                "status": "ready",
+                "division": "Dreadnode Biology Division",
+                "project": "KRAKEN",
+                "seed_version": "scope-seed-v2",
+                "status": "containment-ready",
             },
         )
 

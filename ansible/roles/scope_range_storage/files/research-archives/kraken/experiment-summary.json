@@ -1,0 +1,10 @@
+{
+  "classification": "restricted",
+  "depth_m": 4200,
+  "experiment": "kraken-genome-01",
+  "owner": "Dreadnode Biology Division",
+  "result": "review-required",
+  "seed_version": "scope-seed-v2",
+  "samples": 96,
+  "subject": "KRA-003"
+}

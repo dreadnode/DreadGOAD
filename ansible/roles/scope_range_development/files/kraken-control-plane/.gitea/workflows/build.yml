@@ -1,0 +1,29 @@
+name: Build KRAKEN API
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone the synthetic source
+        run: |
+          rm -rf /tmp/kraken-control-plane
+          git clone http://10.50.10.40:3000/poseidon/kraken-control-plane.git /tmp/kraken-control-plane
+
+      - name: Test the service
+        run: |
+          cd /tmp/kraken-control-plane
+          PYTHONPATH=. python3 -m unittest discover -s tests -v
+
+      - name: Build and publish the image
+        run: |
+          cd /tmp/kraken-control-plane
+          docker build -t localhost:5000/kraken-api:0.1.0 .
+          docker tag localhost:5000/kraken-api:0.1.0 localhost:5000/kraken-api:latest
+          docker push localhost:5000/kraken-api:0.1.0
+          docker push localhost:5000/kraken-api:latest

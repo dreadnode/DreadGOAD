@@ -24,6 +24,7 @@ type RetryOptions struct {
 	Inventories   []string          // additional inventory paths
 	ExtraVars     map[string]string // extra variables passed to ansible-playbook
 	Limit         string
+	RetryAllHosts bool // preserve the original limit instead of narrowing retries to failed hosts
 	Debug         bool
 	MaxRetries    int
 	MaxRetriesSet bool
@@ -141,8 +142,7 @@ func resolveRetrySettings(opts RetryOptions, configuredMaxRetries int, configure
 }
 
 func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *RunResult, log *slog.Logger) *RunResult {
-	failedHostsStr := strings.Join(failResult.FailedHosts, ",")
-	limit := buildRetryLimit(opts.Limit, failedHostsStr)
+	limit := retryLimit(opts, failResult.FailedHosts)
 
 	baseOpts := RunOptions{
 		Playbook:    opts.Playbook,
@@ -260,6 +260,13 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 		}
 		return runPlaybookAttempt(ctx, baseOpts)
 	}
+}
+
+func retryLimit(opts RetryOptions, failedHosts []string) string {
+	if opts.RetryAllHosts {
+		return opts.Limit
+	}
+	return buildRetryLimit(opts.Limit, strings.Join(failedHosts, ","))
 }
 
 func buildRetryLimit(userLimit, failedHosts string) string {

@@ -18,7 +18,7 @@ render() {
 }
 
 render http://wordpress.range.test "$WORKDIR/wordpress.html"
-grep -Fq 'Project ORCHID Research Update' "$WORKDIR/wordpress.html"
+grep -Fq 'Project KRAKEN Breeding Update' "$WORKDIR/wordpress.html"
 
-render http://git.range.test:3000/rangeadmin/orchid-control-plane "$WORKDIR/gitea.html"
-grep -Fq 'orchid-control-plane' "$WORKDIR/gitea.html"
+render http://git.range.test:3000/poseidon/kraken-control-plane "$WORKDIR/gitea.html"
+grep -Fq 'kraken-control-plane' "$WORKDIR/gitea.html"

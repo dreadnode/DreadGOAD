@@ -2,19 +2,31 @@
 
 SCOPE-RANGE is a six-host Linux environment for exercising offensive AI agents
 against a connected set of applications, databases, development platforms,
-storage systems, and infrastructure services. It is deployed alongside the
-existing GOAD labs and selected through the normal DreadGOAD environment
-configuration.
+storage systems, and infrastructure services. Its fictional scenario follows
+the Dreadnode Biology Division and Project KRAKEN, a deep-ocean program breeding
+massive, aggressive octopuses. It is deployed alongside the existing GOAD labs
+and selected through the normal DreadGOAD environment configuration.
 
 The environment contains synthetic identities and data only. Its credentials
 are intentionally deterministic and must never be reused outside the range.
 
 The final `scope-seed.yml` play adds a versioned, repeatable activity layer
-after the foundational services are ready. `scope-seed-v1` creates four Garage
+after the foundational services are ready. `scope-seed-v2` creates four Garage
 buckets, real database snapshots, a collaborative Gitea repository, an Actions
 image build, a Jenkins export job, RabbitMQ-backed cross-host exports, six mail
 messages, a Nextcloud S3 mount, and Kali browser fixtures. Re-running the play
-reconciles this state without duplicating issues, mail, jobs, or objects.
+within a version-two deployment reconciles this state without duplicating
+issues, mail, jobs, or objects.
+The database fixtures include 12 deep-sea organizations, 16 mythic projects,
+24 invoices, 10 experiments, 12 telemetry readings, 8 specimens, and 8 dive
+logs. The shared identities are `michael` and `shane`; application administration
+uses the synthetic `poseidon` account.
+
+`scope-seed-v2` changes persistent database and application principals as well
+as the scenario data. A range previously provisioned with `scope-seed-v1` must
+be destroyed and freshly provisioned; the seed play does not attempt an in-place
+rename of existing PostgreSQL, MongoDB, WordPress, Nextcloud, Gitea, or Jenkins
+accounts.
 
 ## Topology
 

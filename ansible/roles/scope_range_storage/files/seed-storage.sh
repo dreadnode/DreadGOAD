@@ -49,8 +49,8 @@ for bucket in range-assets build-artifacts database-backups research-archives; d
 done
 
 ensure_object \
-  range-assets orchid/brief.json \
-  "$SEED_ROOT/range-assets/orchid/brief.json"
+  range-assets kraken/brief.json \
+  "$SEED_ROOT/range-assets/kraken/brief.json"
 ensure_object \
-  research-archives orchid/experiment-summary.json \
-  "$SEED_ROOT/research-archives/orchid/experiment-summary.json"
+  research-archives kraken/experiment-summary.json \
+  "$SEED_ROOT/research-archives/kraken/experiment-summary.json"

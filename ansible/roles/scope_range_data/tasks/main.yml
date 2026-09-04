@@ -79,19 +79,19 @@
 - name: Seed synthetic Redis state
   ansible.builtin.command: >-
     docker exec scope-redis redis-cli -a ScopeRedis2026!
-    MSET session:alice active session:bob expired job:42 queued
+    MSET session:michael active session:shane expired job:42 queued
   register: redis_seed
   changed_when: "'OK' in redis_seed.stdout"
   no_log: true
 
 - name: Verify PostgreSQL is ready
-  ansible.builtin.command: docker exec scope-postgres pg_isready -U rangeadmin
+  ansible.builtin.command: docker exec scope-postgres pg_isready -U poseidon
   changed_when: false
 
 - name: Verify MongoDB is ready
   ansible.builtin.command: >-
     docker exec scope-mongodb mongosh --quiet
-    --username rangeadmin --password ScopeMongo2026!
+    --username poseidon --password ScopeMongo2026!
     --authenticationDatabase admin --eval 'db.runCommand({ ping: 1 }).ok'
   register: mongodb_health
   changed_when: false

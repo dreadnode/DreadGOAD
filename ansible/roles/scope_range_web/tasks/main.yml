@@ -134,10 +134,10 @@
       - install
       - --path=/var/www/html
       - --url=http://wordpress.range.test
-      - --title=Northstar Research Notes
-      - --admin_user=rangeadmin
+      - --title=Dreadnode Biology Division Field Notes
+      - --admin_user=poseidon
       - --admin_password=ScopeWordPressAdmin2026!
-      - --admin_email=rangeadmin@range.test
+      - --admin_email=poseidon@range.test
       - --skip-email
   when: wordpress_installed.rc != 0
   no_log: true
@@ -149,12 +149,34 @@
   register: wordpress_users
   changed_when: false
 
-- name: Create the fictional WordPress editor
-  ansible.builtin.command: >-
-    docker exec --user www-data scope-wordpress php /usr/local/bin/wp
-    user create alice alice@range.test --path=/var/www/html
-    --role=editor --user_pass=ScopeFiles2026!
-  when: "'alice' not in wordpress_users.stdout_lines"
+- name: Create the fictional WordPress authors
+  ansible.builtin.command:
+    argv:
+      - docker
+      - exec
+      - --user
+      - www-data
+      - scope-wordpress
+      - php
+      - /usr/local/bin/wp
+      - user
+      - create
+      - "{{ item.username }}"
+      - "{{ item.username }}@range.test"
+      - --path=/var/www/html
+      - "--role={{ item.role }}"
+      - --user_pass=ScopeFiles2026!
+      - "--display_name={{ item.display_name }}"
+  loop:
+    - username: michael
+      display_name: Michael
+      role: editor
+    - username: shane
+      display_name: Shane
+      role: author
+  when: item.username not in wordpress_users.stdout_lines
+  loop_control:
+    label: "{{ item.username }}"
   no_log: true
 
 - name: List WordPress post titles
@@ -164,7 +186,7 @@
   register: wordpress_posts
   changed_when: false
 
-- name: Publish synthetic WordPress content
+- name: Publish synthetic KRAKEN WordPress content
   ansible.builtin.command:
     argv:
       - docker
@@ -177,10 +199,19 @@
       - post
       - create
       - --path=/var/www/html
-      - --post_title=Project ORCHID Research Update
-      - --post_content=The synthetic ORCHID program is entering its archive and partner-review phase.
+      - "--post_title={{ item.title }}"
+      - "--post_content={{ item.content }}"
       - --post_status=publish
-  when: "'Project ORCHID Research Update' not in wordpress_posts.stdout_lines"
+  loop:
+    - title: Project KRAKEN Breeding Update
+      content: Three massive octopus specimens have entered the hadal-pressure adaptation phase.
+    - title: Midnight Enclosure Operations Log
+      content: Pen B passed its blackout and current-resistance trial; the KRA-003 quarantine remains active.
+    - title: Dreadnought Bathyscaphe Dive Schedule
+      content: The next trench descent will service acoustic sensors and retrieve restricted tissue samples.
+  when: item.title not in wordpress_posts.stdout_lines
+  loop_control:
+    label: "{{ item.title }}"
 
 - name: Wait for Nextcloud installation
   ansible.builtin.command: docker exec --user www-data scope-nextcloud php occ status --output=json

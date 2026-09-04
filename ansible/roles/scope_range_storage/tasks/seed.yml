@@ -15,8 +15,8 @@
     group: root
     mode: "0755"
   loop:
-    - range-assets/orchid
-    - research-archives/orchid
+    - range-assets/kraken
+    - research-archives/kraken
 
 - name: Install the versioned object-storage seed assets
   ansible.builtin.copy:
@@ -26,10 +26,10 @@
     group: root
     mode: "0644"
   loop:
-    - src: range-assets/orchid/brief.json
-      dest: range-assets/orchid/brief.json
-    - src: research-archives/orchid/experiment-summary.json
-      dest: research-archives/orchid/experiment-summary.json
+    - src: range-assets/kraken/brief.json
+      dest: range-assets/kraken/brief.json
+    - src: research-archives/kraken/experiment-summary.json
+      dest: research-archives/kraken/experiment-summary.json
 
 - name: Install the object-storage seed utility
   ansible.builtin.copy:

@@ -150,7 +150,7 @@ class ManifestTests(unittest.TestCase):
                 "headless browser reaches seeded web applications",
                 "seeded Garage object is readable through WebDAV",
                 "all versioned queue jobs have completion markers",
-                "ORCHID issue tracking fixtures are exact",
+                "KRAKEN issue tracking fixtures are exact",
                 "seeded credentials and successful export build are retained",
                 "three database backups are usable",
                 "three cross-host exports contain versioned data",

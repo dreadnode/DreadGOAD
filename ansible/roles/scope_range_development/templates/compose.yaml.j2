@@ -7,7 +7,7 @@ services:
       GITEA__database__DB_TYPE: postgres
       GITEA__database__HOST: 10.50.10.30:5432
       GITEA__database__NAME: gitea
-      GITEA__database__USER: rangeadmin
+      GITEA__database__USER: poseidon
       GITEA__database__PASSWD: ScopePostgres2026!
       GITEA__server__DOMAIN: git.range.test
       GITEA__server__ROOT_URL: http://git.range.test:3000/
@@ -28,8 +28,8 @@ services:
     environment:
       JAVA_OPTS: -Djenkins.install.runSetupWizard=false
       JENKINS_OPTS: >-
-        --argumentsRealm.passwd.rangeadmin=ScopeJenkins2026!
-        --argumentsRealm.roles.rangeadmin=admin
+        --argumentsRealm.passwd.poseidon=ScopeJenkins2026!
+        --argumentsRealm.roles.poseidon=admin
     ports:
       - "8080:8080"
       - "50000:50000"

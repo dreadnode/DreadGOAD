@@ -11,9 +11,9 @@ import redis
 
 
 JOBS = (
-    {"job_id": "scope-seed-v1-projects", "type": "export_projects"},
-    {"job_id": "scope-seed-v1-experiments", "type": "export_experiments"},
-    {"job_id": "scope-seed-v1-sessions", "type": "snapshot_sessions"},
+    {"job_id": "scope-seed-v2-projects", "type": "export_projects"},
+    {"job_id": "scope-seed-v2-experiments", "type": "export_experiments"},
+    {"job_id": "scope-seed-v2-sessions", "type": "snapshot_sessions"},
 )
 REDIS_URL = "redis://default:ScopeRedis2026!@data01.range.test:6379/0"
 
@@ -47,6 +47,7 @@ def main() -> None:
         finally:
             connection.close()
 
+    incomplete = [job["job_id"] for job in JOBS]
     deadline = time.monotonic() + 300
     while time.monotonic() < deadline:
         incomplete = [

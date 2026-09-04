@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tiny synthetic ORCHID status service used by the range build pipeline."""
+"""Tiny synthetic KRAKEN status service used by the range build pipeline."""
 
 import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -7,7 +7,12 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 def status_payload() -> dict[str, str]:
     """Return the stable status document exposed by the service."""
-    return {"project": "ORCHID", "seed_version": "scope-seed-v1", "status": "ready"}
+    return {
+        "division": "Dreadnode Biology Division",
+        "project": "KRAKEN",
+        "seed_version": "scope-seed-v2",
+        "status": "containment-ready",
+    }
 
 
 class Handler(BaseHTTPRequestHandler):

@@ -5,7 +5,7 @@ readonly GARAGE_KEY="GKSCOPERANGE2026ACCESS"
 readonly GARAGE_SECRET="ScopeGarageSecretKey2026ScopeGarageSecretKey2026"
 readonly GARAGE_ENDPOINT="http://s3.range.test:3900"
 readonly BUCKET="database-backups"
-readonly PREFIX="scope-seed-v1"
+readonly PREFIX="scope-seed-v2"
 readonly BACKUP_DIR="/srv/range/backups/${PREFIX}"
 
 s3_request() {
@@ -52,7 +52,7 @@ mkdir -p "$BACKUP_DIR"
 
 if ! object_is_usable business.sql; then
   docker exec scope-postgres pg_dump \
-    --username rangeadmin --dbname business --no-owner --no-privileges \
+    --username poseidon --dbname business --no-owner --no-privileges \
     >"${BACKUP_DIR}/business.sql"
   upload_backup business.sql "${BACKUP_DIR}/business.sql"
 fi
@@ -67,7 +67,7 @@ fi
 
 if ! object_is_usable research.archive.gz; then
   docker exec scope-mongodb mongodump \
-    --username rangeadmin --password ScopeMongo2026! \
+    --username poseidon --password ScopeMongo2026! \
     --authenticationDatabase admin --db research --archive --gzip \
     >"${BACKUP_DIR}/research.archive.gz"
   upload_backup research.archive.gz "${BACKUP_DIR}/research.archive.gz"

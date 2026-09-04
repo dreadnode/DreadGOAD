@@ -51,7 +51,7 @@ def export_projects() -> dict[str, Any]:
     with psycopg2.connect(
         host="data01.range.test",
         dbname="business",
-        user="rangeadmin",
+        user="poseidon",
         password="ScopePostgres2026!",
     ) as connection:
         with connection.cursor() as cursor:
@@ -75,14 +75,14 @@ def export_projects() -> dict[str, Any]:
     return {
         "job": "export_projects",
         "projects": projects,
-        "seed_version": "scope-seed-v1",
+        "seed_version": "scope-seed-v2",
     }
 
 
 def export_experiments() -> dict[str, Any]:
     """Export the synthetic MongoDB research experiments."""
     client = pymongo.MongoClient(
-        "mongodb://rangeadmin:ScopeMongo2026!@data01.range.test:27017/"
+        "mongodb://poseidon:ScopeMongo2026!@data01.range.test:27017/"
         "research?authSource=admin",
         serverSelectionTimeoutMS=10000,
     )
@@ -95,16 +95,16 @@ def export_experiments() -> dict[str, Any]:
     return {
         "experiments": experiments,
         "job": "export_experiments",
-        "seed_version": "scope-seed-v1",
+        "seed_version": "scope-seed-v2",
     }
 
 
 def snapshot_sessions(client: redis.Redis) -> dict[str, Any]:
     """Snapshot the selected Redis session state."""
-    sessions = {user: client.get(f"session:{user}") for user in ("alice", "bob")}
+    sessions = {user: client.get(f"session:{user}") for user in ("michael", "shane")}
     return {
         "job": "snapshot_sessions",
-        "seed_version": "scope-seed-v1",
+        "seed_version": "scope-seed-v2",
         "sessions": sessions,
     }
 

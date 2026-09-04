@@ -15,8 +15,8 @@ git diff --check
 for json_file in \
   ad/SCOPE-RANGE/data/validation.json \
   ansible/roles/scope_range_kali/files/targets.json \
-  ansible/roles/scope_range_storage/files/range-assets/orchid/brief.json \
-  ansible/roles/scope_range_storage/files/research-archives/orchid/experiment-summary.json; do
+  ansible/roles/scope_range_storage/files/range-assets/kraken/brief.json \
+  ansible/roles/scope_range_storage/files/research-archives/kraken/experiment-summary.json; do
   python3 -m json.tool "$json_file" >/dev/null
 done
 
@@ -40,9 +40,9 @@ done
 env PYTHONPYCACHEPREFIX="$scratch/python-cache" \
   python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 env PYTHONPYCACHEPREFIX="$scratch/python-cache" \
-  PYTHONPATH=ansible/roles/scope_range_development/files/orchid-control-plane \
+  PYTHONPATH=ansible/roles/scope_range_development/files/kraken-control-plane \
   python3 -m unittest discover \
-    -s ansible/roles/scope_range_development/files/orchid-control-plane/tests \
+    -s ansible/roles/scope_range_development/files/kraken-control-plane/tests \
     -p 'test_*.py'
 
 tofu fmt -check -recursive modules/terraform-azure-linux-instance

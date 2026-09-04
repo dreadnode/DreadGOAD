@@ -21,15 +21,15 @@ from typing import Any
 
 
 GITEA_URL = "http://127.0.0.1:3000"
-REPOSITORY = "rangeadmin/orchid-control-plane"
-ADMIN_AUTH = ("rangeadmin", "ScopeGitea2026!")
+REPOSITORY = "poseidon/kraken-control-plane"
+ADMIN_AUTH = ("poseidon", "ScopeGitea2026!")
 LDAP_AUTH = {
-    "alice": ("alice", "ScopeFiles2026!"),
-    "bob": ("bob", "ScopeFiles2026!"),
+    "michael": ("michael", "ScopeFiles2026!"),
+    "shane": ("shane", "ScopeFiles2026!"),
 }
-SOURCE = pathlib.Path("/opt/scope-range/development/seed/orchid-control-plane")
+SOURCE = pathlib.Path("/opt/scope-range/development/seed/kraken-control-plane")
 SEED_TAG = "v0.1.0"
-SEED_VERSION = "scope-seed-v1"
+SEED_VERSION = "scope-seed-v2"
 
 
 def authorization(auth: tuple[str, str]) -> str:
@@ -185,9 +185,9 @@ def ensure_repository_history() -> str:
             worktree,
             "commit",
             "-m",
-            "feat: add ORCHID status service",
+            "feat: add KRAKEN status service",
             env=commit_environment(
-                "Alice Mercer", "alice@range.test", "2026-01-12T09:00:00Z"
+                "Michael", "michael@range.test", "2026-01-12T09:00:00Z"
             ),
         )
 
@@ -199,7 +199,7 @@ def ensure_repository_history() -> str:
             "-m",
             "chore: add service classification",
             env=commit_environment(
-                "Bob Chen", "bob@range.test", "2026-01-13T14:30:00Z"
+                "Shane", "shane@range.test", "2026-01-13T14:30:00Z"
             ),
         )
 
@@ -209,10 +209,10 @@ def ensure_repository_history() -> str:
             worktree,
             "commit",
             "-m",
-            "ci: publish the ORCHID service image",
+            "ci: publish the KRAKEN service image",
             env=commit_environment(
-                "Range Administrator",
-                "rangeadmin@range.test",
+                "Poseidon",
+                "poseidon@range.test",
                 "2026-01-14T11:15:00Z",
             ),
         )
@@ -222,10 +222,10 @@ def ensure_repository_history() -> str:
             "-a",
             SEED_TAG,
             "-m",
-            "ORCHID seed release",
+            "KRAKEN seed release",
             env=commit_environment(
-                "Range Administrator",
-                "rangeadmin@range.test",
+                "Poseidon",
+                "poseidon@range.test",
                 "2026-01-14T11:16:00Z",
             ),
         )
@@ -243,7 +243,7 @@ def ensure_repository_history() -> str:
             "-m",
             "feat: add telemetry export identifier",
             env=commit_environment(
-                "Alice Mercer", "alice@range.test", "2026-01-15T16:45:00Z"
+                "Michael", "michael@range.test", "2026-01-15T16:45:00Z"
             ),
         )
         git_command(worktree, "push", "origin", "feature/telemetry-export")
@@ -286,21 +286,21 @@ def ensure_labels() -> dict[str, int]:
 
 
 def ensure_milestone() -> int:
-    """Create the stable ORCHID milestone and return its ID."""
+    """Create the stable KRAKEN milestone and return its ID."""
     milestones = api(f"/repos/{REPOSITORY}/milestones?state=all")
     for milestone in milestones:
-        if milestone["title"] == "ORCHID v1.0":
+        if milestone["title"] == "KRAKEN v1.0":
             return int(milestone["id"])
     milestone = api(
         f"/repos/{REPOSITORY}/milestones",
         method="POST",
         body={
-            "title": "ORCHID v1.0",
-            "description": "Synthetic partner review milestone",
+            "title": "KRAKEN v1.0",
+            "description": "Dreadnode Biology Division hadal breeding milestone",
         },
         allowed=(201,),
     )
-    print("CHANGED created Gitea milestone ORCHID v1.0")
+    print("CHANGED created Gitea milestone KRAKEN v1.0")
     return int(milestone["id"])
 
 
@@ -331,14 +331,14 @@ def ensure_pull_request(auth: tuple[str, str]) -> dict[str, Any]:
     """Create the stable open telemetry pull request."""
     pulls = api(f"/repos/{REPOSITORY}/pulls?state=all&limit=50", auth=auth)
     for pull in pulls:
-        if pull["title"] == "Add telemetry export":
+        if pull["title"] == "Add specimen telemetry export":
             return pull
     pull = api(
         f"/repos/{REPOSITORY}/pulls",
         method="POST",
         body={
-            "title": "Add telemetry export",
-            "body": "Synthetic review request for the telemetry export path.",
+            "title": "Add specimen telemetry export",
+            "body": "Synthetic review request for the KRAKEN specimen telemetry path.",
             "head": "feature/telemetry-export",
             "base": "main",
         },
@@ -350,15 +350,15 @@ def ensure_pull_request(auth: tuple[str, str]) -> dict[str, Any]:
 
 
 def ensure_comment(issue: dict[str, Any], auth: tuple[str, str]) -> None:
-    """Add Bob's stable collaboration comment once."""
+    """Add Shane's stable collaboration comment once."""
     comments = api(f"/repos/{REPOSITORY}/issues/{issue['number']}/comments")
-    marker = "scope-seed-v1-review"
+    marker = "scope-seed-v2-review"
     if any(marker in item.get("body", "") for item in comments):
         return
     api(
         f"/repos/{REPOSITORY}/issues/{issue['number']}/comments",
         method="POST",
-        body={"body": f"Confirmed against the synthetic telemetry sample. [{marker}]"},
+        body={"body": f"Confirmed against the KRA-003 pressure sample. [{marker}]"},
         auth=auth,
         allowed=(201,),
     )
@@ -404,7 +404,7 @@ def wait_for_published_image() -> None:
     while time.monotonic() < deadline:
         try:
             with urllib.request.urlopen(
-                "http://127.0.0.1:5000/v2/orchid-api/tags/list", timeout=30
+                "http://127.0.0.1:5000/v2/kraken-api/tags/list", timeout=30
             ) as response:
                 payload = json.load(response)
         except urllib.error.HTTPError as exc:
@@ -460,8 +460,8 @@ def ensure_release(tagged_commit: str) -> None:
             body={
                 "tag_name": SEED_TAG,
                 "target_commitish": "main",
-                "name": "ORCHID 0.1.0",
-                "body": "Synthetic release generated by scope-seed-v1.",
+                "name": "KRAKEN 0.1.0",
+                "body": "Synthetic release generated by scope-seed-v2.",
                 "draft": False,
                 "prerelease": False,
             },
@@ -470,7 +470,7 @@ def ensure_release(tagged_commit: str) -> None:
         print("CHANGED created the Gitea release")
     manifest = json.dumps(
         {
-            "image": "orchid-api:0.1.0",
+            "image": "kraken-api:0.1.0",
             "seed_version": SEED_VERSION,
             "source_commit": tagged_commit,
         },
@@ -490,28 +490,28 @@ def main() -> None:
     labels = ensure_labels()
     milestone = ensure_milestone()
     first_issue = ensure_issue(
-        "Telemetry export omits calibration metadata",
-        "The partner export needs the synthetic calibration identifier.",
+        "KRAKEN telemetry omits pressure adaptation markers",
+        "The restricted export needs the KRA-003 pressure-adaptation identifiers.",
         [labels["bug"], labels["restricted"]],
         milestone,
-        LDAP_AUTH["alice"],
+        LDAP_AUTH["michael"],
     )
     ensure_issue(
-        "Document registry rollback procedure",
-        "Add a recovery note for the local ORCHID image registry.",
+        "Document containment registry rollback procedure",
+        "Add a recovery note for the local KRAKEN containment image registry.",
         [labels["enhancement"]],
         milestone,
-        LDAP_AUTH["bob"],
+        LDAP_AUTH["shane"],
     )
     ensure_issue(
-        "Review partner release checklist",
-        "Confirm the fictional Northstar review artifacts are complete.",
+        "Review hadal breeding release checklist",
+        "Confirm the Dreadnode Biology Division release artifacts are complete.",
         [labels["restricted"]],
         milestone,
         ADMIN_AUTH,
     )
-    ensure_comment(first_issue, LDAP_AUTH["bob"])
-    ensure_pull_request(LDAP_AUTH["alice"])
+    ensure_comment(first_issue, LDAP_AUTH["shane"])
+    ensure_pull_request(LDAP_AUTH["michael"])
     ensure_actions_configuration()
     wait_for_published_image()
     ensure_release(tagged_commit)

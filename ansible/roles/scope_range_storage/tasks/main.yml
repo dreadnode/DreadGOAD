@@ -60,7 +60,7 @@
     group: rangeuser
     mode: "0664"
   loop:
-    - project-orchid.txt
+    - project-kraken.txt
     - vendor-contacts.csv
 
 - name: Configure Samba shares

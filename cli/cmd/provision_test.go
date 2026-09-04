@@ -111,6 +111,26 @@ func TestRetryOverridesRejectNegativeValues(t *testing.T) {
 	}
 }
 
+func TestRetryAllHosts(t *testing.T) {
+	tests := []struct {
+		playbook string
+		want     bool
+	}{
+		{playbook: "scope-seed.yml", want: true},
+		{playbook: "ansible/playbooks/scope-seed.yml", want: true},
+		{playbook: "scope-base.yml", want: false},
+		{playbook: "ad-data.yml", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.playbook, func(t *testing.T) {
+			if got := retryAllHosts(tt.playbook); got != tt.want {
+				t.Errorf("retryAllHosts(%q) = %t, want %t", tt.playbook, got, tt.want)
+			}
+		})
+	}
+}
+
 func variantTestConfig(root, source, target string) *config.Config {
 	return &config.Config{
 		ProjectRoot: root,

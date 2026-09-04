@@ -86,9 +86,9 @@
     shell: /bin/bash
     create_home: true
   loop:
-    - alice
-    - bob
-    - research
+    - michael
+    - shane
+    - biology
 
 - name: Create Maildir directories
   ansible.builtin.file:
@@ -97,7 +97,7 @@
     owner: "{{ item.0 }}"
     group: "{{ item.0 }}"
     mode: "0700"
-  loop: "{{ ['alice', 'bob', 'research'] | product(['cur', 'new', 'tmp']) | list }}"
+  loop: "{{ ['michael', 'shane', 'biology'] | product(['cur', 'new', 'tmp']) | list }}"
   loop_control:
     label: "{{ item.0 }}/{{ item.1 }}"
 
@@ -142,7 +142,7 @@
           container_name: scope-openldap
           restart: unless-stopped
           environment:
-            LDAP_ORGANISATION: Northstar Research
+            LDAP_ORGANISATION: Dreadnode Biology Division
             LDAP_DOMAIN: range.test
             LDAP_ADMIN_PASSWORD: ScopeLDAP2026!
             LDAP_CONFIG_PASSWORD: ScopeLDAPConfig2026!
@@ -263,8 +263,8 @@
   ansible.builtin.command: >-
     docker exec scope-openldap ldapsearch -x
     -D cn=admin,dc=range,dc=test -w ScopeLDAP2026!
-    -b ou=people,dc=range,dc=test '(uid=alice)' uid
+    -b ou=people,dc=range,dc=test '(uid=michael)' uid
   register: ldap_health
   changed_when: false
-  failed_when: "'uid: alice' not in ldap_health.stdout"
+  failed_when: "'uid: michael' not in ldap_health.stdout"
   no_log: true
