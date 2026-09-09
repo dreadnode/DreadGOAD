@@ -10,6 +10,20 @@
     state: present
     update_cache: true
 
+- name: Persist the SSH privilege-separation runtime directory
+  ansible.builtin.copy:
+    dest: /etc/tmpfiles.d/scope-range-sshd.conf
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      d /run/sshd 0755 root root -
+
+- name: Materialize the SSH runtime directory
+  ansible.builtin.command:
+    cmd: systemd-tmpfiles --create /etc/tmpfiles.d/scope-range-sshd.conf
+  changed_when: false
+
 - name: Create the synthetic file-service account
   ansible.builtin.user:
     name: rangeuser

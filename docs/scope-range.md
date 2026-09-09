@@ -107,10 +107,11 @@ To reconcile only the versioned activity layer:
 ./cli/dreadgoad --env scope-dev provision --plays scope-seed.yml
 ```
 
-For a read-only audit of the deployed range, run the standalone live validator:
+For a read-only audit of the deployed range, use the standard lab validation
+command:
 
 ```bash
-./scripts/validate-scope-range-live.py --env scope-dev
+./cli/dreadgoad --env scope-dev validate
 ```
 
 The validator reads the deployed-state contract from
@@ -130,12 +131,11 @@ returns a non-zero status when a check fails. Useful options are:
 
 ```bash
 # Critical checks only
-./scripts/validate-scope-range-live.py --env scope-dev --quick
+./cli/dreadgoad --env scope-dev validate --quick
 
 # Select a subscription and report path explicitly
-./scripts/validate-scope-range-live.py \
-  --env scope-dev \
-  --subscription "$AZURE_SUBSCRIPTION_ID" \
+AZURE_SUBSCRIPTION_ID="<subscription-id>" \
+./cli/dreadgoad --env scope-dev validate \
   --output /tmp/scope-range-validation.json
 
 # Validate the expected-state manifest without contacting Azure
@@ -146,10 +146,11 @@ returns a non-zero status when a check fails. Useful options are:
 `--verbose` prints Azure command diagnostics, but redacts the encoded remote
 payload because it includes the range's synthetic credentials.
 
-The current branch predates the generalized `dreadgoad validate` command. When
-that command is merged, its lab dispatch should invoke this validator for
-`SCOPE-RANGE` instead of the Active Directory vulnerability checks used by GOAD
-labs.
+The CLI dispatches `SCOPE-RANGE` to `scripts/validate-scope-range-live.py` and
+forwards `--quick`, `--output`, `--verbose`, and `--no-fail`. The SCOPE validator
+always streams plain output, so `--plain` is accepted as a no-op. Continuous
+`--poll` mode remains specific to the GOAD live dashboard and is rejected for
+SCOPE-RANGE.
 
 For static validation of the implementation before deployment:
 

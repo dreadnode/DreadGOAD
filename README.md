@@ -2,7 +2,8 @@
 
 A heavily modified fork of [GOAD (Game of Active Directory)](https://github.com/Orange-Cyberdefense/GOAD)
 by Orange Cyberdefense. DreadGOAD deploys vulnerable Active Directory lab
-environments for penetration testing and security research.
+environments and connected Linux service ranges for penetration testing,
+security research, and agent evaluation.
 
 > **Warning:** This lab is extremely vulnerable by design. Do not deploy it on
 > the internet without proper network isolation, and do not reuse any of these
@@ -76,6 +77,10 @@ cd cli && go build -o dreadgoad . && cd ..
 
 # Validate vulnerabilities are configured
 ./cli/dreadgoad validate --quick
+
+# Or deploy and validate the Azure Linux service range
+./cli/dreadgoad --env scope-dev up
+./cli/dreadgoad --env scope-dev validate
 ```
 
 For provider-specific setup instructions, see the [provider documentation](docs/mkdocs/docs/providers/).

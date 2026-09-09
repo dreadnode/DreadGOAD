@@ -197,7 +197,8 @@
           "category": "Web",
           "name": "both virtual hosts answer locally",
           "quick": true,
-          "command": "curl -fsS -H 'Host: wordpress.range.test' http://127.0.0.1/ >/dev/null && curl -fsS -H 'Host: cloud.range.test' http://127.0.0.1/status.php >/dev/null"
+          "timeout_seconds": 120,
+          "command": "curl -fsS --retry 3 --retry-all-errors --retry-delay 2 --max-time 15 -H 'Host: wordpress.range.test' http://127.0.0.1/ >/dev/null && curl -fsS --retry 3 --retry-all-errors --retry-delay 2 --max-time 15 -H 'Host: cloud.range.test' http://127.0.0.1/status.php >/dev/null"
         }
       ]
     },
@@ -428,7 +429,7 @@
           "category": "Storage",
           "name": "network file services are active",
           "quick": true,
-          "command": "for service in nfs-kernel-server smbd ssh rsync; do test \"$(systemctl is-active \"$service\")\" = active || exit 1; done"
+          "command": "for service in nfs-kernel-server smbd rsync; do test \"$(systemctl is-active \"$service\")\" = active || exit 1; done && timeout 5 bash -c 'exec 3<>/dev/tcp/127.0.0.1/22; IFS= read -r banner <&3; [[ \"$banner\" == SSH-* ]]'"
         },
         {
           "category": "Storage",

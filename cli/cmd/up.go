@@ -124,7 +124,7 @@ func runUp(cmd *cobra.Command, args []string) error {
 
 func upNextStep(labName string) string {
 	if labName == "SCOPE-RANGE" {
-		return "Next: dreadgoad provision --plays scope-kali.yml    # rerun service checks"
+		return "Next: dreadgoad validate    # deployed-state and service checks"
 	}
 	return "Next: dreadgoad validate    # vulnerability checks"
 }

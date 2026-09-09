@@ -15,12 +15,13 @@ import (
 
 var rootCmd = &cobra.Command{
 	Use:   "dreadgoad",
-	Short: "DreadGOAD - Active Directory lab management CLI",
+	Short: "DreadGOAD - cyber range management CLI",
 	Long: `DreadGOAD orchestrates the deployment and management of intentionally
-vulnerable Active Directory environments for security research and testing.
+vulnerable cyber ranges for security research and testing, including Active
+Directory labs and connected Linux service environments.
 
 It manages the full lifecycle: infrastructure provisioning via Terraform,
-configuration via Ansible, validation of vulnerability configurations,
+configuration via Ansible, validation of deployed range state,
 and operational tasks like SSM session management.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 		if err := config.Init(); err != nil {
@@ -86,7 +87,7 @@ func Execute() error {
 }
 
 func init() {
-	rootCmd.PersistentFlags().StringP("env", "e", "staging", "Target environment (dev, staging, prod)")
+	rootCmd.PersistentFlags().StringP("env", "e", "staging", "Target configured environment")
 	rootCmd.PersistentFlags().String("lab", "", "Lab definition to use (default: GOAD)")
 	rootCmd.PersistentFlags().StringP("provider", "p", "", "Infrastructure provider (aws, azure, proxmox, ludus)")
 	rootCmd.PersistentFlags().String("region", "", "Cloud region (can also be set per environment in dreadgoad.yaml or with DREADGOAD_REGION)")

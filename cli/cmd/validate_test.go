@@ -1,9 +1,13 @@
 package cmd
 
 import (
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dreadnode/dreadgoad/internal/config"
 )
 
 func TestParsePollInterval(t *testing.T) {
@@ -51,5 +55,40 @@ func TestParsePollInterval(t *testing.T) {
 				t.Fatalf("parsePollInterval(%q) = %v, want %v", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestScopeRangeValidatorArgs(t *testing.T) {
+	cfg := &config.Config{ProjectRoot: "/repo", Env: "scope-dev"}
+	got, err := scopeRangeValidatorArgs(cfg, validateOpts{
+		outputPath: "/tmp/report with spaces.json",
+		quick:      true,
+		verbose:    true,
+		noFail:     true,
+		plain:      true,
+	})
+	if err != nil {
+		t.Fatalf("scopeRangeValidatorArgs() error: %v", err)
+	}
+	want := []string{
+		filepath.Join("/repo", "scripts", "validate-scope-range-live.py"),
+		"--env", "scope-dev",
+		"--output", "/tmp/report with spaces.json",
+		"--quick",
+		"--verbose",
+		"--no-fail",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("scopeRangeValidatorArgs() = %#v, want %#v", got, want)
+	}
+}
+
+func TestScopeRangeValidatorRejectsPolling(t *testing.T) {
+	_, err := scopeRangeValidatorArgs(
+		&config.Config{ProjectRoot: "/repo", Env: "scope-dev"},
+		validateOpts{pollInterval: time.Minute},
+	)
+	if err == nil || !strings.Contains(err.Error(), "--poll is not supported") {
+		t.Fatalf("scopeRangeValidatorArgs() error = %v, want unsupported polling error", err)
 	}
 }

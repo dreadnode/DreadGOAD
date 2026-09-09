@@ -30,11 +30,12 @@ type closableTunnel interface{ Close() }
 
 var provisionCmd = &cobra.Command{
 	Use:   "provision",
-	Short: "Run GOAD provisioning playbooks with retry logic",
-	Long: `Runs Ansible playbooks to provision Active Directory infrastructure.
+	Short: "Run the selected lab's provisioning playbooks",
+	Long: `Runs the selected lab's Ansible playbooks to configure its hosts.
 
 Executes the full playbook sequence (or a subset) with error-specific
-retry strategies, SSM session management, and idle timeout monitoring.`,
+retry strategies, provider-specific private network access, and idle timeout
+monitoring.`,
 	Example: `  dreadgoad provision
   dreadgoad provision --plays build.yml,ad-servers.yml
   dreadgoad provision --from ad-data.yml

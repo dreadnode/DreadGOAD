@@ -27,6 +27,7 @@ var infraCmd = &cobra.Command{
 	Long: `Manage the DreadGOAD lab infrastructure lifecycle.
 
 For AWS (provider: aws): uses Terragrunt to manage VPC, EC2 instances, etc.
+For Azure (provider: azure): uses Terragrunt to manage VNets, VMs, Bastion, etc.
 For Proxmox (provider: proxmox): uses Terraform with the bpg/proxmox provider
 to clone VMs from templates.
 For Ludus (provider: ludus): uses the Ludus CLI to manage ranges and VMs.
@@ -93,9 +94,9 @@ func init() {
 	// the Terragrunt exclude{} blocks check; these flags set them for the child
 	// process so users don't have to.
 	for _, cmd := range []*cobra.Command{infraApplyCmd, infraDestroyCmd, infraPlanCmd} {
-		cmd.Flags().Bool("with-bastion", false, "(Azure) Include the optional Azure Bastion module")
+		cmd.Flags().Bool("with-bastion", false, "(Azure) Include the optional Azure Bastion module (automatic for SCOPE-RANGE)")
 		cmd.Flags().Bool("with-controller", false, "(Azure) Include the optional in-VNet Ansible controller module")
-		cmd.Flags().Bool("with-kali", false, "Include the optional Kali Linux attack box")
+		cmd.Flags().Bool("with-kali", false, "Include the optional Kali Linux attack box (automatic for SCOPE-RANGE)")
 	}
 
 	infraCmd.PersistentFlags().StringP("deployment", "d", "", "Deployment name (default: from config)")
@@ -186,7 +187,8 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 		Debug:            cfg.Debug,
 	}
 
-	if withBastion, _ := cmd.Flags().GetBool("with-bastion"); withBastion {
+	withBastion, _ := cmd.Flags().GetBool("with-bastion")
+	if withBastion {
 		opts.ExtraEnv = append(opts.ExtraEnv, "DREADGOAD_ENABLE_AZURE_BASTION=true")
 	}
 	if withController, _ := cmd.Flags().GetBool("with-controller"); withController {

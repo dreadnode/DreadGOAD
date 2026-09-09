@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -18,11 +20,15 @@ import (
 
 var validateCmd = &cobra.Command{
 	Use:   "validate",
-	Short: "Validate GOAD vulnerability configurations",
-	Long: `Validates that all GOAD vulnerabilities are properly configured by
-running checks via SSM PowerShell commands against live instances.
+	Short: "Validate the selected lab",
+	Long: `Validates the deployed state of the selected lab.
 
-Checks credentials, Kerberos, SMB, delegation, MSSQL (linked servers, impersonation,
+For GOAD labs, checks run against live instances to confirm that the intended
+vulnerability configurations are present. For SCOPE-RANGE, validation checks
+the Azure topology and the expected users, services, applications, databases,
+storage, seeded data, and cross-host workflows on all six Linux hosts.
+
+GOAD validation checks credentials, Kerberos, SMB, delegation, MSSQL (linked servers, impersonation,
 xp_cmdshell, sysadmins), ADCS (templates), ACLs, trusts, SID filtering, scheduled tasks,
 LLMNR/NBT-NS, GPO abuse, gMSA, LAPS, and services.`,
 	Example: `  dreadgoad validate
@@ -42,7 +48,7 @@ func init() {
 	validateCmd.Flags().String("output", "", "JSON report output path")
 	validateCmd.Flags().Bool("verbose", false, "Enable verbose output")
 	validateCmd.Flags().Bool("no-fail", false, "Don't exit with error on failed checks")
-	validateCmd.Flags().Bool("quick", false, "Quick validation of critical vulnerabilities only")
+	validateCmd.Flags().Bool("quick", false, "Run critical validation checks only")
 	validateCmd.Flags().Bool("plain", false, "Disable the live dashboard; stream results to stdout")
 	validateCmd.Flags().String("poll", "never", "Re-run cadence for the live dashboard (e.g. 1m, 5m, or 'never'; minimum 1m)")
 
@@ -132,7 +138,7 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if cfg.ResolvedLab() == "SCOPE-RANGE" {
-		return fmt.Errorf("GOAD vulnerability validation does not apply to SCOPE-RANGE; rerun 'dreadgoad provision --plays scope-kali.yml' for its end-to-end service checks")
+		return runScopeRangeValidate(ctx, cfg, opts)
 	}
 
 	fmt.Println("==========================================")
@@ -197,6 +203,50 @@ func runValidate(cmd *cobra.Command, args []string) error {
 
 	if !opts.noFail && report.Failed > 0 {
 		return fmt.Errorf("validation failed with %d errors", report.Failed)
+	}
+	return nil
+}
+
+func scopeRangeValidatorArgs(cfg *config.Config, opts validateOpts) ([]string, error) {
+	if opts.pollInterval > 0 {
+		return nil, fmt.Errorf("--poll is not supported for SCOPE-RANGE validation")
+	}
+
+	script := filepath.Join(cfg.ProjectRoot, "scripts", "validate-scope-range-live.py")
+	args := []string{script, "--env", cfg.Env}
+	if opts.outputPath != "" {
+		args = append(args, "--output", opts.outputPath)
+	}
+	if opts.quick {
+		args = append(args, "--quick")
+	}
+	if opts.verbose {
+		args = append(args, "--verbose")
+	}
+	if opts.noFail {
+		args = append(args, "--no-fail")
+	}
+	return args, nil
+}
+
+func runScopeRangeValidate(ctx context.Context, cfg *config.Config, opts validateOpts) error {
+	args, err := scopeRangeValidatorArgs(cfg, opts)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(args[0]); err != nil {
+		return fmt.Errorf("find SCOPE-RANGE validator: %w", err)
+	}
+
+	command := exec.CommandContext(ctx, "python3", args...)
+	command.Stdin = os.Stdin
+	command.Stdout = os.Stdout
+	command.Stderr = os.Stderr
+	if err := command.Run(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return fmt.Errorf("SCOPE-RANGE validation failed: %w", err)
 	}
 	return nil
 }
