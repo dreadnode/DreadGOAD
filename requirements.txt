@@ -4,7 +4,7 @@ psutil
 Jinja2
 pyyaml
 # AWS SDK
-boto3==1.43.90
+boto3==1.43.91
 botocore==1.43.83
 # Ansible
 # 2.19 breaks Windows/SSM (ansible/ansible#86397); fixed in 2.20 (PR #86619).
