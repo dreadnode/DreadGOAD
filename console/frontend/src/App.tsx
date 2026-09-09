@@ -1,156 +1,48 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import TerminalChat from './components/TerminalChat'
 import RangeView from './components/RangeView'
-import Modal from './components/Modal'
 import ConfirmModal from './components/ConfirmModal'
 import NewSessionModal from './components/NewSessionModal'
-import { Field, btnStyle } from './components/FormFields'
-import { useWebSocket } from './hooks/useWebSocket'
+import SettingsModal from './components/SettingsModal'
+import { mergeSessionSnapshots } from './consoleEventState'
+import { useConsoleSessionEvents } from './hooks/useConsoleSessionEvents'
 import { api, type AppConfig } from './api'
-import type { ApprovalRequest, ChatEvent, Session } from './types'
+import type { Session } from './types'
 
 const MIN_W = 320
 const DEFAULT_RATIO = 0.45
-const MAX_PROGRESS = 200
-
-// Monotonic client-side id → stable React keys for chat events (F3).
-let _cid = 0
-const withCid = (ev: ChatEvent): ChatEvent => ({ ...ev, _cid: ++_cid })
-
 export default function App() {
   const [sessions, setSessions] = useState<Session[]>([])
   const [activeId, setActiveId] = useState<string | null>(null)
-  const [msgs, setMsgs] = useState<Record<string, ChatEvent[]>>({})
   const [cfg, setCfg] = useState<AppConfig | null>(null)
   const [ratio, setRatio] = useState(DEFAULT_RATIO)
   const [showNew, setShowNew] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
-  // Per-session counter bumped when the range changes, so RangeView re-fetches (F1).
-  const [rangeRefresh, setRangeRefresh] = useState<Record<string, number>>({})
-  // Per-session "a turn is in flight" flag → drives the cancel affordance.
-  const [processing, setProcessing] = useState<Record<string, boolean>>({})
-  // In-flight command name per session → warn before cancelling a destructive one.
-  const [procCmd, setProcCmd] = useState<Record<string, string>>({})
-  // When the in-flight turn started (epoch ms), so the elapsed timer survives a
-  // reload instead of restarting from zero. 0 means idle.
-  const [turnStart, setTurnStart] = useState<Record<string, number>>({})
-  // Seed for the "Agent <verb>" flavour word, one per session per turn. Held
-  // here rather than in TerminalChat because that component is not keyed by
-  // session: switching tabs changes its `processing` prop true→false→true, and
-  // a latch living inside it would re-roll the word for a turn already running.
-  const [verbSeed, setVerbSeed] = useState<Record<string, number>>({})
   const [pendingConfirm, setPendingConfirm] = useState<{
     title: string; message: string; confirmLabel?: string;
     destructive?: boolean; onConfirm: () => void;
   } | null>(null)
-  const [pendingApprovals, setPendingApprovals] = useState<Record<string, ApprovalRequest>>({})
-
-  const sessionsRef = useRef<Session[]>([])
-  const resumedRef = useRef<Set<string>>(new Set())
   const containerRef = useRef<HTMLDivElement>(null)
-  sessionsRef.current = sessions
-
-  // --- WebSocket (single, multiplexed by session_id) ---
-  const handleMessage = useCallback((data: string) => {
-    let ev: ChatEvent
-    try { ev = JSON.parse(data) } catch { return }
-    const sid = ev.session_id
-    if (!sid) return
-    if (ev.kind === 'history') {
-      const events = (ev.events || []).map(withCid)
-      setMsgs(prev => ({ ...prev, [sid]: events }))
-      // The server reports whether a turn is still running. A turn survives a
-      // disconnect, so after a reload this is the only way the pane learns it
-      // isn't idle — otherwise the working indicator and the cancel affordance
-      // both go missing while a deploy is mid-flight.
-      const running = ev.active === true
-      setProcessing(prev => ({ ...prev, [sid]: running }))
-      setProcCmd(prev => ({ ...prev, [sid]: running ? ev.command || '' : '' }))
-      setVerbSeed(prev => ({
-        ...prev,
-        [sid]: running ? prev[sid] || Date.now() : 0,
-      }))
-      setTurnStart(prev => {
-        const at = running ? Date.parse(ev.started_at || '') : NaN
-        // Fall back to now if the timestamp is unusable, so the timer starts
-        // from zero rather than rendering a nonsense duration.
-        return { ...prev, [sid]: running ? (Number.isNaN(at) ? Date.now() : at) : 0 }
-      })
-      setPendingApprovals(prev => {
-        const next = { ...prev }
-        if (ev.approval) next[sid] = ev.approval
-        else delete next[sid]
-        return next
-      })
-      return
-    }
-    if (ev.kind === 'approval_required' && ev.approval_id && ev.command && ev.argv) {
-      setPendingApprovals(prev => ({
-        ...prev,
-        [sid]: {
-          approval_id: ev.approval_id,
-          command: ev.command,
-          argv: ev.argv,
-          detail: ev.detail,
-          requested_at: ev.requested_at,
-        },
-      }))
-      return
-    }
-    if (ev.kind === 'approval_resolved' && ev.approval_id) {
-      setPendingApprovals(prev => {
-        if (prev[sid]?.approval_id !== ev.approval_id) return prev
-        const next = { ...prev }
-        delete next[sid]
-        return next
-      })
-      return
-    }
-    if (ev.kind === 'command_progress') {
-      setMsgs(prev => {
-        const arr = prev[sid] || []
-        const updated = [...arr, withCid(ev)]
-        let run = 0
-        for (let i = updated.length - 1; i >= 0 && updated[i].kind === 'command_progress'; i--) run++
-        if (run > MAX_PROGRESS) updated.splice(updated.length - run, run - MAX_PROGRESS)
-        return { ...prev, [sid]: updated }
-      })
-      return
-    }
-    setMsgs(prev => ({ ...prev, [sid]: [...(prev[sid] || []), withCid(ev)] }))
-    // A check_run means the hook refreshed the range doc → make RangeView re-fetch.
-    if (ev.kind === 'check_run') {
-      setRangeRefresh(prev => ({ ...prev, [sid]: (prev[sid] || 0) + 1 }))
-      // The same hook also learns *session*-level facts — the cloud account,
-      // resource group and attack box are only knowable post-deploy and get
-      // written to the snapshot. Sessions were otherwise fetched once at mount,
-      // so those fields never surfaced until a full page reload.
-      api.listSessions().then(d => setSessions(d.sessions)).catch(() => {})
-    }
-    if (ev.kind === 'command_run' && typeof ev.command === 'string') {
-      setProcCmd(prev => ({ ...prev, [sid]: ev.phase === 'start' ? ev.command : '' }))
-    }
-    if (ev.kind === 'agent_end') {
-      setProcessing(prev => ({ ...prev, [sid]: false }))
-      setProcCmd(prev => ({ ...prev, [sid]: '' }))
-      setTurnStart(prev => ({ ...prev, [sid]: 0 }))
-      setVerbSeed(prev => ({ ...prev, [sid]: 0 }))
-    }
+  const refreshSessionSnapshots = useCallback((next: Session[]) => {
+    setSessions(current => mergeSessionSnapshots(current, next))
   }, [])
-
-  const resume = useCallback((send: (d: string) => void, id: string) => {
-    if (resumedRef.current.has(id)) return
-    resumedRef.current.add(id)
-    send(JSON.stringify({ type: 'resume', session_id: id }))
-  }, [])
-
-  const handleOpen = useCallback((send: (d: string) => void) => {
-    // Re-subscribe every known session so background tabs stay live (§4.2).
-    resumedRef.current.clear()
-    for (const s of sessionsRef.current) resume(send, s.id)
-  }, [resume])
-
-  const { status, send } = useWebSocket('/ws/chat', handleMessage, handleOpen)
+  const {
+    state: {
+      messages: msgs,
+      rangeRefresh,
+      processing,
+      command: procCmd,
+      turnStartedAt: turnStart,
+      verbSeed,
+      approvals: pendingApprovals,
+    },
+    status,
+    send,
+    resume,
+    beginTurn,
+    forgetSession,
+    sendApproval,
+  } = useConsoleSessionEvents(sessions, refreshSessionSnapshots)
 
   // --- load config + sessions ---
   useEffect(() => {
@@ -161,8 +53,8 @@ export default function App() {
   // resume + activate a session
   const activate = useCallback((id: string) => {
     setActiveId(id)
-    if (status === 'connected') resume(send, id)
-  }, [status, send, resume])
+    resume(id)
+  }, [resume])
 
   useEffect(() => {
     if (!activeId && sessions.length) activate(sessions[0].id)
@@ -170,13 +62,9 @@ export default function App() {
 
   const sendMessage = useCallback((content: string) => {
     if (!activeId) return
-    setProcessing(prev => ({ ...prev, [activeId]: true }))
-    // Optimistic start; a later resume replaces it with the server's timestamp.
-    setTurnStart(prev => ({ ...prev, [activeId]: Date.now() }))
-    // A new turn always draws a new word.
-    setVerbSeed(prev => ({ ...prev, [activeId]: Date.now() }))
+    beginTurn(activeId)
     send(JSON.stringify({ session_id: activeId, content }))
-  }, [activeId, send])
+  }, [activeId, beginTurn, send])
 
   const onCancel = useCallback(() => {
     if (!activeId || pendingConfirm) return
@@ -225,32 +113,14 @@ export default function App() {
       return
     }
     setSessions(prev => prev.filter(s => s.id !== id))
-    setMsgs(prev => { const n = { ...prev }; delete n[id]; return n })
-    setPendingApprovals(prev => { const n = { ...prev }; delete n[id]; return n })
+    forgetSession(id)
     if (activeId === id) setActiveId(null)
-  }, [activeId])
+  }, [activeId, forgetSession])
 
   const approval = Object.entries(pendingApprovals)[0]
   const approvalSession = approval
     ? sessions.find(session => session.id === approval[0])?.label || approval[0]
     : null
-  const resolveApproval = useCallback((sid: string, request: ApprovalRequest, decision: 'confirm' | 'deny') => {
-    const sent = send(JSON.stringify({
-      type: 'approval',
-      session_id: sid,
-      approval_id: request.approval_id,
-      decision,
-    }))
-    if (!sent) return false
-    setPendingApprovals(prev => {
-      if (prev[sid]?.approval_id !== request.approval_id) return prev
-      const next = { ...prev }
-      delete next[sid]
-      return next
-    })
-    return true
-  }, [send])
-
   // --- resizer ---
   const onDrag = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -275,8 +145,8 @@ export default function App() {
           commandArgv={approval[1].argv}
           confirmLabel="CONFIRM"
           destructive
-          onConfirm={() => resolveApproval(approval[0], approval[1], 'confirm')}
-          onCancel={() => resolveApproval(approval[0], approval[1], 'deny')}
+          onConfirm={() => sendApproval(approval[0], approval[1], 'confirm')}
+          onCancel={() => sendApproval(approval[0], approval[1], 'deny')}
         />
       )}
       {!approval && showNew && cfg && (
@@ -403,69 +273,5 @@ export default function App() {
         </div>
       )}
     </div>
-  )
-}
-
-function SettingsModal({ cfg, model, onModelChange, onClose, onSaved }: {
-  cfg: AppConfig
-  model?: string
-  onModelChange?: (model: string) => Promise<void> | void
-  onClose: () => void
-  onSaved: () => void
-}) {
-  const [modelInput, setModelInput] = useState(model ?? '')
-  const [apiKey, setApiKey] = useState('')
-  const [apiKeyEnv, setApiKeyEnv] = useState('OPENROUTER_API_KEY')
-  const [err, setErr] = useState('')
-  const [saving, setSaving] = useState(false)
-
-  const save = async () => {
-    setErr('')
-    setSaving(true)
-    try {
-      // Model (per active session) — apply if changed.
-      const m = modelInput.trim()
-      if (onModelChange && m && m !== model) await onModelChange(m)
-      // API key (global) — apply if a key was entered.
-      if (apiKey.trim()) {
-        await api.setSettings({ api_key: apiKey.trim(), api_key_env: apiKeyEnv.trim() || undefined })
-      }
-      onSaved()
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e))
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  return (
-    <Modal onClose={onClose} width={420} ariaLabel="Settings">
-        <div style={{ color: 'var(--dg-brand)', fontWeight: 700, fontSize: 13, marginBottom: 16 }}>Settings</div>
-
-        {onModelChange ? (
-          <>
-            <Field label="Model (this session)" value={modelInput} onChange={setModelInput} placeholder="openrouter/anthropic/claude-sonnet-5" />
-            <div style={{ color: 'var(--dn-text-dim)', fontSize: 10, marginTop: -8, marginBottom: 12 }}>
-              Changing the model continues this session's conversation on the new model.
-            </div>
-          </>
-        ) : (
-          <div style={{ color: 'var(--dn-text-dim)', fontSize: 11, marginBottom: 12 }}>
-            Open a session to change its model.
-          </div>
-        )}
-
-        <Field label="API key" value={apiKey} onChange={setApiKey} placeholder="sk-or-…  (stored in memory, never saved)" type="password" />
-        <Field label="API key env var" value={apiKeyEnv} onChange={setApiKeyEnv} placeholder="OPENROUTER_API_KEY" />
-        <div style={{ color: cfg.api_key_set ? 'var(--dn-success)' : 'var(--dn-warning)', fontSize: 11, marginTop: -4, marginBottom: 12 }}>
-          {cfg.api_key_set ? '● API key is set (leave blank to keep)' : '○ No API key set — agent turns will fail'}
-        </div>
-
-        {err && <div style={{ color: 'var(--dn-error)', fontSize: 11, marginBottom: 8 }}>{err}</div>}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 8 }}>
-          <button onClick={onClose} style={btnStyle(false)}>CANCEL</button>
-          <button onClick={save} disabled={saving} style={btnStyle(true)}>{saving ? 'SAVING…' : 'SAVE'}</button>
-        </div>
-    </Modal>
   )
 }
