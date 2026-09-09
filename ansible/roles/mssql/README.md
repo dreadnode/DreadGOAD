@@ -26,6 +26,8 @@ Install and configure Microsoft SQL Server Express
 
 ### config.yml
 
+- **Locate sqlcmd binary** (ansible.windows.win_shell)
+- **Set sqlcmd path fact** (ansible.builtin.set_fact)
 - **Ensure BUILTIN\Administrators has SQL sysadmin** (ansible.windows.win_shell)
 - **Add MSSQL admin** (ansible.windows.win_shell)
 - **Log MSSQL admin errors** (ansible.builtin.debug) - Conditional
@@ -58,15 +60,6 @@ Install and configure Microsoft SQL Server Express
 - **Extract SQL Server installation files** (ansible.windows.win_command) - Conditional
 - **Check for lingering SQL Server setup processes** (ansible.windows.win_powershell) - Conditional
 - **Install SQL Server** (ansible.windows.win_command) - Conditional
-- **Add or update registry for ip port (2022)** (ansible.windows.win_regedit) - Conditional
-- **Add or update registry for ip port (2019)** (ansible.windows.win_regedit) - Conditional
-- **Record pre-reboot boot time baseline (post-registry change)** (ansible.windows.win_powershell) - Conditional
-- **Reboot if registry was changed** (block) - Conditional
-- **Trigger reboot via win_reboot** (ansible.windows.win_reboot)
-- **Firewall ¦ Allow MSSQL through Firewall** (ansible.windows.win_dsc)
-- **Firewall ¦ Allow MSSQL discover through Firewall** (ansible.windows.win_dsc)
-- **Be sure service is started** (ansible.windows.win_service)
-- **Wait for port 1433 to become open on the host, start checking every 5 seconds** (ansible.windows.win_wait_for)
 
 ### main.yml
 
@@ -76,6 +69,11 @@ Install and configure Microsoft SQL Server Express
 - **Check if SQL Server service exists** (ansible.windows.win_service)
 - **Run MSSQL installation tasks** (ansible.builtin.include_tasks) - Conditional
 - **Ensure MSSQL service is started** (ansible.windows.win_service)
+- **Set static TCP port 1433** (ansible.windows.win_regedit)
+- **Clear dynamic TCP port** (ansible.windows.win_regedit)
+- **Firewall ¦ Allow MSSQL through Firewall** (ansible.windows.win_dsc)
+- **Firewall ¦ Allow MSSQL discover through Firewall** (ansible.windows.win_dsc)
+- **Restart MSSQL to apply port changes** (ansible.windows.win_service) - Conditional
 - **Wait for port 1433 to become open** (ansible.windows.win_wait_for)
 - **Run MSSQL configuration tasks** (ansible.builtin.include_tasks)
 

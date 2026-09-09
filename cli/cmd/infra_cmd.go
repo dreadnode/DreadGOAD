@@ -354,6 +354,17 @@ func runTerragruntModule(ctx context.Context, cmd *cobra.Command, opts terragrun
 	return terragrunt.Run(ctx, opts)
 }
 
+// shouldEnableAWSKali reports whether the optional Kali module should be
+// included. Destroy also detects an existing module so it cannot be orphaned
+// when --with-kali is omitted.
+func shouldEnableAWSKali(requested bool, action, kaliDir string) bool {
+	if requested || action != "destroy" {
+		return requested
+	}
+	_, err := os.Stat(kaliDir)
+	return err == nil
+}
+
 // runInfraActionAWS handles infra commands for AWS via Terragrunt.
 func runInfraActionAWS(cmd *cobra.Command, cfg *config.Config, action string) error {
 	if err := materializeLabConfig(cfg); err != nil {
@@ -382,14 +393,8 @@ func runInfraActionAWS(cmd *cobra.Command, cfg *config.Config, action string) er
 	}
 
 	withKali, _ := cmd.Flags().GetBool("with-kali")
-	// On destroy, always include the optional unit so an existing attack box
-	// is not orphaned when the user omits --with-kali.
-	if !withKali && action == "destroy" {
-		kaliDir := filepath.Join(cfg.ProjectRoot, "infra", deployment, cfg.Env, region, "kali")
-		if _, err := os.Stat(kaliDir); err == nil {
-			withKali = true
-		}
-	}
+	kaliDir := filepath.Join(cfg.ProjectRoot, "infra", deployment, cfg.Env, region, "kali")
+	withKali = shouldEnableAWSKali(withKali, action, kaliDir)
 	if withKali {
 		opts.ExtraEnv = append(opts.ExtraEnv, "DREADGOAD_ENABLE_AWS_KALI=true")
 	}

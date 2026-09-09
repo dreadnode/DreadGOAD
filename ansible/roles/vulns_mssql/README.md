@@ -15,6 +15,8 @@ Configure vulnerable SQL Server settings for attack simulation
 
 ### main.yml
 
+- **Locate sqlcmd binary** (ansible.windows.win_shell)
+- **Set sqlcmd path fact** (ansible.builtin.set_fact)
 - **Run SQL COMMAND** (ansible.windows.win_shell)
 
 ## Example Playbook
