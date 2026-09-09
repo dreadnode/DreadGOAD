@@ -57,3 +57,6 @@ skip_list:
   - fqcn[action]
   - fqcn[action-core]
   - jinja[spacing]
+  # ansible-lint's requires_ansible allowlist lags behind actual releases;
+  # 2.20 is GA but the linter only knows up to 2.19.
+  - meta-runtime[unsupported-version]

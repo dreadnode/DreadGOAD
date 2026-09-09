@@ -31,7 +31,7 @@ repos:
     hooks:
       - id: codespell
         entry: codespell -q 3 -f -S ".git,.github,README.md" -L "mot,fonction,connexion"
-        exclude: '(go\.sum|\.min\.css\.map|\.css\.map|\.min\.map|\.min\.js|sysmonconfig-export\.xml|jquery\.validate\.(min\.)?js|jquery-3\.4\.1(\.slim)?\.js|modernizr-[\d\.]+\.js)$'
+        exclude: '(go\.sum|package-lock\.json|\.min\.css\.map|\.css\.map|\.min\.map|\.min\.js|sysmonconfig-export\.xml|jquery\.validate\.(min\.)?js|jquery-3\.4\.1(\.slim)?\.js|modernizr-[\d\.]+\.js)$'
 
   - repo: https://github.com/jumanjihouse/pre-commit-hooks
     rev: 3.0.0
@@ -39,7 +39,7 @@ repos:
       - id: script-must-have-extension
         name: Ensure shell scripts end with .sh
         types: [shell]
-        exclude: '\.sh\.tpl$'
+        exclude: '(^dreadgoad-console$|\.sh\.tpl$)'
       - id: shellcheck
         exclude: '\.sh\.tpl$'
       - id: shfmt

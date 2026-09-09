@@ -14,10 +14,12 @@ bootcmd:
 package_update: true
 
 packages:
+  - ca-certificates
+  - curl
+  - dnsutils
+  - impacket-scripts
   - netexec
   - python3-impacket
-  - impacket-scripts
-  - dnsutils
   - python3-pip
 
 write_files:
@@ -32,4 +34,6 @@ write_files:
     permissions: "0755"
 
 runcmd:
-  - [chown, "${admin_user}", "/home/${admin_user}/.ssh/authorized_keys"]
+  - [chown, "-R", "${admin_user}:${admin_user}", "/home/${admin_user}"]
+  - ["sh", "-c", "curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh"]
+  - ["su", "-l", "${admin_user}", "-c", "curl -fsSL https://dreadnode.io/install.sh | bash"]

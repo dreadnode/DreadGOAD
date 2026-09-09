@@ -12,7 +12,16 @@ type Instance struct {
 	Name      string
 	PrivateIP string
 	State     string // "running", "stopped", etc.
-	Tags      map[string]string
+	// Account is the cloud account the instance belongs to: the AWS account ID
+	// or the Azure subscription ID. Both come from data already fetched during
+	// discovery, so populating it costs no extra API call. Empty when the
+	// provider cannot determine it.
+	Account string
+	// Group is the provider's resource container: an Azure resource group.
+	// Empty on providers that have no such concept — AWS has none, where a
+	// range is identified by tag convention rather than by containment.
+	Group string
+	Tags  map[string]string
 }
 
 // FindInstanceByRole returns the first instance whose Role tag matches role.
@@ -105,6 +114,28 @@ type InteractiveShell interface {
 	StartInteractiveShell(ctx context.Context, instanceID, region string) error
 }
 
+// OutOfBandRunner is an optional interface for providers that can execute a
+// script WITHOUT an in-guest network listener — via the cloud control plane
+// (Azure Run Command, AWS SSM) rather than WinRM/SSH.
+//
+// This is deliberately separate from Provider.RunCommand. On Azure the latter
+// goes over WinRM through a bastion tunnel: fast and fine for fan-out checks
+// like validate and health-check, but useless for the one case that matters
+// here — a host that is broken badly enough to stop answering on 5985. The
+// control plane reaches the VM through its guest agent, so it still works.
+//
+// AWS's RunCommand is already SSM-backed and so is already out-of-band; it
+// implements this by delegating. Callers that need the guarantee must type-
+// assert for this interface rather than assuming RunCommand provides it.
+type OutOfBandRunner interface {
+	// RunCommandOutOfBand executes a script via the control plane and reports
+	// which channel served it, for surfacing to the operator.
+	RunCommandOutOfBand(ctx context.Context, instanceID, command string, timeout time.Duration) (*CommandResult, error)
+
+	// OutOfBandChannel names the mechanism (e.g. "Azure Run Command", "AWS SSM").
+	OutOfBandChannel() string
+}
+
 // Session represents an active remote session.
 type Session struct {
 	SessionID  string
@@ -136,4 +167,29 @@ type SSMRecovery interface {
 type SSMStatus struct {
 	InstanceID string
 	PingStatus string
+}
+
+// SecurityCheckResult is one check's outcome in the security report.
+type SecurityCheckResult struct {
+	Name     string `json:"name"`
+	Resource string `json:"resource"`
+	Status   string `json:"status"`   // "OK", "FAIL", "WARN", "SKIP"
+	Severity string `json:"severity"` // "critical", "high", "info"
+	Detail   string `json:"detail"`
+}
+
+// SecurityReport is the --json payload for security-check.
+type SecurityReport struct {
+	Passed  int                   `json:"passed"`
+	Failed  int                   `json:"failed"`
+	Warned  int                   `json:"warned"`
+	Skipped int                   `json:"skipped"`
+	Checks  []SecurityCheckResult `json:"checks"`
+}
+
+// SecurityChecker is an optional interface for providers that can audit
+// the network security posture of a deployed range. vpcCIDR is the
+// expected VNet/VPC address space from the config.
+type SecurityChecker interface {
+	SecurityCheck(ctx context.Context, env, vpcCIDR string) ([]SecurityCheckResult, error)
 }

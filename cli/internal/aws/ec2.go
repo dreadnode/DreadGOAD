@@ -16,7 +16,12 @@ type Instance struct {
 	Name       string
 	PrivateIP  string
 	State      string
-	Tags       map[string]string
+	// Account is the AWS account ID that owns the instance. It comes from the
+	// enclosing Reservation's OwnerId, which DescribeInstances already returns —
+	// no STS call and no extra IAM permission. Note this is the *owning*
+	// account, which for a single-account range is also the calling account.
+	Account string
+	Tags    map[string]string
 }
 
 // DiscoverInstances finds DreadGOAD instances by project/environment tags or
@@ -97,6 +102,7 @@ func appendDiscoveredInstances(instances []Instance, seen map[string]struct{}, r
 				InstanceID: instanceID,
 				PrivateIP:  deref(i.PrivateIpAddress),
 				State:      string(i.State.Name),
+				Account:    deref(r.OwnerId),
 				Tags:       make(map[string]string, len(i.Tags)),
 			}
 			for _, t := range i.Tags {

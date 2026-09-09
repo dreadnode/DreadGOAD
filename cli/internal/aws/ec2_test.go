@@ -71,3 +71,33 @@ func TestAppendDiscoveredInstancesDeduplicatesAndPreservesTags(t *testing.T) {
 		t.Fatalf("appendDiscoveredInstances() = %#v, want Name and Role tags preserved", instances[0])
 	}
 }
+
+// Account comes from the enclosing Reservation rather than the instance, so it
+// is the one field a refactor of this loop can silently drop -- nothing else
+// reads OwnerId. It feeds `dreadgoad status` (lab.go) and from there the web
+// app's cloud-account display, where an empty value looks like a discovery
+// failure rather than a missing assignment.
+func TestAppendDiscoveredInstancesCapturesOwningAccount(t *testing.T) {
+	reservation := types.Reservation{
+		OwnerId: Ptr("70a9c8a4"),
+		Instances: []types.Instance{{
+			InstanceId: Ptr("i-dc01"),
+			State:      &types.InstanceState{Name: types.InstanceStateNameRunning},
+			Tags:       []types.Tag{{Key: Ptr("Name"), Value: Ptr("test-goad-dc01")}},
+		}},
+	}
+
+	instances := appendDiscoveredInstances(nil, make(map[string]struct{}), []types.Reservation{reservation})
+
+	if len(instances) != 1 {
+		t.Fatalf("got %d instances, want 1", len(instances))
+	}
+	if instances[0].Account != "70a9c8a4" {
+		t.Errorf("Account = %q, want %q (from Reservation.OwnerId)", instances[0].Account, "70a9c8a4")
+	}
+	// The same struct literal populates both; a merge that keeps one and drops
+	// the other is the failure this pairs against.
+	if instances[0].Tags["Name"] != "test-goad-dc01" {
+		t.Errorf("Tags[Name] = %q, want test-goad-dc01", instances[0].Tags["Name"])
+	}
+}

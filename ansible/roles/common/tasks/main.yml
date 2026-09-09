@@ -26,6 +26,11 @@
 - name: Install DSC modules (skip on prebaked AMIs)
   when: not ((goad_prebaked | default({})).dsc_modules | default(false))
   block:
+    - name: Unblock PackageManagement DLLs (MOTW causes 0x8000FFFF on Install-Module)
+      ansible.windows.win_shell: |
+        Get-ChildItem -Path 'C:\Program Files\WindowsPowerShell\Modules' -Recurse -ErrorAction SilentlyContinue |
+          Unblock-File -ErrorAction SilentlyContinue
+
     - name: Upgrade module PowerShellGet to fix accept license issue
       ansible.windows.win_shell: |
         $ProgressPreference = 'SilentlyContinue'
@@ -33,9 +38,7 @@
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         Install-PackageProvider -Name NuGet -Force -Confirm:$false
         Install-Module PowerShellGet -Force -Confirm:$false
-        # Newly-installed DLLs sometimes carry Mark-of-the-Web from the .nupkg
-        # download, which makes Microsoft.PackageManagement.dll fail to load on
-        # the next Install-Module call ("Catastrophic failure" / 0x8000FFFF).
+        # Re-unblock: the installs above may have written new MOTW-flagged DLLs.
         Get-ChildItem -Path 'C:\Program Files\WindowsPowerShell\Modules' -Recurse -ErrorAction SilentlyContinue |
           Unblock-File -ErrorAction SilentlyContinue
       register: powershellget_install
@@ -66,7 +69,7 @@
       failed_when: false
       changed_when: false
 
-    - name: Install all missing modules in parallel
+    - name: Install all missing modules
       community.windows.win_psmodule:
         name: "{{ item | trim }}"
         state: present
@@ -82,26 +85,9 @@
         - item | trim != ''
         - item | trim != 'ALL_INSTALLED'
       register: module_install
-      async: 600
-      poll: 0
-      vars:
-        ansible_win_async_startup_timeout: 30
-
-    - name: Wait for module installations to complete
-      ansible.builtin.async_status:
-        jid: "{{ async_result_item.ansible_job_id }}"
-      loop: "{{ module_install.results }}"
-      loop_control:
-        loop_var: "async_result_item"
-        label: "Waiting for module: {{ async_result_item.item | default('unknown') | trim }}"
-      register: async_poll_results
-      until: async_poll_results.finished
-      retries: 120
-      delay: 5
-      when:
-        - module_install is not skipped
-        - async_result_item.ansible_job_id is defined
-      failed_when: async_poll_results.finished and async_poll_results.failed
+      retries: 3
+      delay: 10
+      until: module_install is not failed
 
 - name: Verify DSC LCM is ready
   ansible.windows.win_powershell:

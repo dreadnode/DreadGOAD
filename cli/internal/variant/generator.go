@@ -1062,7 +1062,19 @@ func (g *Generator) transformFile(srcPath, relPath string) (transformed bool, er
 // are replaced in place; missing values are inserted under [all:vars], with
 // the section appended when the provider template does not define it.
 func (g *Generator) repointDomainName(content string) string {
-	target := filepath.Base(g.TargetPath)
+	return RepointDomainName(content, filepath.Base(g.TargetPath))
+}
+
+// RepointDomainName is repointDomainName for callers outside generation.
+//
+// `env create` builds an environment's inventory by copying a reference or the
+// stock provider template, both of which carry the base lab's domain_name. For
+// a variant environment that value has to name the variant's own directory for
+// the same reason it does here — playbooks resolve assets as ad/{{ domain_name
+// }}/... — and provisioning will not correct it later, because
+// bootstrapInventory (cmd/provision.go) skips a file that already exists.
+// Exported rather than duplicated so the rule lives in one place.
+func RepointDomainName(content, target string) string {
 	re := regexp.MustCompile(`(?m)^(\s*domain_name\s*=\s*).*$`)
 	if re.MatchString(content) {
 		return re.ReplaceAllStringFunc(content, func(line string) string {

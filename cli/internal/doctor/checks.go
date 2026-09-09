@@ -174,7 +174,7 @@ func PrintResults(results []CheckResult) int {
 }
 
 // CheckAnsibleCoreVersion verifies ansible-core is installed and within the
-// compatible version range (<2.19). Returns an error if the version is
+// compatible version range (2.20.x). Returns an error if the version is
 // incompatible or ansible-core is not found. This is used as a pre-flight
 // gate before running playbooks.
 func CheckAnsibleCoreVersion(provider string) error {
@@ -191,7 +191,7 @@ func checkAnsibleVersion(provider string) CheckResult {
 		return CheckResult{
 			Name:    "ansible-core",
 			Status:  "fail",
-			Message: "ansible-core not found. Install: pip install 'ansible-core>=2.17.0,<2.18.0'",
+			Message: "ansible-core not found. Install: pip install 'ansible-core>=2.20.0,<2.21.0'",
 		}
 	}
 
@@ -205,24 +205,7 @@ func checkAnsibleVersion(provider string) CheckResult {
 	minor, _ := strconv.Atoi(m[2])
 	version := fmt.Sprintf("%s.%s.%s", m[1], m[2], m[3])
 
-	if major > 2 || (major == 2 && minor >= 19) {
-		if provider == "azure" {
-			return CheckResult{
-				Name:   "ansible-core",
-				Status: "warn",
-				Message: fmt.Sprintf("v%s detected. Versions >=2.19 break Windows SSM (AWS) "+
-					"but work fine with Azure WinRM/PSRP", version),
-			}
-		}
-		return CheckResult{
-			Name:   "ansible-core",
-			Status: "fail",
-			Message: fmt.Sprintf("v%s detected. Versions >=2.19 break Windows SSM. "+
-				"Fix: pip install 'ansible-core>=2.17.0,<2.18.0'", version),
-		}
-	}
-
-	if major == 2 && minor >= 17 && minor < 19 {
+	if major == 2 && minor == 20 {
 		return CheckResult{
 			Name:    "ansible-core",
 			Status:  "pass",
@@ -230,10 +213,37 @@ func checkAnsibleVersion(provider string) CheckResult {
 		}
 	}
 
+	// 2.19 breaks Windows/SSM but works with Azure WinRM/PSRP.
+	if major == 2 && minor == 19 {
+		if provider == "azure" {
+			return CheckResult{
+				Name:   "ansible-core",
+				Status: "warn",
+				Message: fmt.Sprintf("v%s detected. 2.19 breaks Windows/SSM (AWS) "+
+					"but works with Azure WinRM/PSRP. Recommended: 2.20.x", version),
+			}
+		}
+		return CheckResult{
+			Name:   "ansible-core",
+			Status: "fail",
+			Message: fmt.Sprintf("v%s detected. 2.19 breaks Windows/SSM. "+
+				"Fix: pip install 'ansible-core>=2.20.0,<2.21.0'", version),
+		}
+	}
+
+	if major > 2 || (major == 2 && minor > 20) {
+		return CheckResult{
+			Name:    "ansible-core",
+			Status:  "warn",
+			Message: fmt.Sprintf("v%s (untested, recommend 2.20.x)", version),
+		}
+	}
+
 	return CheckResult{
-		Name:    "ansible-core",
-		Status:  "warn",
-		Message: fmt.Sprintf("v%s (untested, recommend 2.17.x)", version),
+		Name:   "ansible-core",
+		Status: "fail",
+		Message: fmt.Sprintf("v%s is not supported. "+
+			"Fix: pip install 'ansible-core>=2.20.0,<2.21.0'", version),
 	}
 }
 
@@ -245,19 +255,85 @@ func checkCommand(name, label string) CheckResult {
 	return CheckResult{Name: label, Status: "pass", Message: path}
 }
 
+func awsProfile() string {
+	if p := os.Getenv("AWS_PROFILE"); p != "" {
+		return p
+	}
+	return os.Getenv("AWS_DEFAULT_PROFILE")
+}
+
+func awsRegion() string {
+	if r := os.Getenv("AWS_REGION"); r != "" {
+		return r
+	}
+	return os.Getenv("AWS_DEFAULT_REGION")
+}
+
+func classifyAWSError(stderr, profile string) string {
+	profileHint := " (default profile)"
+	if profile != "" {
+		profileHint = fmt.Sprintf(" (profile: %s)", profile)
+	}
+
+	lower := strings.ToLower(stderr)
+	switch {
+	case strings.Contains(lower, "unable to locate credentials"):
+		return fmt.Sprintf("no credentials found%s. Run: aws configure", profileHint)
+
+	case strings.Contains(lower, "sso session") ||
+		strings.Contains(lower, "token has expired and refresh failed") ||
+		strings.Contains(lower, "sso_start_url"):
+		fix := "aws sso login"
+		if profile != "" {
+			fix = fmt.Sprintf("aws sso login --profile %s", profile)
+		}
+		return fmt.Sprintf("SSO session expired%s. Run: %s", profileHint, fix)
+
+	case strings.Contains(lower, "expiredtoken"):
+		return fmt.Sprintf("session token expired%s. Refresh your credentials or re-assume the role", profileHint)
+
+	case strings.Contains(lower, "could not be found"):
+		fix := "aws configure"
+		if profile != "" {
+			fix = fmt.Sprintf("aws configure --profile %s", profile)
+		}
+		return fmt.Sprintf("profile not found%s. Check AWS_PROFILE or run: %s",
+			profileHint, fix)
+
+	case strings.Contains(lower, "invalidclienttokenid") ||
+		strings.Contains(lower, "signaturedoesnotmatch"):
+		return fmt.Sprintf("credentials are invalid%s. Run: aws configure", profileHint)
+
+	default:
+		hint := strings.TrimSpace(stderr)
+		if len(hint) > 120 {
+			hint = hint[:120] + "..."
+		}
+		return fmt.Sprintf("credentials check failed%s. %s", profileHint, hint)
+	}
+}
+
 func checkAWSCredentials() CheckResult {
 	out, err := exec.Command("aws", "sts", "get-caller-identity", "--query", "Account", "--output", "text").CombinedOutput()
 	if err != nil {
 		return CheckResult{
 			Name:    "AWS Credentials",
 			Status:  "fail",
-			Message: "invalid or not configured. Run: aws configure",
+			Message: classifyAWSError(string(out), awsProfile()),
 		}
+	}
+
+	info := fmt.Sprintf("account %s", strings.TrimSpace(string(out)))
+	if p := awsProfile(); p != "" {
+		info += fmt.Sprintf(", profile %s", p)
+	}
+	if r := awsRegion(); r != "" {
+		info += fmt.Sprintf(", region %s", r)
 	}
 	return CheckResult{
 		Name:    "AWS Credentials",
 		Status:  "pass",
-		Message: fmt.Sprintf("account %s", strings.TrimSpace(string(out))),
+		Message: info,
 	}
 }
 

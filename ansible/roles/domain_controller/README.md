@@ -30,10 +30,12 @@ Promote a Windows server as a primary domain controller
 - **Ensure DNS feature is installed** (ansible.windows.win_feature)
 - **Reboot if DNS feature installation requires it** (ansible.windows.win_reboot) - Conditional
 - **Check if xDnsServer exists** (ansible.windows.win_shell)
+- **Unblock module DLLs before xDnsServer install** (ansible.windows.win_shell) - Conditional
 - **Install xDnsServer PowerShell module** (community.windows.win_psmodule) - Conditional
 - **Configure DNS listener addresses** (ansible.windows.win_powershell) - Conditional
 - **Configure DNS Forwarders** (ansible.windows.win_powershell) - Conditional
 - **Check if ActiveDirectoryDSC exists** (ansible.windows.win_shell)
+- **Unblock module DLLs before ActiveDirectoryDSC install** (ansible.windows.win_shell) - Conditional
 - **Install ActiveDirectoryDSC only if needed** (community.windows.win_psmodule) - Conditional
 - **Enable the Active Directory Web Services** (ansible.windows.win_service)
 - **Ensure admin groups are properly configured** (block)

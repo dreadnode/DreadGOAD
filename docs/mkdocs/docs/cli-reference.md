@@ -412,23 +412,42 @@ Runs health checks across all lab instances via SSM to verify:
 dreadgoad health-check
 ```
 
-### diagnose
+### exec
 
-Run diagnostic checks against domain controllers.
+Run a script on range hosts via the cloud control plane.
 
-Runs the `diagnose-dc01` playbook from an independent host to verify network connectivity, LDAP, WinRM, and DNS for the primary domain controller.
+Uses Azure Run Command or AWS SSM rather than WinRM, so it reaches a host whose WinRM
+listener is down — the case where `provision` and `health-check` cannot connect at all.
+Scripts run with administrative privileges and there is no dry run.
 
 | Flag | Description |
 |------|-------------|
-| `--dc01-ip string` | Override dc01 IP address (skips AWS lookup) |
+| `--hosts string` | Comma-separated host names (required; no default) |
+| `--cmd, -c string` | Script to execute (required) |
+| `--json` | Emit results as JSON |
+| `--timeout duration` | Per-invocation timeout (default 5m) |
+
+A host token must match a name exactly or match one dash-delimited segment of the VM
+name, so `dc02` selects `dreadindex-dreadgoad-DC02-vm` while a partial token like `dc0`
+is rejected rather than silently expanded to three DCs.
+
+AWS uses `AWS-RunPowerShellScript`, so targets must be Windows. Azure infers the
+interpreter from the VM's OS, so Linux hosts work there. Azure caps output at 4096
+bytes per stream and takes ~5-15s per invocation — scope queries narrowly.
 
 ```bash
-# Auto-detect dc01 IP from AWS
-dreadgoad diagnose
+# Inspect a service on one host
+dreadgoad exec --hosts dc02 --cmd 'Get-Service WinRM | Select-Object Status,StartType'
 
-# Specify dc01 IP manually
-dreadgoad diagnose --dc01-ip 10.0.10.10
+# Act on it
+dreadgoad exec --hosts dc02 --cmd 'Set-Service WinRM -StartupType Automatic; Start-Service WinRM'
+
+# Several hosts, machine-readable
+dreadgoad exec --hosts dc01,dc03 --cmd 'w32tm /query /status' --json
 ```
+
+This replaces the former `diagnose` command, which was hardcoded to a single lab
+variant and to AWS-only IP discovery.
 
 ### verify-trusts
 

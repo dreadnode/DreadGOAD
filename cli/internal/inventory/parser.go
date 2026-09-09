@@ -159,6 +159,12 @@ func (inv *Inventory) IsSSM() bool {
 	return strings.Contains(conn, "aws_ssm")
 }
 
+// SSMBucketName returns the S3 bucket the AWS SSM connection plugin uses to
+// transfer files, or an empty string if the inventory does not specify one.
+func (inv *Inventory) SSMBucketName() string {
+	return inv.Vars["ansible_aws_ssm_bucket_name"]
+}
+
 // Region returns the AWS SSM region from inventory vars, or an empty string
 // if the inventory does not specify one. Callers should fall back to
 // config.Config.ResolveRegion() rather than hardcoding a default — silently

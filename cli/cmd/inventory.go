@@ -13,6 +13,7 @@ import (
 
 	"github.com/dreadnode/dreadgoad/internal/config"
 	inv "github.com/dreadnode/dreadgoad/internal/inventory"
+	"github.com/dreadnode/dreadgoad/internal/provider"
 	"github.com/spf13/cobra"
 )
 
@@ -76,6 +77,17 @@ func runInventorySync(cmd *cobra.Command, args []string) error {
 
 	if err := updateEnvField(invPath, cfg.Env); err != nil {
 		return err
+	}
+
+	// Passwords first, and independently of the address sync below: an
+	// unresolvable host makes applyInstanceUpdates return an error, and the
+	// credentials are worth repairing even on a run that then reports that.
+	// This is the command both preflight gates point the operator at, so it has
+	// to reconcile everything the inventory gets wrong, not just addresses.
+	if cfg.ResolvedProvider() == provider.NameAzure {
+		if err := syncAzureInventoryPasswords(cfg); err != nil {
+			return err
+		}
 	}
 
 	jsonFile, _ := cmd.Flags().GetString("json")
@@ -177,17 +189,23 @@ func loadInstances(ctx context.Context, jsonFile, invPath string, cfg *config.Co
 // extractHostRole extracts the Ansible inventory hostname from a VM name.
 // Supports multiple naming conventions:
 //   - AWS: "dreadgoad-dc01" -> "dc01"
+//   - Azure: "A-dreadgoad-DC01-vm" -> "dc01"
 //   - Ludus/Proxmox: "DG-GOAD-DC01" -> "dc01"
 //
 // Falls back to the last hyphen-separated segment for unknown patterns.
 func extractHostRole(vmName string) string {
 	lower := strings.ToLower(vmName)
 
-	// AWS convention: "dreadgoad-<role>"
-	if strings.Contains(lower, "dreadgoad-") {
-		parts := strings.SplitN(lower, "dreadgoad-", 2)
-		if len(parts) == 2 && parts[1] != "" {
-			return parts[1]
+	// Azure suffixes every machine name with "-vm". Left in place it yields
+	// "dc01-vm", which matches no inventory host, and the sync then reports
+	// "all values are current" over an inventory that is still all PENDING.
+	lower = strings.TrimSuffix(lower, "-vm")
+
+	// AWS convention: "dreadgoad-<role>". Anchored on the *last* occurrence
+	// so it works regardless of what the env/deployment prefix contains.
+	if i := strings.LastIndex(lower, "dreadgoad-"); i >= 0 {
+		if role := lower[i+len("dreadgoad-"):]; role != "" {
+			return role
 		}
 	}
 
@@ -237,12 +255,57 @@ func applyInstanceUpdates(invPath string, instances []instanceInfo) error {
 		return fmt.Errorf("write updated inventory: %w", err)
 	}
 
+	// A host still holding a placeholder is unreachable — Ansible resolves
+	// ansible_host to the literal string and every play fails "unreachable".
+	// Reporting "all values are current" over that state is a false success
+	// that surfaces minutes later as a provisioning failure, so name it here.
+	if stale := placeholderHosts(lines); len(stale) > 0 {
+		names := make([]string, 0, len(instances))
+		for _, inst := range instances {
+			names = append(names, inst.Name)
+		}
+		// Says "for these hosts", not "nothing matched": a sync routinely
+		// resolves most of the inventory and leaves one host behind, and an
+		// error claiming total failure would send the operator looking in the
+		// wrong place.
+		return fmt.Errorf(
+			"inventory %s still has placeholder ansible_host for %s — "+
+				"no discovered machine name maps to those hosts\n"+
+				"  discovered %d machine(s): %s",
+			invPath, strings.Join(stale, ", "), len(instances), strings.Join(names, ", "))
+	}
+
 	if updates == 0 {
 		fmt.Println("No inventory updates needed. All values are current.")
 	} else {
 		fmt.Printf("Updated %d entries in %s\n", updates, invPath)
 	}
 	return nil
+}
+
+// placeholderRe matches an inventory host line whose ansible_host is still a
+// scaffolding placeholder: PENDING (written by `env create`) or an unrendered
+// {{ip_range}} template from a provider inventory.
+//
+// Leading whitespace is allowed because Ansible accepts indented host lines,
+// and a gate that misses them would let the exact failure it guards against
+// through. The character class after it excludes ";" and "#" so a commented-out
+// host is not reported as live; RE2 has no lookahead, so the exclusion is
+// spelled into the class rather than written as (?![;#]).
+//
+// The trailing (\s|$) makes the value match whole-token: without it "pending"
+// also matches the prefix of a real address like "pending-lab.example.com",
+// blocking a run over a host that is perfectly well configured.
+var placeholderRe = regexp.MustCompile(`(?mi)^\s*([^;#\s]\S*)\s+ansible_host=(pending|\{\{[^}]*\}\}\S*)(\s|$)`)
+
+// placeholderHosts returns the inventory hostnames whose ansible_host has not
+// been resolved to a real address.
+func placeholderHosts(inventory string) []string {
+	var out []string
+	for _, m := range placeholderRe.FindAllStringSubmatch(inventory, -1) {
+		out = append(out, m[1])
+	}
+	return out
 }
 
 func runInventoryShow(cmd *cobra.Command, args []string) error {
