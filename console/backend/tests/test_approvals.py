@@ -184,6 +184,57 @@ async def test_command_runner_stops_before_spawn_when_approval_is_denied() -> No
         command_runner._spawn_and_stream = original_spawn
 
 
+async def test_execution_uses_the_exact_prepared_plan() -> None:
+    """Approval and spawn must receive the same immutable plan snapshot."""
+    original_require = approvals.require
+    original_spawn = command_runner._spawn_and_stream
+    approved_argv: tuple[str, ...] | None = None
+
+    plan = command_runner._CommandPlan(
+        name="/up",
+        argv=("dreadgoad", "--config", "/range/config.yml", "up"),
+        cwd="/range",
+        spec=command_runner.commands.REGISTRY["/up"],
+    )
+
+    async def approve(
+        app_: object, sid: str, name: str, argv: list[str]
+    ) -> tuple[bool, str]:
+        nonlocal approved_argv
+        assert sid == "s-plan" and name == "/up"
+        approved_argv = tuple(argv)
+        return True, "approval-id"
+
+    async def spawn(
+        app_: object,
+        sid: str,
+        name: str,
+        argv: list[str],
+        **kwargs: object,
+    ) -> command_runner._RunResult:
+        assert tuple(argv) == approved_argv, "argv changed between approval and spawn"
+        assert tuple(argv) == plan.argv
+        assert sid == "s-plan" and name == plan.name
+        assert kwargs == {
+            "cwd": plan.cwd,
+            "kill_grace": 300.0,
+            "cloud_ops": True,
+            "long_running": True,
+            "approval_id": "approval-id",
+        }
+        return command_runner._RunResult(0, "done", cancelled=False)
+
+    approvals.require = approve
+    command_runner._spawn_and_stream = spawn
+    try:
+        result = await command_runner._execute_command(None, "s-plan", plan)
+        assert result is not None and result.output == "done"
+        assert plan.argv == ("dreadgoad", "--config", "/range/config.yml", "up")
+    finally:
+        approvals.require = original_require
+        command_runner._spawn_and_stream = original_spawn
+
+
 def test_unprotected_command_needs_no_runtime_or_approval() -> None:
     sid = "s-read"
     app, db = _app()

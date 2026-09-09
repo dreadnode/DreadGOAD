@@ -116,14 +116,14 @@ def preflight(
     )
 
 
-def config_path_of(session: dict[str, t.Any]) -> str | None:
+def config_path_of(session: t.Mapping[str, t.Any]) -> str | None:
     """The config path recorded on a session's anchor, if it has one."""
     anchor = session.get("anchor") or {}
     path = anchor.get("config_path")
     return str(path) if path else None
 
 
-def run_cwd(session: dict[str, t.Any], default: str | Path) -> str:
+def run_cwd(session: t.Mapping[str, t.Any], default: str | Path) -> str:
     """Working directory for any CLI spawn on behalf of ``session``.
 
     Every spawn must agree on this. The console has four — the operator/agent

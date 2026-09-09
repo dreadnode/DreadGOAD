@@ -8,6 +8,7 @@ import yaml
 from fastapi import APIRouter, HTTPException, Request
 
 from . import chat, configstore, paths
+from .schemas import SessionDocument
 from .sessions import SessionService
 
 router = APIRouter()
@@ -18,7 +19,7 @@ def _service(request: Request) -> SessionService:
 
 
 @router.post("/api/sessions")
-async def create_session(request: Request, body: dict[str, t.Any]) -> dict[str, t.Any]:
+async def create_session(request: Request, body: dict[str, t.Any]) -> SessionDocument:
     """Create a session by attaching to, or creating, an environment."""
     service = _service(request)
     mode = body.get("mode", "attach")
@@ -77,7 +78,7 @@ async def list_sessions(request: Request) -> dict[str, t.Any]:
 
 
 @router.get("/api/sessions/{session_id}")
-async def get_session(request: Request, session_id: str) -> dict[str, t.Any]:
+async def get_session(request: Request, session_id: str) -> SessionDocument:
     """Return one session or a 404 when it does not exist."""
     session = await _service(request).get_session(session_id)
     if session is None:

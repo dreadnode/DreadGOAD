@@ -555,6 +555,18 @@ def test_parse_ws_message_validation() -> None:
         assert message is not None and message["type"] == expected_type, message
         assert message.get("content") == expected_content, message
 
+    approval, error, session_id = parse_ws_message(
+        '{"type":"approval","session_id":" s-2 ",'
+        '"approval_id":" a-2 ","decision":"deny"}'
+    )
+    assert error is None and session_id == "s-2"
+    assert approval == {
+        "session_id": "s-2",
+        "type": "approval",
+        "approval_id": "a-2",
+        "decision": "deny",
+    }
+
     invalid = (
         ("not json", "valid JSON"),
         ("[]", "JSON object"),
@@ -563,6 +575,7 @@ def test_parse_ws_message_validation() -> None:
         ('{"session_id":[],"content":"hello"}', "session_id"),
         ('{"session_id":"s-1","type":false}', "type must"),
         ('{"session_id":"s-1","type":"unknown"}', "unknown message type"),
+        ('{"session_id":"s-1","type":" message ","content":"x"}', "unknown"),
         ('{"session_id":"s-1","content":7}', "content must"),
         ('{"session_id":"s-1","content":"  "}', "must not be empty"),
         ('{"session_id":"s-1","type":"cancel","content":"x"}', "unexpected field"),
@@ -590,9 +603,28 @@ def test_parse_ws_message_validation() -> None:
         {"session_id": "s-1", "content": "x" * (WS_MAX_CONTENT_CHARS + 1)}
     )
     assert parse_ws_message(oversized_content)[1] == "content is too large"
+    largest_content = json.dumps(
+        {"session_id": "s-1", "content": "x" * WS_MAX_CONTENT_CHARS}
+    )
+    assert parse_ws_message(largest_content)[1] is None
     assert (
         parse_ws_message(" " * (WS_MAX_MESSAGE_CHARS + 1))[1] == "message is too large"
     )
+    oversized_integer = '{"session_id":"s-1","content":' + "9" * 5000 + "}"
+    assert parse_ws_message(oversized_integer) == (
+        None,
+        "message must be valid JSON",
+        None,
+    )
+
+    # The allowlist runs before payload validation, preserving error precedence
+    # and returning the already validated session ID for a routable error.
+    message, error, session_id = parse_ws_message(
+        '{"session_id":" s-3 ","type":"message","z":1,"a":2}'
+    )
+    assert message is None
+    assert error == "unexpected field(s): a, z"
+    assert session_id == "s-3"
     print("PASS test_parse_ws_message_validation")
 
 

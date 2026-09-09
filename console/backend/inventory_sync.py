@@ -114,7 +114,9 @@ def map_range_status(
     return result
 
 
-def backfill_keys(rng: dict[str, t.Any], seeded: dict[str, t.Any]) -> bool:
+def backfill_keys(
+    rng: t.MutableMapping[str, t.Any], seeded: t.Mapping[str, t.Any]
+) -> bool:
     """Add missing host role keys to pre-key range documents."""
     by_id = {host.get("id"): host.get("key") for host in seeded.get("hosts", [])}
     changed = False

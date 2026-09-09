@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import typing as t
+from dataclasses import dataclass
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -22,12 +23,83 @@ WS_MAX_CONTENT_CHARS = 32_768
 WS_MAX_MESSAGE_CHARS = 65_536
 WS_MAX_SESSION_ID_CHARS = 128
 
+_COMMON_FIELDS = frozenset({"session_id", "type"})
+_FIELDS_BY_TYPE = {
+    "message": _COMMON_FIELDS | {"content"},
+    "resume": _COMMON_FIELDS,
+    "cancel": _COMMON_FIELDS,
+    "approval": _COMMON_FIELDS | {"approval_id", "decision"},
+}
+
+
+@dataclass(frozen=True)
+class _FrameEnvelope:
+    """Validated fields shared by every client WebSocket frame."""
+
+    session_id: str
+    message_type: str
+
 
 def ws_origin_allowed(origin: str | None) -> bool:
     """Return whether an Origin may open the console WebSocket."""
     if origin is None:
         return True
     return bool(_WS_ORIGIN_RE.match(origin.strip().lower()))
+
+
+def _parse_envelope(
+    value: dict[str, t.Any],
+) -> tuple[_FrameEnvelope | None, str | None, str | None]:
+    """Validate shared fields and return an envelope plus a safe session id."""
+    raw_session_id = value.get("session_id")
+    if not isinstance(raw_session_id, str) or not raw_session_id.strip():
+        return None, "session_id must be a non-empty string", None
+    session_id = raw_session_id.strip()
+    if len(session_id) > WS_MAX_SESSION_ID_CHARS:
+        return None, "session_id is too long", None
+
+    raw_type = value.get("type", "message")
+    if not isinstance(raw_type, str):
+        return None, "type must be a string", session_id
+    if raw_type not in _FIELDS_BY_TYPE:
+        return None, f"unknown message type: {raw_type}", session_id
+    return _FrameEnvelope(session_id, raw_type), None, session_id
+
+
+def _unexpected_fields(value: dict[str, t.Any], message_type: str) -> str | None:
+    """Describe fields that are not part of the selected frame type."""
+    unexpected = sorted(set(value) - _FIELDS_BY_TYPE[message_type])
+    if unexpected:
+        return f"unexpected field(s): {', '.join(unexpected)}"
+    return None
+
+
+def _parse_message_payload(
+    value: dict[str, t.Any],
+) -> tuple[dict[str, str] | None, str | None]:
+    """Validate and normalize the content carried by a message frame."""
+    content = value.get("content")
+    if not isinstance(content, str):
+        return None, "content must be a string"
+    content = content.strip()
+    if not content:
+        return None, "content must not be empty"
+    if len(content) > WS_MAX_CONTENT_CHARS:
+        return None, "content is too large"
+    return {"content": content}, None
+
+
+def _parse_approval_payload(
+    value: dict[str, t.Any],
+) -> tuple[dict[str, str] | None, str | None]:
+    """Validate and normalize an approval decision."""
+    approval_id = value.get("approval_id")
+    if not isinstance(approval_id, str) or not approval_id.strip():
+        return None, "approval_id must be a non-empty string"
+    decision = value.get("decision")
+    if decision not in {"confirm", "deny"}:
+        return None, "decision must be 'confirm' or 'deny'"
+    return {"approval_id": approval_id.strip(), "decision": decision}, None
 
 
 def parse_ws_message(
@@ -39,59 +111,43 @@ def parse_ws_message(
 
     try:
         value = json.loads(raw)
-    except json.JSONDecodeError:
+    except (ValueError, RecursionError):
         return None, "message must be valid JSON", None
     if not isinstance(value, dict):
         return None, "message must be a JSON object", None
 
-    raw_session_id = value.get("session_id")
-    if not isinstance(raw_session_id, str) or not raw_session_id.strip():
-        return None, "session_id must be a non-empty string", None
-    session_id = raw_session_id.strip()
-    if len(session_id) > WS_MAX_SESSION_ID_CHARS:
-        return None, "session_id is too long", None
+    envelope, error, session_id = _parse_envelope(value)
+    if error is not None:
+        return None, error, session_id
+    assert envelope is not None and session_id is not None
 
-    raw_type = value.get("type", "message")
-    if not isinstance(raw_type, str):
-        return None, "type must be a string", session_id
-    message_type = raw_type
-    if message_type not in {"message", "resume", "cancel", "approval"}:
-        return None, f"unknown message type: {message_type}", session_id
+    error = _unexpected_fields(value, envelope.message_type)
+    if error is not None:
+        return None, error, session_id
 
-    allowed = {"session_id", "type"}
-    if message_type == "message":
-        allowed.add("content")
-    elif message_type == "approval":
-        allowed.update({"approval_id", "decision"})
-    unexpected = sorted(set(value) - allowed)
-    if unexpected:
-        return (
-            None,
-            f"unexpected field(s): {', '.join(unexpected)}",
-            session_id,
-        )
+    payload: dict[str, str] = {}
+    if envelope.message_type == "message":
+        parsed, error = _parse_message_payload(value)
+        if error is not None:
+            return None, error, session_id
+        assert parsed is not None
+        payload = parsed
+    elif envelope.message_type == "approval":
+        parsed, error = _parse_approval_payload(value)
+        if error is not None:
+            return None, error, session_id
+        assert parsed is not None
+        payload = parsed
 
-    message = {"session_id": session_id, "type": message_type}
-    if message_type == "message":
-        content = value.get("content")
-        if not isinstance(content, str):
-            return None, "content must be a string", session_id
-        content = content.strip()
-        if not content:
-            return None, "content must not be empty", session_id
-        if len(content) > WS_MAX_CONTENT_CHARS:
-            return None, "content is too large", session_id
-        message["content"] = content
-    elif message_type == "approval":
-        approval_id = value.get("approval_id")
-        if not isinstance(approval_id, str) or not approval_id.strip():
-            return None, "approval_id must be a non-empty string", session_id
-        decision = value.get("decision")
-        if decision not in {"confirm", "deny"}:
-            return None, "decision must be 'confirm' or 'deny'", session_id
-        message["approval_id"] = approval_id.strip()
-        message["decision"] = decision
-    return message, None, session_id
+    return (
+        {
+            "session_id": envelope.session_id,
+            "type": envelope.message_type,
+            **payload,
+        },
+        None,
+        session_id,
+    )
 
 
 @router.websocket("/ws/chat")

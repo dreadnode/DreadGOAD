@@ -8,13 +8,14 @@ import typing as t
 
 from . import commands, labconfig, paths, projectroot
 from .cli import Capture, capture
+from .schemas import PersistedRangeDocument, RangeHost, new_range_host
 
 _EXT_ROLE = "linux"
 
 
 async def extension_nodes(
-    session: dict[str, t.Any], capture_command: Capture | None = None
-) -> list[dict[str, t.Any]]:
+    session: t.Mapping[str, t.Any], capture_command: Capture | None = None
+) -> list[RangeHost]:
     """Return nodes belonging to enabled extensions."""
     anchor = session.get("anchor", {})
     config_path, env = anchor.get("config_path"), anchor.get("env")
@@ -42,21 +43,13 @@ async def extension_nodes(
         extensions = json.loads(stdout)
     except Exception:  # noqa: BLE001
         return []
-    nodes = []
+    nodes: list[RangeHost] = []
     for extension in extensions:
         if not extension.get("enabled"):
             continue
         for machine in extension.get("machines") or []:
             nodes.append(
-                {
-                    "id": machine,
-                    "key": machine,
-                    "hostname": machine,
-                    "role": _EXT_ROLE,
-                    "source": "extension",
-                    "domain": None,
-                    **labconfig._blank_dynamic(),
-                }
+                new_range_host(machine, machine, machine, _EXT_ROLE, "extension", None)
             )
     return nodes
 
@@ -86,8 +79,8 @@ async def reseed(
 
 
 async def repair_missing_config_hosts(
-    app: t.Any, session_id: str, rng: dict[str, t.Any]
-) -> dict[str, t.Any]:
+    app: t.Any, session_id: str, rng: t.Mapping[str, t.Any]
+) -> PersistedRangeDocument:
     """Seed the lab's hosts into a topology that was built before they existed.
 
     Returns the repaired range, or ``rng`` unchanged when there is nothing to do.
@@ -111,23 +104,24 @@ async def repair_missing_config_hosts(
     unconditional reseed on every read would fight `/extensions`, whose nodes
     this seed does not produce.
     """
-    hosts = rng.get("hosts") or []
+    document = t.cast(PersistedRangeDocument, rng)
+    hosts = document.get("hosts") or []
     if any(h.get("source") == "config" for h in hosts):
-        return rng
+        return document
 
     db = app.state.db
     session = await db.get_session(session_id)
     if session is None:
-        return rng
+        return document
     config = labconfig.session_lab_config_path(session, str(paths.repo_root()))
     if not config or not os.path.isfile(config):
-        return rng  # nothing to seed from yet; a greenfield range is legitimate
+        return document  # nothing to seed from yet; a greenfield range is legitimate
 
     seeded = labconfig.seed_topology(
         config, (session.get("snapshot") or {}).get("provider")
     )
     if not any(h.get("source") == "config" for h in seeded.get("hosts", [])):
-        return rng  # config parsed but defines no hosts — leave as-is
+        return document  # config parsed but defines no hosts — leave as-is
 
     # Carry over anything the seed does not produce. merge_reseed makes the
     # seeded set authoritative and drops the rest, which is right for a genuine
@@ -144,6 +138,6 @@ async def repair_missing_config_hosts(
             seeded["hosts"].append(host)
             seeded_ids.add(host.get("id"))
 
-    repaired = labconfig.merge_reseed(rng, seeded)
+    repaired = t.cast(PersistedRangeDocument, labconfig.merge_reseed(document, seeded))
     await db.upsert_range(session_id, repaired)
     return repaired

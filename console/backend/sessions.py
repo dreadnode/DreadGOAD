@@ -20,6 +20,7 @@ from pathlib import Path
 
 from . import configstore, labconfig, paths, scaffold
 from .db import Database
+from .schemas import RangeDocument, SessionDocument, SessionSnapshot
 
 
 def _slug(s: str) -> str:
@@ -30,7 +31,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def default_label(config_path: str, env: str, snapshot: dict[str, t.Any]) -> str:
+def default_label(config_path: str, env: str, snapshot: SessionSnapshot) -> str:
     """The tab name for a session, as ``<config>/<env>``.
 
     A tab only has to answer *which session is this*; what it is — provider,
@@ -81,7 +82,7 @@ class SessionService:
         env: str,
         model: str | None = None,
         label: str | None = None,
-    ) -> dict[str, t.Any]:
+    ) -> SessionDocument:
         """Attach a session to an existing ``(config_path, env)``."""
         snap = labconfig.derive_snapshot(config_path, env)
 
@@ -90,7 +91,7 @@ class SessionService:
         dirname = f"{_slug(label or env)}-{sid[2:]}"
         sdir = paths.ensure_private_dir(self.sessions_root / dirname)
 
-        session = {
+        session: SessionDocument = {
             "id": sid,
             "label": lbl,
             "model": model,
@@ -119,7 +120,7 @@ class SessionService:
         top_level: dict[str, t.Any] | None = None,
         model: str | None = None,
         label: str | None = None,
-    ) -> dict[str, t.Any]:
+    ) -> SessionDocument:
         """Create-new-env flow: write the env into the yaml, then attach."""
         labconfig.write_new_env(config_path, env_name, env_fields, top_level)
         session = await self.create_session(
@@ -129,7 +130,7 @@ class SessionService:
         return session
 
     async def _scaffold_for(
-        self, session: dict[str, t.Any], env_fields: dict[str, t.Any]
+        self, session: SessionDocument, env_fields: dict[str, t.Any]
     ) -> None:
         """Build the environment's infrastructure and record what happened.
 
@@ -195,7 +196,7 @@ class SessionService:
         region: str | None = None,
         model: str | None = None,
         label: str | None = None,
-    ) -> dict[str, t.Any]:
+    ) -> SessionDocument:
         """Create-new-config flow: write a config, put one env in it, attach.
 
         The whole point of doing this in one call rather than exposing a
@@ -223,13 +224,13 @@ class SessionService:
         await self._scaffold_for(session, env_fields)
         return session
 
-    def _seed_topology(self, session: dict[str, t.Any]) -> dict[str, t.Any]:
+    def _seed_topology(self, session: SessionDocument) -> RangeDocument:
         cfg = labconfig.session_lab_config_path(session, self.repo_root)
         return labconfig.seed_topology(
             cfg, (session.get("snapshot") or {}).get("provider")
         )
 
-    async def _reseed_topology(self, session: dict[str, t.Any]) -> None:
+    async def _reseed_topology(self, session: SessionDocument) -> None:
         """Re-read the lab config into the topology, keeping live state.
 
         Seeding happens inside create_session, which runs BEFORE the scaffold
@@ -249,11 +250,11 @@ class SessionService:
         seeded = self._seed_topology(session)
         await self.db.upsert_range(session["id"], labconfig.merge_reseed(rng, seeded))
 
-    async def list_sessions(self) -> list[dict[str, t.Any]]:
+    async def list_sessions(self) -> list[SessionDocument]:
         """Return every known session."""
         return await self.db.list_sessions()
 
-    async def get_session(self, session_id: str) -> dict[str, t.Any] | None:
+    async def get_session(self, session_id: str) -> SessionDocument | None:
         """Return one session, or None if it doesn't exist."""
         return await self.db.get_session(session_id)
 

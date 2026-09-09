@@ -20,6 +20,13 @@ import ruamel.yaml
 import yaml
 
 from . import projectroot
+from .schemas import (
+    RangeDocument,
+    RangeHost,
+    SessionDocument,
+    SessionSnapshot,
+    new_range_host,
+)
 
 # config.json host `type` → RangeView role (§6.3).
 _ROLE_BY_TYPE = {
@@ -127,7 +134,7 @@ def resolve_region(
     return env_region or file_region
 
 
-def derive_snapshot(config_path: str, env: str) -> dict[str, t.Any]:
+def derive_snapshot(config_path: str, env: str) -> SessionSnapshot:
     """Build a session ``snapshot`` from ``(config_path, env)``.
 
     Provider/region are file-level (top of ``dreadgoad.yaml``); variant/lab/
@@ -161,7 +168,7 @@ def derive_snapshot(config_path: str, env: str) -> dict[str, t.Any]:
     variant_source = e.get("variant_source")
     lab = variant_target or variant_source
 
-    snapshot: dict[str, t.Any] = {
+    snapshot: SessionSnapshot = {
         "provider": provider,
         "region": region,
         "lab": lab,
@@ -186,21 +193,7 @@ def _role_for(host_type: str) -> str:
     return _ROLE_BY_TYPE.get((host_type or "").lower(), "other")
 
 
-def _blank_dynamic() -> dict[str, t.Any]:
-    return {
-        "status": "unknown",
-        "health": "unknown",
-        "ip_private": None,
-        "ip_public": None,
-        "cloud_id": None,
-        "cloud_name": None,  # provider VM name, learned from the ingestion hook
-        "last_checked_at": None,
-    }
-
-
-def seed_topology(
-    lab_config_path: str | None, provider: str | None
-) -> dict[str, t.Any]:
+def seed_topology(lab_config_path: str | None, provider: str | None) -> RangeDocument:
     """Seed a range's node set from ``config.json`` + infra nodes (§6.3).
 
     3-way merge, v1 subset:
@@ -222,50 +215,40 @@ def seed_topology(
             cfg = json.load(f)
         hosts_cfg = (cfg.get("lab") or {}).get("hosts") or {}
 
-    hosts: list[dict[str, t.Any]] = []
+    hosts: list[RangeHost] = []
     for _key, h in hosts_cfg.items():
         hostname = h.get("hostname", _key)
-        host = {
-            "id": hostname,
+        host = new_range_host(
+            hostname,
             # The config key (``dc01``) is the CLI's host *role*, and it's what
             # cloud instances are named after — a variant renames the hostname
             # (``solar``) but not the VM. Keep it for instance correlation and
             # for matching per-host health results (§6.4).
-            "key": _key,
-            "hostname": hostname,
-            "role": _role_for(h.get("type", "")),
-            "source": "config",
-            "domain": h.get("domain"),
-            **_blank_dynamic(),
-        }
+            _key,
+            hostname,
+            _role_for(h.get("type", "")),
+            "config",
+            h.get("domain"),
+        )
         hosts.append(host)
 
     # Infra nodes (not in the lab config).
     hosts.append(
-        {
-            "id": "attackbox",
-            "key": "attackbox",
-            "hostname": "attackbox",
-            "role": "attackbox",
-            "source": "infra",
-            "domain": None,
-            **_blank_dynamic(),
-        }
+        new_range_host(
+            "attackbox", "attackbox", "attackbox", "attackbox", "infra", None
+        )
     )
     if provider == "azure":
         hosts.append(
-            {
-                "id": "bastion",
-                "key": "bastion",
-                "hostname": "bastion",
-                "role": "bastion",
-                "source": "infra",
-                "domain": None,
-                **_blank_dynamic(),
-            }
+            new_range_host("bastion", "bastion", "bastion", "bastion", "infra", None)
         )
 
-    return {"hosts": hosts, "edges": [], "layout": {}, "last_checked_at": None}
+    return {
+        "hosts": hosts,
+        "edges": [],
+        "layout": {},
+        "last_checked_at": None,
+    }
 
 
 _DYNAMIC_FIELDS = (
@@ -280,8 +263,8 @@ _DYNAMIC_FIELDS = (
 
 
 def merge_reseed(
-    existing: dict[str, t.Any], seeded: dict[str, t.Any]
-) -> dict[str, t.Any]:
+    existing: t.Mapping[str, t.Any], seeded: t.Mapping[str, t.Any]
+) -> RangeDocument:
     """Re-seed a range's node set while preserving live state + layout (§6.3).
 
     Used after ``/extensions`` / ``/variant`` change the topology: the node set
@@ -290,29 +273,27 @@ def merge_reseed(
     positions.
     """
     old = {h["id"]: h for h in existing.get("hosts", [])}
-    hosts: list[dict[str, t.Any]] = []
+    hosts: list[RangeHost] = []
     for h in seeded.get("hosts", []):
         if h["id"] in old:
-            merged = dict(h)
+            merged: dict[str, t.Any] = dict(h)
             prev = old[h["id"]]
             for k in _DYNAMIC_FIELDS:
                 if k in prev:
                     merged[k] = prev[k]
-            hosts.append(merged)
+            hosts.append(t.cast(RangeHost, merged))
         else:
             hosts.append(h)
     keep = {h["id"] for h in hosts}
     layout = {k: v for k, v in existing.get("layout", {}).items() if k in keep}
-    out = dict(existing)
+    out = t.cast(RangeDocument, dict(existing))
     out["hosts"] = hosts
     out["edges"] = seeded.get("edges", [])
     out["layout"] = layout
     return out
 
 
-def session_lab_config_path(
-    session: dict[str, t.Any], fallback_root: str
-) -> str | None:
+def session_lab_config_path(session: SessionDocument, fallback_root: str) -> str | None:
     """Where a session's lab config lives, resolved in the config's own tree.
 
     ``lab`` is repo-relative (``ad/GOAD-redteam``), so it only means anything

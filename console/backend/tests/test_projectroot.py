@@ -311,7 +311,9 @@ def test_no_spawn_site_passes_the_console_repo_as_cwd() -> None:
     # And every module that spawns must reach the helper at all.
     for name in ("fetch.py", "inventory_sync.py", "topology_sync.py"):
         assert "projectroot.run_cwd" in (backend / name).read_text(), name
-    assert "run_cwd = " in (backend / "command_runner.py").read_text()
+    command_runner = (backend / "command_runner.py").read_text()
+    assert "str(checks.root)" in command_runner
+    assert "cwd=plan.cwd" in command_runner
     print("PASS test_no_spawn_site_passes_the_console_repo_as_cwd")
 
 

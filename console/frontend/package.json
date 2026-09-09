@@ -14,6 +14,8 @@
     "test:tooltip": "esbuild tests/tooltip.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/dreadgoad-tooltip-test.mjs && node node_modules/.cache/dreadgoad-tooltip-test.mjs",
     "test:confirm": "esbuild tests/confirmModal.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/dreadgoad-confirm-test.mjs && node node_modules/.cache/dreadgoad-confirm-test.mjs",
     "test:resources": "esbuild tests/vmResourceDetails.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/dreadgoad-resource-test.mjs && node node_modules/.cache/dreadgoad-resource-test.mjs",
+    "test:range": "esbuild tests/rangeView.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/dreadgoad-range-test.mjs && node node_modules/.cache/dreadgoad-range-test.mjs",
+    "test:new-session": "esbuild tests/newSessionModel.test.ts --bundle --platform=node --format=esm --outfile=node_modules/.cache/dreadgoad-new-session-test.mjs && node node_modules/.cache/dreadgoad-new-session-test.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

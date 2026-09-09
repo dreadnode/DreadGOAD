@@ -118,51 +118,11 @@ export interface SecurityCheck {
   detail: string
 }
 
-// Chat event as sent over the WebSocket (kind + kind-specific fields).
-export interface ChatEvent {
+interface ChatEventMeta {
   _cid?: number // client-assigned key for live events (App-side)
   seq?: number  // server-assigned key for persisted events (DB-side)
+  ts?: string
   session_id?: string
-  kind: string
-  content?: string
-  tool?: string
-  args?: string
-  result?: string
-  message?: string
-  command?: string
-  exit_code?: number
-  cancelled?: boolean
-  approval_id?: string
-  decision?: string
-  detail?: string
-  argv?: string[]
-  approval?: ApprovalRequest | null
-  /** Cancelled, but the work it started is still finishing outside this
-   *  process (a cloud lifecycle op, a playbook already running on a host). */
-  still_running?: boolean
-  line?: string
-  hosts_updated?: number
-  passed?: number
-  failed?: number
-  skipped?: number
-  checks?: HealthCheck[]
-  instances?: Instance[]
-  total?: number
-  running?: number
-  warnings?: number
-  categories?: ValidateCategory[]
-  failures?: ValidateFailure[]
-  mode?: string
-  hosts?: ScrubHost[]
-  found?: number
-  removed?: number
-  results?: ExecResult[]
-  succeeded?: number
-  warned?: number
-  security_checks?: SecurityCheck[]
-  usage?: { input_tokens?: number; output_tokens?: number }
-  events?: ChatEvent[]
-  [key: string]: unknown
 }
 
 export interface ApprovalRequest {
@@ -172,3 +132,113 @@ export interface ApprovalRequest {
   detail: string
   requested_at: string
 }
+
+interface UserMessageEvent { kind: 'user_message'; content: string }
+interface GenerationEvent {
+  kind: 'generation'
+  content: string
+  usage?: { input_tokens?: number; output_tokens?: number } | null
+}
+export interface ToolStartEvent { kind: 'tool_start'; tool: string; args: string }
+interface ToolEndEvent { kind: 'tool_end'; tool: string; result: string }
+interface ErrorEvent { kind: 'error'; message: string }
+interface AgentEndEvent { kind: 'agent_end'; failed: boolean; cancelled?: boolean }
+interface StatusEvent { kind: 'status'; content: string }
+interface CommandStartEvent {
+  kind: 'command_run'
+  phase: 'start'
+  command: string
+  argv: string[]
+  cwd: string
+  approval_id?: string
+}
+interface CommandEndEvent {
+  kind: 'command_run'
+  phase: 'end'
+  command: string
+  exit_code: number
+  cancelled: boolean
+  /** Cancelled, but the work it started is still finishing outside this
+   *  process (a cloud lifecycle op, a playbook already running on a host). */
+  still_running?: boolean
+  tail?: string
+  approval_id?: string
+}
+interface CommandProgressEvent { kind: 'command_progress'; line: string }
+interface CheckRunEvent {
+  kind: 'check_run'
+  hosts_updated?: number
+  changes?: unknown[]
+  error?: string
+}
+export interface HealthReportEvent {
+  kind: 'health_report'
+  passed: number
+  failed: number
+  skipped: number
+  checks: HealthCheck[]
+}
+export interface InstancesReportEvent {
+  kind: 'instances_report'
+  instances: Instance[]
+  total: number
+  running: number
+}
+export interface ValidateReportEvent {
+  kind: 'validate_report'
+  passed: number
+  failed: number
+  warnings: number
+  total: number
+  categories: ValidateCategory[]
+  failures: ValidateFailure[]
+}
+export interface ScrubReportEvent {
+  kind: 'scrub_report'
+  mode: string
+  hosts: ScrubHost[]
+  found: number
+  removed: number
+}
+export interface ExecReportEvent {
+  kind: 'exec_report'
+  results: ExecResult[]
+  succeeded: number
+  total: number
+}
+export interface SecurityReportEvent {
+  kind: 'security_report'
+  passed: number
+  failed: number
+  warned: number
+  skipped: number
+  security_checks: SecurityCheck[]
+}
+interface ApprovalRequiredEvent extends ApprovalRequest {
+  kind: 'approval_required'
+}
+interface ApprovalResolvedEvent {
+  kind: 'approval_resolved'
+  approval_id: string
+  command: string
+  decision: 'approved' | 'denied' | 'expired' | 'cancelled'
+}
+interface HistoryEvent {
+  kind: 'history'
+  events: ChatEvent[]
+  active: boolean
+  started_at: string | null
+  command: string | null
+  approval: ApprovalRequest | null
+}
+
+type ChatEventPayload =
+  | UserMessageEvent | GenerationEvent | ToolStartEvent | ToolEndEvent
+  | ErrorEvent | AgentEndEvent | StatusEvent
+  | CommandStartEvent | CommandEndEvent | CommandProgressEvent | CheckRunEvent
+  | HealthReportEvent | InstancesReportEvent | ValidateReportEvent
+  | ScrubReportEvent | ExecReportEvent | SecurityReportEvent
+  | ApprovalRequiredEvent | ApprovalResolvedEvent | HistoryEvent
+
+// The `kind` discriminator makes every event payload independently checkable.
+export type ChatEvent = ChatEventMeta & ChatEventPayload

@@ -1,9 +1,9 @@
-// Command-recall semantics, extracted from TerminalChat's key handling so the
+// Command-recall semantics, extracted from TerminalComposer's key handling so the
 // state machine can be exercised without a DOM. The component holds the same
 // four pieces of state (history, histIndex, draft, input) and calls the same
 // two transitions; this asserts what those transitions do.
 import assert from 'node:assert/strict'
-import { mergeHistory } from '../src/components/TerminalChat'
+import { mergeHistory } from '../src/components/terminalChatHistory'
 import type { ChatEvent } from '../src/types'
 
 const said = (content: string) => ({ kind: 'user_message', content }) as ChatEvent
@@ -16,7 +16,7 @@ interface Recall {
   input: string
 }
 
-/** Mirrors recallOlder in TerminalChat. */
+/** Mirrors recallOlder in TerminalComposer. */
 function older(s: Recall): boolean {
   if (s.history.length === 0) return false
   if (s.histIndex === null) s.draft = s.input
@@ -27,7 +27,7 @@ function older(s: Recall): boolean {
   return true
 }
 
-/** Mirrors recallNewer in TerminalChat. */
+/** Mirrors recallNewer in TerminalComposer. */
 function newer(s: Recall): boolean {
   if (s.histIndex === null) return false
   if (s.histIndex === 0) {

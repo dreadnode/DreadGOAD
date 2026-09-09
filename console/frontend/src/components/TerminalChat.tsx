@@ -1,12 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { ChatEvent, HealthCheck, Instance, SecurityCheck } from '../types'
+import type {
+  ChatEvent,
+  ExecReportEvent,
+  HealthReportEvent,
+  InstancesReportEvent,
+  ScrubReportEvent,
+  SecurityReportEvent,
+  ToolStartEvent,
+  ValidateReportEvent,
+} from '../types'
 import type { ConnectionStatus } from '../hooks/useWebSocket'
 import { api, type CommandDef } from '../api'
 import { agentVerb } from '../agentVerbs'
 import { buildHelpLines, type HelpLineKind } from '../help'
-import ConfirmModal from './ConfirmModal'
+import TerminalComposer from './TerminalComposer'
+import { COPY_COMMAND, HELP_COMMAND } from './terminalCommands'
+
+export { mergeHistory } from './terminalChatHistory'
 
 function formatTokens(n: number): string {
   if (n >= 1_000_000) { const v = n / 1_000_000; return (v >= 10 ? Math.round(v) : +v.toFixed(1)) + 'M' }
@@ -20,7 +32,7 @@ const HEALTH_COLOR: Record<string, string> = {
   SKIP: 'var(--dn-text-muted)',
 }
 
-function HealthReport({ ev }: { ev: ChatEvent }) {
+function HealthReport({ ev }: { ev: HealthReportEvent }) {
   const checks = ev.checks ?? []
   const failed = ev.failed ?? 0
   const summaryColor = failed > 0 ? 'var(--dn-error)' : 'var(--dn-success)'
@@ -33,7 +45,7 @@ function HealthReport({ ev }: { ev: ChatEvent }) {
         </span>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'auto auto 1fr', gap: '2px 10px', fontSize: 11, marginLeft: 12 }}>
-        {checks.map((c: HealthCheck, i: number) => (
+        {checks.map((c, i) => (
           <div key={i} style={{ display: 'contents' }}>
             <span style={{ color: HEALTH_COLOR[c.status] ?? 'var(--dn-text-muted)', fontWeight: 700 }}>{c.status}</span>
             <span style={{ color: 'var(--dn-text-muted)' }}>{c.host}</span>
@@ -56,7 +68,7 @@ const SECURITY_COLOR: Record<string, string> = {
 
 const SEVERITY_ORDER: Record<string, number> = { critical: 0, high: 1, info: 2 }
 
-function SecurityReport({ ev }: { ev: ChatEvent }) {
+function SecurityReport({ ev }: { ev: SecurityReportEvent }) {
   const checks = ev.security_checks ?? []
   const failed = ev.failed ?? 0
   const warned = ev.warned ?? 0
@@ -73,7 +85,7 @@ function SecurityReport({ ev }: { ev: ChatEvent }) {
         </span>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'auto auto auto 1fr', gap: '2px 10px', fontSize: 11, marginLeft: 12 }}>
-        {sorted.map((c: SecurityCheck, i: number) => (
+        {sorted.map((c, i) => (
           <div key={i} style={{ display: 'contents' }}>
             <span style={{ color: SECURITY_COLOR[c.status] ?? 'var(--dn-text-muted)', fontWeight: 700 }}>{c.status}</span>
             <span style={{ color: 'var(--dn-text-dim)', fontSize: 10 }}>{c.severity}</span>
@@ -99,7 +111,7 @@ const INSTANCE_STATE_COLOR: Record<string, string> = {
   terminated: 'var(--dn-error)',
 }
 
-function InstancesReport({ ev }: { ev: ChatEvent }) {
+function InstancesReport({ ev }: { ev: InstancesReportEvent }) {
   const instances = ev.instances ?? []
   const total = ev.total ?? instances.length
   const running = ev.running ?? 0
@@ -113,7 +125,7 @@ function InstancesReport({ ev }: { ev: ChatEvent }) {
       </div>
       {total > 0 && (
         <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: '3px 14px', fontSize: 11, marginLeft: 12 }}>
-          {instances.map((inst: Instance, i: number) => {
+          {instances.map((inst, i) => {
             const color = INSTANCE_STATE_COLOR[(inst.state || '').toLowerCase()] ?? 'var(--dn-text-muted)'
             return (
               <div key={i} style={{ display: 'contents' }}>
@@ -135,7 +147,7 @@ const VALIDATE_STATE: Record<string, { mark: string; color: string }> = {
   skipped: { mark: '·', color: 'var(--dn-text-muted)' },
 }
 
-function ValidateReport({ ev }: { ev: ChatEvent }) {
+function ValidateReport({ ev }: { ev: ValidateReportEvent }) {
   const cats = ev.categories ?? []
   const failures = ev.failures ?? []
   const failed = ev.failed ?? 0
@@ -195,7 +207,7 @@ function ValidateReport({ ev }: { ev: ChatEvent }) {
   )
 }
 
-function ScrubReport({ ev }: { ev: ChatEvent }) {
+function ScrubReport({ ev }: { ev: ScrubReportEvent }) {
   const hosts = ev.hosts ?? []
   const found = ev.found ?? 0
   const dryRun = ev.mode !== 'apply'
@@ -248,7 +260,7 @@ function ScrubReport({ ev }: { ev: ChatEvent }) {
   )
 }
 
-function ExecReport({ ev }: { ev: ChatEvent }) {
+function ExecReport({ ev }: { ev: ExecReportEvent }) {
   const results = ev.results ?? []
   const succeeded = ev.succeeded ?? 0
   const total = ev.total ?? results.length
@@ -329,13 +341,10 @@ function Badge({ text, color }: { text: string; color: string }) {
   )
 }
 
-function toolSummary(ev: ChatEvent): string {
-  if (ev.tool) {
-    let a = ''
-    try { a = JSON.stringify(JSON.parse(ev.args || '{}')) } catch { a = ev.args || '' }
-    return `${ev.tool} ${a}`.trim()
-  }
-  return ev.command || ''
+function toolSummary(ev: ToolStartEvent): string {
+  let args = ''
+  try { args = JSON.stringify(JSON.parse(ev.args || '{}')) } catch { args = ev.args || '' }
+  return `${ev.tool} ${args}`.trim()
 }
 
 function Message({ ev }: { ev: ChatEvent }) {
@@ -403,28 +412,6 @@ function Message({ ev }: { ev: ChatEvent }) {
   }
 }
 
-// Client-side only: /help and /copy map to no CLI verb, so they live here
-// rather than in the server registry (which the agent may run).
-const HELP_COMMAND: CommandDef = {
-  name: '/help',
-  description: 'How a range run works, start to finish',
-  detail: 'read-only; shown automatically in an empty session',
-  cli: '',
-  dispatch: 'direct',
-  long_running: false,
-  takes_args: false,
-}
-
-const COPY_COMMAND: CommandDef = {
-  name: '/copy',
-  description: 'Copy last N agent messages (default 1, "all" for entire chat)',
-  detail: 'copies to clipboard; nothing is sent to the backend',
-  cli: '',
-  dispatch: 'direct',
-  long_running: false,
-  takes_args: true,
-}
-
 // Keyed off the line's declared kind, not its text. Detail paragraphs
 // often open with a command name ("/scrub deletes ..."), so styling by a
 // leading slash painted five of them as command rows.
@@ -454,45 +441,6 @@ function HelpPanel({ commands }: { commands: CommandDef[] }) {
   )
 }
 
-/** A command typed but never sent, tagged with where in the transcript it fell. */
-export interface ClientOnlyEntry { text: string; after: number }
-
-/**
- * Recall history, oldest first: everything the operator submitted, in the order
- * they submitted it.
- *
- * Sent messages come back from the server as transcript events, so the
- * transcript is the record — history then survives a reload and switches with
- * the session for free. Client-only commands leave no event, so they are
- * spliced back in at the transcript length they were typed at. Exported so the
- * ordering can be tested without a DOM.
- */
-export function mergeHistory(
-  messages: ChatEvent[], clientOnly: ClientOnlyEntry[],
-): string[] {
-  const out: string[] = []
-  for (let i = 0; i <= messages.length; i++) {
-    // Everything typed while the transcript was this long comes first...
-    for (const c of clientOnly) {
-      if (c.after === i) out.push(c.text)
-    }
-    // ...then the message at this position, if it is one the operator sent.
-    // The loop runs one past the end so trailing entries (`after` === length)
-    // are emitted; guard the read rather than duplicating the inner loop.
-    const m = messages[i]
-    if (m?.kind === 'user_message') {
-      const text = (m.content ?? '').trim()
-      if (text) out.push(text)
-    }
-  }
-  // `after` can exceed the length if the transcript was later trimmed or
-  // replaced by a shorter replay; those still belong at the end.
-  for (const c of clientOnly) {
-    if (c.after > messages.length) out.push(c.text)
-  }
-  return out
-}
-
 /**
  * Keep the guide's transcript position inside the transcript.
  *
@@ -515,7 +463,6 @@ export function reanchorHelp(helpAfter: number | null, length: number): number |
 }
 
 export default function TerminalChat({ sessionId, messages, status, onSend, processing, turnStartedAt, verbSeed, onCancel, model, onOpenSettings, confirmationBlocked }: Props) {
-  const [input, setInput] = useState('')
   // Transcript position the guide was last requested at; null = never asked.
   // An empty pane shows it regardless, so a new session opens on the workflow.
   const [helpAfter, setHelpAfter] = useState<number | null>(null)
@@ -523,32 +470,14 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
   // False once the command catalog fails to load: nothing can be classified,
   // so the destructive-command confirm has to assume the worst.
   const [catalogOk, setCatalogOk] = useState(true)
-  const [cmdHighlight, setCmdHighlight] = useState(0)
-  // Shell-style recall. `histIndex` counts back from the newest entry; null
-  // means "not browsing", and `draft` holds whatever was half-typed when
-  // browsing started so Down can put it back.
-  const [histIndex, setHistIndex] = useState<number | null>(null)
-  const [draft, setDraft] = useState('')
-  // Commands that never reach the server, so never come back as transcript
-  // events. Only /help qualifies today, but it is still something the operator
-  // typed and expects to find behind Up. `after` is the transcript length when
-  // it was typed, which is what puts it back in chronological order — appending
-  // them all to the end made a /help typed first surface as the newest entry.
-  const [clientOnly, setClientOnly] = useState<{ text: string; after: number }[]>([])
   const endRef = useRef<HTMLDivElement>(null)
   // The scrolling transcript container — needed to pin it to the TOP for the
   // guide, which endRef (an anchor at the bottom) can't express.
   const scrollRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLTextAreaElement>(null)
-  const activeCmdRef = useRef<HTMLDivElement>(null)
   const pinnedRef = useRef(true)
   const autoScrollingRef = useRef(false)
   const autoScrollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [showJump, setShowJump] = useState(false)
-  const [pendingConfirm, setPendingConfirm] = useState<{
-    title: string; message: string; confirmLabel?: string;
-    destructive?: boolean; onConfirm: () => void;
-  } | null>(null)
 
   const sessionTokens = useMemo(() => {
     let inp = 0, out = 0
@@ -592,38 +521,12 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
     }
   }, [messages])
 
-  // Auto-grow the input upward as it wraps to multiple lines (like ALFRED).
-  // Reset to 'auto' first so it also shrinks back when text is deleted.
-  useEffect(() => {
-    const el = inputRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 200)}px`
-  }, [input])
-
-  // Keep the keyboard-highlighted command scrolled into the popup's viewport
-  // (the menu is a fixed-height scroll box; arrow-nav can move past the fold).
-  useEffect(() => { activeCmdRef.current?.scrollIntoView({ block: 'nearest' }) }, [cmdHighlight])
-
-  // Park the caret at the end of a recalled entry. React restores the caret to
-  // its previous offset when a controlled value changes, so recalling a long
-  // command from a short one drops the caret into the middle of it — and the
-  // next Up then reads the caret as off the first line and moves it instead of
-  // stepping further back, stalling the recall.
-  useEffect(() => {
-    if (histIndex === null) return
-    const el = inputRef.current
-    if (!el) return
-    el.setSelectionRange(el.value.length, el.value.length)
-  }, [histIndex, input])
-
   // The guide is per-session. This component is never remounted when tabs
   // change (App renders one instance and swaps its props), so without this the
   // index would carry into the next session — showing the panel where /help was
   // never typed, and at an offset that means nothing in that transcript.
   useEffect(() => {
     setHelpAfter(null)
-    setPendingConfirm(null)
     pinnedRef.current = true
     setShowJump(false)
   }, [sessionId])
@@ -633,22 +536,6 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
   useEffect(() => {
     setHelpAfter(prev => reanchorHelp(prev, messages.length))
   }, [messages.length])
-
-  // Recall history, oldest first. Derived from the transcript rather than kept
-  // as its own list: the transcript is the server's record, so history survives
-  // a reload and switches with the session for free. Client-only commands are
-  // appended because they leave no transcript event to derive from.
-  const history = useMemo(
-    () => mergeHistory(messages, clientOnly),
-    [messages, clientOnly],
-  )
-
-  // Browsing state is meaningless against another session's history.
-  useEffect(() => {
-    setHistIndex(null)
-    setDraft('')
-    setClientOnly([])
-  }, [sessionId])
 
   // Load the slash-command registry once for the autocomplete menu (§5.1).
   // Sorted by name: the registry is grouped by lifecycle, but in a menu you
@@ -670,21 +557,6 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
       })
   }, [])
 
-  // Autocomplete: filter to the typed `/`-token; hide once a space is typed (args).
-  // Declared before the Esc handler below, which needs to know if it's open.
-  const firstToken = input.split(' ')[0]
-  const filteredCommands = useMemo(
-    () => (input.startsWith('/') ? commands.filter(c => c.name.startsWith(firstToken)) : []),
-    [commands, input, firstToken],
-  )
-  // Hidden while browsing history: recalling a slash command refills the input
-  // with something the menu matches, the menu opens, and from then on it owns
-  // Up/Down — so recall dead-ended after exactly one step, on the commands you
-  // most want to recall. Typing anything clears histIndex and brings it back.
-  const showCmdMenu = filteredCommands.length > 0
-    && !input.includes(' ')
-    && histIndex === null
-
   // One verb per turn. Pure in render because the seed only changes when a turn
   // starts (App owns it per session): latching locally would re-roll the word
   // when a tab switch flips `processing`, and drawing at random here would
@@ -705,187 +577,8 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
     return () => clearInterval(id)
   }, [processing, turnStartedAt])
 
-  // Esc cancels the in-flight command/turn (sends {type:cancel} → SIGINT, §5.4).
-  // Suppressed while the slash-command menu is open: Esc there means "close the
-  // menu", and this document-level listener would otherwise *also* fire and kill
-  // a running command. The menu's own handler (below) can't prevent that on its
-  // own, since this listener is native and separate from React's dispatch.
-  useEffect(() => {
-    if (!processing || showCmdMenu) return
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onCancel() }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [processing, showCmdMenu, onCancel])
-
-  const submit = () => {
-    const t = input.trim()
-    if (!t) return
-    // /help is client-side: it maps to no CLI verb, so it never reaches the
-    // registry or the agent. Handled before the connection guard too, so the
-    // guide is readable while disconnected or before a session exists — which
-    // is exactly when someone is most likely to need it.
-    if (t === HELP_COMMAND.name) {
-      // Remember where in the transcript it was asked for, so it renders
-      // inline at that point rather than pinned above or below everything.
-      setHelpAfter(messages.length)
-      // No transcript event will carry this one, so record it for recall here,
-      // tagged with the transcript position that keeps it in chronological order.
-      setClientOnly(prev => (
-        prev[prev.length - 1]?.text === t && prev[prev.length - 1]?.after === messages.length
-          ? prev
-          : [...prev, { text: t, after: messages.length }]
-      ))
-      setInput('')
-      setCmdHighlight(0)
-      setHistIndex(null)
-      return
-    }
-    // /copy is client-side: grab the last N generation events (or all) and
-    // write them to the clipboard. Like /help it works without a live session.
-    if (t.startsWith('/copy')) {
-      const countArg = t.slice(5).trim()
-      const all = messages.filter(m => m.kind === 'generation' && m.content)
-      const copyAll = countArg.toLowerCase() === 'all'
-      const parsed = countArg && !copyAll ? parseInt(countArg, 10) : 1
-      const count = isNaN(parsed) || parsed <= 0 ? 1 : parsed
-      const selected = copyAll ? all : all.slice(-count)
-      if (selected.length > 0) {
-        const text = selected.map(m => m.content).join('\n\n')
-        navigator.clipboard.writeText(text).catch(() => {})
-      }
-      setClientOnly(prev => (
-        prev[prev.length - 1]?.text === t && prev[prev.length - 1]?.after === messages.length
-          ? prev
-          : [...prev, { text: t, after: messages.length }]
-      ))
-      setInput('')
-      setCmdHighlight(0)
-      setHistIndex(null)
-      return
-    }
-
-    if (!sessionId || status !== 'connected' || processing) return
-
-    // High-consequence commands are approved by the backend after it has built
-    // the exact argv. Do not pre-confirm them here: that would produce two
-    // dialogs and, more importantly, would still not authorize the server-side
-    // operation. The catalog-failure check below remains a local fail-closed
-    // guard for slash commands the client cannot classify.
-    const doSend = () => {
-      onSend(t)
-      setInput('')
-      setCmdHighlight(0)
-      setHistIndex(null)
-      setDraft('')
-    }
-
-    if (!catalogOk && t.startsWith('/')) {
-      setPendingConfirm({
-        title: 'Unverified command',
-        message: `The command list could not be loaded, so ${t.split(' ')[0]} cannot be `
-          + 'checked for whether it is destructive.\n\nRun it anyway?',
-        destructive: true,
-        onConfirm: () => { doSend(); setPendingConfirm(null) },
-      })
-      return
-    }
-    doSend()
-  }
-
-  const selectCommand = (cmd: CommandDef) => {
-    // Fill the command; agent commands take args, so leave a trailing space.
-    setInput(cmd.name + ' ')
-    setCmdHighlight(0)
-    inputRef.current?.focus()
-  }
-
-  // The input is a textarea (Shift+Enter makes a new line), so Up/Down still
-  // have to move the caret inside a multi-line draft. Recall only takes over on
-  // the edge lines — the same rule a shell uses — and only with no selection,
-  // so Shift+Up extends a selection rather than swapping the text underneath it.
-  const caretOnFirstLine = (el: HTMLTextAreaElement) =>
-    el.selectionStart === el.selectionEnd
-    && !el.value.slice(0, el.selectionStart).includes('\n')
-  const caretOnLastLine = (el: HTMLTextAreaElement) =>
-    el.selectionStart === el.selectionEnd
-    && !el.value.slice(el.selectionEnd).includes('\n')
-
-  /** Step one entry further back. Returns false when there is nowhere to go. */
-  const recallOlder = (): boolean => {
-    if (history.length === 0) return false
-    if (histIndex === null) setDraft(input)
-    const next = histIndex === null ? 0 : histIndex + 1
-    if (next >= history.length) return true  // already oldest; swallow the key
-    setHistIndex(next)
-    setInput(history[history.length - 1 - next])
-    return true
-  }
-
-  /** Step forward; past the newest entry, restore the half-typed draft. */
-  const recallNewer = (): boolean => {
-    if (histIndex === null) return false
-    if (histIndex === 0) {
-      setHistIndex(null)
-      setInput(draft)
-      return true
-    }
-    const next = histIndex - 1
-    setHistIndex(next)
-    setInput(history[history.length - 1 - next])
-    return true
-  }
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (showCmdMenu) {
-      if (e.key === 'ArrowUp') {
-        e.preventDefault()
-        setCmdHighlight(i => (i > 0 ? i - 1 : filteredCommands.length - 1))
-        return
-      }
-      if (e.key === 'ArrowDown') {
-        e.preventDefault()
-        setCmdHighlight(i => (i < filteredCommands.length - 1 ? i + 1 : 0))
-        return
-      }
-      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) {
-        e.preventDefault()
-        selectCommand(filteredCommands[cmdHighlight])
-        return
-      }
-      // stopPropagation as well as preventDefault: belt-and-braces so this Esc
-      // can never reach the document-level cancel listener.
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        e.stopPropagation()
-        setInput('')
-        return
-      }
-    }
-    // Below the menu block on purpose: while the menu is open Up/Down belong to
-    // it. The menu only opens on a leading "/", so an empty prompt — where
-    // recall is most wanted — always reaches this.
-    const el = e.currentTarget as HTMLTextAreaElement
-    if (e.key === 'ArrowUp' && !e.shiftKey && caretOnFirstLine(el)) {
-      if (recallOlder()) { e.preventDefault(); return }
-    }
-    if (e.key === 'ArrowDown' && !e.shiftKey && caretOnLastLine(el)) {
-      if (recallNewer()) { e.preventDefault(); return }
-    }
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit() }
-  }
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--dn-bg)', borderRight: '1px solid var(--dn-border)', position: 'relative' }}>
-      {!confirmationBlocked && pendingConfirm && (
-        <ConfirmModal
-          title={pendingConfirm.title}
-          message={pendingConfirm.message}
-          confirmLabel={pendingConfirm.confirmLabel}
-          destructive={pendingConfirm.destructive}
-          onConfirm={pendingConfirm.onConfirm}
-          onCancel={() => setPendingConfirm(null)}
-        />
-      )}
       {/* minHeight is shared with RangeView's header so the two pane banners
           line up across the split — see --dg-pane-header-h in index.css. */}
       <div style={{
@@ -983,93 +676,18 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
           }}
         >↓ jump to latest</button>
       )}
-      <div style={{ position: 'relative', borderTop: '1px solid var(--dn-border)', background: 'var(--dn-black)' }}>
-        {showCmdMenu && (
-          <div style={{
-            position: 'absolute', bottom: '100%', left: 0, right: 0, zIndex: 50,
-            background: 'var(--dn-surface)', border: '1px solid var(--dn-border)',
-            borderBottom: 'none', borderRadius: '4px 4px 0 0',
-            // Taller now that each row carries a second line — still shows ~5
-            // rows, which is what arrow-key navigation needs to feel anchored.
-            maxHeight: 300, overflowY: 'auto', fontFamily: 'var(--font-mono)', fontSize: 12,
-          }}>
-            {filteredCommands.map((cmd, i) => (
-              <div
-                key={cmd.name}
-                ref={i === cmdHighlight ? activeCmdRef : undefined}
-                // onMouseDown (not onClick) so the item is chosen before the
-                // textarea blurs, and preventDefault keeps focus in the input.
-                onMouseDown={e => { e.preventDefault(); selectCommand(cmd) }}
-                onMouseEnter={() => setCmdHighlight(i)}
-                style={{
-                  padding: '7px 12px', cursor: 'pointer', display: 'flex', gap: 8,
-                  alignItems: 'flex-start',
-                  background: i === cmdHighlight ? 'var(--dn-border)' : 'transparent',
-                }}
-              >
-                <span
-                  title={cmd.dispatch === 'agent'
-                    ? 'agent — interprets free-form arguments into CLI flags'
-                    : 'direct — runs the CLI verb as-is, no LLM involved'}
-                >{cmd.dispatch === 'agent' ? '🤖' : '⚡'}</span>
-                <span style={{ color: 'var(--dg-interactive)', minWidth: 96, flexShrink: 0 }}>
-                  {cmd.name}
-                </span>
-                <span style={{ minWidth: 0 }}>
-                  <span style={{ color: 'var(--dn-text-bright)', fontSize: 11 }}>
-                    {cmd.description}
-                  </span>
-                  {/* Second line: the consequence, then the verb it maps to.
-                      This is what stops someone running /variant on a live range. */}
-                  <span style={{ display: 'block', fontSize: 10, marginTop: 2 }}>
-                    {cmd.detail && (
-                      <span style={{ color: 'var(--dg-node-label)' }}>{cmd.detail}</span>
-                    )}
-                    {cmd.cli && (
-                      <span style={{ color: 'var(--dn-text-muted)' }}>
-                        {cmd.detail ? '  ·  ' : ''}{cmd.cli}
-                      </span>
-                    )}
-                  </span>
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-        <div style={{ display: 'flex', alignItems: 'flex-start', padding: '12px 16px' }}>
-          <span style={{ color: 'var(--dg-interactive)', marginRight: 8, fontSize: 13, lineHeight: '20px' }}>&gt;</span>
-          <textarea
-            ref={inputRef}
-            value={input}
-            rows={1}
-            disabled={!sessionId || status !== 'connected' || processing}
-            // Editing a recalled entry ends browsing: the box now holds the
-            // operator's text, so Down must not overwrite it with a draft they
-            // have already moved on from.
-            onChange={e => {
-              setInput(e.target.value)
-              setCmdHighlight(0)
-              setHistIndex(null)
-            }}
-            onKeyDown={handleKeyDown}
-            placeholder={
-              status !== 'connected'
-                ? `${status}…`
-                : !sessionId
-                  ? 'create or select a session (+ NEW) to begin'
-                  : processing
-                    ? 'wait for the current turn, or press Esc to cancel'
-                    : 'message or /command  (type / for commands)'
-            }
-            style={{
-              flex: 1, background: 'transparent', border: 'none', outline: 'none', resize: 'none',
-              color: 'var(--dn-text-bright)', fontFamily: 'var(--font-mono)', fontSize: 13,
-              lineHeight: '20px', padding: 0, margin: 0,
-              maxHeight: 200, overflowY: 'auto', display: 'block',
-            }}
-          />
-        </div>
-      </div>
+      <TerminalComposer
+        sessionId={sessionId}
+        messages={messages}
+        status={status}
+        processing={processing}
+        commands={commands}
+        catalogOk={catalogOk}
+        confirmationBlocked={confirmationBlocked}
+        onSend={onSend}
+        onCancel={onCancel}
+        onShowHelp={setHelpAfter}
+      />
     </div>
   )
 }

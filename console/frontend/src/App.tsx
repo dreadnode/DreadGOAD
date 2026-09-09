@@ -65,13 +65,13 @@ export default function App() {
       // both go missing while a deploy is mid-flight.
       const running = ev.active === true
       setProcessing(prev => ({ ...prev, [sid]: running }))
-      setProcCmd(prev => ({ ...prev, [sid]: running ? (ev.command as string) || '' : '' }))
+      setProcCmd(prev => ({ ...prev, [sid]: running ? ev.command || '' : '' }))
       setVerbSeed(prev => ({
         ...prev,
         [sid]: running ? prev[sid] || Date.now() : 0,
       }))
       setTurnStart(prev => {
-        const at = running ? Date.parse((ev.started_at as string) || '') : NaN
+        const at = running ? Date.parse(ev.started_at || '') : NaN
         // Fall back to now if the timestamp is unusable, so the timer starts
         // from zero rather than rendering a nonsense duration.
         return { ...prev, [sid]: running ? (Number.isNaN(at) ? Date.now() : at) : 0 }
@@ -88,11 +88,11 @@ export default function App() {
       setPendingApprovals(prev => ({
         ...prev,
         [sid]: {
-          approval_id: ev.approval_id as string,
-          command: ev.command as string,
-          argv: ev.argv as string[],
-          detail: ev.detail || '',
-          requested_at: '',
+          approval_id: ev.approval_id,
+          command: ev.command,
+          argv: ev.argv,
+          detail: ev.detail,
+          requested_at: ev.requested_at,
         },
       }))
       return
@@ -128,7 +128,7 @@ export default function App() {
       api.listSessions().then(d => setSessions(d.sessions)).catch(() => {})
     }
     if (ev.kind === 'command_run' && typeof ev.command === 'string') {
-      setProcCmd(prev => ({ ...prev, [sid]: ev.phase === 'start' ? ev.command as string : '' }))
+      setProcCmd(prev => ({ ...prev, [sid]: ev.phase === 'start' ? ev.command : '' }))
     }
     if (ev.kind === 'agent_end') {
       setProcessing(prev => ({ ...prev, [sid]: false }))

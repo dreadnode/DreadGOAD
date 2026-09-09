@@ -834,7 +834,7 @@ async def test_repair_seeds_hosts_missing_from_the_original_topology() -> None:
         )
         hosts = {h["id"]: h for h in repaired["hosts"]}
         assert {"nova", "vertex"} <= set(hosts), hosts.keys()
-        assert hosts["nova"]["key"] == "dc01", hosts["nova"]
+        assert hosts["nova"].get("key") == "dc01", hosts["nova"]
         assert hosts["nova"]["role"] == "dc", hosts["nova"]
         # Live state and layout of surviving nodes must not be lost.
         assert hosts["attackbox"]["status"] == "running", hosts["attackbox"]

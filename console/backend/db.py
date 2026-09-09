@@ -23,6 +23,8 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
+from .schemas import EventRecord, PersistedRangeDocument, SessionDocument
+
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sessions (
     id   TEXT PRIMARY KEY,
@@ -158,11 +160,11 @@ class Database:
 
     # --- sessions ----------------------------------------------------------
 
-    async def upsert_session(self, session: dict[str, t.Any]) -> None:
+    async def upsert_session(self, session: t.Mapping[str, t.Any]) -> None:
         """Insert or replace a session document, keyed by its ``id``."""
         await self._run(self._upsert_session, session)
 
-    def _upsert_session(self, session: dict[str, t.Any]) -> None:
+    def _upsert_session(self, session: t.Mapping[str, t.Any]) -> None:
         sid = session["id"]
         self._c.execute(
             "INSERT INTO sessions (id, data) VALUES (?, ?) "
@@ -171,23 +173,23 @@ class Database:
         )
         self._c.commit()
 
-    async def get_session(self, session_id: str) -> dict[str, t.Any] | None:
+    async def get_session(self, session_id: str) -> SessionDocument | None:
         """Return the session document, or None if it doesn't exist."""
         return await self._run(self._get_session, session_id)
 
-    def _get_session(self, session_id: str) -> dict[str, t.Any] | None:
+    def _get_session(self, session_id: str) -> SessionDocument | None:
         row = self._c.execute(
             "SELECT data FROM sessions WHERE id=?", (session_id,)
         ).fetchone()
-        return json.loads(row["data"]) if row else None
+        return t.cast(SessionDocument, json.loads(row["data"])) if row else None
 
-    async def list_sessions(self) -> list[dict[str, t.Any]]:
+    async def list_sessions(self) -> list[SessionDocument]:
         """Return every session document (unordered)."""
         return await self._run(self._list_sessions)
 
-    def _list_sessions(self) -> list[dict[str, t.Any]]:
+    def _list_sessions(self) -> list[SessionDocument]:
         rows = self._c.execute("SELECT data FROM sessions").fetchall()
-        return [json.loads(r["data"]) for r in rows]
+        return [t.cast(SessionDocument, json.loads(r["data"])) for r in rows]
 
     async def delete_session(self, session_id: str) -> None:
         """Delete a session and cascade to its range doc and event log."""
@@ -202,7 +204,7 @@ class Database:
 
     # --- ranges ------------------------------------------------------------
 
-    async def upsert_range(self, session_id: str, rng: dict[str, t.Any]) -> None:
+    async def upsert_range(self, session_id: str, rng: t.Mapping[str, t.Any]) -> None:
         """Insert or replace a session's range topology document.
 
         Range discovery/health writers often hold a snapshot across network
@@ -211,14 +213,14 @@ class Database:
         """
         await self._run(self._upsert_range, session_id, rng)
 
-    def _upsert_range(self, session_id: str, rng: dict[str, t.Any]) -> None:
-        document = dict(rng)
+    def _upsert_range(self, session_id: str, rng: t.Mapping[str, t.Any]) -> None:
+        document = t.cast(PersistedRangeDocument, dict(rng))
         incoming_revision = self._range_layout_revision(document)
         row = self._c.execute(
             "SELECT data FROM ranges WHERE session_id=?", (session_id,)
         ).fetchone()
         if row is not None:
-            current = json.loads(row["data"])
+            current = t.cast(PersistedRangeDocument, json.loads(row["data"]))
             current_revision = self._range_layout_revision(current)
             if current_revision > incoming_revision:
                 document["layout"] = current.get("layout", {})
@@ -233,7 +235,7 @@ class Database:
         self._c.commit()
 
     @staticmethod
-    def _range_layout_revision(rng: dict[str, t.Any]) -> int:
+    def _range_layout_revision(rng: t.Mapping[str, t.Any]) -> int:
         revision = rng.get("layout_revision", 0)
         return (
             revision
@@ -272,7 +274,7 @@ class Database:
         if row is None:
             return None
 
-        rng = json.loads(row["data"])
+        rng = t.cast(PersistedRangeDocument, json.loads(row["data"]))
         current_revision = self._range_layout_revision(rng)
         if expected_revision != current_revision:
             return False, current_revision
@@ -287,17 +289,17 @@ class Database:
         self._c.commit()
         return True, new_revision
 
-    async def get_range(self, session_id: str) -> dict[str, t.Any] | None:
+    async def get_range(self, session_id: str) -> PersistedRangeDocument | None:
         """Return a session's range document, or None if it doesn't exist."""
         return await self._run(self._get_range, session_id)
 
-    def _get_range(self, session_id: str) -> dict[str, t.Any] | None:
+    def _get_range(self, session_id: str) -> PersistedRangeDocument | None:
         row = self._c.execute(
             "SELECT data FROM ranges WHERE session_id=?", (session_id,)
         ).fetchone()
         if row is None:
             return None
-        rng = json.loads(row["data"])
+        rng = t.cast(PersistedRangeDocument, json.loads(row["data"]))
         rng.setdefault("layout", {})
         rng["layout_revision"] = self._range_layout_revision(rng)
         return rng
@@ -357,7 +359,7 @@ class Database:
 
     async def get_events(
         self, session_id: str, kinds: t.Sequence[str] | None = None
-    ) -> list[dict[str, t.Any]]:
+    ) -> list[EventRecord]:
         """Return events for a session ordered by ``seq``.
 
         ``kinds=None`` returns all events; a non-empty sequence filters to those
@@ -368,7 +370,7 @@ class Database:
 
     def _get_events(
         self, session_id: str, kinds: t.Sequence[str] | None
-    ) -> list[dict[str, t.Any]]:
+    ) -> list[EventRecord]:
         if kinds is not None:
             if not kinds:
                 return []  # empty filter → no events (None means "all")
@@ -383,15 +385,18 @@ class Database:
                 "SELECT seq, kind, ts, payload FROM events WHERE session_id=? ORDER BY seq",
                 (session_id,),
             ).fetchall()
-        return [
-            {
-                "seq": r["seq"],
-                "kind": r["kind"],
-                "ts": r["ts"],
-                "payload": json.loads(r["payload"]),
-            }
-            for r in rows
-        ]
+        return t.cast(
+            list[EventRecord],
+            [
+                {
+                    "seq": r["seq"],
+                    "kind": r["kind"],
+                    "ts": r["ts"],
+                    "payload": json.loads(r["payload"]),
+                }
+                for r in rows
+            ],
+        )
 
     # --- meta --------------------------------------------------------------
 

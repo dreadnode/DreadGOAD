@@ -15,12 +15,12 @@ layout in Python, the same way lab discovery defers to ``lab list --json``.
 from __future__ import annotations
 
 import os
-import typing as t
 
 import logging
 
 from . import commands, labconfig, paths, projectroot
 from .cli import Capture, capture
+from .schemas import SessionDocument
 
 log = logging.getLogger(__name__)
 
@@ -166,7 +166,7 @@ async def scaffold_env(
 
 
 async def generate_answer_key(
-    session: dict[str, t.Any],
+    session: SessionDocument,
     fallback_root: str,
     capture_command: Capture | None = None,
 ) -> str | None:

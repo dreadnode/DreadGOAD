@@ -801,7 +801,7 @@ async def test_swap_model_preserves_thread_and_persists() -> None:
             assert out is not None
             # model persisted on the session
             sess = await db.get_session(s["id"])
-            assert sess is not None and sess["model"] == "openrouter/x/y", sess
+            assert sess is not None and sess.get("model") == "openrouter/x/y", sess
             # rebuilt with the new model, old conversation grafted on
             assert seen["model"] == "openrouter/x/y"
             new = chat_runtime.runtime(s["id"]).agent
@@ -926,7 +926,7 @@ async def test_swap_model_no_live_agent() -> None:
             assert not called, "no cached agent → must not build one eagerly"
             assert chat_runtime.runtime(s["id"]).agent is None
             sess = await db.get_session(s["id"])
-            assert sess is not None and sess["model"] == "m2", sess
+            assert sess is not None and sess.get("model") == "m2", sess
             # unknown session → None
             assert await chat.swap_model(app, "ghost", "m3") is None
             print("PASS test_swap_model_no_live_agent")

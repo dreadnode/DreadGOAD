@@ -40,6 +40,16 @@ class _RunResult:
     started: bool = True
 
 
+@dataclass(frozen=True)
+class _CommandPlan:
+    """Validated inputs needed to approve and spawn one CLI command."""
+
+    name: str
+    argv: tuple[str, ...]
+    cwd: str
+    spec: commands.Command
+
+
 async def _spawn_and_stream(
     app: t.Any,
     session_id: str,
@@ -591,101 +601,78 @@ async def _emit_overlays(
         await hook.reseed(app, session_id, _capture_command(session_id))
 
 
-async def run_cli(
-    app: t.Any, session_id: str, name: str, extra: list[str] | None = None
-) -> tuple[int, str]:
-    """Run one DreadGOAD command through the shared console pipeline."""
-    session = await app.state.db.get_session(session_id)
-    if session is None:
-        await chat_events.emit_event(
-            app, session_id, "error", {"message": "session not found"}
-        )
-        return 1, "session not found"
-
-    if name == "/login":
-        return await _run_login(app, session_id, session)
-
-    try:
-        extra = await _prepare_extra(session, session_id, name, list(extra or []))
-    except _Aborted as exc:
-        await chat_events.emit_event(app, session_id, "error", {"message": exc.emit})
-        return exc.code, exc.output
-
+async def _prepare_command(
+    app: t.Any,
+    session_id: str,
+    session: dict[str, t.Any],
+    name: str,
+    extra: list[str],
+) -> _CommandPlan:
+    """Resolve and validate everything needed before operator approval."""
+    extra = await _prepare_extra(session, session_id, name, extra)
     try:
         argv = commands.build_argv(
             session, name, extra, repo_root=str(paths.repo_root())
         )
     except ValueError as exc:
-        await chat_events.emit_event(app, session_id, "error", {"message": str(exc)})
-        return 1, str(exc)
-
-    if commands.REGISTRY[name].cloud_ops:
-        cred_err = await _check_credentials(session)
-        if cred_err:
-            await chat_events.emit_event(
-                app, session_id, "error", {"message": cred_err}
-            )
-            return 1, cred_err
-
-    # Where the CLI will resolve the range's files. The config path and the
-    # working directory are independent inputs to the CLI (see projectroot),
-    # and this used to be a fixed repo_root() — so a config in another checkout
-    # had its inventory and lab data looked up in the console's tree instead of
-    # its own. Running in the config's directory makes the CLI's inference land
-    # where it would running by hand next to that config.
-    #
-    # repo_root() still locates the *binary* in build_argv above; that is the
-    # console's own checkout and is a separate question from where the range's
-    # files live.
-    config_path = projectroot.config_path_of(session)
-    if config_path:
-        # long_running is the registry's marker for the commands that drive
-        # hosts (/health, /provision, /reset, /exec, /up, /validate) as opposed
-        # to cloud-only reads (/instances). Only those need an inventory, and
-        # warning about it on every read would make the warning worth ignoring.
-        checks = projectroot.preflight(
-            config_path,
-            session["anchor"]["env"],
-            check_inventory=commands.REGISTRY[name].long_running,
-        )
-        run_cwd = str(checks.root)
-        # Advisory, and emitted before the spawn: a missing inventory otherwise
-        # surfaces only as every host failing identically, long afterwards.
-        for warning in checks.warnings:
-            await chat_events.emit_event(
-                app, session_id, "status", {"content": warning}
-            )
-    else:
-        run_cwd = str(paths.repo_root())
-
-    # Gate only after all validation and read-only preflight work, leaving no
-    # mutable preparation between approval of the exact argv and process spawn.
-    approved, approval_id = await approvals.require(app, session_id, name, argv)
-    if not approved:
-        return (
-            2,
-            f"{name} was not run because the operator denied or did not approve it; "
-            "do not retry.",
-        )
+        raise _Aborted(1, str(exc)) from exc
 
     command_spec = commands.REGISTRY[name]
-    result = await _spawn_and_stream(
+    if command_spec.cloud_ops:
+        cred_err = await _check_credentials(session)
+        if cred_err:
+            raise _Aborted(1, cred_err)
+
+    # The config path and working directory are independent CLI inputs. Run in
+    # the config's directory so project-root inference matches invoking the CLI
+    # by hand beside that config; repo_root() above still locates the binary.
+    config_path = projectroot.config_path_of(session)
+    if not config_path:
+        return _CommandPlan(name, tuple(argv), str(paths.repo_root()), command_spec)
+
+    checks = projectroot.preflight(
+        config_path,
+        session["anchor"]["env"],
+        check_inventory=command_spec.long_running,
+    )
+    for warning in checks.warnings:
+        await chat_events.emit_event(app, session_id, "status", {"content": warning})
+    return _CommandPlan(name, tuple(argv), str(checks.root), command_spec)
+
+
+async def _execute_command(
+    app: t.Any, session_id: str, plan: _CommandPlan
+) -> _RunResult | None:
+    """Approve and spawn a prepared command; return None when approval fails."""
+    # Keep approval adjacent to spawn. Preparation is complete, so no mutable
+    # command input can change after the operator approves the exact argv.
+    argv = list(plan.argv)
+    approved, approval_id = await approvals.require(app, session_id, plan.name, argv)
+    if not approved:
+        return None
+
+    return await _spawn_and_stream(
         app,
         session_id,
-        name,
+        plan.name,
         argv,
-        cwd=run_cwd,
-        kill_grace=300.0 if name in _SLOW_CANCEL else 12.0,
-        cloud_ops=command_spec.cloud_ops,
-        long_running=command_spec.long_running,
+        cwd=plan.cwd,
+        kill_grace=300.0 if plan.name in _SLOW_CANCEL else 12.0,
+        cloud_ops=plan.spec.cloud_ops,
+        long_running=plan.spec.long_running,
         approval_id=approval_id,
     )
 
+
+async def _finalize_command(
+    app: t.Any, session_id: str, plan: _CommandPlan, result: _RunResult
+) -> tuple[int, str]:
+    """Refresh range state and emit reports after a command has started."""
     if not result.started:
         return result.exit_code, result.output
 
     if result.cancelled:
-        if command_spec.cloud_ops:
+        if plan.spec.cloud_ops:
             try:
                 payload = await asyncio.wait_for(
                     hook.run_check(
@@ -702,5 +689,35 @@ async def run_cli(
 
     payload = await hook.run_check(app, session_id, _capture_command(session_id))
     await chat_events.emit_event(app, session_id, "check_run", payload)
-    await _emit_overlays(app, session_id, name, result.output, result.exit_code)
+    await _emit_overlays(app, session_id, plan.name, result.output, result.exit_code)
     return result.exit_code, result.output
+
+
+async def run_cli(
+    app: t.Any, session_id: str, name: str, extra: list[str] | None = None
+) -> tuple[int, str]:
+    """Run one DreadGOAD command through the shared console pipeline."""
+    session = await app.state.db.get_session(session_id)
+    if session is None:
+        await chat_events.emit_event(
+            app, session_id, "error", {"message": "session not found"}
+        )
+        return 1, "session not found"
+
+    if name == "/login":
+        return await _run_login(app, session_id, session)
+
+    try:
+        plan = await _prepare_command(app, session_id, session, name, list(extra or []))
+    except _Aborted as exc:
+        await chat_events.emit_event(app, session_id, "error", {"message": exc.emit})
+        return exc.code, exc.output
+
+    result = await _execute_command(app, session_id, plan)
+    if result is None:
+        return (
+            2,
+            f"{name} was not run because the operator denied or did not approve it; "
+            "do not retry.",
+        )
+    return await _finalize_command(app, session_id, plan, result)

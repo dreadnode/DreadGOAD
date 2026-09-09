@@ -8,6 +8,7 @@ import typing as t
 from fastapi import APIRouter, HTTPException, Request
 
 from . import hostdetail, topology_sync
+from .schemas import PersistedRangeDocument
 
 router = APIRouter()
 
@@ -17,7 +18,7 @@ LAYOUT_MAX_ABS_COORDINATE = 1_000_000
 
 
 @router.get("/api/ranges/{session_id}")
-async def get_range(request: Request, session_id: str) -> dict[str, t.Any]:
+async def get_range(request: Request, session_id: str) -> PersistedRangeDocument:
     """Return the topology rendered by the RangeView.
 
     A read can repair the topology before returning it — see
