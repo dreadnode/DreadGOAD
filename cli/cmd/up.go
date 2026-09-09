@@ -16,17 +16,17 @@ import (
 )
 
 var (
-	upSkipDoctor   bool
-	upFromStep     string
-	upLimit        string
-	upPlays        string
-	upMaxRetries   int
-	upRetryDelay   int
-	upFromPlaybook string
-	upInfraModule  string
-	upInfraExclude string
-	upWithKali          bool
-	upBackendBootstrap  bool
+	upSkipDoctor       bool
+	upFromStep         string
+	upLimit            string
+	upPlays            string
+	upMaxRetries       int
+	upRetryDelay       int
+	upFromPlaybook     string
+	upInfraModule      string
+	upInfraExclude     string
+	upWithKali         bool
+	upBackendBootstrap bool
 )
 
 var upCmd = &cobra.Command{

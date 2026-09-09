@@ -45,7 +45,8 @@ def _capture(payload: str, rc: int = 0, err: str = ""):
 
 
 def test_find_host_matches_on_node_id() -> None:
-    assert hostdetail.find_host(_RANGE, "nova")["key"] == "dc01"
+    found = hostdetail.find_host(_RANGE, "nova")
+    assert found is not None and found["key"] == "dc01"
     assert hostdetail.find_host(_RANGE, "dc01") is None, (
         "lookup is by node id; the key is what Azure names contain, not what "
         "the graph addresses a node by"

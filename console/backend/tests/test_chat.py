@@ -504,6 +504,7 @@ class FakeAgent:
 
     def __init__(self) -> None:
         self.prompt: str | None = None
+        self.thread: types.SimpleNamespace
 
     def stream(self, prompt: str):  # noqa: ANN201
         self.prompt = prompt
@@ -859,7 +860,7 @@ async def test_thread_persisted_and_restored_on_agent_rebuild() -> None:
         chat._get_agent = patched_get_agent
         orig_create = chat.create_agent
 
-        rebuilt_agent = [None]
+        rebuilt_agent: list[FakeAgent | None] = [None]
 
         def recording_create(model, session, app_, sid_, run_cli_):  # noqa: ANN001, ANN202
             fa = FakeAgent()
@@ -883,6 +884,7 @@ async def test_thread_persisted_and_restored_on_agent_rebuild() -> None:
 
             # Rebuild the agent — should restore the thread.
             agent = await chat._get_agent(app, s["id"])
+            assert agent is not None, "agent rebuild returned no agent"
             assert agent is rebuilt_agent[0], "agent was not rebuilt"
             assert len(agent.thread.messages) == 2, (
                 f"thread not restored: {len(agent.thread.messages)} messages"

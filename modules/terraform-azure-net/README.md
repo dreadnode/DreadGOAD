@@ -114,7 +114,7 @@ module "network" {
 
 | Name | Version |
 | ---- | ------- |
-| <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | 5.3.0 |
+| <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | 5.4.0 |
 
 ## Modules
 

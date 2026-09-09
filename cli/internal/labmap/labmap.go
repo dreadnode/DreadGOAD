@@ -23,17 +23,17 @@ type HostInfo struct {
 
 // HostConfig represents a host from config.json lab.hosts.
 type HostConfig struct {
-	Hostname    string                     `json:"hostname"`
-	Type        string                     `json:"type"` // "dc" or "server"
-	OS          string                     `json:"os"`   // empty = windows, "linux" for linux
-	Domain      string                     `json:"domain"`
-	Path        string                     `json:"path"`
-	Scripts     []string                   `json:"scripts"`
-	Vulns       []string                   `json:"vulns"`
-	VulnsVars   map[string]json.RawMessage `json:"vulns_vars"`
-	Security    []string                   `json:"security"`
-	UseLAPS     bool                       `json:"use_laps"`
-	MSSQL       *MSSQLConfig               `json:"mssql"`
+	Hostname           string                     `json:"hostname"`
+	Type               string                     `json:"type"` // "dc" or "server"
+	OS                 string                     `json:"os"`   // empty = windows, "linux" for linux
+	Domain             string                     `json:"domain"`
+	Path               string                     `json:"path"`
+	Scripts            []string                   `json:"scripts"`
+	Vulns              []string                   `json:"vulns"`
+	VulnsVars          map[string]json.RawMessage `json:"vulns_vars"`
+	Security           []string                   `json:"security"`
+	UseLAPS            bool                       `json:"use_laps"`
+	MSSQL              *MSSQLConfig               `json:"mssql"`
 	LocalGroups        map[string][]string        `json:"local_groups"`
 	VulnsADCSTemplates []string                   `json:"vulns_adcs_templates"`
 }

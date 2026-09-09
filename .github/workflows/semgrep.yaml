@@ -31,7 +31,7 @@ jobs:
     name: Semgrep Analysis
     runs-on: ubuntu-latest
     container:
-      image: returntocorp/semgrep@sha256:f1f7b71861c7b28b6e0f661225a2c4f58a484f5d0f182465c6d6b3b22f972ade # v1.160.0
+      image: returntocorp/semgrep@sha256:51c9f53a4fce0d55e9abd08d7b96968654248a4b1122e77f20e0a49c0072446c # v1.160.0
 
     if: (github.actor != 'dependabot[bot]')
 
