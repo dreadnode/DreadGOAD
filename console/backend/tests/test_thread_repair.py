@@ -233,7 +233,13 @@ async def test_cancelled_command_yields_a_paired_result_and_stops() -> None:
         # Exactly what command_runner.py does when the operator cancels.
         raise asyncio.CancelledError
 
-    tool_obj = agent_mod._make_run_dreadgoad(object(), "s-1", cancelling_run_cli)
+    tool_obj = agent_mod._make_run_dreadgoad(
+        object(),
+        "s-1",
+        cancelling_run_cli,
+        project_root="/repo",
+        session_dir="/session",
+    )
     message, stop = await tool_obj.handle_tool_call(_call("toolu_01U71"))
 
     # The pairing the provider checks for, which is what was missing.
@@ -264,7 +270,13 @@ async def test_genuine_task_cancellation_is_not_swallowed() -> None:
         await asyncio.sleep(3600)
         return 0, ""
 
-    tool_obj = agent_mod._make_run_dreadgoad(object(), "s-1", hanging_run_cli)
+    tool_obj = agent_mod._make_run_dreadgoad(
+        object(),
+        "s-1",
+        hanging_run_cli,
+        project_root="/repo",
+        session_dir="/session",
+    )
 
     task = asyncio.create_task(tool_obj.handle_tool_call(_call("toolu_x")))
     await started.wait()

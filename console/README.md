@@ -124,6 +124,13 @@ any supplied argument: cobra resolves repeated flags last-wins, so an appended
 `/exec` additionally accepts only one each of `--hosts`, `--cmd`, and optional
 `--timeout`; it rejects unknown or duplicate flags, empty values, more than 20
 targets, scripts over 16 KiB, and timeouts over 30 minutes.
+Model-selected local paths for provisioning, infrastructure modules, scoring,
+validation, cleanup reports, SSH keys, and variant generation are confined to
+the range project and session workspace. Playbook selectors are more narrowly
+confined to the project's `ansible/playbooks` directory.
+This restriction is applied at the agent tool boundary; direct operator commands
+retain the CLI's normal path behavior. A `/score` report path remains remote and
+is fetched from the attack box into the session workspace before scoring.
 
 ## Prompts
 

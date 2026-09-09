@@ -458,6 +458,28 @@ _EXEC_MAX_HOSTS = 20
 _EXEC_MAX_TIMEOUT_SECONDS = 30 * 60
 _DURATION_PART_RE = re.compile(r"(\d+(?:\.\d+)?)(ms|s|m|h)")
 
+# Local paths the model may choose through otherwise legitimate CLI flags.
+# This is deliberately separate from build_argv(): operator-typed commands use
+# that shared builder too and retain the CLI's full path behavior. The agent
+# wrapper calls validate_agent_local_paths() before entering the shared runner.
+_AGENT_LOCAL_PATH_FLAGS: dict[str, frozenset[str]] = {
+    "/up": frozenset({"--module", "--plays"}),
+    "/provision": frozenset({"--plays"}),
+    "/reset": frozenset({"--plays"}),
+    "/score": frozenset({"--report", "--answer-key", "--output", "--ssh-key"}),
+    "/scrub": frozenset({"--report-output", "--ssh-key"}),
+    "/validate": frozenset({"--output"}),
+    "/variant": frozenset({"--source", "--target"}),
+}
+
+# These flags are comma-separated playbook names, not one filesystem path.
+# Resolve every member from the directory the Go runner actually prefixes and
+# keep it inside that directory; checking the unsplit string allows an earlier
+# member to absorb enough ``..`` components to hide a later escaping member.
+_AGENT_PLAYBOOK_LIST_FLAGS = frozenset(
+    {("/up", "--plays"), ("/provision", "--plays"), ("/reset", "--plays")}
+)
+
 
 def _duration_seconds(value: str) -> float | None:
     """Parse the ordinary subset of Go duration syntax accepted by /exec."""
@@ -470,6 +492,85 @@ def _duration_seconds(value: str) -> float | None:
         total += float(match.group(1)) * scales[match.group(2)]
         position = match.end()
     return total if position == len(value) and total > 0 else None
+
+
+def validate_agent_local_paths(
+    name: str,
+    extra: list[str],
+    *,
+    project_root: str | Path,
+    session_dir: str | Path,
+) -> None:
+    """Confine model-selected local paths to its two intended workspaces.
+
+    Relative CLI paths resolve from the range project because that is the
+    subprocess cwd. The first positional argument to /score is intentionally
+    absent from this policy: it is a path on the attack box, fetched into the
+    session directory before the scoring command starts.
+
+    This check is agent-only. Direct operator commands still expose the CLI's
+    normal path behavior through :func:`build_argv`.
+    """
+    path_flags = _AGENT_LOCAL_PATH_FLAGS.get(name)
+    if not path_flags:
+        return
+
+    project = Path(project_root).resolve()
+    session = Path(session_dir).resolve()
+    filesystem_root = Path(project.anchor)
+    if project == filesystem_root or session == Path(session.anchor):
+        raise ValueError("agent path confinement root may not be the filesystem root")
+    roots = (project, session)
+    index = 0
+    while index < len(extra):
+        argument = extra[index]
+        if argument == "--":
+            break
+
+        flag: str | None = None
+        value: str | None = None
+        if argument in path_flags:
+            flag = argument
+            if index + 1 >= len(extra):
+                raise ValueError(f"{flag} requires a path")
+            value = extra[index + 1]
+            index += 2
+        else:
+            for candidate in path_flags:
+                prefix = f"{candidate}="
+                if argument.startswith(prefix):
+                    flag = candidate
+                    value = argument[len(prefix) :]
+                    break
+            index += 1
+
+        if flag is None:
+            continue
+        if not value:
+            raise ValueError(f"{flag} requires a non-empty path")
+        playbook_list = (name, flag) in _AGENT_PLAYBOOK_LIST_FLAGS
+        values = value.split(",") if playbook_list else [value]
+        if any(not item for item in values):
+            raise ValueError(f"{flag} contains an empty path")
+        base = project / "ansible" / "playbooks" if playbook_list else project
+        allowed_roots = (base,) if playbook_list else roots
+        for item in values:
+            try:
+                path = Path(item)
+                resolved = (path if path.is_absolute() else base / path).resolve()
+                confined = any(
+                    resolved == root or root in resolved.parents
+                    for root in allowed_roots
+                )
+            except (OSError, RuntimeError, ValueError) as exc:
+                raise ValueError(f"{flag} contains an invalid local path") from exc
+            if not confined:
+                boundary = (
+                    "the range project's ansible/playbooks directory"
+                    if playbook_list
+                    else "the range project or session workspace"
+                )
+                raise ValueError(f"{flag} must stay within {boundary}")
 
 
 def _validate_exec_args(extra: list[str]) -> None:

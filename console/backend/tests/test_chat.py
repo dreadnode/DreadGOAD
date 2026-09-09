@@ -561,7 +561,13 @@ async def test_run_dreadgoad_tool_validates_and_runs() -> None:
         calls.append((cmd, args))
         return (0, "output tail")
 
-    tool = agent._make_run_dreadgoad(object(), "s-1", fake_run_cli)
+    tool = agent._make_run_dreadgoad(
+        object(),
+        "s-1",
+        fake_run_cli,
+        project_root="/repo",
+        session_dir="/session",
+    )
 
     # an action command → routed through run_cli
     out = await tool.fn(command="/up", args=["--from", "x"])
@@ -590,6 +596,23 @@ async def test_run_dreadgoad_tool_validates_and_runs() -> None:
     assert "Refused" in refused, refused
     assert calls == [], "run_cli must not run for an unknown command"
 
+    # Model-selected local files cannot escape its range/session workspaces.
+    refused = await tool.fn(
+        command="/score",
+        args=["/home/kali/report.jsonl", "--output", "/tmp/escaped.json"],
+    )
+    assert "Refused" in refused and "--output" in refused, refused
+    assert calls == [], "an escaped local path must not reach run_cli"
+
+    # A second --report would be last-wins in Cobra and could otherwise replace
+    # the fetched session-local report with an arbitrary local file.
+    refused = await tool.fn(
+        command="/score",
+        args=["/home/kali/report.jsonl", "--report=/etc/passwd"],
+    )
+    assert "Refused" in refused and "--report" in refused, refused
+    assert calls == [], "an overriding local report path must not reach run_cli"
+
     # A cancelled command must end the turn without giving the model something
     # it can retry. This asserted that CancelledError escapes the wrapper, which
     # met the "no retry" half but broke the conversation: CancelledError is a
@@ -603,7 +626,13 @@ async def test_run_dreadgoad_tool_validates_and_runs() -> None:
     async def cancelled_run_cli(app, sid, cmd, args):  # noqa: ANN001, ANN202
         raise asyncio.CancelledError
 
-    cancelled_tool = agent._make_run_dreadgoad(object(), "s-1", cancelled_run_cli)
+    cancelled_tool = agent._make_run_dreadgoad(
+        object(),
+        "s-1",
+        cancelled_run_cli,
+        project_root="/repo",
+        session_dir="/session",
+    )
     call = ToolCall(
         id="cancel-1",
         function=FunctionCall(

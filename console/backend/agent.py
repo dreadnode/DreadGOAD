@@ -137,7 +137,14 @@ def _instructions(session: dict[str, t.Any]) -> str:
     )
 
 
-def _make_run_dreadgoad(app: t.Any, session_id: str, run_cli: RunCli):  # noqa: ANN202
+def _make_run_dreadgoad(
+    app: t.Any,
+    session_id: str,
+    run_cli: RunCli,
+    *,
+    project_root: str,
+    session_dir: str,
+):  # noqa: ANN202
     """Build the session-bound run_dreadgoad tool.
 
     The agent may run any concrete command in ``commands.AGENT_RUNNABLE`` — reads
@@ -176,6 +183,16 @@ def _make_run_dreadgoad(app: t.Any, session_id: str, run_cli: RunCli):  # noqa: 
                 f"Refused: {command!r} is not runnable through this tool. "
                 f"Valid commands: {sorted(commands.AGENT_RUNNABLE)}."
             )
+        tool_args = list(args or [])
+        try:
+            commands.validate_agent_local_paths(
+                command,
+                tool_args,
+                project_root=project_root,
+                session_dir=session_dir,
+            )
+        except ValueError as exc:
+            return f"Refused: {exc}"
         # An operator cancel reaches us as CancelledError, raised deliberately by
         # run_cli as a signal (command_runner.py). Letting it escape a tool call
         # is what produced the "tool_use ids were found without tool_result"
@@ -199,9 +216,7 @@ def _make_run_dreadgoad(app: t.Any, session_id: str, run_cli: RunCli):  # noqa: 
         # balanced and the run ends immediately — which is also the behaviour
         # cancelling is supposed to have, no chance for the agent to retry.
         try:
-            exit_code, output = await run_cli(
-                app, session_id, command, list(args or [])
-            )
+            exit_code, output = await run_cli(app, session_id, command, tool_args)
         except asyncio.CancelledError:
             # Only convert the signal. A genuine teardown (task.cancel(), e.g.
             # cleanup_session on shutdown) must never be swallowed, and
@@ -299,7 +314,20 @@ def create_agent(
             "session has no session_dir — cannot sandbox agent file writes"
         )
     fs = Filesystem(path=session_dir, variant="write")
-    tools: list[t.Any] = [fs, _make_run_dreadgoad(app, session_id, run_cli)]
+    config_path = session.get("anchor", {}).get("config_path")
+    if not config_path:
+        raise ValueError("session has no config_path — cannot confine agent paths")
+    agent_project_root = str(projectroot.resolve_root(config_path)[0])
+    tools: list[t.Any] = [
+        fs,
+        _make_run_dreadgoad(
+            app,
+            session_id,
+            run_cli,
+            project_root=agent_project_root,
+            session_dir=str(session_dir),
+        ),
+    ]
     lab_reader = _make_read_lab_file(session)
     if lab_reader is not None:
         tools.append(lab_reader)

@@ -366,6 +366,113 @@ def test_exec_args_are_structurally_bounded() -> None:
     print("PASS test_exec_args_are_structurally_bounded")
 
 
+def test_agent_local_paths_are_confined_without_changing_cli_builder() -> None:
+    """Model-selected local paths stay in its workspaces; remote paths survive."""
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        project = root / "project"
+        session = root / "session"
+        outside = root / "outside"
+        project.mkdir()
+        session.mkdir()
+        outside.mkdir()
+
+        allowed = (
+            ("/up", ["--module", "goad/dc01", "--plays=ad.yml,acl.yml"]),
+            ("/provision", ["--plays", "ad.yml,acl.yml"]),
+            ("/reset", ["--plays=ad.yml,acl.yml"]),
+            (
+                "/score",
+                [
+                    "/home/kali/report.jsonl",  # remote: deliberately unrestricted
+                    "--answer-key",
+                    "scoreboard/answer_key.json",
+                    f"--output={session / 'score.json'}",
+                ],
+            ),
+            ("/scrub", ["--report-output", str(session / "archive.jsonl")]),
+            ("/validate", ["--output", "validate_report.json"]),
+            ("/variant", ["--source=ad/GOAD", "--target", "ad/GOAD-new"]),
+        )
+        for name, args in allowed:
+            commands.validate_agent_local_paths(
+                name, args, project_root=project, session_dir=session
+            )
+
+        blocked = (
+            ("/up", ["--module", "../../outside"]),
+            ("/provision", ["--plays", "good/a/b/c.yml,../../../outside.yml"]),
+            # The first positional report is remote, but a repeated --report
+            # would override the fetched session-local path (pflag last-wins).
+            ("/score", ["remote.jsonl", "--report", "/etc/passwd"]),
+            ("/score", ["remote.jsonl", "--answer-key", "/etc/passwd"]),
+            ("/score", ["remote.jsonl", f"--output={outside / 'score.json'}"]),
+            ("/scrub", ["--ssh-key", "../../outside/id_rsa"]),
+            ("/validate", ["--output", str(outside / "validate.json")]),
+            ("/variant", ["--source", str(outside)]),
+            ("/variant", [f"--target={outside / 'variant'}"]),
+        )
+        for name, args in blocked:
+            try:
+                commands.validate_agent_local_paths(
+                    name, args, project_root=project, session_dir=session
+                )
+            except ValueError as exc:
+                assert "must stay within" in str(exc), (name, args, exc)
+            else:
+                raise AssertionError(f"escaped agent path accepted: {name} {args!r}")
+
+        try:
+            commands.validate_agent_local_paths(
+                "/reset",
+                ["--plays=ad.yml,"],
+                project_root=project,
+                session_dir=session,
+            )
+        except ValueError as exc:
+            assert "empty path" in str(exc), exc
+        else:
+            raise AssertionError("empty playbook-list member accepted")
+
+        # Resolving before comparison closes the ordinary symlink escape.
+        link = project / "outside-link"
+        link.symlink_to(outside, target_is_directory=True)
+        try:
+            commands.validate_agent_local_paths(
+                "/validate",
+                ["--output", str(link / "report.json")],
+                project_root=project,
+                session_dir=session,
+            )
+        except ValueError as exc:
+            assert "must stay within" in str(exc), exc
+        else:
+            raise AssertionError("agent path escaped through a symlink")
+
+        try:
+            commands.validate_agent_local_paths(
+                "/validate",
+                ["--output", "/tmp/report.json"],
+                project_root="/",
+                session_dir=session,
+            )
+        except ValueError as exc:
+            assert "filesystem root" in str(exc), exc
+        else:
+            raise AssertionError("filesystem root disabled agent path confinement")
+
+        # The shared argv builder remains unchanged for explicitly typed/direct
+        # callers; this policy exists only at the model tool boundary.
+        argv = commands.build_argv(
+            _SESSION,
+            "/scrub",
+            ["--report-output", str(outside / "operator.jsonl")],
+            repo_root="/repo",
+        )
+        assert argv[-2:] == ["--report-output", str(outside / "operator.jsonl")]
+    print("PASS test_agent_local_paths_are_confined_without_changing_cli_builder")
+
+
 def test_restart_targets_one_host() -> None:
     """/restart maps to `lab restart-vm <host>` and demands a hostname.
 
@@ -1137,6 +1244,7 @@ def main() -> None:
     test_load_prompt_and_guidance_injection()
     test_exec_verb_and_json_flag()
     test_exec_args_are_structurally_bounded()
+    test_agent_local_paths_are_confined_without_changing_cli_builder()
     test_restart_targets_one_host()
     test_anchor_cannot_be_overridden_by_extra_args()
     test_exec_guidance_states_the_dangerous_parts()

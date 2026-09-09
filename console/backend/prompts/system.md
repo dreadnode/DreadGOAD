@@ -137,6 +137,13 @@ cannot do it.
   `--retry-delay`, `--skip-purge`, `--skip-provision`. It has NO `--from`.
 - **/variant**: `--source <dir>`, `--target <dir>`, `--name <name>`.
 
+Local paths you pass through command flags must stay inside this range's project
+or the session workspace. This applies to playbook and infrastructure-module
+selectors, report/output, answer-key, SSH-key, and variant source/target flags.
+Playbook selectors stay specifically inside `ansible/playbooks`. `/score`'s
+first report path is different: it names a file on the attack box and is fetched
+into the session workspace.
+
 If a command fails because a file is missing at a default location, check whether
 a flag can point at the real one before concluding it cannot be run.
 
