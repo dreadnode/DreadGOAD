@@ -231,3 +231,31 @@ func TestRunInfraValidateAzureScopeRange(t *testing.T) {
 		t.Fatalf("missing Kali error = %v", err)
 	}
 }
+
+func TestShouldEnableAWSKali(t *testing.T) {
+	kaliDir := filepath.Join(t.TempDir(), "kali")
+	if err := os.Mkdir(kaliDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name      string
+		requested bool
+		action    string
+		path      string
+		want      bool
+	}{
+		{name: "explicit apply", requested: true, action: "apply", path: filepath.Join(t.TempDir(), "missing"), want: true},
+		{name: "ordinary apply", action: "apply", path: kaliDir, want: false},
+		{name: "existing module on destroy", action: "destroy", path: kaliDir, want: true},
+		{name: "missing module on destroy", action: "destroy", path: filepath.Join(t.TempDir(), "missing"), want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldEnableAWSKali(tt.requested, tt.action, tt.path); got != tt.want {
+				t.Fatalf("shouldEnableAWSKali(%v, %q, %q) = %v, want %v", tt.requested, tt.action, tt.path, got, tt.want)
+			}
+		})
+	}
+}

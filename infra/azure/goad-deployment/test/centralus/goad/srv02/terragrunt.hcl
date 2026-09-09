@@ -47,7 +47,7 @@ include "root" {
 
 inputs = {
   env           = local.env
-  instance_name = "${local.deployment_name}-dreadgoad-${local.hostname}"
+  instance_name = "${local.deployment_name}-${local.hostname}"
   computer_name = local.hostname
   instance_size = local.instance_size
   source_image = {
@@ -62,7 +62,7 @@ inputs = {
   admin_password      = local.admin_password
 
   bootstrap_script = templatefile(
-    "${get_repo_root()}/infra/azure/goad-deployment/test/centralus/goad/templates/bootstrap.ps1.tpl",
+    "${get_terragrunt_dir()}/../templates/bootstrap.ps1.tpl",
     {
       admin_password = local.admin_password
     },
@@ -71,7 +71,7 @@ inputs = {
   tags = {
     Project      = "DreadGOAD"
     Role         = "MemberServer"
-    Lab          = "${local.deployment_name}-goad"
+    Lab          = "${local.deployment_name}"
     Domain       = include.host.locals.domain
     ComputerName = local.hostname
     GoadId       = local.goad_id

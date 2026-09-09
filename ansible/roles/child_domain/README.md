@@ -23,9 +23,11 @@ Promote a Windows server as a child domain controller
 - **Configure DNS listener addresses** (ansible.windows.win_powershell) - Conditional
 - **Enable TLS 1.2 permanently via registry** (ansible.windows.win_regedit)
 - **Check if xDnsServer exists** (ansible.windows.win_shell)
+- **Unblock module DLLs before xDnsServer install** (ansible.windows.win_shell) - Conditional
 - **Install xDnsServer only if needed** (community.windows.win_psmodule) - Conditional
 - **Configure DNS Forwarders** (ansible.windows.win_dsc)
 - **Check if ActiveDirectoryDSC exists** (ansible.windows.win_shell)
+- **Unblock module DLLs before ActiveDirectoryDSC install** (ansible.windows.win_shell) - Conditional
 - **Install ActiveDirectoryDSC only if needed** (community.windows.win_psmodule) - Conditional
 - **Enable the Active Directory Web Services** (ansible.windows.win_service)
 

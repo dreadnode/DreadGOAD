@@ -1,12 +1,14 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/dreadnode/dreadgoad/internal/config"
@@ -55,13 +57,14 @@ func init() {
 	envCreateCmd.Flags().String("vpc-cidr", "", "VPC/VNet CIDR block (default: auto-assigned)")
 	envCreateCmd.Flags().String("reference", "staging", "Reference environment to copy infrastructure from (default: staging for AWS, test for Azure)")
 	envCreateCmd.Flags().Bool("variant", false, "Generate randomized variant config")
+	envCreateCmd.Flags().String("variant-source", defaultVariantSource, "Base lab to generate the variant from (with --variant)")
 	envCreateCmd.Flags().Bool("force", false, "Overwrite existing environment")
 }
 
 func runEnvCreate(cmd *cobra.Command, args []string) error {
 	envName := strings.TrimSpace(args[0])
-	if envName == "" {
-		return fmt.Errorf("environment name cannot be empty")
+	if err := validateEnvName(envName); err != nil {
+		return err
 	}
 
 	cfg, err := config.Get()
@@ -83,15 +86,72 @@ func runEnvCreate(cmd *cobra.Command, args []string) error {
 	}
 	useVariant, _ := cmd.Flags().GetBool("variant")
 	force, _ := cmd.Flags().GetBool("force")
+	variantSource, _ := cmd.Flags().GetString("variant-source")
+	if strings.TrimSpace(variantSource) == "" {
+		variantSource = defaultVariantSource
+	}
 
 	if vpcCIDR == "" {
 		vpcCIDR = cfg.VpcCIDR(envName)
 	}
 
-	return scaffoldEnv(cfg, envName, region, vpcCIDR, reference, useVariant, force)
+	return scaffoldEnv(cfg, envName, region, vpcCIDR, reference, variantSource, useVariant, force)
 }
 
-func scaffoldEnv(cfg *config.Config, envName, region, vpcCIDR, reference string, useVariant, force bool) error {
+// defaultVariantSource is the base lab a variant is generated from when the
+// caller does not name one. Matches `variant generate --source`.
+const defaultVariantSource = "ad/GOAD"
+
+// variantTargetFor returns the directory `--variant` will generate into.
+//
+// Derived as <source basename>-<env> rather than a literal "GOAD-" prefix, so a
+// variant of ad/SCCM lands in ad/SCCM-<env> instead of a GOAD-named directory
+// holding an SCCM lab. For the default source this is byte-identical to the old
+// behaviour (ad/GOAD -> GOAD-<env>), so existing environments are unaffected;
+// only the sources that --variant-source newly made reachable differ.
+//
+// The target is derived rather than accepted as a flag so it cannot disagree
+// with the source and environment it belongs to — and so it matches what the
+// console writes into variant_target for the same pair.
+func variantTargetFor(projectRoot, envName, variantSource string) string {
+	source := variantSource
+	if source == "" {
+		source = defaultVariantSource
+	}
+	return filepath.Join(projectRoot, "ad", filepath.Base(source)+"-"+envName)
+}
+
+// envNameRe is what an environment name may contain. The name is not just a
+// label: it becomes a directory under infra/, the {env}-inventory filename, the
+// ad/GOAD-{env} variant tree, and part of the deployed Azure resource names.
+//
+// Dots are deliberately allowed — "3.1" and "dg-test-2.A" are real environment
+// names. They used to break variant resolution, but that was viper splitting
+// config keys on ".", fixed in config.repairDottedEnvironmentKeys rather than by
+// forbidding the character.
+var envNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// validateEnvName rejects names that would escape or corrupt the paths built
+// from them, before any directory is created.
+func validateEnvName(name string) error {
+	if name == "" {
+		return fmt.Errorf("environment name cannot be empty")
+	}
+	// Checked ahead of the pattern so traversal gets a message that names the
+	// actual problem rather than a generic "invalid character".
+	if name == "." || name == ".." || strings.ContainsAny(name, `/\`) {
+		return fmt.Errorf("environment name %q would escape the project directory", name)
+	}
+	if !envNameRe.MatchString(name) {
+		return fmt.Errorf(
+			"environment name %q is not usable as a directory and file name\n"+
+				"  use letters, digits, dot, hyphen or underscore, starting with a letter or digit (e.g. 3.1, dg-test-2.A)",
+			name)
+	}
+	return nil
+}
+
+func scaffoldEnv(cfg *config.Config, envName, region, vpcCIDR, reference, variantSource string, useVariant, force bool) error {
 	provider := cfg.ResolvedProvider()
 	infraBase := cfg.InfraBasePathForProvider(provider)
 	envDir := filepath.Join(infraBase, envName)
@@ -108,22 +168,29 @@ func scaffoldEnv(cfg *config.Config, envName, region, vpcCIDR, reference string,
 
 	printEnvSummary(provider, envName, region, vpcCIDR, reference, useVariant)
 
-	if err := scaffoldHCL(provider, envDir, regionDir, envName, region, vpcCIDR); err != nil {
+	hostFilter := labHostKeys(cfg.ProjectRoot, variantSource)
+
+	if err := scaffoldHCL(provider, envDir, regionDir, envName, region, vpcCIDR, hostFilter); err != nil {
 		return err
 	}
-
-	if err := copyInfrastructure(refRegionDir, regionDir); err != nil {
+	if err := copyInfrastructure(refRegionDir, regionDir, hostFilter); err != nil {
 		return fmt.Errorf("copy infrastructure: %w", err)
 	}
-	color.Green("  Copied infrastructure from %s", reference)
+	if hostFilter != nil {
+		color.Green("  Copied infrastructure from %s (filtered to %d hosts)", reference, len(hostFilter))
+	} else {
+		color.Green("  Copied infrastructure from %s", reference)
+	}
 
-	configPath, err := scaffoldLabConfig(cfg.ProjectRoot, envName, useVariant)
+	configPath, err := scaffoldLabConfig(cfg.ProjectRoot, envName, variantSource, useVariant)
 	if err != nil {
 		return err
 	}
 
 	invPath := filepath.Join(cfg.ProjectRoot, envName+"-inventory")
-	if err := scaffoldInventory(provider, cfg.ProjectRoot, envName, region, reference); err != nil {
+	if err := scaffoldInventory(
+		provider, cfg.ProjectRoot, envName, region, reference, variantSource, useVariant,
+	); err != nil {
 		return err
 	}
 	color.Green("  Created inventory: %s", filepath.Base(invPath))
@@ -146,9 +213,9 @@ func printEnvSummary(provider, envName, region, vpcCIDR, reference string, useVa
 	fmt.Println()
 }
 
-func scaffoldHCL(provider, envDir, regionDir, envName, region, vpcCIDR string) error {
+func scaffoldHCL(provider, envDir, regionDir, envName, region, vpcCIDR string, hostFilter map[string]bool) error {
 	if provider == "azure" {
-		if err := createAzureEnvHCL(envDir, envName, vpcCIDR); err != nil {
+		if err := createAzureEnvHCL(envDir, envName, vpcCIDR, hostFilter); err != nil {
 			return fmt.Errorf("create env.hcl: %w", err)
 		}
 		color.Green("  Created env.hcl (Azure)")
@@ -169,12 +236,12 @@ func scaffoldHCL(provider, envDir, regionDir, envName, region, vpcCIDR string) e
 	return nil
 }
 
-func scaffoldLabConfig(projectRoot, envName string, useVariant bool) (string, error) {
+func scaffoldLabConfig(projectRoot, envName, variantSource string, useVariant bool) (string, error) {
 	if useVariant {
-		if err := generateVariantConfig(projectRoot, envName); err != nil {
+		if err := generateVariantConfig(projectRoot, envName, variantSource); err != nil {
 			return "", fmt.Errorf("generate variant config: %w", err)
 		}
-		configPath := filepath.Join(projectRoot, "ad", "GOAD-"+envName, "data")
+		configPath := filepath.Join(variantTargetFor(projectRoot, envName, variantSource), "data")
 		color.Green("  Generated variant config in %s", configPath)
 		return configPath, nil
 	}
@@ -186,7 +253,9 @@ func scaffoldLabConfig(projectRoot, envName string, useVariant bool) (string, er
 	return configPath, nil
 }
 
-func scaffoldInventory(provider, projectRoot, envName, region, reference string) error {
+func scaffoldInventory(
+	provider, projectRoot, envName, region, reference, variantSource string, useVariant bool,
+) error {
 	var err error
 	if provider == "azure" {
 		err = generateAzureInventory(projectRoot, envName, reference)
@@ -196,6 +265,44 @@ func scaffoldInventory(provider, projectRoot, envName, region, reference string)
 	if err != nil {
 		return fmt.Errorf("generate inventory: %w", err)
 	}
+	if useVariant {
+		if err := repointInventoryDomain(projectRoot, envName, variantSource); err != nil {
+			return fmt.Errorf("repoint inventory domain_name: %w", err)
+		}
+	}
+	return nil
+}
+
+// repointInventoryDomain points a variant environment's inventory at the
+// variant's own asset tree.
+//
+// The inventory is built from a reference environment or the stock provider
+// template, so it arrives carrying the BASE lab's domain_name. Playbooks
+// resolve vulnerability and security scripts as ad/{{ domain_name }}/scripts
+// (ansible/playbooks/security.yml, vulnerabilities.yml), so leaving it would
+// provision a randomized variant using the stock lab's assets — quietly, and
+// only for environments created this way.
+//
+// Rewriting in place rather than sourcing the variant's own inventory wholesale
+// is deliberate: on AWS the reference carries SSM settings (ansible_aws_ssm_*,
+// bucket) that the variant template does not have, so swapping the source would
+// trade this bug for a worse one. domain_name is the only functional difference
+// between the two.
+func repointInventoryDomain(projectRoot, envName, variantSource string) error {
+	invPath := filepath.Join(projectRoot, envName+"-inventory")
+	data, err := os.ReadFile(invPath)
+	if err != nil {
+		return err
+	}
+	target := filepath.Base(variantTargetFor(projectRoot, envName, variantSource))
+	updated := variant.RepointDomainName(string(data), target)
+	if updated == string(data) {
+		return nil
+	}
+	if err := os.WriteFile(invPath, []byte(updated), 0o644); err != nil {
+		return err
+	}
+	color.Green("  Pointed inventory domain_name at %s", target)
 	return nil
 }
 
@@ -311,7 +418,7 @@ func createEnvHCL(envDir, envName, vpcCIDR string) error {
 	content := fmt.Sprintf(`# Set common variables for the environment.
 # This is automatically pulled in by the root terragrunt.hcl configuration.
 locals {
-  deployment_name = "goad"           # Change to your deployment name
+  deployment_name = "dreadgoad"      # Change to your deployment name
   aws_account_id  = get_aws_account_id()
   env             = %q
   vpc_cidr        = %q
@@ -334,7 +441,38 @@ func createRegionHCL(regionDir, region string) error {
 	return os.WriteFile(filepath.Join(regionDir, "region.hcl"), []byte(content), 0o644)
 }
 
-func copyInfrastructure(srcRegionDir, dstRegionDir string) error {
+// labHostKeys reads the host role keys (dc01, dc02, …) from a lab source's
+// config.json. Returns nil if the source cannot be read — callers treat nil as
+// "copy everything" so the scaffolding degrades to the old behavior rather than
+// failing for labs that don't follow the standard layout.
+func labHostKeys(projectRoot, variantSource string) map[string]bool {
+	source := variantSource
+	if source == "" {
+		source = defaultVariantSource
+	}
+	if !filepath.IsAbs(source) {
+		source = filepath.Join(projectRoot, source)
+	}
+	data, err := os.ReadFile(filepath.Join(source, "data", "config.json"))
+	if err != nil {
+		return nil
+	}
+	var cfg struct {
+		Lab struct {
+			Hosts map[string]json.RawMessage `json:"hosts"`
+		} `json:"lab"`
+	}
+	if json.Unmarshal(data, &cfg) != nil {
+		return nil
+	}
+	hosts := make(map[string]bool, len(cfg.Lab.Hosts))
+	for k := range cfg.Lab.Hosts {
+		hosts[k] = true
+	}
+	return hosts
+}
+
+func copyInfrastructure(srcRegionDir, dstRegionDir string, hostFilter map[string]bool) error {
 	return filepath.WalkDir(srcRegionDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -353,6 +491,15 @@ func copyInfrastructure(srcRegionDir, dstRegionDir string) error {
 				return filepath.SkipDir
 			}
 			return nil
+		}
+
+		// Skip host directories that the target lab doesn't define.
+		// Host dirs live at goad/<host>/ — exactly two path segments.
+		if hostFilter != nil && d.IsDir() {
+			parts := strings.Split(relPath, string(filepath.Separator))
+			if len(parts) == 2 && parts[0] == "goad" && !hostFilter[parts[1]] {
+				return filepath.SkipDir
+			}
 		}
 
 		dstPath := filepath.Join(dstRegionDir, relPath)
@@ -455,9 +602,23 @@ func resolveReferenceInventory(projectRoot, reference string) (string, error) {
 	)
 }
 
-func generateVariantConfig(projectRoot, envName string) error {
-	source := filepath.Join(projectRoot, "ad", "GOAD")
-	target := filepath.Join(projectRoot, "ad", "GOAD-"+envName)
+// generateVariantConfig builds the variant for an environment.
+//
+// “variantSource“ names the base lab to copy from — ad/GOAD by default, but
+// the repo ships several (GOAD-Light, GOAD-Mini, SCCM, NHA, DRACARYS) and they
+// differ in host count and provider support. It was previously hardcoded to
+// ad/GOAD, which made `env create --variant` unable to express any of them.
+// Relative paths resolve against the project root, matching how
+// `variant generate --source` and the config's variant_source are written.
+func generateVariantConfig(projectRoot, envName, variantSource string) error {
+	source := variantSource
+	if source == "" {
+		source = defaultVariantSource
+	}
+	if !filepath.IsAbs(source) {
+		source = filepath.Join(projectRoot, source)
+	}
+	target := variantTargetFor(projectRoot, envName, source)
 
 	gen := variant.NewGenerator(source, target, envName)
 	return gen.Run()
@@ -496,9 +657,20 @@ func deriveAzureSubnets(vnetCIDR string) (azureSubnets, error) {
 	}, nil
 }
 
+// azureInstanceSize returns the Azure VM size for a host role.
+// dc02 gets extra memory for the recurring attack-simulation tasks.
+func azureInstanceSize(role string) string {
+	if role == "dc02" {
+		return "Standard_D4s_v3"
+	}
+	return "Standard_D2s_v3"
+}
+
 // createAzureEnvHCL writes an Azure-specific env.hcl with VNet, bastion,
 // controller, and kali subnet CIDRs auto-derived from the VNet CIDR.
-func createAzureEnvHCL(envDir, envName, vnetCIDR string) error {
+// hostFilter determines which hosts appear in goad_instance_sizes; nil means
+// the full 5-host GOAD topology.
+func createAzureEnvHCL(envDir, envName, vnetCIDR string, hostFilter map[string]bool) error {
 	subnets, err := deriveAzureSubnets(vnetCIDR)
 	if err != nil {
 		return err
@@ -506,19 +678,30 @@ func createAzureEnvHCL(envDir, envName, vnetCIDR string) error {
 	if err := os.MkdirAll(envDir, 0o755); err != nil {
 		return err
 	}
+
+	hosts := hostFilter
+	if hosts == nil {
+		hosts = map[string]bool{"dc01": true, "dc02": true, "dc03": true, "srv02": true, "srv03": true}
+	}
+	// Build the instance_sizes map in sorted order for deterministic output.
+	sorted := make([]string, 0, len(hosts))
+	for h := range hosts {
+		sorted = append(sorted, h)
+	}
+	sort.Strings(sorted)
+	var sizeLines strings.Builder
+	for _, h := range sorted {
+		fmt.Fprintf(&sizeLines, "    %-5s = %q\n", h, azureInstanceSize(h))
+	}
+
 	content := fmt.Sprintf(`locals {
-  deployment_name = "goad"
+  deployment_name = "dreadgoad"
   env             = %q
   vnet_cidr       = %q
 
-  # DC02 runs the recurring attack-simulation tasks and needs additional memory.
+  # DC02 gets extra memory for the recurring attack-simulation tasks.
   goad_instance_sizes = {
-    dc01  = "Standard_D2s_v3"
-    dc02  = "Standard_D4s_v3"
-    dc03  = "Standard_D2s_v3"
-    srv02 = "Standard_D2s_v3"
-    srv03 = "Standard_D2s_v3"
-  }
+%s  }
 
   bastion_sku               = "Standard"
   bastion_subnet_cidr       = %q
@@ -533,7 +716,7 @@ func createAzureEnvHCL(envDir, envName, vnetCIDR string) error {
   kali_ssh_source_address_prefix = %q
   kali_instance_size             = "Standard_D2s_v3"
 }
-`, envName, vnetCIDR, subnets.Bastion, subnets.Controller, subnets.Bastion,
+`, envName, vnetCIDR, sizeLines.String(), subnets.Bastion, subnets.Controller, subnets.Bastion,
 		subnets.Kali, subnets.Bastion)
 	return os.WriteFile(filepath.Join(envDir, "env.hcl"), []byte(content), 0o644)
 }

@@ -25,10 +25,10 @@ Apply common Windows configuration settings for domain-joined hosts
 - **Set a proxy for specific protocols** (ansible.windows.win_inet_proxy) - Conditional
 - **Configure IE to use a specific proxy per protocol** (ansible.windows.win_inet_proxy) - Conditional
 - **Install DSC modules (skip on prebaked AMIs)** (block) - Conditional
+- **Unblock PackageManagement DLLs (MOTW causes 0x8000FFFF on Install-Module)** (ansible.windows.win_shell)
 - **Upgrade module PowerShellGet to fix accept license issue** (ansible.windows.win_shell)
 - **Check all required modules** (ansible.windows.win_shell)
-- **Install all missing modules in parallel** (community.windows.win_psmodule) - Conditional
-- **Wait for module installations to complete** (ansible.builtin.async_status) - Conditional
+- **Install all missing modules** (community.windows.win_psmodule) - Conditional
 - **Verify DSC LCM is ready** (ansible.windows.win_powershell)
 - **Enable RDP (skip on prebaked AMIs)** (block) - Conditional
 - **Windows ¦ Enable Remote Desktop** (ansible.windows.win_dsc)

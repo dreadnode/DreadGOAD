@@ -48,7 +48,7 @@ include {
 
 inputs = {
   env           = local.env
-  instance_name = "${local.deployment_name}-dreadgoad-${local.hostname}"
+  instance_name = "${local.deployment_name}-${local.hostname}"
   instance_type = "t3.medium"
   os_type       = local.os_type
   enable_asg    = false
@@ -112,8 +112,8 @@ inputs = {
     Environment  = local.env
     Project      = "DreadGOAD"
     Role         = "MemberServer"
-    Lab          = "${local.deployment_name}-goad"
-    Name         = "${local.deployment_name}-dreadgoad-${local.hostname}"
+    Lab          = "${local.deployment_name}"
+    Name         = "${local.deployment_name}-${local.hostname}"
     Domain       = local.domain
     ComputerName = local.hostname
   }

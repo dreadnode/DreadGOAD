@@ -97,9 +97,10 @@ if ($null -eq $existing_obj) {
 
 # Now set the mayContain attributes, we do a last check on existing_obj in case we are in check mode
 if ($null -ne $may_contain -and $null -ne $existing_obj) {
+    $current_may_contain = @($existing_obj.mayContain | Where-Object { $_ -ne $null })
     foreach ($may_contain_entry in $may_contain) {
-        if (-not $existing_obj.mayContain.Contains($may_contain_entry)) {
-            Set-ADObject -Identity $existing_obj.ObjectGuid -Add @{ mayContain = $may_contain_entry } @common_params > $null
+        if ($may_contain_entry -notin $current_may_contain) {
+            Set-ADObject -Identity $existing_obj.ObjectGuid -Add @{ mayContain = [string]$may_contain_entry } @common_params > $null
             $result.changed = $true
         }
     }

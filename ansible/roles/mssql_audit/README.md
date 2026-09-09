@@ -29,7 +29,8 @@ Configure SQL Server auditing for security monitoring
 
 ### main.yml
 
-- **Set MSSQL connection string** (ansible.builtin.set_fact)
+- **Locate sqlcmd binary** (ansible.windows.win_shell)
+- **Set MSSQL connection variables** (ansible.builtin.set_fact)
 - **Create audit directory** (ansible.windows.win_file)
 - **Create XEvents directory** (ansible.windows.win_file) - Conditional
 - **Enable SQL Server login auditing (all successful and failed logins)** (ansible.windows.win_shell)

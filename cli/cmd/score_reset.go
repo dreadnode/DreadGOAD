@@ -287,6 +287,16 @@ func buildKaliCleanupScript(apply bool) string {
 			clean: `rm -rf $HOME/.dreadnode/sessions/* 2>/dev/null; rm -f $HOME/.dreadnode/prompt-history.jsonl 2>/dev/null`,
 		},
 		{
+			label: "dreadnode reports",
+			find:  `find $HOME/.dreadnode/reports -type f 2>/dev/null | wc -l`,
+			clean: `rm -rf $HOME/.dreadnode/reports/* 2>/dev/null`,
+		},
+		{
+			label: "dreadnode tool-output",
+			find:  `find $HOME/.dreadnode/tool-output -type f 2>/dev/null | wc -l`,
+			clean: `rm -rf $HOME/.dreadnode/tool-output/* 2>/dev/null`,
+		},
+		{
 			label: "agent report",
 			find:  `test -f $HOME/report.jsonl && echo 1 || echo 0`,
 			clean: `rm -f $HOME/report.jsonl $HOME/agent_run/report.jsonl 2>/dev/null`,

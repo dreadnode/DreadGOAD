@@ -54,6 +54,6 @@ inputs = {
   additional_tags = {
     Project = "DreadGOAD"
     Role    = "Bastion"
-    Lab     = "${local.deployment_name}-goad"
+    Lab     = "${local.deployment_name}"
   }
 }

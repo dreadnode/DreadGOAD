@@ -74,11 +74,11 @@
       ],
     },
     {
-      description: 'Disable updates for ansible-core (pinned to <2.18 due to SSM pipelining bug)',
+      description: 'Pin ansible-core to 2.20.x (2.19 breaks Windows/SSM, fixed in 2.20)',
       matchPackageNames: [
         'ansible-core',
       ],
-      enabled: false,
+      allowedVersions: '>=2.20.0,<2.21.0',
     },
     {
       description: 'Auto-merge pip dependencies',

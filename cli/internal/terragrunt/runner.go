@@ -32,6 +32,9 @@ type Options struct {
 	ExcludeDirs      string
 	LogFile          string
 	Debug            bool
+	// BackendBootstrap tells Terragrunt to auto-provision the remote-state
+	// backend (S3 bucket / DynamoDB table) when it doesn't exist yet.
+	BackendBootstrap bool
 	// ExtraEnv is appended to the child process environment in KEY=VALUE form.
 	// Used by callers that need to set Terragrunt feature toggles (e.g. the
 	// Azure Bastion module's DREADGOAD_ENABLE_AZURE_BASTION gate) without
@@ -46,6 +49,14 @@ type Result struct {
 }
 
 func Run(ctx context.Context, opts Options) error {
+	if opts.Action != "init" {
+		initOpts := opts
+		initOpts.Action = "init"
+		if err := Run(ctx, initOpts); err != nil {
+			return fmt.Errorf("pre-%s init -upgrade: %w", opts.Action, err)
+		}
+	}
+
 	args := buildArgs(opts)
 
 	slog.Info("running terragrunt",
@@ -69,12 +80,25 @@ func Run(ctx context.Context, opts Options) error {
 	cmd.Stderr = cmd.Stdout
 
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("terragrunt %s timed out (context: %w); last output:\n%s",
+				opts.Action, ctx.Err(), lastLines(tail.String(), 20))
+		}
 		return commandError(fmt.Sprintf("terragrunt %s failed", opts.Action), err, tail.String(), opts.TerragruntBinary)
 	}
 	return nil
 }
 
 func RunAll(ctx context.Context, opts Options) error {
+	// Provider lockfiles cached from a prior run may pin an older version
+	// than the module constraint now requires.  Run init -upgrade first so
+	// the subsequent action doesn't fail with a version mismatch.
+	if opts.Action != "init" {
+		if err := runAllInit(ctx, opts); err != nil {
+			return fmt.Errorf("pre-%s init -upgrade: %w", opts.Action, err)
+		}
+	}
+
 	// Terragrunt flags go before --, tofu flags go after the action.
 	args := []string{"run", "--all"}
 	// terragrunt v0.97+ auto-appends -auto-approve for run --all.
@@ -84,6 +108,9 @@ func RunAll(ctx context.Context, opts Options) error {
 	}
 	if opts.NonInteractive {
 		args = append(args, "--non-interactive")
+	}
+	if opts.BackendBootstrap {
+		args = append(args, "--backend-bootstrap")
 	}
 	args = append(args, "--", opts.Action)
 	if opts.Action == "init" {
@@ -114,9 +141,20 @@ func RunAll(ctx context.Context, opts Options) error {
 	cmd.Stderr = cmd.Stdout
 
 	if err := cmd.Run(); err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("terragrunt run --all %s timed out (context: %w); last output:\n%s",
+				opts.Action, ctx.Err(), lastLines(tail.String(), 20))
+		}
 		return commandError(fmt.Sprintf("terragrunt run --all %s failed", opts.Action), err, tail.String(), opts.TerragruntBinary)
 	}
 	return nil
+}
+
+func runAllInit(ctx context.Context, opts Options) error {
+	initOpts := opts
+	initOpts.Action = "init"
+	initOpts.AutoApprove = false
+	return RunAll(ctx, initOpts)
 }
 
 func RunIndividual(ctx context.Context, opts Options, modulePath string, exclude []string) ([]Result, error) {
@@ -206,6 +244,9 @@ func buildArgs(opts Options) []string {
 	if opts.NonInteractive {
 		args = append(args, "--non-interactive")
 	}
+	if opts.BackendBootstrap {
+		args = append(args, "--backend-bootstrap")
+	}
 	return args
 }
 
@@ -250,6 +291,14 @@ func (b *tailBuffer) Write(p []byte) (int, error) {
 
 func (b *tailBuffer) String() string {
 	return string(b.buf)
+}
+
+func lastLines(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) <= n {
+		return strings.Join(lines, "\n")
+	}
+	return strings.Join(lines[len(lines)-n:], "\n")
 }
 
 func commandError(message string, runErr error, output, terragruntBinary string) error {

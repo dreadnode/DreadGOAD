@@ -103,7 +103,10 @@ func init() {
 func azureClientFromProvider(prov provider.Provider) (*azure.Client, error) {
 	ap, ok := prov.(*azure.AzureProvider)
 	if !ok {
-		return nil, fmt.Errorf("bastion requires the Azure provider; got %s", prov.Name())
+		// Phrased without naming a command: lab describe shares this helper,
+		// and wrapping it there produced "requires the Azure provider: bastion
+		// requires the Azure provider".
+		return nil, fmt.Errorf("this command requires the Azure provider; got %s", prov.Name())
 	}
 	return ap.Client(), nil
 }

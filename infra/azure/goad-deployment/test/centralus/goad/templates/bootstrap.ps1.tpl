@@ -1,7 +1,5 @@
-# Azure first-boot bootstrap for GOAD lab hosts. Custom Script Extension runs
-# this via `powershell -EncodedCommand`, whose cmdline cap (8192 chars) limits
-# the script size — keep this minimal. Server 2022 Datacenter Azure Edition has
-# TLS 1.2 enabled by default, so no SCHANNEL fixups needed here.
+# Azure first-boot bootstrap for GOAD lab hosts. Runs via Custom Script
+# Extension. Keep this minimal — heavy lifting belongs in Ansible roles.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
 
