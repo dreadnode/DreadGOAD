@@ -1,6 +1,7 @@
 // REST client for session lifecycle + RangeView reads (design §7).
 
 import type { RangeDoc, RangeLayout, Session } from './types'
+import { authenticatedFetch } from './auth'
 
 /**
  * The human-readable part of a failed response.
@@ -147,15 +148,15 @@ export interface CommandDef {
 }
 
 export const api = {
-  config: (): Promise<AppConfig> => fetch('/api/config').then(r => json<AppConfig>(r)),
+  config: (): Promise<AppConfig> => authenticatedFetch('/api/config').then(r => json<AppConfig>(r)),
 
   commands: (): Promise<{ commands: CommandDef[] }> =>
-    fetch('/api/commands').then(r => json(r)),
+    authenticatedFetch('/api/commands').then(r => json(r)),
 
-  configs: (): Promise<ConfigListing> => fetch('/api/configs').then(r => json<ConfigListing>(r)),
+  configs: (): Promise<ConfigListing> => authenticatedFetch('/api/configs').then(r => json<ConfigListing>(r)),
 
   labs: (configPath?: string): Promise<{ labs: LabSummary[] }> =>
-    fetch('/api/labs' + (configPath ? `?config_path=${encodeURIComponent(configPath)}` : ''))
+    authenticatedFetch('/api/labs' + (configPath ? `?config_path=${encodeURIComponent(configPath)}` : ''))
       .then(r => json(r)),
 
   environments: (configPath: string): Promise<{
@@ -165,48 +166,48 @@ export const api = {
     /** Per environment, the region the CLI resolves — env key first, file key as fallback. */
     env_regions?: Record<string, string | null>
   }> =>
-    fetch(`/api/environments?config_path=${encodeURIComponent(configPath)}`).then(r => json(r)),
+    authenticatedFetch(`/api/environments?config_path=${encodeURIComponent(configPath)}`).then(r => json(r)),
 
   setSettings: (body: { api_key?: string; api_key_env?: string }): Promise<{ ok: boolean; api_key_env: string }> =>
-    fetch('/api/settings', {
+    authenticatedFetch('/api/settings', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }).then(r => json(r)),
 
   listSessions: (): Promise<{ sessions: Session[] }> =>
-    fetch('/api/sessions').then(r => json(r)),
+    authenticatedFetch('/api/sessions').then(r => json(r)),
 
   createSession: (body: Record<string, unknown>): Promise<Session> =>
-    fetch('/api/sessions', {
+    authenticatedFetch('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }).then(r => json<Session>(r)),
 
   deleteSession: (id: string): Promise<unknown> =>
-    fetch(`/api/sessions/${id}`, { method: 'DELETE' }).then(r => json(r)),
+    authenticatedFetch(`/api/sessions/${id}`, { method: 'DELETE' }).then(r => json(r)),
 
   setModel: (id: string, model: string): Promise<{ ok: boolean; model: string }> =>
-    fetch(`/api/sessions/${id}/model`, {
+    authenticatedFetch(`/api/sessions/${id}/model`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ model }),
     }).then(r => json(r)),
 
   hostDetail: (sessionId: string, nodeId: string): Promise<HostDetail> =>
-    fetch(`/api/ranges/${sessionId}/hosts/${encodeURIComponent(nodeId)}`)
+    authenticatedFetch(`/api/ranges/${sessionId}/hosts/${encodeURIComponent(nodeId)}`)
       .then(r => json<HostDetail>(r)),
 
   getRange: (id: string): Promise<RangeDoc> =>
-    fetch(`/api/ranges/${id}`).then(r => json<RangeDoc>(r)),
+    authenticatedFetch(`/api/ranges/${id}`).then(r => json<RangeDoc>(r)),
 
   saveLayout: (
     id: string,
     layout: RangeLayout,
     revision: number,
   ): Promise<{ ok: boolean; layout_revision: number }> =>
-    fetch(`/api/ranges/${id}/layout`, {
+    authenticatedFetch(`/api/ranges/${id}/layout`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ layout, revision }),

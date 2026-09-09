@@ -8,7 +8,7 @@ import typing as t
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from . import approvals, chat
+from . import approvals, auth, chat
 
 router = APIRouter()
 
@@ -101,7 +101,14 @@ async def ws_chat(websocket: WebSocket) -> None:
     if not ws_origin_allowed(websocket.headers.get("origin")):
         await websocket.close(code=1008)
         return
-    await websocket.accept()
+    bearer_ok = auth.bearer_authorized(websocket.headers.get("authorization"))
+    protocol_ok = auth.websocket_protocol_authorized(
+        websocket.headers.get("sec-websocket-protocol")
+    )
+    if not bearer_ok and not protocol_ok:
+        await websocket.close(code=1008)
+        return
+    await websocket.accept(subprotocol=auth.WS_PROTOCOL if protocol_ok else None)
     try:
         while True:
             raw = await websocket.receive_text()

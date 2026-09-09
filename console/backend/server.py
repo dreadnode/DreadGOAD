@@ -6,10 +6,11 @@ import os
 import typing as t
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from . import chat, paths
+from . import auth, chat, paths
 from .chat_socket import (  # noqa: F401 -- compatibility re-exports
     WS_MAX_CONTENT_CHARS,
     WS_MAX_MESSAGE_CHARS,
@@ -77,6 +78,25 @@ async def _lifespan(app: FastAPI) -> t.AsyncIterator[None]:
 
 
 app = FastAPI(title="DreadGOAD Console", lifespan=_lifespan)
+
+
+@app.middleware("http")
+async def authenticate_api(
+    request: Request,
+    call_next: t.Callable[[Request], t.Awaitable[Response]],
+) -> Response:
+    """Require the per-launch bearer token for every control-plane API call."""
+    if request.url.path.startswith("/api/") and not auth.bearer_authorized(
+        request.headers.get("authorization")
+    ):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "authentication required"},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return await call_next(request)
+
+
 app.include_router(config_router)
 app.include_router(session_router)
 app.include_router(range_router)

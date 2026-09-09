@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { websocketProtocols } from '../auth'
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected'
 
@@ -35,7 +36,9 @@ export function useWebSocket(
 
     setStatus('connecting')
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const ws = new WebSocket(`${protocol}//${window.location.host}${path}`)
+    const url = `${protocol}//${window.location.host}${path}`
+    const authProtocols = websocketProtocols()
+    const ws = authProtocols ? new WebSocket(url, authProtocols) : new WebSocket(url)
 
     ws.onopen = () => {
       if (!unmountedRef.current) {

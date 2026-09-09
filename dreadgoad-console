@@ -284,6 +284,13 @@ if [ "$API_KEY_ENV" != "OPENROUTER_API_KEY" ]; then
 	export OPENROUTER_API_KEY="$API_KEY_VALUE"
 fi
 
+# One credential per launch protects the loopback API from other local users
+# and unrelated processes. It is carried to the browser in a URL fragment (not
+# sent in HTTP access logs); the frontend removes it from the address bar after
+# capturing it. The backend removes this environment variable after import so
+# later CLI/cloud subprocesses do not inherit the token.
+AUTH_TOKEN="$(python3 -c 'import secrets; print(secrets.token_urlsafe(32))')"
+
 field "root" "$ROOT"
 field "python" "$PY_V"
 field "node" "$NODE_V" "$([ "$NODE_V" = "not found" ] && echo "$RED" || echo "$DIM")"
@@ -356,7 +363,13 @@ fi
 
 # ready <url-suffix> — boxed "serving on" banner.
 ready() {
-	local url="http://localhost:$PORT" line
+	local base_url url line
+	if [ "$DEV" = 1 ]; then
+		base_url="http://localhost:5173"
+	else
+		base_url="http://localhost:$PORT"
+	fi
+	url="$base_url/#token=$AUTH_TOKEN"
 	# ASCII stand-in for the '·' separator so ${#line} measures display columns
 	# even where ${#…} counts bytes (bash 3.2 / non-UTF-8 locale).
 	line="  DreadGOAD Console  .  $url  "
@@ -380,7 +393,8 @@ if [ "$DEV" = 1 ]; then
 	# trees. Same path covers `kill` of this script and either side crashing.
 	(cd "$FRONTEND" && npm install && npm run dev) &
 	VITE_PID=$!
-	"$VENV/bin/uvicorn" console.backend.server:app --reload --port "$PORT" &
+	DREADGOAD_CONSOLE_AUTH_TOKEN="$AUTH_TOKEN" \
+		"$VENV/bin/uvicorn" console.backend.server:app --reload --port "$PORT" &
 	API_PID=$!
 
 	# Signal a process and its descendants. npm → vite and uvicorn → its reloader
@@ -464,4 +478,5 @@ step "serving"
 ready
 # mount_frontend() is invoked by an app-factory shim so the static dir is wired.
 DREADGOAD_CONSOLE_FRONTEND_DIST="$FRONTEND/dist" \
+	DREADGOAD_CONSOLE_AUTH_TOKEN="$AUTH_TOKEN" \
 	exec "$VENV/bin/uvicorn" console.backend.server:app --port "$PORT"

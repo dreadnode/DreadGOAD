@@ -132,6 +132,12 @@ This restriction is applied at the agent tool boundary; direct operator commands
 retain the CLI's normal path behavior. A `/score` report path remains remote and
 is fetched from the attack box into the session workspace before scoring.
 
+The launcher also creates a fresh 256-bit control-plane token for every run.
+The printed launch URL carries it in the URL fragment, which the frontend saves
+in tab-scoped storage and immediately removes from the address bar. All HTTP API
+requests use a bearer header, and browser WebSockets authenticate through their
+subprotocol header; unauthenticated local clients cannot operate the console.
+
 ## Prompts
 
 Agent prompt content lives as editable markdown in `backend/prompts/`:

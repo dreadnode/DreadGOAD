@@ -47,7 +47,7 @@ except ModuleNotFoundError:
 from fastapi import WebSocketDisconnect  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from console.backend import chat, chat_runtime, commands  # noqa: E402
+from console.backend import auth, chat, chat_runtime, commands  # noqa: E402
 from console.backend.db import Database  # noqa: E402
 from console.backend.server import (  # noqa: E402
     WS_MAX_CONTENT_CHARS,
@@ -78,7 +78,9 @@ def client() -> Iterator[TestClient]:
     a standalone script (see ``main``), where that setup is inline instead;
     the pytest functions had no such fixture and so never ran.
     """
-    with TestClient(app) as started:
+    with TestClient(
+        app, headers={"Authorization": auth.authorization_value()}
+    ) as started:
         yield started
 
 
@@ -86,7 +88,9 @@ def main() -> None:
     cfg = pathlib.Path(_TMP) / "dreadgoad.yaml"
     cfg.write_text(_YAML)
 
-    with TestClient(app) as client:
+    with TestClient(
+        app, headers={"Authorization": auth.authorization_value()}
+    ) as client:
         # health
         assert client.get("/api/health").json()["status"] == "ok"
 
@@ -377,6 +381,7 @@ def main() -> None:
         test_range_read_repairs_missing_config_hosts(client)
 
         test_ws_origin_allowed()
+        test_control_plane_authentication(client)
         test_parse_ws_message_validation()
         test_ws_rejects_cross_origin(client)
         test_ws_invalid_message_does_not_close_connection(client)
@@ -468,6 +473,67 @@ def test_ws_origin_allowed() -> None:
     ):
         assert not ws_origin_allowed(bad), bad
     print("PASS test_ws_origin_allowed")
+
+
+def test_control_plane_authentication(client: TestClient) -> None:
+    """Every API route and WebSocket handshake requires this launch's token."""
+    assert auth.AUTH_ENV not in os.environ
+    assert auth.LEGACY_AUTH_ENV not in os.environ
+    assert auth.bearer_authorized(auth.authorization_value())
+    assert auth.bearer_authorized(
+        auth.authorization_value().replace("Bearer", "bearer")
+    )
+    for invalid in (None, "", "Bearer", "Basic nope", "Bearer wrong", "Bearer  wrong"):
+        assert not auth.bearer_authorized(invalid), invalid
+
+    for authorization in ("", "Bearer wrong"):
+        response = client.get("/api/config", headers={"Authorization": authorization})
+        assert response.status_code == 401, response.text
+        assert response.headers["www-authenticate"] == "Bearer"
+        assert response.json() == {"detail": "authentication required"}
+
+    assert client.get("/api/config").status_code == 200
+    # Static bootstrap is intentionally public; otherwise the browser could not
+    # load the code that captures the fragment token and authenticates the API.
+    assert client.get("/", headers={"Authorization": ""}).status_code != 401
+
+    offered = f"{auth.WS_PROTOCOL}, {auth.WS_CREDENTIAL_PROTOCOL_PREFIX}wrong"
+    assert not auth.websocket_protocol_authorized(offered)
+    assert auth.websocket_protocol_authorized(
+        f"{auth.WS_PROTOCOL}, "
+        f"{auth.WS_CREDENTIAL_PROTOCOL_PREFIX}{auth.authorization_value().split(' ', 1)[1]}"
+    )
+
+    for protocols in (
+        None,
+        [auth.WS_PROTOCOL, f"{auth.WS_CREDENTIAL_PROTOCOL_PREFIX}wrong"],
+    ):
+        accepted = False
+        try:
+            with client.websocket_connect(
+                "/ws/chat",
+                headers={
+                    "origin": "http://localhost:7331",
+                    "authorization": "",
+                },
+                subprotocols=protocols,
+            ):
+                accepted = True
+        except WebSocketDisconnect as exc:
+            assert exc.code == 1008, exc.code
+        assert not accepted, protocols
+
+    token = auth.authorization_value().split(" ", 1)[1]
+    with client.websocket_connect(
+        "/ws/chat",
+        headers={"origin": "http://localhost:7331", "authorization": ""},
+        subprotocols=[
+            auth.WS_PROTOCOL,
+            f"{auth.WS_CREDENTIAL_PROTOCOL_PREFIX}{token}",
+        ],
+    ) as websocket:
+        assert websocket.accepted_subprotocol == auth.WS_PROTOCOL
+    print("PASS test_control_plane_authentication")
 
 
 def test_parse_ws_message_validation() -> None:
