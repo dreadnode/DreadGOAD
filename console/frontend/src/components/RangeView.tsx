@@ -1,7 +1,6 @@
 import {
   createContext, Fragment, useCallback, useContext, useEffect, useMemo, useRef, useState,
 } from 'react'
-import { shortResourceId } from '../format'
 import {
   ReactFlow,
   Background,
@@ -20,6 +19,7 @@ import ConnectModal from './ConnectModal'
 import CopyableCommand from './CopyableCommand'
 import HostDetailPanel from './HostDetailPanel'
 import Tooltip from './Tooltip'
+import VMResourceDetails from './VMResourceDetails'
 
 // How a node asks for the connect modal. A context rather than a prop on the
 // node's `data`: buildNodes is pure and exported for verification, and threading
@@ -461,8 +461,6 @@ function AccordionDetail(
       </div>
     )
   }
-  const disks = detail.disks || []
-  const nics = detail.nics || []
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 11 }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
@@ -471,32 +469,7 @@ function AccordionDetail(
         {detail.resource_group && <DetailRow label="Resource Group" value={detail.resource_group} />}
         {detail.power_state && <DetailRow label="Power State" value={detail.power_state} />}
       </div>
-      {disks.length > 0 && (
-        <ResourceSection title={`Disks (${disks.length})`}>
-          {disks.map(d => (
-            <ResourceCard key={`${d.role}-${d.name}-${d.lun ?? 'os'}`} title={d.name} tag={d.role}>
-              {d.size_gb != null && <DetailRow label="Size" value={`${d.size_gb} GiB`} />}
-              {d.storage_type && <DetailRow label="Type" value={d.storage_type} />}
-              {d.caching && <DetailRow label="Caching" value={d.caching} />}
-              {d.lun != null && <DetailRow label="LUN" value={String(d.lun)} />}
-            </ResourceCard>
-          ))}
-        </ResourceSection>
-      )}
-      {nics.length > 0 && (
-        <ResourceSection title={`Network interfaces (${nics.length})`}>
-          {nics.map(n => (
-            <ResourceCard key={n.id} title={n.name} tag={n.primary ? 'primary' : undefined}>
-              {(n.private_ips?.length ?? 0) > 0 && <DetailRow label="Private IP" value={n.private_ips.join(', ')} />}
-              {n.mac_address && <DetailRow label="MAC" value={n.mac_address} />}
-              {n.subnet_id && <DetailRow label="Subnet" value={shortResourceId(n.subnet_id)} />}
-              {n.nsg_id && <DetailRow label="NSG" value={shortResourceId(n.nsg_id)} />}
-              {n.accelerated_networking && <DetailRow label="Accel net" value="enabled" />}
-              {n.public_ip_id && <DetailRow label="Public IP" value={shortResourceId(n.public_ip_id)} />}
-            </ResourceCard>
-          ))}
-        </ResourceSection>
-      )}
+      <VMResourceDetails detail={detail} variant="accordion" />
       {plan && <ConnectCommands plan={plan} />}
     </div>
   )
@@ -534,42 +507,6 @@ function DetailRow({ label, value }: { label: string; value: string }) {
     </div>
   )
 }
-
-function ResourceSection({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <span style={{
-        fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase',
-        color: 'var(--dg-interactive)',
-      }}>{title}</span>
-      {children}
-    </div>
-  )
-}
-
-function ResourceCard({ title, tag, children }: {
-  title: string; tag?: string; children: React.ReactNode
-}) {
-  return (
-    <div style={{
-      border: '1px solid var(--dn-border-lt)', borderRadius: 4,
-      padding: '7px 10px', display: 'flex', flexDirection: 'column', gap: 4,
-    }}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{title}</span>
-        {tag && (
-          <span style={{
-            fontSize: 10, letterSpacing: '0.06em', textTransform: 'uppercase',
-            padding: '1px 6px', borderRadius: 3,
-            border: '1px solid var(--dg-interactive)', color: 'var(--dg-interactive)',
-          }}>{tag}</span>
-        )}
-      </div>
-      {children}
-    </div>
-  )
-}
-
 
 const cellStyle: React.CSSProperties = {
   padding: '7px 10px', whiteSpace: 'nowrap', color: 'var(--dn-text)',

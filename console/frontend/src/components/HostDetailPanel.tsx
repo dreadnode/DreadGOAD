@@ -3,6 +3,7 @@ import { api } from '../api'
 import type { HostDetail } from '../api'
 import { shortResourceId } from '../format'
 import Modal from './Modal'
+import VMResourceDetails from './VMResourceDetails'
 
 // Read-only: everything here describes what Azure already has. Nothing in this
 // panel mutates a resource, so there is no confirm gate and no destructive path
@@ -25,33 +26,6 @@ function Row({ label, value, full }: { label: string; value: string; full?: stri
       >
         {value}
       </span>
-    </div>
-  )
-}
-
-function Card({ title, tag, children }: {
-  title: string; tag?: string; children: React.ReactNode
-}) {
-  return (
-    <div
-      style={{
-        border: '1px solid var(--dn-border-lt)', borderRadius: 4,
-        padding: '9px 11px', display: 'flex', flexDirection: 'column', gap: 5,
-      }}
-    >
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600 }}>{title}</span>
-        {tag && (
-          <span
-            style={{
-              fontSize: 10, letterSpacing: '0.06em', textTransform: 'uppercase',
-              padding: '1px 6px', borderRadius: 3,
-              border: '1px solid var(--dg-interactive)', color: 'var(--dg-interactive)',
-            }}
-          >{tag}</span>
-        )}
-      </div>
-      {children}
     </div>
   )
 }
@@ -175,50 +149,9 @@ export default function HostDetailPanel(
               <Row label="Resource grp" value={detail.resource_group} />
             </div>
 
-            <Section title={`Disks (${(detail.disks || []).length})`}>
-              {(detail.disks || []).map(d => (
-                <Card key={`${d.role}-${d.name}-${d.lun ?? 'os'}`} title={d.name} tag={d.role}>
-                  {d.size_gb != null && <Row label="Size" value={`${d.size_gb} GiB`} />}
-                  {d.storage_type && <Row label="Type" value={d.storage_type} />}
-                  {d.caching && <Row label="Caching" value={d.caching} />}
-                  {d.lun != null && <Row label="LUN" value={String(d.lun)} />}
-                </Card>
-              ))}
-            </Section>
-
-            <Section title={`Network interfaces (${(detail.nics || []).length})`}>
-              {(detail.nics || []).map(n => (
-                <Card key={n.id} title={n.name} tag={n.primary ? 'primary' : undefined}>
-                  {n.private_ips.length > 0 && (
-                    <Row label="Private IP" value={n.private_ips.join(', ')} />
-                  )}
-                  {n.mac_address && <Row label="MAC" value={n.mac_address} />}
-                  {n.subnet_id && <Row label="Subnet" value={shortResourceId(n.subnet_id)} full={n.subnet_id} />}
-                  {n.nsg_id && <Row label="NSG" value={shortResourceId(n.nsg_id)} full={n.nsg_id} />}
-                  {n.accelerated_networking && <Row label="Accel net" value="enabled" />}
-                  {n.public_ip_id && <Row label="Public IP" value={shortResourceId(n.public_ip_id)} full={n.public_ip_id} />}
-                </Card>
-              ))}
-            </Section>
+            <VMResourceDetails detail={detail} variant="modal" />
           </>
         )}
     </Modal>
-  )
-}
-
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  const items = Array.isArray(children) ? children : [children]
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-      <span
-        style={{
-          fontSize: 10, letterSpacing: '0.08em', textTransform: 'uppercase',
-          color: 'var(--dg-interactive)',
-        }}
-      >{title}</span>
-      {items.length === 0
-        ? <span style={{ color: 'var(--dg-node-label)' }}>None attached.</span>
-        : children}
-    </div>
   )
 }
