@@ -15,7 +15,8 @@ export function Field({ label, value, onChange, placeholder, type, onBlur, sugge
   // it from a counter meant writing to a module global during render — impure,
   // and double-counted under StrictMode (main.tsx enables it). useId exists for
   // exactly this and is stable across renders without the side effect.
-  const listId = useId()
+  const inputId = useId()
+  const listId = `${inputId}-suggestions`
   const hasList = !!suggestions?.length
 
   return (
@@ -24,11 +25,11 @@ export function Field({ label, value, onChange, placeholder, type, onBlur, sugge
           surface, far under the 4.5:1 floor, which left the field labels
           barely visible. These name what you are about to type into a form
           that creates a range — the last thing that should be guessed at. */}
-      <label style={{
+      <label htmlFor={inputId} style={{
         display: 'block', marginBottom: 4,
         color: 'var(--dn-text-bright)', fontWeight: 700,
       }}>{label}</label>
-      <input type={type} value={value} placeholder={placeholder} onChange={e => onChange(e.target.value)} onBlur={onBlur}
+      <input id={inputId} type={type} value={value} placeholder={placeholder} onChange={e => onChange(e.target.value)} onBlur={onBlur}
         list={hasList ? listId : undefined} style={{
         width: '100%', boxSizing: 'border-box', padding: '6px 8px', background: 'var(--dn-bg)',
         border: '1px solid var(--dn-border)', borderRadius: 3, color: 'var(--dn-text)',
@@ -51,13 +52,16 @@ export function Select({ label, value, onChange, options, disabled }: {
   options: Array<{ value: string; label: string; disabled?: boolean }>
   disabled?: boolean
 }) {
+  const selectId = useId()
+
   return (
     <div style={{ marginBottom: 12 }}>
-      <label style={{
+      <label htmlFor={selectId} style={{
         display: 'block', marginBottom: 4,
         color: 'var(--dn-text-bright)', fontWeight: 700,
       }}>{label}</label>
       <select
+        id={selectId}
         value={value}
         disabled={disabled}
         onChange={e => onChange(e.target.value)}

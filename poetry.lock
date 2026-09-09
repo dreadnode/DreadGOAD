@@ -21,15 +21,15 @@ resolvelib = ">=0.5.3,<0.6.0"
 
 [[package]]
 name = "ansible-core"
-version = "2.17.14"
+version = "2.18.0"
 description = "Radically simple IT automation"
 optional = false
-python-versions = ">=3.10"
+python-versions = ">=3.11"
 groups = ["main"]
-markers = "python_version >= \"3.11\""
+markers = "python_version == \"3.11\""
 files = [
-    {file = "ansible_core-2.17.14-py3-none-any.whl", hash = "sha256:34a49582a57c2f2af17ede2cefd3b3602a2d55d22089f3928570d52030cafa35"},
-    {file = "ansible_core-2.17.14.tar.gz", hash = "sha256:7c17fee39f8c29d70e3282a7e9c10bd70d5cd4fd13ddffc5dcaa52adbd142ff8"},
+    {file = "ansible_core-2.18.0-py3-none-any.whl", hash = "sha256:d28818df3741d6cd744dab5e4ff9c658daa94ba71c8e15a12dbe9eeab30a658f"},
+    {file = "ansible_core-2.18.0.tar.gz", hash = "sha256:87fbebbfe8d961e9b153e84b4438ba3a327dbfdcd4ad05a6065d9ff5d9d02e7b"},
 ]
 
 [package.dependencies]
@@ -38,6 +38,26 @@ jinja2 = ">=3.0.0"
 packaging = "*"
 PyYAML = ">=5.1"
 resolvelib = ">=0.5.3,<1.1.0"
+
+[[package]]
+name = "ansible-core"
+version = "2.20.9"
+description = "Radically simple IT automation"
+optional = false
+python-versions = ">=3.12"
+groups = ["main"]
+markers = "python_version >= \"3.12\""
+files = [
+    {file = "ansible_core-2.20.9-py3-none-any.whl", hash = "sha256:1ab5e75c4bb214a37e75f40f02dc545cdbbe2a322ef367cbb4451234c3cbe765"},
+    {file = "ansible_core-2.20.9.tar.gz", hash = "sha256:73bcd4c3dd51b597202f8cf5a72b8e145342c7885ad21114e5979bdf629b3366"},
+]
+
+[package.dependencies]
+cryptography = "*"
+jinja2 = ">=3.1.0"
+packaging = "*"
+PyYAML = ">=5.1"
+resolvelib = ">=0.8.0,<2.0.0"
 
 [[package]]
 name = "ansible-runner"
@@ -1635,4 +1655,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.8"
-content-hash = "aa51fac115790fddf0107d37862906b7e32e7e0f40867ae9338bfa52d0139a43"
+content-hash = "9f85dcf9a5a9ff330e7cd1400050dd118219a1a34743f1ffa9d92ff594945c3e"
