@@ -12,7 +12,18 @@
     name: rsync
     state: restarted
 
-- name: Reload SSH
-  ansible.builtin.service:
-    name: ssh
-    state: reloaded
+- name: Reload SSH listeners
+  ansible.builtin.shell:
+    cmd: |
+      set -euo pipefail
+      /usr/sbin/sshd -t
+      mapfile -t listeners < <(
+        pgrep -f '^sshd: /usr/sbin/sshd -D \[listener\]' || true
+      )
+      if (( ${#listeners[@]} == 0 )); then
+        systemctl restart ssh.service
+      else
+        kill -HUP "${listeners[@]}"
+      fi
+    executable: /bin/bash
+  changed_when: true

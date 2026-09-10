@@ -39,7 +39,7 @@
       Match User rangeuser
         PasswordAuthentication yes
     validate: /usr/sbin/sshd -t -f %s
-  notify: Reload SSH
+  notify: Reload SSH listeners
 
 - name: Create storage service directories
   ansible.builtin.file:
@@ -168,7 +168,6 @@
   loop:
     - nfs-kernel-server
     - smbd
-    - ssh
     - rsync
 
 - name: Apply pending storage service configuration
