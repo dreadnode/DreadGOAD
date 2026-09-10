@@ -29,6 +29,7 @@ nav:
     - DRACARYS: labs/DRACARYS.md
     - SCCM: labs/SCCM.md
     - MINILAB: labs/MINILAB.md
+    - SCOPE-RANGE: labs/SCOPE-RANGE.md
   - 📈 Extensions:
     - index: extensions/index.md
     - guacamole: extensions/guacamole.md

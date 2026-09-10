@@ -7,7 +7,7 @@ specification:
     varied collection of applications, databases, development systems, storage
     services, and infrastructure protocols.
   implementation_notes:
-    - This file is the reference specification; deployment instructions are in docs/scope-range.md.
+    - This file is the reference specification; deployment instructions are in docs/mkdocs/docs/labs/SCOPE-RANGE.md.
     - The initial implementation targets Azure and is selected through the scope-dev environment.
     - Use a supported Ubuntu Server LTS release for service hosts.
     - Use Kali Linux for the agent host.

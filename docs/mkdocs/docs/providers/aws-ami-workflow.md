@@ -64,7 +64,7 @@ dreadgoad config init    # Creates ~/.config/dreadgoad/dreadgoad.yaml
 dreadgoad config show    # View the effective configuration
 ```
 
-For full details on all config options, see [CLI configuration](../../cli.md).
+For full details on all config options, see [CLI configuration](../cli-reference.md#config).
 
 ### Choosing an environment
 

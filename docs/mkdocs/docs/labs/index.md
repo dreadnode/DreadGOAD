@@ -11,6 +11,8 @@
     - [SCCM](SCCM.md) : 4 vms, 1 forest, 1 domain, with microsoft configuration manager installed
     ![SCCM overview](../img/SCCMLAB_overview.png)
 
+    - [SCOPE-RANGE](SCOPE-RANGE.md): 6 Linux VMs on Azure with interconnected applications, databases, development platforms, storage, and infrastructure services for offensive AI agent testing
+
 - Challenge lab :
     - [NHA](NHA.md) : A challenge with 5 vms and 2 domains. no schema provided, you will have to find out how break it.
 

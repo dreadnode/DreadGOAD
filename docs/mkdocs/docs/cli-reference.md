@@ -493,6 +493,9 @@ For SCOPE-RANGE, select `scope-dev` and run `dreadgoad validate`; `--quick`,
 `--output`, `--verbose`, and `--no-fail` are forwarded to its live validator.
 `--plain` is a no-op and `--poll` is not supported.
 
+See [SCOPE-RANGE on Azure](labs/SCOPE-RANGE.md) for its topology, deployment,
+web-console workflow, validation contract, synthetic data, and teardown.
+
 See [validation.md](https://github.com/dreadnode/DreadGOAD/blob/main/docs/validation.md) for the full guide.
 
 ---

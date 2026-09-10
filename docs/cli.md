@@ -32,7 +32,7 @@ Run `dreadgoad <command> --help` for full flag listings. Major commands:
 | `inventory`     | Generate/inspect Ansible inventory                                                            |
 | `health-check`  | Verify all lab instances are reachable and healthy                                            |
 | `verify-trusts` | Verify domain trust relationships between all lab domains                                     |
-| `validate`      | Validate the selected live lab — see [validation.md](./validation.md) and [scope-range.md](./scope-range.md) |
+| `validate`      | Validate the selected live lab — see [validation.md](./validation.md) and the [SCOPE-RANGE guide](./mkdocs/docs/labs/SCOPE-RANGE.md) |
 | `scoreboard`    | Live engagement status board (answer key + agent report) — see [scoreboard.md](./scoreboard.md) |
 | `variant`       | Generate randomized graph-isomorphic lab variants                                             |
 | `extension`     | Manage pluggable lab extensions (ELK, Exchange, Wazuh, ...)                                   |
