@@ -1226,6 +1226,48 @@ async def test_spawn_and_stream_success_returns_result() -> None:
     print("PASS test_spawn_and_stream_success_returns_result")
 
 
+async def test_score_uses_session_answer_key_unless_explicitly_overridden() -> None:
+    from console.backend import command_runner
+
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        session = {
+            "session_dir": str(root),
+            "anchor": {"config_path": "/repo/dreadgoad.yaml", "env": "dev"},
+        }
+        key = root / "artifacts" / "answer_key.json"
+        key.parent.mkdir()
+        key.write_text("{}")
+
+        original_fetch = command_runner.fetch.fetch_report
+
+        async def fake_fetch(_session, _remote, _capture):  # noqa: ANN001, ANN202
+            return 0, str(root / "report.jsonl"), "fetched"
+
+        command_runner.fetch.fetch_report = fake_fetch
+        try:
+            prepared = await command_runner._prepare_extra(
+                session, "s-test", "/score", ["/home/kali/report.jsonl"]
+            )
+            assert prepared == [
+                str(root / "report.jsonl"),
+                "--answer-key",
+                str(key),
+            ]
+
+            explicit = await command_runner._prepare_extra(
+                session,
+                "s-test",
+                "/score",
+                ["/home/kali/report.jsonl", "--answer-key=/repo/custom.json"],
+            )
+            assert explicit[-1] == "--answer-key=/repo/custom.json", explicit
+            assert explicit.count("--answer-key") == 0, explicit
+        finally:
+            command_runner.fetch.fetch_report = original_fetch
+    print("PASS test_score_uses_session_answer_key_unless_explicitly_overridden")
+
+
 def main() -> None:
     test_argv_injects_config_and_env()
     test_argv_multiword_and_flag_verbs()
@@ -1270,6 +1312,7 @@ def main() -> None:
         asyncio.run(test_check_credentials_azure_error_discrimination())
         asyncio.run(test_spawn_and_stream_oserror_returns_not_started())
         asyncio.run(test_spawn_and_stream_success_returns_result())
+        asyncio.run(test_score_uses_session_answer_key_unless_explicitly_overridden())
     else:
         print("SKIP command_runner tests (dreadnode not installed)")
     test_system_prompt_covers_the_registry()

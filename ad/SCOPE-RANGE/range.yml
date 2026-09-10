@@ -1,0 +1,4 @@
+schema_version: 1
+kind: service-range
+lifecycle:
+  session_init: []

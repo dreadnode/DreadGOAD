@@ -2,6 +2,34 @@
 
 You can use this template to create your own lab
 
+## Range lifecycle metadata
+
+Each range owns its console-session initialization behavior in `range.yml`.
+Only registered action names are accepted; shell commands and script paths are
+not executed from this file. Active Directory ranges normally generate their
+private scoring key when a console session starts:
+
+```yaml
+schema_version: 1
+kind: active-directory
+lifecycle:
+  session_init:
+    - action: generate_answer_key
+```
+
+A range that needs no initialization should declare an empty list:
+
+```yaml
+schema_version: 1
+kind: service-range
+lifecycle:
+  session_init: []
+```
+
+The console invokes `dreadgoad range init-session` generically. Generated
+artifacts are written beneath the private console session directory rather than
+into the range source tree.
+
 ## Inventory file : Inventory
 
 This is the ansible inventory file.

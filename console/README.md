@@ -195,6 +195,7 @@ second tab is rejected with a 409 rather than overwriting the newer layout.
 | `configstore.py` | Which configs exist, where new ones are written, credential hints |
 | `labs.py` | Base-lab discovery for the variant-source picker (`lab list --json`) |
 | `scaffold.py` | Builds an environment's infra tree via `dreadgoad env create` |
+| `lifecycle.py` | Runs range-declared session initialization and locates private artifacts |
 | `sessions.py` | Session lifecycle service |
 | `db.py` | SQLite persistence (single-worker executor, WAL) |
 | `fetch.py` | `/score` report fetch via `dreadgoad score fetch` |
@@ -208,7 +209,7 @@ second tab is rejected with a 409 rather than overwriting the newer layout.
 # Backend tests (each suite is standalone-runnable, no pytest required):
 .venv/bin/python console/backend/tests/test_commands.py
 # ... test_chat.py, test_configstore.py, test_db.py, test_fetch.py, test_hook.py,
-#     test_hostdetail.py, test_labconfig.py, test_labs.py, test_longops.py,
+#     test_hostdetail.py, test_labconfig.py, test_labs.py, test_lifecycle.py, test_longops.py,
 #     test_server_rest.py,
 #     test_sessions.py, test_summary.py
 

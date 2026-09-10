@@ -14,7 +14,7 @@ import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
-from console.backend import configstore, paths  # noqa: E402
+from console.backend import configstore, paths, sessions as sessions_module  # noqa: E402
 from console.backend.db import Database  # noqa: E402
 from console.backend.sessions import SessionService, default_label  # noqa: E402
 
@@ -136,6 +136,75 @@ async def test_delete_session_removes_dir_and_rows() -> None:
             print("PASS test_delete_session_removes_dir_and_rows")
         finally:
             await svc.db.close()
+
+
+async def test_create_session_records_initialization_results() -> None:
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        cfg = tmp / "dreadgoad.yaml"
+        cfg.write_text(_YAML)
+        svc = await _svc(tmp)
+        original = sessions_module.lifecycle.initialize_session
+
+        async def initialized(_session, _root):  # noqa: ANN001, ANN202
+            return [
+                {
+                    "action": "generate_answer_key",
+                    "status": "completed",
+                    "message": "generated 12 scoring objectives",
+                }
+            ]
+
+        sessions_module.lifecycle.initialize_session = initialized
+        try:
+            session = await svc.create_session(str(cfg), "staging")
+            events = await svc.db.get_events(session["id"])
+            init_events = [
+                event
+                for event in events
+                if (event.get("payload") or {}).get("initialization")
+            ]
+            assert len(init_events) == 1, init_events
+            payload = init_events[0]["payload"]
+            assert payload["initialization"]["status"] == "completed", payload
+            assert "generated 12" in payload["content"], payload
+        finally:
+            sessions_module.lifecycle.initialize_session = original
+            await svc.db.close()
+    print("PASS test_create_session_records_initialization_results")
+
+
+async def test_scaffold_retries_initialization_only_for_variants() -> None:
+    """Only a variant is pending until its generated config is scaffolded."""
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        cfg = tmp / "dreadgoad.yaml"
+        cfg.write_text(_YAML)
+        svc = await _svc(tmp)
+        session = await svc.create_session(str(cfg), "staging")
+        initialized: list[str] = []
+        original_scaffold = sessions_module.scaffold.scaffold_env
+        original_initialize = svc._initialize
+
+        async def scaffolded(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+            return True, "ok"
+
+        async def initialize(current):  # noqa: ANN001, ANN202
+            initialized.append(current["id"])
+
+        sessions_module.scaffold.scaffold_env = scaffolded
+        svc._initialize = initialize  # type: ignore[method-assign]
+        try:
+            await svc._scaffold_for(session, {"variant": False})
+            assert initialized == [], initialized
+
+            await svc._scaffold_for(session, {"variant": True})
+            assert initialized == [session["id"]], initialized
+        finally:
+            sessions_module.scaffold.scaffold_env = original_scaffold
+            svc._initialize = original_initialize  # type: ignore[method-assign]
+            await svc.db.close()
+    print("PASS test_scaffold_retries_initialization_only_for_variants")
 
 
 async def test_delete_refuses_working_dir_outside_session_root() -> None:
@@ -374,6 +443,8 @@ async def _main() -> None:
     await test_create_attach_session()
     await test_service_repairs_existing_session_directory_modes()
     await test_delete_session_removes_dir_and_rows()
+    await test_create_session_records_initialization_results()
+    await test_scaffold_retries_initialization_only_for_variants()
     await test_delete_refuses_working_dir_outside_session_root()
     await test_create_new_env_writes_yaml_and_backs_up()
     await test_greenfield_seeds_infra_only()

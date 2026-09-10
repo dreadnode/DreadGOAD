@@ -28,6 +28,9 @@ func GenerateAnswerKey(configPath string) (*AnswerKey, error) {
 	if !ok {
 		return nil, fmt.Errorf("config has no top-level 'lab' object")
 	}
+	if len(mapMap(lab, "domains")) == 0 {
+		return nil, fmt.Errorf("answer-key generation requires an Active Directory lab with at least one domain")
+	}
 
 	labPath := filepath.Dir(filepath.Dir(configPath))
 	asrep := parseASREPTargets(labPath, lab)
@@ -538,14 +541,33 @@ func LoadAnswerKey(path string) (*AnswerKey, error) {
 	return &ak, nil
 }
 
-// WriteAnswerKey writes the answer key to disk as pretty-printed JSON.
+// WriteAnswerKey atomically writes the answer key as private, pretty-printed
+// JSON. Answer keys contain credentials, so they must not inherit ordinary
+// world-readable config-file permissions.
 func WriteAnswerKey(ak *AnswerKey, path string) error {
 	data, err := json.MarshalIndent(ak, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal answer key: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o644); err != nil {
-		return fmt.Errorf("write answer key %s: %w", path, err)
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".answer-key-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create temporary answer key beside %s: %w", path, err)
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("secure temporary answer key %s: %w", tmpPath, err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write temporary answer key %s: %w", tmpPath, err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temporary answer key %s: %w", tmpPath, err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("replace answer key %s: %w", path, err)
 	}
 	return nil
 }

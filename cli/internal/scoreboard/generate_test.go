@@ -20,25 +20,32 @@ func TestGenerateAnswerKeyMissingLab(t *testing.T) {
 	}
 }
 
-// TestGenerateAnswerKeyEmptyLab verifies that an empty lab config produces
-// a valid answer key with zero objectives rather than crashing.
-func TestGenerateAnswerKeyEmptyLab(t *testing.T) {
+// TestGenerateAnswerKeyRejectsNonADLab verifies that service ranges cannot be
+// mislabeled as GOAD answer keys merely because they also define hosts.
+func TestGenerateAnswerKeyRejectsNonADLab(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "data", "config.json")
 	if err := os.MkdirAll(filepath.Dir(cfg), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(cfg, []byte(`{"lab": {}}`), 0o644); err != nil {
+	if err := os.WriteFile(cfg, []byte(`{"lab":{"hosts":{"web01":{"hostname":"web01"}},"domains":{}}}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	ak, err := GenerateAnswerKey(cfg)
+	if _, err := GenerateAnswerKey(cfg); err == nil {
+		t.Fatal("expected non-AD lab to be rejected")
+	}
+}
+
+func TestWriteAnswerKeyIsPrivate(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "answer_key.json")
+	if err := WriteAnswerKey(&AnswerKey{Version: "2.0"}, path); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatal(err)
 	}
-	if len(ak.Objectives) != 0 {
-		t.Errorf("expected 0 objectives for empty lab, got %d", len(ak.Objectives))
-	}
-	if ak.TotalObjectives != 0 {
-		t.Errorf("expected TotalObjectives=0, got %d", ak.TotalObjectives)
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("answer key mode = %o, want 600", got)
 	}
 }

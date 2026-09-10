@@ -42,7 +42,8 @@ ad/REDLAB
 ad/EDRLAB
 ad/DEMO
 ad/FEDGOAD
-ad/MINILAB
+ad/MINILAB/*
+!ad/MINILAB/range.yml
 
 # Keys and secrets
 *.pem

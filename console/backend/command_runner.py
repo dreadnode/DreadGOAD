@@ -21,6 +21,7 @@ from . import (
     commands,
     fetch,
     hook,
+    lifecycle,
     paths,
     projectroot,
     summary,
@@ -346,7 +347,17 @@ async def _prepare_extra(
         raise _Aborted(1, str(exc)) from exc
     if rc_fetch != 0:
         raise _Aborted(rc_fetch, f"report fetch failed: {message[-300:]}", message)
-    return [local, *extra[1:]]
+    trailing = extra[1:]
+    if not _has_option(trailing, "--answer-key"):
+        generated_key = lifecycle.answer_key_path(session)
+        if generated_key.is_file():
+            trailing = ["--answer-key", str(generated_key), *trailing]
+    return [local, *trailing]
+
+
+def _has_option(args: list[str], option: str) -> bool:
+    """Return whether args contain ``--flag value`` or ``--flag=value``."""
+    return any(arg == option or arg.startswith(f"{option}=") for arg in args)
 
 
 # ---------------------------------------------------------------------------

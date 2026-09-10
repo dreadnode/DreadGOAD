@@ -18,7 +18,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import configstore, labconfig, paths, scaffold
+from . import configstore, labconfig, lifecycle, paths, scaffold
 from .db import Database
 from .schemas import RangeDocument, SessionDocument, SessionSnapshot
 
@@ -108,8 +108,8 @@ class SessionService:
         topo["session_id"] = sid
         await self.db.upsert_range(sid, topo)
 
-        await scaffold.generate_answer_key(session, self.repo_root)
         await self.db.append_event(sid, "session_created", {"label": lbl})
+        await self._initialize(session)
         return session
 
     async def create_new_env_session(
@@ -182,10 +182,40 @@ class SessionService:
             },
         )
         if ok:
-            await scaffold.generate_answer_key(session, self.repo_root)
+            # A variant's generated config does not exist when create_session
+            # first runs, so its declared actions report pending and need this
+            # post-scaffold retry. Ordinary ranges were already initialized at
+            # session creation; rerunning them here would duplicate events and
+            # unnecessarily rewrite generated artifacts.
+            if bool(env_fields.get("variant")):
+                await self._initialize(session)
             # The variant only exists now, so the topology seeded during
             # create_session above saw no lab config and holds infra nodes only.
             await self._reseed_topology(session)
+
+    async def _initialize(self, session: SessionDocument) -> None:
+        """Run and retain this range's declarative session initialization."""
+        try:
+            results = await lifecycle.initialize_session(session, self.repo_root)
+        except Exception as exc:  # noqa: BLE001 - initialization is non-fatal
+            results = [
+                {
+                    "action": "range_init",
+                    "status": "failed",
+                    "message": str(exc),
+                }
+            ]
+        for result in results:
+            action = result["action"].replace("_", " ")
+            detail = result.get("message", "")
+            content = f"Session initialization: {action} {result['status']}."
+            if detail:
+                content += f" {detail}"
+            await self.db.append_event(
+                session["id"],
+                "status",
+                {"content": content, "initialization": result},
+            )
 
     async def create_config_session(
         self,
