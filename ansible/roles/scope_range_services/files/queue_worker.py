@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# pyright: reportMissingImports=false, reportMissingModuleSource=false
 """Execute allowlisted synthetic range jobs and persist their results."""
 
 from __future__ import annotations

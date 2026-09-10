@@ -127,6 +127,29 @@ func TestDestroyWithStateProceeds(t *testing.T) {
 	}
 }
 
+func TestScopeDestroyUsesStableStateDirectory(t *testing.T) {
+	workDir := t.TempDir()
+	stateDir := filepath.Join(t.TempDir(), "scope-dev", "centralus")
+	writeTestState(t, filepath.Dir(filepath.Dir(stateDir)), 0o600)
+
+	if err := checkScopeInfraState(workDir, stateDir, "scope-dev", "centralus", "destroy"); err != nil {
+		t.Fatalf("destroy with stable state must proceed: %v", err)
+	}
+}
+
+func TestScopeDestroyWithoutStableStateIsRefused(t *testing.T) {
+	workDir := t.TempDir()
+	stateDir := filepath.Join(t.TempDir(), "scope-dev", "centralus")
+	err := checkScopeInfraState(workDir, stateDir, "scope-dev", "centralus", "destroy")
+	if err == nil {
+		t.Fatal("destroy without stable state must fail")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, stateDir) || !strings.Contains(msg, "outside the checkout") {
+		t.Fatalf("error does not explain stable state recovery:\n%s", msg)
+	}
+}
+
 func TestRemoteBackendDestroyDoesNotRequireLocalState(t *testing.T) {
 	dir := t.TempDir()
 	if err := checkInfraWorkDir(dir, "dev", "us-west-2", "destroy"); err != nil {

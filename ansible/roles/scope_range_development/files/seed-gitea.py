@@ -198,9 +198,7 @@ def ensure_repository_history() -> str:
             "commit",
             "-m",
             "chore: add service classification",
-            env=commit_environment(
-                "Shane", "shane@range.test", "2026-01-13T14:30:00Z"
-            ),
+            env=commit_environment("Shane", "shane@range.test", "2026-01-13T14:30:00Z"),
         )
 
         copy_seed(worktree, ".gitea")

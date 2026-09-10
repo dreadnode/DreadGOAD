@@ -176,6 +176,8 @@ Destroy the environment when it is not in use:
 ./cli/dreadgoad --env scope-dev infra destroy
 ```
 
-Terraform state is stored beneath `.dreadgoad/state/azure/scope-range/` rather
-than the disposable Terragrunt cache, so the normal CLI destroy path retains the
-state required to clean up the deployment.
+Terraform state is stored beneath `~/.dreadgoad/state/azure/scope-range/`,
+outside both the repository and the disposable Terragrunt cache. The CLI keeps
+that tree private and automatically migrates the checkout-local state path used
+by early SCOPE-RANGE builds. Back up this directory while a range is live: it is
+the record the normal CLI destroy path needs to clean up the deployment.

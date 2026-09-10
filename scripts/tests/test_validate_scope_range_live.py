@@ -10,6 +10,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from typing import Any
 
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -40,7 +41,7 @@ class InfrastructureAzure:
 
     def __init__(
         self,
-        manifest: dict[str, object],
+        manifest: dict[str, Any],
         *,
         wrong_nat: bool = False,
         missing_nat_public_ip: bool = False,

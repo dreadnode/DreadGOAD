@@ -35,6 +35,9 @@ type Options struct {
 	// BackendBootstrap tells Terragrunt to auto-provision the remote-state
 	// backend (S3 bucket / DynamoDB table) when it doesn't exist yet.
 	BackendBootstrap bool
+	// Reconfigure accepts the configured backend as authoritative during init.
+	// Callers use this after they have deliberately relocated local state.
+	Reconfigure bool
 	// ExtraEnv is appended to the child process environment in KEY=VALUE form.
 	// Used by callers that need to set Terragrunt feature toggles (e.g. the
 	// Azure Bastion module's DREADGOAD_ENABLE_AZURE_BASTION gate) without
@@ -99,23 +102,7 @@ func RunAll(ctx context.Context, opts Options) error {
 		}
 	}
 
-	// Terragrunt flags go before --, tofu flags go after the action.
-	args := []string{"run", "--all"}
-	// terragrunt v0.97+ auto-appends -auto-approve for run --all.
-	// Only add --no-auto-approve when the caller explicitly wants a prompt.
-	if !opts.AutoApprove && (opts.Action == "apply" || opts.Action == "destroy") {
-		args = append(args, "--no-auto-approve")
-	}
-	if opts.NonInteractive {
-		args = append(args, "--non-interactive")
-	}
-	if opts.BackendBootstrap {
-		args = append(args, "--backend-bootstrap")
-	}
-	args = append(args, "--", opts.Action)
-	if opts.Action == "init" {
-		args = append(args, "-upgrade")
-	}
+	args := buildRunAllArgs(opts)
 
 	slog.Info("running terragrunt run --all",
 		"action", opts.Action,
@@ -148,6 +135,30 @@ func RunAll(ctx context.Context, opts Options) error {
 		return commandError(fmt.Sprintf("terragrunt run --all %s failed", opts.Action), err, tail.String(), opts.TerragruntBinary)
 	}
 	return nil
+}
+
+func buildRunAllArgs(opts Options) []string {
+	// Terragrunt flags go before --, tofu flags go after the action.
+	args := []string{"run", "--all"}
+	// terragrunt v0.97+ auto-appends -auto-approve for run --all.
+	// Only add --no-auto-approve when the caller explicitly wants a prompt.
+	if !opts.AutoApprove && (opts.Action == "apply" || opts.Action == "destroy") {
+		args = append(args, "--no-auto-approve")
+	}
+	if opts.NonInteractive {
+		args = append(args, "--non-interactive")
+	}
+	if opts.BackendBootstrap {
+		args = append(args, "--backend-bootstrap")
+	}
+	args = append(args, "--", opts.Action)
+	if opts.Action == "init" {
+		args = append(args, "-upgrade")
+		if opts.Reconfigure {
+			args = append(args, "-reconfigure")
+		}
+	}
+	return args
 }
 
 func runAllInit(ctx context.Context, opts Options) error {
@@ -237,6 +248,9 @@ func buildArgs(opts Options) []string {
 	args := []string{opts.Action}
 	if opts.Action == "init" {
 		args = append(args, "-upgrade")
+		if opts.Reconfigure {
+			args = append(args, "-reconfigure")
+		}
 	}
 	if opts.AutoApprove && (opts.Action == "apply" || opts.Action == "destroy") {
 		args = append(args, "-auto-approve")

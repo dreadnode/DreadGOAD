@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -27,6 +28,18 @@ func TestBuildArgs_Init(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected -upgrade in args for init, got %v", args)
+	}
+}
+
+func TestBuildArgsInitReconfigure(t *testing.T) {
+	opts := Options{Action: "init", Reconfigure: true}
+	for name, args := range map[string][]string{
+		"single":  buildArgs(opts),
+		"run-all": buildRunAllArgs(opts),
+	} {
+		if !slices.Contains(args, "-reconfigure") {
+			t.Errorf("%s init args omit -reconfigure: %v", name, args)
+		}
 	}
 }
 

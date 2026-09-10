@@ -22,6 +22,28 @@ const ROLE_OS: Record<string, string> = {
   attackbox: 'Kali Linux',
   linux: 'Linux',
 }
+const OS_LABEL: Record<string, string> = {
+  linux: 'Linux',
+  windows: 'Windows Server',
+  kali: 'Kali Linux',
+}
+
+const describeHostOS = (host: RangeHost) => {
+  const configured = host.os?.trim()
+  if (configured) {
+    return {
+      label: OS_LABEL[configured.toLowerCase()] ?? configured,
+      title: "Declared by the host's lab definition",
+    }
+  }
+  const derived = ROLE_OS[host.role]
+  return derived
+    ? {
+        label: derived,
+        title: "Derived from the host's role for a legacy lab definition",
+      }
+    : null
+}
 
 const isConnectable = (host: RangeHost) => host.role === 'attackbox'
 
@@ -49,6 +71,7 @@ export default function HostNode({ data }: NodeProps) {
   const service = isManagedService(host)
   const onConnect = useContext(ConnectRequest)
   const onDetail = useContext(DetailRequest)
+  const operatingSystem = describeHostOS(host)
   const moniker = (host.key ?? '').toUpperCase()
   const showMoniker = moniker !== '' && moniker !== (host.hostname ?? '').toUpperCase()
   const color = service
@@ -168,13 +191,13 @@ export default function HostNode({ data }: NodeProps) {
         }}>{host.ip_private}</div>
       )}
 
-      {!service && (ROLE_OS[host.role] || host.cloud_name || host.ip_public) && (
+      {!service && (operatingSystem || host.cloud_name || host.ip_public) && (
         <div style={{ marginTop: 6, paddingTop: 5, borderTop: '1px solid var(--dg-node-rule)' }}>
-          {ROLE_OS[host.role] && (
+          {operatingSystem && (
             <NodeRow
               label="os"
-              value={ROLE_OS[host.role]}
-              title="Derived from the host's role in the lab definition, not read from the VM"
+              value={operatingSystem.label}
+              title={operatingSystem.title}
             />
           )}
           {host.cloud_name && <NodeRow label="vm" value={host.cloud_name} />}

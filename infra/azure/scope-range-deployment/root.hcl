@@ -18,8 +18,12 @@ provider "azurerm" {
 EOF
 }
 
-# Keep local state outside .terragrunt-cache so clearing the cache cannot lose
-# ownership of live Azure resources. The state directory is gitignored.
+# Keep local state outside both .terragrunt-cache and the repository so clearing
+# caches or replacing a checkout cannot lose ownership of live Azure resources.
+locals {
+  scope_state_root = pathexpand("~/.dreadgoad/state/azure/scope-range")
+}
+
 remote_state {
   backend = "local"
   generate = {
@@ -27,6 +31,6 @@ remote_state {
     if_exists = "overwrite_terragrunt"
   }
   config = {
-    path = "${get_repo_root()}/.dreadgoad/state/azure/scope-range/${path_relative_to_include()}/terraform.tfstate"
+    path = "${local.scope_state_root}/${path_relative_to_include()}/terraform.tfstate"
   }
 }

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# pyright: reportMissingImports=false, reportMissingModuleSource=false
 """Publish each versioned SCOPE-RANGE seed job once and await completion."""
 
 from __future__ import annotations

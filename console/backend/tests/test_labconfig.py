@@ -10,6 +10,7 @@ import pathlib
 import stat
 import sys
 import tempfile
+import typing as t
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
@@ -24,6 +25,7 @@ from console.backend.labconfig import (  # noqa: E402
     session_lab_config_path,
     write_new_env,
 )
+from console.backend.schemas import SessionDocument  # noqa: E402
 
 _REPO = pathlib.Path(__file__).resolve().parents[3]
 
@@ -167,10 +169,13 @@ def test_explicit_lab_rejects_unsafe_names() -> None:
 def test_real_scope_lab_uses_generic_attackbox() -> None:
     config_path = _REPO / "dreadgoad.yaml"
     snap = derive_snapshot(str(config_path), "scope-dev")
-    session = {
-        "anchor": {"config_path": str(config_path), "env": "scope-dev"},
-        "snapshot": snap,
-    }
+    session = t.cast(
+        SessionDocument,
+        {
+            "anchor": {"config_path": str(config_path), "env": "scope-dev"},
+            "snapshot": snap,
+        },
+    )
     resolved = session_lab_config_path(session, str(_REPO))
     expected_path = _REPO / "ad" / "SCOPE-RANGE" / "data" / "scope-dev-config.json"
     assert resolved == str(expected_path), resolved
@@ -186,15 +191,25 @@ def test_real_scope_lab_uses_generic_attackbox() -> None:
     }
     assert ids == expected_config_hosts | {"attackbox", "bastion"}, ids
     assert "kali01" not in ids, "the real Kali VM must use the generic attackbox node"
+    scope_hosts = [
+        host for host in topology["hosts"] if host["id"] in expected_config_hosts
+    ]
+    assert {host.get("os") for host in scope_hosts} == {"linux"}, scope_hosts
     print("PASS test_real_scope_lab_uses_generic_attackbox")
 
 
 def test_session_lab_config_path_falls_back_and_refuses_env_escape() -> None:
     config_path = _REPO / "dreadgoad.yaml"
-    session = {
-        "anchor": {"config_path": str(config_path), "env": "missing-env-config"},
-        "snapshot": {"lab": "ad/SCOPE-RANGE"},
-    }
+    session = t.cast(
+        SessionDocument,
+        {
+            "anchor": {
+                "config_path": str(config_path),
+                "env": "missing-env-config",
+            },
+            "snapshot": {"lab": "ad/SCOPE-RANGE"},
+        },
+    )
     expected_base = _REPO / "ad" / "SCOPE-RANGE" / "data" / "config.json"
     assert session_lab_config_path(session, str(_REPO)) == str(expected_base)
 

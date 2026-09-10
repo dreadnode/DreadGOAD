@@ -250,7 +250,7 @@ func azureModuleEnv(cmd *cobra.Command, action, moduleRoot string) []string {
 // Layout: infra/azure/{deployment}/{env}/{region}/. Default deployment is
 // "goad-deployment" (the lab); standalone modules can live alongside this
 // tree but are not the primary lifecycle path.
-func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) error {
+func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) (resultErr error) {
 	if err := materializeLabConfig(cfg); err != nil {
 		return fmt.Errorf("materialize lab config: %w", err)
 	}
@@ -287,6 +287,23 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 		}
 	}
 
+	var scopeStateDir string
+	if cfg.ResolvedLab() == "SCOPE-RANGE" {
+		homeDir, homeErr := os.UserHomeDir()
+		if homeErr != nil {
+			return fmt.Errorf("resolve user home for SCOPE-RANGE state: %w", homeErr)
+		}
+		stateRoot, stateErr := prepareScopeState(cfg.ProjectRoot, homeDir)
+		if stateErr != nil {
+			return stateErr
+		}
+		scopeStateDir = filepath.Join(stateRoot, cfg.Env, region)
+		opts.Reconfigure = true
+		defer func() {
+			resultErr = errors.Join(resultErr, secureScopeState(stateRoot))
+		}()
+	}
+
 	// Resolved after the legacy fallback: the destroy-time module sweep looks
 	// for module directories, so pointing it at the deployment-shaped path on
 	// a legacy layout would find none and silently orphan them.
@@ -305,8 +322,14 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 	// Checked after the fallback so the legacy layout is still accepted, and
 	// state-aware so a destroy with nothing to destroy says why (see
 	// infra_state.go) rather than pointing at a directory.
-	if err := checkLocalInfraState(workDir, cfg.Env, region, action); err != nil {
-		return err
+	var stateErr error
+	if scopeStateDir != "" {
+		stateErr = checkScopeInfraState(workDir, scopeStateDir, cfg.Env, region, action)
+	} else {
+		stateErr = checkLocalInfraState(workDir, cfg.Env, region, action)
+	}
+	if stateErr != nil {
+		return stateErr
 	}
 
 	opts.LogFile = infraLogPath(cfg, action, deployment, module)
@@ -558,7 +581,20 @@ func renderProxmoxTemplates(cfg *config.Config, workDir string) error {
 	return tfrender.Render(renderOpts)
 }
 
-func runAzureInfraOutput(cfg *config.Config, deployment, region, module string) error {
+func runAzureInfraOutput(cfg *config.Config, deployment, region, module string) (resultErr error) {
+	if cfg.ResolvedLab() == "SCOPE-RANGE" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("resolve user home for SCOPE-RANGE state: %w", err)
+		}
+		stateRoot, err := prepareScopeState(cfg.ProjectRoot, homeDir)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			resultErr = errors.Join(resultErr, secureScopeState(stateRoot))
+		}()
+	}
 	workDir := filepath.Join(cfg.ProjectRoot, "infra", "azure", deployment, cfg.Env, region)
 	if _, err := os.Stat(workDir); os.IsNotExist(err) {
 		workDir = filepath.Join(cfg.ProjectRoot, "infra", "azure", region)

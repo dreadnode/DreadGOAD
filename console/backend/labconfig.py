@@ -250,6 +250,12 @@ def seed_topology(lab_config_path: str | None, provider: str | None) -> RangeDoc
     hosts: list[RangeHost] = []
     for _key, h in hosts_cfg.items():
         hostname = h.get("hostname", _key)
+        configured_os = h.get("os")
+        operating_system = (
+            configured_os.strip()
+            if isinstance(configured_os, str) and configured_os.strip()
+            else None
+        )
         host = new_range_host(
             hostname,
             # The config key (``dc01``) is the CLI's host *role*, and it's what
@@ -261,6 +267,7 @@ def seed_topology(lab_config_path: str | None, provider: str | None) -> RangeDoc
             _role_for(h.get("type", "")),
             "config",
             h.get("domain"),
+            operating_system,
         )
         hosts.append(host)
 

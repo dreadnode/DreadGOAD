@@ -81,7 +81,7 @@ async def reseed(
 async def repair_missing_config_hosts(
     app: t.Any, session_id: str, rng: t.Mapping[str, t.Any]
 ) -> PersistedRangeDocument:
-    """Seed the lab's hosts into a topology that was built before they existed.
+    """Repair config hosts and metadata missing from an older topology.
 
     Returns the repaired range, or ``rng`` unchanged when there is nothing to do.
 
@@ -99,14 +99,18 @@ async def repair_missing_config_hosts(
     was not reachable when the session was made.
 
     Deliberately a repair rather than an unconditional reseed. It fires only
-    when the topology has NO config-sourced hosts and the lab config now exists,
-    which makes it self-limiting — one pass and the precondition is false. An
-    unconditional reseed on every read would fight `/extensions`, whose nodes
-    this seed does not produce.
+    when the topology has NO config-sourced hosts or when an existing config
+    host predates OS metadata. Both cases are self-limiting after one persisted
+    repair. An unconditional reseed on every read would fight `/extensions`,
+    whose nodes this seed does not produce.
     """
     document = t.cast(PersistedRangeDocument, rng)
     hosts = document.get("hosts") or []
-    if any(h.get("source") == "config" for h in hosts):
+    missing_config_hosts = not any(h.get("source") == "config" for h in hosts)
+    missing_os_metadata = any(
+        h.get("source") == "config" and "os" not in h for h in hosts
+    )
+    if not missing_config_hosts and not missing_os_metadata:
         return document
 
     db = app.state.db
@@ -120,8 +124,37 @@ async def repair_missing_config_hosts(
     seeded = labconfig.seed_topology(
         config, (session.get("snapshot") or {}).get("provider")
     )
-    if not any(h.get("source") == "config" for h in seeded.get("hosts", [])):
+    seeded_config_hosts = [
+        h for h in seeded.get("hosts", []) if h.get("source") == "config"
+    ]
+    if not seeded_config_hosts:
         return document  # config parsed but defines no hosts — leave as-is
+
+    if not missing_config_hosts:
+        # Do not re-seed an established topology merely to backfill metadata:
+        # that could change its node set and interfere with extension nodes.
+        # Match by the stable config key first, with ID as a legacy fallback.
+        seeded_by_key = {h.get("key"): h for h in seeded_config_hosts if h.get("key")}
+        seeded_by_id = {h["id"]: h for h in seeded_config_hosts}
+        repaired_hosts: list[RangeHost] = []
+        changed = False
+        for host in hosts:
+            repaired_host = t.cast(RangeHost, dict(host))
+            if host.get("source") == "config" and "os" not in host:
+                host_key, host_id = host.get("key"), host.get("id")
+                reference = (
+                    seeded_by_key.get(host_key) if isinstance(host_key, str) else None
+                ) or (seeded_by_id.get(host_id) if isinstance(host_id, str) else None)
+                if reference is not None:
+                    repaired_host["os"] = reference.get("os")
+                    changed = True
+            repaired_hosts.append(repaired_host)
+        if not changed:
+            return document
+        repaired = t.cast(PersistedRangeDocument, dict(document))
+        repaired["hosts"] = repaired_hosts
+        await db.upsert_range(session_id, repaired)
+        return repaired
 
     # Carry over anything the seed does not produce. merge_reseed makes the
     # seeded set authoritative and drops the rest, which is right for a genuine

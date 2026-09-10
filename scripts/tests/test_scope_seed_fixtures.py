@@ -14,12 +14,8 @@ POSTGRES_SEED = ROOT / "ansible/roles/scope_range_data/files/init-postgres.sh"
 MARIADB_SEED = ROOT / "ansible/roles/scope_range_data/files/init-mariadb.sql"
 MONGO_SEED = ROOT / "ansible/roles/scope_range_data/files/init-mongo.js"
 VALIDATION_MANIFEST = ROOT / "ad/SCOPE-RANGE/data/validation.json"
-KALI_SMOKE_TEST = (
-    ROOT / "ansible/roles/scope_range_kali/files/scope-range-smoke.sh"
-)
-VENDOR_CONTACTS = (
-    ROOT / "ansible/roles/scope_range_storage/files/vendor-contacts.csv"
-)
+KALI_SMOKE_TEST = ROOT / "ansible/roles/scope_range_kali/files/scope-range-smoke.sh"
+VENDOR_CONTACTS = ROOT / "ansible/roles/scope_range_storage/files/vendor-contacts.csv"
 
 
 def sql_insert_rows(source: str, table: str) -> list[str]:
@@ -38,6 +34,14 @@ def sql_insert_rows(source: str, table: str) -> list[str]:
     ]
 
 
+def required_match_group(pattern: str, value: str) -> str:
+    """Return the first regex group or fail with useful fixture context."""
+    match = re.match(pattern, value)
+    if match is None:
+        raise AssertionError(f"fixture row did not match {pattern!r}: {value!r}")
+    return match.group(1)
+
+
 class ScopeSeedFixtureTests(unittest.TestCase):
     """Keep fixture volume, story, and live assertions synchronized."""
 
@@ -51,15 +55,16 @@ class ScopeSeedFixtureTests(unittest.TestCase):
         self.assertEqual(len(projects), 16)
         self.assertEqual(len(invoices), 24)
         self.assertEqual(len(sql_insert_rows(source, "authorization_records")), 6)
-        invoice_customer_ids = [int(re.match(r"\((\d+),", row).group(1)) for row in invoices]  # type: ignore[union-attr]
-        self.assertEqual(invoice_customer_ids, [item for item in range(1, 13) for _ in range(2)])
+        invoice_customer_ids = [
+            int(required_match_group(r"\((\d+),", row)) for row in invoices
+        ]
+        self.assertEqual(
+            invoice_customer_ids, [item for item in range(1, 13) for _ in range(2)]
+        )
         self.assertIn("Dreadnode Biology Division", source)
         self.assertIn("'KRAKEN'", source)
 
-        sql_companies = {
-            re.match(r"\('([^']+)'", row).group(1)  # type: ignore[union-attr]
-            for row in customers
-        }
+        sql_companies = {required_match_group(r"\('([^']+)'", row) for row in customers}
         with VENDOR_CONTACTS.open(encoding="utf-8", newline="") as stream:
             storage_companies = {row["company"] for row in csv.DictReader(stream)}
         self.assertEqual(storage_companies, sql_companies)
