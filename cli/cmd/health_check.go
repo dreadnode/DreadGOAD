@@ -18,16 +18,16 @@ import (
 
 var healthCheckCmd = &cobra.Command{
 	Use:   "health-check",
-	Short: "Verify all lab instances are healthy",
-	Long: `Runs health checks across all lab instances to verify:
-  - Domain controllers are responding
-  - AD replication is working with no failures
-  - Domain trusts are established
-  - DNS resolution across domains
-  - Member servers can reach their DCs
-  - Critical services (IIS, MSSQL) are running`,
+	Short: "Verify the selected lab's hosts and core services",
+	Long: `Runs the health checks defined for the selected lab.
+
+GOAD-family labs check Active Directory, replication, trusts, DNS, and critical
+Windows services. SCOPE-RANGE checks that every expected Linux VM is running
+and that its core application, database, storage, and infrastructure services
+are available. Use validate for the lab's complete expected-state audit.`,
 	Example: `  dreadgoad health-check
-  dreadgoad health-check --env staging`,
+	dreadgoad health-check --env staging
+	dreadgoad health-check --json`,
 	RunE: runHealthCheck,
 }
 
@@ -65,11 +65,21 @@ type healthReport struct {
 }
 
 func runHealthCheck(cmd *cobra.Command, args []string) error {
-	// Signal-aware context so SIGINT (e.g. the web app's cancel) aborts the
-	// in-flight checks promptly instead of running to completion.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	// Preserve Cobra's parent cancellation while also handling SIGINT directly,
+	// so callers and the web console can abort in-flight checks promptly.
+	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 	defer stop()
 	jsonOut := healthCheckJSON
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
+	return inspectorFor(cfg).health(ctx, cmd, cfg, jsonOut)
+}
+
+func runGOADHealthCheck(
+	ctx context.Context, _ *cobra.Command, cfg *config.Config, jsonOut bool,
+) error {
 
 	// In JSON mode the human table is suppressed so stdout carries only the
 	// report (the web app parses it for per-host health).
@@ -79,11 +89,6 @@ func runHealthCheck(cmd *cobra.Command, args []string) error {
 		left := pad / 2
 		right := pad - left
 		fmt.Printf("%s%s%s\n", strings.Repeat("=", left), title, strings.Repeat("=", right))
-	}
-
-	cfg, err := config.Get()
-	if err != nil {
-		return err
 	}
 
 	infra, err := requireInfra(ctx)
@@ -97,6 +102,9 @@ func runHealthCheck(cmd *cobra.Command, args []string) error {
 	}
 
 	checks := buildChecks(infra.Lab)
+	if len(checks) == 0 {
+		return fmt.Errorf("no health checks are defined for lab %s", cfg.ResolvedLab())
+	}
 
 	passed := 0
 	failed := 0

@@ -74,11 +74,11 @@ loop.
 | `/score` | `score` | 🤖 agent | Fetch an agent report off the attack box and score it |
 | `/exec` | `exec --json` | 🤖 agent | Run a script on named hosts via the cloud control plane |
 | `/restart` | `lab restart-vm` | 🤖 agent | Reboot one host, leaving the rest of the range up |
-| `/status` | `lab status --json`, then `health-check --json` | 🤖 agent | Cloud power state and host health in one pass |
+| `/status` | `lab status --json`, then `health-check --json` | ⚡ direct composite | Cloud power state and host health in one pass |
 | `/instances` | `lab status --json` | ⚡ direct | Cloud power state |
-| `/health` | `health-check --json` | ⚡ direct | Per-host AD health (rendered as a table) |
+| `/health` | `health-check --json` | ⚡ direct | Per-host core service health (rendered as a table) |
 | `/secure` | `security-check --json` | ⚡ direct | Network security posture |
-| `/validate` | `validate` | ⚡ direct | Vuln-config correctness |
+| `/validate` | `validate --json` | ⚡ direct | Full expected-state validation for the selected lab |
 | `/start [host]` | `lab start` / `lab start-vm` | ⚡ direct | Power on the range or one VM |
 | `/stop [host]` | `lab stop` / `lab stop-vm` | ⚡ direct | Power off the range or one VM |
 | `/scrub` | `score reset` | ⚡ direct | Clean agent artifacts (add `dry` to preview) |
@@ -108,9 +108,10 @@ errors all fail closed without starting the command.
 
 The agent's tool can reach every concrete backend command in the table except
 `/login`, direct ones included, so it can answer a question by running a read and
-act on a request in plain English. The composite `/status` command is expanded
-into `/instances` and `/health` before the model turn; `/status` itself is not a
-tool command. The client-only `/help` and `/copy` commands are also unavailable.
+act on a request in plain English. The backend executes the composite `/status`
+command as `/instances` followed by `/health`; it does not require a model turn
+and `/status` itself is not a tool command. The client-only `/help` and `/copy`
+commands are also unavailable.
 The `/up` and `/destroy` approval boundary is enforced mechanically in the
 backend, regardless of whether the command came from typed input or an agent tool
 call. Other state-changing commands retain their documented prompt-level safety

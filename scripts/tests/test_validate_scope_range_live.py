@@ -134,6 +134,16 @@ class ManifestTests(unittest.TestCase):
                 for host in hosts.values()
             )
         )
+        health_counts = {
+            host_id: len(
+                validator.select_host_checks(host, quick=False, health=True)["checks"]
+            )
+            for host_id, host in hosts.items()
+        }
+        self.assertTrue(
+            all(count > 0 for count in health_counts.values()), health_counts
+        )
+        self.assertLess(sum(health_counts.values()), 20, health_counts)
         check_names = {
             check["name"] for host in hosts.values() for check in host["checks"]
         }
@@ -186,6 +196,15 @@ class ManifestTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "invalid quick flag"):
                 validator.load_manifest(path)
 
+    def test_invalid_health_flag_is_rejected(self) -> None:
+        manifest = json.loads(json.dumps(self.manifest))
+        manifest["hosts"][0]["checks"][0]["health"] = "yes"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = pathlib.Path(temp_dir) / "manifest.json"
+            path.write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "invalid health flag"):
+                validator.load_manifest(path)
+
     def test_extra_template_field_is_rejected(self) -> None:
         manifest = json.loads(json.dumps(self.manifest))
         manifest["resource_group_template"] = "{env}-{0}-rg"
@@ -215,6 +234,7 @@ class RemoteExecutionTests(unittest.TestCase):
                     "category": "Data",
                     "name": "first check",
                     "quick": True,
+                    "health": True,
                     "command": "test secret-value = secret-value",
                 },
                 {
@@ -232,6 +252,14 @@ class RemoteExecutionTests(unittest.TestCase):
         self.assertNotIn("secret-value", launcher)
         self.assertNotIn("first check", launcher)
         self.assertIn("base64 -d | bash", launcher)
+
+    def test_health_subset_is_explicit_and_exclusive(self) -> None:
+        selected = validator.select_host_checks(self.host, quick=False, health=True)[
+            "checks"
+        ]
+        self.assertEqual([check["name"] for check in selected], ["first check"])
+        with self.assertRaisesRegex(ValueError, "mutually exclusive"):
+            validator.select_host_checks(self.host, quick=True, health=True)
 
     def test_remote_commands_cannot_consume_the_check_stream(self) -> None:
         self.assertIn(
@@ -441,6 +469,7 @@ class ReportTests(unittest.TestCase):
             (3, 1, 1, 1),
         )
         self.assertEqual(report["mode"], "quick")
+        self.assertEqual(report["report_type"], "validation")
         with tempfile.TemporaryDirectory() as temp_dir:
             path = pathlib.Path(temp_dir) / "report.json"
             validator.write_report(path, report)

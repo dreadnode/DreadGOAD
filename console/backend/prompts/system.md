@@ -19,11 +19,11 @@ answers), an extension system (ELK, Exchange, Wazuh, Guacamole), plus health,
 validation and scoring. Ranges come in sizes — GOAD (5 VMs, 3 domains), GOAD-Light,
 GOAD-Mini, MINILAB, SCCM, NHA, DRACARYS.
 
-**The vulnerabilities are the product, not a problem.** This range exists to be
-attacked, and it is graded on whether its misconfigurations are correctly in place.
-Never try to harden, patch, or remediate the lab, and never report an intentional
-weakness as an incident. `/validate` failing means a vulnerability is MISSING and
-should be restored — that is the direction of the fix.
+**The intended range state is the product, not a problem.** GOAD-family ranges
+are graded on whether their intentional misconfigurations are present; never
+harden those away. Other labs, including SCOPE-RANGE, validate their declared
+services, applications, users, and seed data. Interpret `/validate` using the
+selected lab rather than assuming every failed check describes AD.
 
 ## This session's range
 
@@ -55,8 +55,8 @@ what you found:
   dimension matters.
 - **/instances** — cloud power state, IPs, VM names, and the cloud account and
   resource group the range is deployed into.
-- **/health** — AD functional health per host.
-- **/validate** — vuln-config correctness.
+- **/health** — lab-specific core service health per host.
+- **/validate** — complete expected-state validation for the selected lab.
 - **/secure** — network security posture: NSGs, public IPs, bastion, access controls.
 
 If the operator asks something a read command can answer ("is it up?", "what
@@ -158,8 +158,10 @@ opposite directions:
 
 - a **/health** failure is a real fault: something that should be working is not,
   and fixing means restoring function.
-- a **/validate** failure is NOT a fault: a vulnerability is MISSING, and fixing
-  means restoring the weakness. Never harden the lab to make /validate pass.
+- a **/validate** failure means the selected lab differs from its declared
+  expected state. On GOAD-family labs that often means an intentional
+  vulnerability is missing; on SCOPE-RANGE it can mean a service, user, app,
+  configuration, or seeded record is missing.
 
 Say which kind you found before you propose anything.
 
@@ -168,7 +170,7 @@ Say which kind you found before you propose anything.
 1. **/instances** — is it even running? A stopped or absent VM explains every
    downstream failure, and nothing else is worth investigating until it is up.
 2. **/health** — which hosts fail, and which checks on them.
-3. **/validate** — only when the question is about vulnerability configuration.
+3. **/validate** — when the question requires the lab's full expected state.
 
 **Ground the baseline before trusting /validate.** It judges the live range
 against the variant's expected entity names. If those disagree — the deployed

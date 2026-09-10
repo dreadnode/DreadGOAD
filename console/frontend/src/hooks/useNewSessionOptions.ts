@@ -11,6 +11,7 @@ interface NewSessionOptions {
   envChoice: string
   setEnvChoice: (value: string) => void
   loadedProvider: string
+  loadedProviders: Record<string, string>
   loadedRegions: Record<string, string | null>
   loadedPath: string
   labList: LabSummary[]
@@ -32,6 +33,7 @@ export function useNewSessionOptions(
   const [loading, setLoading] = useState(false)
   const [envChoice, setEnvChoice] = useState('')
   const [loadedProvider, setLoadedProvider] = useState('')
+  const [loadedProviders, setLoadedProviders] = useState<Record<string, string>>({})
   const [loadedRegions, setLoadedRegions] = useState<Record<string, string | null>>({})
   const [loadedPath, setLoadedPath] = useState('')
   const [labList, setLabList] = useState<LabSummary[]>([])
@@ -57,6 +59,7 @@ export function useNewSessionOptions(
     setEnvChoice('')
     setConfigOk(false)
     setLoadedProvider('')
+    setLoadedProviders({})
     setLoadedRegions({})
     setLoadedPath('')
   }, [])
@@ -80,6 +83,7 @@ export function useNewSessionOptions(
       setConfigOk(true)
       setLoadedPath(trimmedPath)
       setLoadedProvider(result.provider || '')
+      setLoadedProviders(result.env_providers || {})
       setLoadedRegions(result.env_regions || {})
       setEnvChoice(previous => result.environments.includes(previous)
         ? previous
@@ -143,6 +147,7 @@ export function useNewSessionOptions(
     envChoice,
     setEnvChoice,
     loadedProvider,
+    loadedProviders,
     loadedRegions,
     loadedPath,
     labList,

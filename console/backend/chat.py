@@ -3,6 +3,7 @@
 One socket carries a ``session_id`` on every message. Dispatch (§5.1):
   - ``dispatch="direct"`` commands (deterministic reads, /destroy) run the CLI
     programmatically via ``run_cli``;
+  - ``dispatch="composite"`` commands run a fixed sequence of direct commands;
   - ``dispatch="agent"`` commands expand to a structured prompt and run through
     the agent's ``run_dreadgoad`` tool — which calls the *same* ``run_cli``, so
     both paths stream/status/hook/cancel identically;
@@ -288,6 +289,25 @@ async def handle_message(app: t.Any, session_id: str, content: str) -> None:
             exit_code, output = await run_cli(app, session_id, name, extra)
             await _inject_direct_note(app, session_id, name, extra, exit_code, output)
             await emit_event(app, session_id, "agent_end", {"failed": exit_code != 0})
+            return
+        if cmd.dispatch == "composite":
+            if extra:
+                await emit_event(
+                    app,
+                    session_id,
+                    "error",
+                    {"message": f"{name} takes no arguments (got: {' '.join(extra)})"},
+                )
+                await emit_event(app, session_id, "agent_end", {"failed": True})
+                return
+            failed = False
+            for child_name in cmd.agent_commands:
+                exit_code, output = await run_cli(app, session_id, child_name, [])
+                await _inject_direct_note(
+                    app, session_id, child_name, [], exit_code, output
+                )
+                failed = failed or exit_code != 0
+            await emit_event(app, session_id, "agent_end", {"failed": failed})
             return
         # dispatch="agent": expand to a structured prompt; the agent runs it via
         # its run_dreadgoad tool (robust arg interpretation, constrained).

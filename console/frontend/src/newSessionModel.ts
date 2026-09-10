@@ -18,6 +18,7 @@ export interface NewSessionModelInput {
   configOk: boolean
   envChoice: string
   loadedProvider: string
+  loadedProviders: Record<string, string>
   loadedRegions: Record<string, string | null>
   newEnv: string
   source: string
@@ -89,7 +90,8 @@ export function deriveNewSessionModel(input: NewSessionModelInput): NewSessionMo
   const selected = input.listing?.configs.find(config => config.path === configPath)
   const effectiveProvider = creatingConfig
     ? input.provider
-    : (input.loadedProvider || selected?.provider || '')
+    : ((!creatingEnv && input.loadedProviders[input.envChoice])
+      || input.loadedProvider || selected?.provider || 'aws')
   const providers = input.listing?.providers ?? input.cfg.providers ?? ['aws', 'azure']
   const credentialHint = input.listing?.credential_hints?.[effectiveProvider] || ''
 

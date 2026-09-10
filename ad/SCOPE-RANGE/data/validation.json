@@ -38,6 +38,7 @@
           "category": "Base",
           "name": "Docker service is active",
           "quick": true,
+          "health": true,
           "command": "test \"$(systemctl is-active docker)\" = active"
         },
         {
@@ -62,6 +63,7 @@
           "category": "DNS",
           "name": "all range host records resolve correctly",
           "quick": true,
+          "health": true,
           "command": "for pair in 'kali01.range.test 10.50.10.10' 'web01.range.test 10.50.10.20' 'data01.range.test 10.50.10.30' 'dev01.range.test 10.50.10.40' 'storage01.range.test 10.50.10.50' 'services01.range.test 10.50.10.60'; do set -- $pair; test \"$(dig +short \"$1\" | tail -n 1)\" = \"$2\" || exit 1; done"
         },
         {
@@ -131,12 +133,14 @@
           "category": "Web",
           "name": "Nginx is active",
           "quick": true,
+          "health": true,
           "command": "test \"$(systemctl is-active nginx)\" = active"
         },
         {
           "category": "Web",
           "name": "WordPress and Nextcloud containers are running",
           "quick": true,
+          "health": true,
           "command": "for container in scope-wordpress scope-nextcloud; do test \"$(docker inspect -f '{{.State.Status}}' \"$container\")\" = running || exit 1; done"
         },
         {
@@ -229,6 +233,7 @@
           "category": "Database",
           "name": "all database containers are running",
           "quick": true,
+          "health": true,
           "command": "for container in scope-postgres scope-mariadb scope-mongodb scope-redis; do test \"$(docker inspect -f '{{.State.Status}}' \"$container\")\" = running || exit 1; done"
         },
         {
@@ -314,12 +319,14 @@
           "category": "Development",
           "name": "development containers and runner are running",
           "quick": true,
+          "health": true,
           "command": "for container in scope-gitea scope-gitea-runner scope-jenkins scope-registry; do test \"$(docker inspect -f '{{.State.Status}}' \"$container\")\" = running || exit 1; done"
         },
         {
           "category": "Gitea",
           "name": "Gitea API is healthy",
           "quick": true,
+          "health": true,
           "command": "curl -fsS http://127.0.0.1:3000/api/healthz >/dev/null"
         },
         {
@@ -429,6 +436,7 @@
           "category": "Storage",
           "name": "network file services are active",
           "quick": true,
+          "health": true,
           "command": "for service in nfs-kernel-server smbd rsync; do test \"$(systemctl is-active \"$service\")\" = active || exit 1; done && timeout 5 bash -c 'exec 3<>/dev/tcp/127.0.0.1/22; IFS= read -r banner <&3; [[ \"$banner\" == SSH-* ]]'"
         },
         {
@@ -471,6 +479,7 @@
           "category": "Object Storage",
           "name": "Garage container and health endpoint are healthy",
           "quick": true,
+          "health": true,
           "command": "test \"$(docker inspect -f '{{.State.Status}}' scope-garage)\" = running && curl -fsS http://127.0.0.1:3903/health >/dev/null"
         },
         {
@@ -532,6 +541,7 @@
           "category": "Services",
           "name": "infrastructure services are active",
           "quick": true,
+          "health": true,
           "command": "for service in bind9 dovecot postfix rabbitmq-server scope-queue-worker; do test \"$(systemctl is-active \"$service\")\" = active || exit 1; done"
         },
         {
@@ -544,6 +554,7 @@
           "category": "LDAP",
           "name": "OpenLDAP container is running",
           "quick": true,
+          "health": true,
           "command": "test \"$(docker inspect -f '{{.State.Status}}' scope-openldap)\" = running"
         },
         {

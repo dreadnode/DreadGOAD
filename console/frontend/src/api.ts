@@ -140,7 +140,7 @@ export interface CommandDef {
   description: string
   detail: string        // consequence/prerequisite, shown under the description
   cli: string           // the dreadgoad verb this maps to
-  dispatch: 'direct' | 'agent'
+  dispatch: 'direct' | 'composite' | 'agent'
   long_running: boolean
   takes_args: boolean
   /** Cannot be undone; useful for warnings and backend approval presentation. */
@@ -163,6 +163,8 @@ export const api = {
     environments: string[]
     provider?: string
     region?: string
+    /** Per environment, the provider the CLI resolves — env key, file key, then AWS. */
+    env_providers?: Record<string, string>
     /** Per environment, the region the CLI resolves — env key first, file key as fallback. */
     env_regions?: Record<string, string | null>
   }> =>

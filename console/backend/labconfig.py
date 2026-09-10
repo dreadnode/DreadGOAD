@@ -1,8 +1,8 @@
 """Derive session snapshots and seed range topology from lab config (§4.3, §6.3).
 
 Two inputs:
-  - ``dreadgoad.yaml``      → the session *snapshot* (provider/region file-level;
-                             variant/lab/network per-env)
+  - ``dreadgoad.yaml``      → the session *snapshot* (provider/region/lab
+                             resolved per environment; variant/network per-env)
   - ``ad/<lab>/data/config.json`` → the range *topology* (hosts + roles)
 
 The snapshot is a cache derived from the ``(config_path, env)`` anchor; the
@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import typing as t
 
@@ -45,6 +46,10 @@ CLI_PROVIDERS = ("aws", "azure", "proxmox", "ludus")
 # happily and then be unable to render or connect, so the create UI offers only
 # these while the CLI keeps supporting the rest.
 CONSOLE_PROVIDERS = ("aws", "azure")
+
+# Matches cli/internal/config.validLabName. Explicit lab names are joined below
+# ``ad/``, so separators and dot segments must never be accepted here.
+_VALID_LAB_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 
 
 def _environments_of(data: dict[str, t.Any], config_path: str) -> dict[str, t.Any]:
@@ -89,56 +94,84 @@ def list_environments(config_path: str) -> dict[str, t.Any]:
             f"{config_path} is not a valid config (expected a YAML mapping)"
         )
     envs = _environments_of(data, config_path)
-    provider = data.get("provider")
+    file_provider = data.get("provider")
     file_region = data.get("region")
 
-    # Per environment, the region the CLI would ACTUALLY use — which is not the
-    # same question for both providers:
-    #
-    #   aws    Config.ResolveRegion (config.go:474-485): the environment's own
-    #          region wins, the file-level key is the fallback.
-    #   azure  runInfraActionAzure reads cfg.Region directly (infra_cmd.go:215)
-    #          and never calls ResolveRegion, so a per-environment region is
-    #          silently ignored and only the file-level key counts.
-    #
-    # The console warns "this config sets no region" from this value, so folding
-    # the two together would have told an Azure operator they were fine right up
-    # until `up` failed with "azure region not configured".
+    # Report the values the CLI will actually resolve for each environment.
+    # Keeping the file-level values preserves the existing API contract for
+    # create-new-environment, while the maps let an attached environment select
+    # its own provider and region without inheriting another environment's
+    # cloud context in the UI.
     return {
         "environments": list(envs.keys()),
-        "provider": provider,
+        "provider": file_provider,
         "region": file_region,
+        "env_providers": {
+            name: resolve_provider(settings, file_provider)
+            for name, settings in envs.items()
+        },
         "env_regions": {
-            name: resolve_region(provider, settings, file_region)
+            name: resolve_region(settings, file_region)
             for name, settings in envs.items()
         },
     }
 
 
-def resolve_region(
-    provider: str | None, env_settings: t.Any, file_region: t.Any
-) -> t.Any:
+def resolve_provider(env_settings: t.Any, file_provider: t.Any) -> str:
+    """The provider the CLI will actually use for one environment.
+
+    Mirrors ``Config.ResolvedProvider``: an environment override wins, then the
+    file-level setting, and AWS remains the CLI's compatibility default when
+    neither is set. Invalid environment shapes are handled like an absent
+    override here; ``_environments_of`` owns validation of the outer mapping.
+    """
+    if isinstance(env_settings, dict) and env_settings.get("provider"):
+        return str(env_settings["provider"])
+    return str(file_provider or "aws")
+
+
+def resolve_region(env_settings: t.Any, file_region: t.Any) -> t.Any:
     """The region the CLI will actually use for one environment.
 
     Shared by :func:`list_environments` and :func:`derive_snapshot` so the
-    warning, the session header, and the region handed to ``env create`` cannot
-    disagree. They previously did: a per-environment region on an Azure config
-    made the header show a region, the scaffold target use it, and the warning
-    simultaneously report there was none.
-
-    See :func:`list_environments` for why the two providers differ.
+    warning and session header cannot disagree. Mirrors ``Config.ResolvedRegion``:
+    the environment value wins and the file-level value is the fallback for
+    every cloud provider.
     """
-    if provider == "azure":
-        return file_region
     env_region = env_settings.get("region") if isinstance(env_settings, dict) else None
     return env_region or file_region
+
+
+def resolve_lab(env_settings: t.Any, file_lab: t.Any) -> str:
+    """Resolve a console lab path using CLI-compatible explicit-lab rules.
+
+    Existing variant configurations store repo-relative paths and retain their
+    established target/source precedence. Otherwise this mirrors
+    ``Config.ResolvedLab``: the environment's bare lab name wins, followed by
+    the file-level name and the backward-compatible ``GOAD`` default. Explicit
+    names are validated before being placed below ``ad/``.
+    """
+    settings = env_settings if isinstance(env_settings, dict) else {}
+    variant_target = settings.get("variant_target")
+    variant_source = settings.get("variant_source")
+    if variant_target:
+        return str(variant_target)
+    if variant_source:
+        return str(variant_source)
+
+    lab = settings.get("lab") or file_lab or "GOAD"
+    if not isinstance(lab, str) or not _VALID_LAB_NAME.fullmatch(lab):
+        raise ValueError(
+            f"invalid lab name {lab!r}: use letters, numbers, underscores, and hyphens"
+        )
+    return os.path.join("ad", lab)
 
 
 def derive_snapshot(config_path: str, env: str) -> SessionSnapshot:
     """Build a session ``snapshot`` from ``(config_path, env)``.
 
-    Provider/region are file-level (top of ``dreadgoad.yaml``); variant/lab/
-    network come from the named env. Credentials are never included.
+    Provider/region/lab follow the CLI's per-environment resolution rules;
+    variant/network come from the named env. Credentials are never included.
     """
     with open(config_path) as f:
         data = yaml.safe_load(f) or {}
@@ -147,7 +180,6 @@ def derive_snapshot(config_path: str, env: str) -> SessionSnapshot:
             f"{config_path} is not a valid config (expected a YAML mapping)"
         )
 
-    provider = data.get("provider")
     envs = _environments_of(data, config_path)
     if env not in envs:
         available = ", ".join(sorted(envs)) or "none"
@@ -156,17 +188,17 @@ def derive_snapshot(config_path: str, env: str) -> SessionSnapshot:
         )
     e = envs[env] or {}
 
-    # Mirrors Config.ResolveRegion (config.go:474-485): the environment's own
-    # region wins, and the file-level key is the fallback for environments that
+    provider = resolve_provider(e, data.get("provider"))
+
+    # Mirrors Config.ResolvedRegion: the environment's own region wins, and the
+    # file-level key is the fallback for environments that
     # don't declare one. Reading only the file-level key made the header show a
     # region the CLI would not actually use. The CLI's highest-precedence source
     # — --region / DREADGOAD_REGION — is deliberately not consulted: it belongs
     # to a single invocation, not to the environment this snapshot describes.
-    region = resolve_region(provider, e, data.get("region"))
+    region = resolve_region(e, data.get("region"))
 
-    variant_target = e.get("variant_target")
-    variant_source = e.get("variant_source")
-    lab = variant_target or variant_source
+    lab = resolve_lab(e, data.get("lab"))
 
     snapshot: SessionSnapshot = {
         "provider": provider,
@@ -308,21 +340,40 @@ def session_lab_config_path(session: SessionDocument, fallback_root: str) -> str
     """
     anchor = session.get("anchor") or {}
     config_path = anchor.get("config_path")
+    env = anchor.get("env")
     root = (
         str(projectroot.resolve_root(config_path)[0]) if config_path else fallback_root
     )
-    return lab_config_path(root, (session.get("snapshot") or {}).get("lab"))
+    return lab_config_path(
+        root,
+        (session.get("snapshot") or {}).get("lab"),
+        str(env) if env else None,
+    )
 
 
-def lab_config_path(repo_root: str, lab: str | None) -> str | None:
-    """Resolve ``ad/<lab>/data/config.json`` under the repo root.
+def lab_config_path(
+    repo_root: str, lab: str | None, env: str | None = None
+) -> str | None:
+    """Resolve an environment's lab config JSON under the repo root.
 
     ``lab`` is a repo-relative dir like ``ad/GOAD-dreadindex``. Returns None if
-    ``lab`` is unset.
+    ``lab`` is unset. Mirrors the CLI's legacy environment-config precedence:
+    ``<env>-config.json`` wins when present, with ``config.json`` as fallback.
     """
     if not lab:
         return None
-    return os.path.join(repo_root, lab, "data", "config.json")
+    data_dir = os.path.realpath(os.path.join(repo_root, lab, "data"))
+    if env:
+        environment_config = os.path.realpath(
+            os.path.join(data_dir, f"{env}-config.json")
+        )
+        if os.path.commonpath((data_dir, environment_config)) != data_dir:
+            raise ValueError(
+                f"invalid environment name {env!r}: path separators forbidden"
+            )
+        if os.path.isfile(environment_config):
+            return environment_config
+    return os.path.join(data_dir, "config.json")
 
 
 def _round_trip_yaml() -> ruamel.yaml.YAML:

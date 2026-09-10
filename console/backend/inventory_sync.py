@@ -20,7 +20,10 @@ _STATE = {
     "terminated": "absent",
 }
 _ALIASES = {
-    "attackbox": ["attackbox", "kali", "attack"],
+    # Ordered from most to least specific. SCOPE-RANGE names its mandatory
+    # attack box ``kali01``; preferring that token prevents an unrelated
+    # ``kali``-named VM from winning only because discovery returned it last.
+    "attackbox": ["attackbox", "kali01", "kali", "attack"],
     "bastion": ["bastion"],
 }
 _ARM_ID_RE = re.compile(
@@ -38,11 +41,8 @@ def _norm_state(state: str | None) -> str:
 
 def find_attack_box(instances: list[dict[str, t.Any]]) -> str | None:
     """Return the attack box cloud id among live instances, if present."""
-    for instance in instances:
-        name = str(instance.get("name") or "").lower()
-        if any(alias in name for alias in _ALIASES["attackbox"]):
-            return instance.get("id")
-    return None
+    found = _match_aliases(instances, _ALIASES["attackbox"])
+    return found.get("id") if found is not None else None
 
 
 def parse_cloud_account(instances: list[dict[str, t.Any]]) -> dict[str, str]:
@@ -73,13 +73,22 @@ def _match(
     Last match wins to mirror the CLI's discovery behavior.
     """
     host_id = str(host.get("key") or host.get("id") or "").lower()
-    aliases = _ALIASES.get(host_id, [host_id])
-    found: dict[str, t.Any] | None = None
-    for instance in instances:
-        name = str(instance.get("name") or "").lower()
-        if any(alias in name for alias in aliases):
-            found = instance
-    return found
+    return _match_aliases(instances, _ALIASES.get(host_id, [host_id]))
+
+
+def _match_aliases(
+    instances: list[dict[str, t.Any]], aliases: list[str]
+) -> dict[str, t.Any] | None:
+    """Match by ordered aliases, retaining last-match behavior per alias."""
+    for alias in aliases:
+        found: dict[str, t.Any] | None = None
+        for instance in instances:
+            name = str(instance.get("name") or "").lower()
+            if alias in name:
+                found = instance
+        if found is not None:
+            return found
+    return None
 
 
 def map_range_status(
@@ -155,20 +164,12 @@ async def run_check(
     rng = await db.get_range(session_id)
     if session is None or rng is None:
         return {"error": "session/range not found"}
-
-    if any("key" not in host for host in rng.get("hosts", [])):
-        snapshot = session.get("snapshot") or {}
-        config = labconfig.lab_config_path(str(paths.repo_root()), snapshot.get("lab"))
-        seeded = labconfig.seed_topology(config, snapshot.get("provider"))
-        if backfill_keys(rng, seeded):
-            await db.upsert_range(session_id, rng)
-
     argv = commands.build_argv(session, "/instances", repo_root=str(paths.repo_root()))
     try:
         runner = capture_command or capture
         # Same tree as the commands whose results this records — see
-        # projectroot.run_cwd. (lab_config_path above stays on repo_root: the
-        # lab definitions are console-side, not part of the range's checkout.)
+        # projectroot.run_cwd. Lab definitions used later for key backfills
+        # remain console-side rather than coming from the range checkout.
         return_code, stdout, stderr = await runner(
             argv, projectroot.run_cwd(session, paths.repo_root())
         )
@@ -179,6 +180,26 @@ async def run_check(
         instances = json.loads(stdout)
     except Exception as exc:  # noqa: BLE001
         return {"error": str(exc)}
+
+    return await apply_instances(app, session_id, instances)
+
+
+async def apply_instances(
+    app: t.Any, session_id: str, instances: list[dict[str, t.Any]]
+) -> dict[str, t.Any]:
+    """Synchronize a range from an already captured ``lab status`` result."""
+    db = app.state.db
+    session = await db.get_session(session_id)
+    rng = await db.get_range(session_id)
+    if session is None or rng is None:
+        return {"error": "session/range not found"}
+
+    if any("key" not in host for host in rng.get("hosts", [])):
+        snapshot = session.get("snapshot") or {}
+        config = labconfig.session_lab_config_path(session, str(paths.repo_root()))
+        seeded = labconfig.seed_topology(config, snapshot.get("provider"))
+        if backfill_keys(rng, seeded):
+            await db.upsert_range(session_id, rng)
 
     snapshot = session.get("snapshot") or {}
     dirty = False

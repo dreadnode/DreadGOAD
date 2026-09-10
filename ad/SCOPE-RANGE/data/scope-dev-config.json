@@ -1,14 +1,6 @@
 {
   "lab": {
     "hosts": {
-      "kali01": {
-        "hostname": "kali01",
-        "type": "server",
-        "os": "linux",
-        "scripts": [],
-        "vulns": [],
-        "security": []
-      },
       "web01": {
         "hostname": "web01",
         "type": "server",

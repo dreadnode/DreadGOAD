@@ -2,12 +2,13 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dreadnode/dreadgoad/internal/config"
@@ -50,6 +51,7 @@ func init() {
 	validateCmd.Flags().Bool("no-fail", false, "Don't exit with error on failed checks")
 	validateCmd.Flags().Bool("quick", false, "Run critical validation checks only")
 	validateCmd.Flags().Bool("plain", false, "Disable the live dashboard; stream results to stdout")
+	validateCmd.Flags().Bool("json", false, "Output machine-readable JSON (per-check results + report)")
 	validateCmd.Flags().String("poll", "never", "Re-run cadence for the live dashboard (e.g. 1m, 5m, or 'never'; minimum 1m)")
 
 	if err := viper.BindPFlag("validate.poll", validateCmd.Flags().Lookup("poll")); err != nil {
@@ -88,6 +90,7 @@ type validateOpts struct {
 	quick        bool
 	plain        bool
 	pollInterval time.Duration
+	json         bool
 }
 
 func validateOptsFromFlags(cmd *cobra.Command) (validateOpts, error) {
@@ -97,12 +100,16 @@ func validateOptsFromFlags(cmd *cobra.Command) (validateOpts, error) {
 	opts.noFail, _ = cmd.Flags().GetBool("no-fail")
 	opts.quick, _ = cmd.Flags().GetBool("quick")
 	opts.plain, _ = cmd.Flags().GetBool("plain")
+	opts.json, _ = cmd.Flags().GetBool("json")
 
 	d, err := parsePollInterval(viper.GetString("validate.poll"))
 	if err != nil {
 		return opts, err
 	}
 	opts.pollInterval = d
+	if opts.json && opts.pollInterval > 0 {
+		return opts, fmt.Errorf("--json cannot be combined with --poll")
+	}
 	return opts, nil
 }
 
@@ -137,13 +144,18 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if cfg.ResolvedLab() == "SCOPE-RANGE" {
-		return runScopeRangeValidate(ctx, cfg, opts)
-	}
+	return inspectorFor(cfg).validate(ctx, cmd, cfg, opts)
+}
 
-	fmt.Println("==========================================")
-	fmt.Println("GOAD Vulnerability Validation")
-	fmt.Println("==========================================")
+func runGOADValidate(
+	ctx context.Context, _ *cobra.Command, _ *config.Config, opts validateOpts,
+) error {
+
+	if !opts.json {
+		fmt.Println("==========================================")
+		fmt.Println("GOAD Vulnerability Validation")
+		fmt.Println("==========================================")
+	}
 
 	infra, err := requireInfra(ctx)
 	if err != nil {
@@ -157,16 +169,28 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		defer d.Drain()
 	}
 
-	useTUI := !opts.plain && term.IsTerminal(int(os.Stdout.Fd()))
+	useTUI := !opts.json && !opts.plain && term.IsTerminal(int(os.Stdout.Fd()))
 	if opts.pollInterval > 0 && !useTUI {
 		fmt.Fprintf(os.Stderr, "Warning: --poll is ignored without the live dashboard (TTY/--plain)\n")
 		opts.pollInterval = 0
 	}
 
-	fmt.Printf("Environment: %s\n", infra.Env)
-	fmt.Printf("Region: %s\n", infra.Region)
+	if !opts.json {
+		fmt.Printf("Environment: %s\n", infra.Env)
+		fmt.Printf("Region: %s\n", infra.Region)
+	}
 
 	v := validate.NewValidator(infra.Provider, infra.Env, opts.verbose, slog.Default(), infra.Lab)
+	if opts.json {
+		v.SetSilent(true)
+		encoder := json.NewEncoder(os.Stdout)
+		var encoderMu sync.Mutex
+		v.SetOnResult(func(check validate.Result) {
+			encoderMu.Lock()
+			defer encoderMu.Unlock()
+			_ = encoder.Encode(check)
+		})
+	}
 
 	if err := v.DiscoverHosts(ctx); err != nil {
 		return fmt.Errorf("discover hosts: %w", err)
@@ -190,21 +214,36 @@ func runValidate(cmd *cobra.Command, args []string) error {
 
 	report := v.GetReport()
 	outputPath := opts.outputPath
-	if outputPath == "" {
+	if outputPath == "" && !opts.json {
 		outputPath = fmt.Sprintf("/tmp/goad-validation-%s.json", time.Now().Format("20060102-150405"))
 	}
-	if err := v.SaveReport(outputPath); err != nil {
-		fmt.Printf("Warning: could not save report: %v\n", err)
+	if outputPath != "" {
+		if err := v.SaveReport(outputPath); err != nil {
+			fmt.Fprintf(validationWarningWriter(opts.json), "Warning: could not save report: %v\n", err)
+		}
 	}
 
-	fmt.Println()
-	fmt.Println(validate.RenderSummaryPanel(report, infra.Env, infra.Region, time.Since(runStart), terminalWidth()))
-	fmt.Printf("\nResults saved to: %s\n", outputPath)
+	if opts.json {
+		if err := json.NewEncoder(os.Stdout).Encode(report); err != nil {
+			return fmt.Errorf("encode validation report: %w", err)
+		}
+	} else {
+		fmt.Println()
+		fmt.Println(validate.RenderSummaryPanel(report, infra.Env, infra.Region, time.Since(runStart), terminalWidth()))
+		fmt.Printf("\nResults saved to: %s\n", outputPath)
+	}
 
 	if !opts.noFail && report.Failed > 0 {
 		return fmt.Errorf("validation failed with %d errors", report.Failed)
 	}
 	return nil
+}
+
+func validationWarningWriter(jsonOut bool) *os.File {
+	if jsonOut {
+		return os.Stderr
+	}
+	return os.Stdout
 }
 
 func scopeRangeValidatorArgs(cfg *config.Config, opts validateOpts) ([]string, error) {
@@ -226,6 +265,9 @@ func scopeRangeValidatorArgs(cfg *config.Config, opts validateOpts) ([]string, e
 	if opts.noFail {
 		args = append(args, "--no-fail")
 	}
+	if opts.json {
+		args = append(args, "--json")
+	}
 	return args, nil
 }
 
@@ -234,21 +276,7 @@ func runScopeRangeValidate(ctx context.Context, cfg *config.Config, opts validat
 	if err != nil {
 		return err
 	}
-	if _, err := os.Stat(args[0]); err != nil {
-		return fmt.Errorf("find SCOPE-RANGE validator: %w", err)
-	}
-
-	command := exec.CommandContext(ctx, "python3", args...)
-	command.Stdin = os.Stdin
-	command.Stdout = os.Stdout
-	command.Stderr = os.Stderr
-	if err := command.Run(); err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ctxErr
-		}
-		return fmt.Errorf("SCOPE-RANGE validation failed: %w", err)
-	}
-	return nil
+	return runScopeRangeInspector(ctx, args, "validation")
 }
 
 func terminalWidth() int {

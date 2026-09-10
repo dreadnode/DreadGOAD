@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -9,6 +10,15 @@ import (
 
 	"github.com/dreadnode/dreadgoad/internal/config"
 )
+
+func TestValidationWarningWriterKeepsJSONStdoutClean(t *testing.T) {
+	if got := validationWarningWriter(true); got != os.Stderr {
+		t.Fatalf("validationWarningWriter(true) = %v, want stderr", got)
+	}
+	if got := validationWarningWriter(false); got != os.Stdout {
+		t.Fatalf("validationWarningWriter(false) = %v, want stdout", got)
+	}
+}
 
 func TestParsePollInterval(t *testing.T) {
 	tests := []struct {
@@ -66,6 +76,7 @@ func TestScopeRangeValidatorArgs(t *testing.T) {
 		verbose:    true,
 		noFail:     true,
 		plain:      true,
+		json:       true,
 	})
 	if err != nil {
 		t.Fatalf("scopeRangeValidatorArgs() error: %v", err)
@@ -77,6 +88,7 @@ func TestScopeRangeValidatorArgs(t *testing.T) {
 		"--quick",
 		"--verbose",
 		"--no-fail",
+		"--json",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("scopeRangeValidatorArgs() = %#v, want %#v", got, want)

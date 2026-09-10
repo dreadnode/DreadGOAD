@@ -405,13 +405,5 @@ func runUpProvision(cmd *cobra.Command, args []string) error {
 }
 
 func runUpHealthCheck(cmd *cobra.Command, args []string) error {
-	cfg, err := config.Get()
-	if err != nil {
-		return err
-	}
-	if cfg.ResolvedLab() == "SCOPE-RANGE" {
-		fmt.Println("SCOPE-RANGE foundational and versioned seed checks passed during provisioning.")
-		return nil
-	}
 	return runHealthCheck(cmd, args)
 }

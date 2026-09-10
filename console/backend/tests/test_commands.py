@@ -43,6 +43,7 @@ def test_argv_injects_config_and_env() -> None:
 def test_argv_multiword_and_flag_verbs() -> None:
     assert _argv("/reset")[5:] == ["lab", "reset"]
     assert _argv("/instances")[5:] == ["lab", "status", "--json"]
+    assert _argv("/validate")[5:] == ["validate", "--json"]
     # /scrub carries --apply by default; see test_scrub_applies_by_default.
     assert _argv("/scrub")[5:] == ["score", "reset", "--apply"]
     print("PASS test_argv_multiword_and_flag_verbs")
@@ -164,6 +165,7 @@ def test_dispatch_and_agent_commands() -> None:
     assert commands.REGISTRY["/up"].dispatch == "agent"
     assert commands.REGISTRY["/variant"].dispatch == "agent"
     assert commands.REGISTRY["/instances"].dispatch == "direct"
+    assert commands.REGISTRY["/status"].dispatch == "composite"
     assert commands.REGISTRY["/destroy"].dispatch == "direct"
     # The agent-dispatch (expand-to-prompt) set = the mutating/arg-flexible ones.
     agent_dispatch = {n for n, c in commands.REGISTRY.items() if c.dispatch == "agent"}
@@ -179,8 +181,6 @@ def test_dispatch_and_agent_commands() -> None:
         "/exec",
         # /restart needs a hostname pulled out of the operator's phrasing.
         "/restart",
-        # /status runs /instances then /health via the agent in one turn.
-        "/status",
     }, agent_dispatch
     # Only concrete CLI commands are tool-runnable. /login opens an interactive
     # browser flow; /status is a composite prompt expanded to two concrete reads.
@@ -195,9 +195,9 @@ def test_dispatch_and_agent_commands() -> None:
         "/status has no CLI verb and must be expanded before the tool call"
     )
     for name, command in commands.REGISTRY.items():
-        if command.dispatch == "agent" and not command.verb:
+        if command.dispatch == "composite":
             assert command.agent_commands, (
-                f"composite agent command {name} must declare its tool commands"
+                f"composite command {name} must declare its child commands"
             )
     print("PASS test_dispatch_and_agent_commands")
 
@@ -214,12 +214,6 @@ def test_expand_command_prompt() -> None:
         "/provision", []
     )
 
-    status = commands.expand_command_prompt("/status", [])
-    assert "command='/instances' with args=[]" in status, status
-    assert "command='/health' with args=[]" in status, status
-    assert status.index("command='/instances'") < status.index("command='/health'")
-    assert "Do NOT call command='/status'" in status, status
-    assert "run exactly these steps in order" in status, status
     print("PASS test_expand_command_prompt")
 
 

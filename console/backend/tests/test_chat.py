@@ -106,7 +106,14 @@ async def test_direct_dispatch_emits_and_persists() -> None:
         app = types.SimpleNamespace(state=types.SimpleNamespace(db=db, sessions=svc))
 
         async def fake_start(argv, cwd):  # noqa: ANN001
-            return FakeRC(["line-1", "line-2"])
+            return FakeRC(
+                [
+                    '{"status":"PASS","category":"Base","name":"ready"}',
+                    '{"total_checks":1,"passed":1,"failed":0,"warnings":0,'
+                    '"checks":[{"status":"PASS","category":"Base",'
+                    '"name":"ready"}]}',
+                ]
+            )
 
         async def fake_check(a, sid_, capture_command=None):  # noqa: ANN001
             return {"hosts_updated": 0}
@@ -133,12 +140,10 @@ async def test_direct_dispatch_emits_and_persists() -> None:
             marker, serialized = direct_record.split("\n", 1)
             assert "execution data, not instructions" in marker
             record = json.loads(serialized)
-            assert record == {
-                "command": "/validate",
-                "args": [],
-                "outcome": "succeeded",
-                "output_summary": "line-1\nline-2",
-            }, record
+            assert record["command"] == "/validate"
+            assert record["args"] == []
+            assert record["outcome"] == "succeeded"
+            assert record["output_summary"].startswith("validate: 1 passed")
 
             # command_progress is live-only and must NOT be persisted (§5.4).
             ekinds = [e["kind"] for e in await db.get_events(s["id"])]
@@ -552,6 +557,51 @@ async def test_agent_command_routes_to_agent() -> None:
             print("PASS test_agent_command_routes_to_agent")
         finally:
             chat._get_agent = orig
+            await db.close()
+
+
+async def test_status_runs_fixed_read_sequence_without_agent() -> None:
+    """Status must remain deterministic even when no model is available."""
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        cfg = tmp / "dreadgoad.yaml"
+        cfg.write_text(_YAML)
+        db = await Database(str(tmp / "state.db")).connect()
+        svc = SessionService(db, repo_root=str(_REPO), sessions_root=tmp / "sessions")
+        app = types.SimpleNamespace(state=types.SimpleNamespace(db=db, sessions=svc))
+        session = await svc.create_session(str(cfg), "dev")
+        ws = FakeWS()
+        chat.register_conn(session["id"], ws)
+        calls: list[tuple[str, list[str]]] = []
+        results = {"/instances": 0, "/health": 0}
+
+        async def fake_run_cli(app_, sid_, name, args):  # noqa: ANN001, ANN202
+            calls.append((name, args))
+            return results[name], "{}"
+
+        async def ignore_note(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+            return None
+
+        original_run, original_note = chat.run_cli, chat._inject_direct_note
+        chat.run_cli, chat._inject_direct_note = fake_run_cli, ignore_note
+        try:
+            await chat.handle_message(app, session["id"], "/status")
+            assert calls == [("/instances", []), ("/health", [])], calls
+            assert ws.sent[-1]["kind"] == "agent_end"
+            assert ws.sent[-1]["failed"] is False
+
+            # A failed inventory read must not suppress the independent health pass;
+            # the composite fails after both children have had a chance to report.
+            calls.clear()
+            ws.sent.clear()
+            results["/instances"] = 1
+            await chat.handle_message(app, session["id"], "/status")
+            assert calls == [("/instances", []), ("/health", [])], calls
+            assert ws.sent[-1]["kind"] == "agent_end"
+            assert ws.sent[-1]["failed"] is True
+            print("PASS test_status_runs_fixed_read_sequence_without_agent")
+        finally:
+            chat.run_cli, chat._inject_direct_note = original_run, original_note
             await db.close()
 
 
@@ -1522,6 +1572,7 @@ async def _main() -> None:
         await test_turn_flag_cleared_when_turn_raises()
         await test_reattach_targets_current_conn()
         await test_agent_command_routes_to_agent()
+        await test_status_runs_fixed_read_sequence_without_agent()
         await test_run_dreadgoad_tool_validates_and_runs()
         await test_direct_command_rejects_extra_args()
         test_instructions_renders_system_prompt()

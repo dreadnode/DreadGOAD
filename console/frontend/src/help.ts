@@ -33,15 +33,15 @@ export const WORKFLOW: WorkflowPhase[] = [
     detail:
       '/status runs /instances then /health in one pass. Use them separately when ' +
       'you only need one: /instances is the cloud view (power state, IPs), ' +
-      '/health is the truth (AD, DNS, replication checks). /secure audits network ' +
+      "/health runs the selected lab's core service checks. /secure audits network " +
       'security posture (NSGs, public IPs, bastion).',
   },
   {
     title: '3. Validate the lab content',
     commands: ['/validate'],
     detail:
-      'Checks the intentional vulnerabilities are actually in place. ' +
-      'A failure means a vulnerability is MISSING — the lab is under-broken, not broken.',
+      "Checks the selected lab's complete expected state. For GOAD this includes " +
+      'intentional vulnerabilities; for SCOPE-RANGE it includes services, apps, users, and seed data.',
   },
   {
     title: '4. Fix what is wrong',

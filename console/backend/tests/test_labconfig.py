@@ -21,6 +21,7 @@ from console.backend.labconfig import (  # noqa: E402
     list_environments,
     merge_reseed,
     seed_topology,
+    session_lab_config_path,
     write_new_env,
 )
 
@@ -45,6 +46,17 @@ environments:
   dev:
     variant_source: ad/GOAD
     vpc_cidr: "10.0.0.0/16"
+"""
+
+_FIXTURE_YAML_PROVIDER_OVERRIDE = """\
+provider: aws
+environments:
+  dev:
+    region: us-east-1
+  scope-dev:
+    provider: azure
+    region: centralus
+    lab: SCOPE-RANGE
 """
 
 
@@ -76,6 +88,123 @@ def test_derive_snapshot_aws_falls_back_to_source() -> None:
     assert "aws" in snap and "profile" in snap["aws"], snap
     os.unlink(tmp.name)
     print("PASS test_derive_snapshot_aws_falls_back_to_source")
+
+
+def test_environment_provider_override_matches_cli_resolution() -> None:
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as tmp:
+        tmp.write(_FIXTURE_YAML_PROVIDER_OVERRIDE)
+    try:
+        listing = list_environments(tmp.name)
+        assert listing["provider"] == "aws", listing
+        assert listing["env_providers"] == {
+            "dev": "aws",
+            "scope-dev": "azure",
+        }, listing
+        assert listing["env_regions"]["scope-dev"] == "centralus", listing
+
+        snap = derive_snapshot(tmp.name, "scope-dev")
+        assert snap["provider"] == "azure", snap
+        assert snap["region"] == "centralus", snap
+        assert snap["lab"] == "ad/SCOPE-RANGE", snap
+        assert "azure" in snap, snap
+        assert "aws" not in snap, snap
+    finally:
+        os.unlink(tmp.name)
+    print("PASS test_environment_provider_override_matches_cli_resolution")
+
+
+def test_provider_defaults_to_aws_like_cli() -> None:
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as tmp:
+        tmp.write("environments:\n  dev: {}\n")
+    try:
+        listing = list_environments(tmp.name)
+        assert listing["env_providers"] == {"dev": "aws"}, listing
+        assert derive_snapshot(tmp.name, "dev")["provider"] == "aws"
+    finally:
+        os.unlink(tmp.name)
+    print("PASS test_provider_defaults_to_aws_like_cli")
+
+
+def test_lab_resolution_precedence() -> None:
+    cases = {
+        "lab: GOAD-Light\nenvironments:\n  dev: {}\n": "ad/GOAD-Light",
+        "lab: GOAD\nenvironments:\n  dev:\n    lab: SCOPE-RANGE\n": "ad/SCOPE-RANGE",
+        "environments:\n  dev: {}\n": "ad/GOAD",
+        (
+            "lab: SCOPE-RANGE\nenvironments:\n  dev:\n    variant_source: ad/GOAD\n"
+        ): "ad/GOAD",
+        (
+            "lab: SCOPE-RANGE\nenvironments:\n  dev:\n"
+            "    variant_source: ad/GOAD\n"
+            "    variant_target: ad/GOAD-redteam\n"
+        ): "ad/GOAD-redteam",
+    }
+    for body, expected in cases.items():
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as tmp:
+            tmp.write(body)
+        try:
+            assert derive_snapshot(tmp.name, "dev")["lab"] == expected, body
+        finally:
+            os.unlink(tmp.name)
+    print("PASS test_lab_resolution_precedence")
+
+
+def test_explicit_lab_rejects_unsafe_names() -> None:
+    for lab in ("../GOAD", "GOAD/Light", ".", "scope range"):
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as tmp:
+            tmp.write(f"environments:\n  dev:\n    lab: {lab!r}\n")
+        try:
+            try:
+                derive_snapshot(tmp.name, "dev")
+                raise AssertionError(f"expected ValueError for unsafe lab {lab!r}")
+            except ValueError as exc:
+                assert "invalid lab name" in str(exc), exc
+        finally:
+            os.unlink(tmp.name)
+    print("PASS test_explicit_lab_rejects_unsafe_names")
+
+
+def test_real_scope_lab_uses_generic_attackbox() -> None:
+    config_path = _REPO / "dreadgoad.yaml"
+    snap = derive_snapshot(str(config_path), "scope-dev")
+    session = {
+        "anchor": {"config_path": str(config_path), "env": "scope-dev"},
+        "snapshot": snap,
+    }
+    resolved = session_lab_config_path(session, str(_REPO))
+    expected_path = _REPO / "ad" / "SCOPE-RANGE" / "data" / "scope-dev-config.json"
+    assert resolved == str(expected_path), resolved
+
+    topology = seed_topology(resolved, snap["provider"])
+    ids = {host["id"] for host in topology["hosts"]}
+    expected_config_hosts = {
+        "web01",
+        "data01",
+        "dev01",
+        "storage01",
+        "services01",
+    }
+    assert ids == expected_config_hosts | {"attackbox", "bastion"}, ids
+    assert "kali01" not in ids, "the real Kali VM must use the generic attackbox node"
+    print("PASS test_real_scope_lab_uses_generic_attackbox")
+
+
+def test_session_lab_config_path_falls_back_and_refuses_env_escape() -> None:
+    config_path = _REPO / "dreadgoad.yaml"
+    session = {
+        "anchor": {"config_path": str(config_path), "env": "missing-env-config"},
+        "snapshot": {"lab": "ad/SCOPE-RANGE"},
+    }
+    expected_base = _REPO / "ad" / "SCOPE-RANGE" / "data" / "config.json"
+    assert session_lab_config_path(session, str(_REPO)) == str(expected_base)
+
+    session["anchor"]["env"] = "../../outside"
+    try:
+        session_lab_config_path(session, str(_REPO))
+        raise AssertionError("expected ValueError for environment path escape")
+    except ValueError as exc:
+        assert "path separators forbidden" in str(exc), exc
+    print("PASS test_session_lab_config_path_falls_back_and_refuses_env_escape")
 
 
 def test_derive_snapshot_unknown_env_raises() -> None:
@@ -558,16 +687,14 @@ def test_list_environments_reports_the_region_the_cli_would_use() -> None:
     cases = {
         "provider: aws\nenvironments:\n  prod:\n    region: eu-west-2\n": "eu-west-2",
         "provider: aws\nregion: us-east-1\nenvironments:\n  prod: {}\n": "us-east-1",
-        # Env beats file, matching config.go:478-484.
+        # Env beats file, matching Config.ResolvedRegion.
         "provider: aws\nregion: us-east-1\nenvironments:\n"
         "  prod:\n    region: eu-west-2\n": "eu-west-2",
         "provider: azure\nenvironments:\n  prod: {}\n": None,
-        # Azure reads cfg.Region directly (infra_cmd.go:215) and never calls
-        # ResolveRegion, so a per-environment region is ignored: this config
-        # deploys nothing, and must not be reported as having a region.
-        "provider: azure\nenvironments:\n  prod:\n    region: eastus\n": None,
+        # Azure now follows the same ResolvedRegion precedence as AWS.
+        "provider: azure\nenvironments:\n  prod:\n    region: eastus\n": "eastus",
         "provider: azure\nregion: centralus\nenvironments:\n"
-        "  prod:\n    region: eastus\n": "centralus",
+        "  prod:\n    region: eastus\n": "eastus",
     }
     for body, expected in cases.items():
         with tempfile.TemporaryDirectory() as d:
@@ -606,6 +733,12 @@ def test_environments_must_be_a_mapping() -> None:
 if __name__ == "__main__":
     test_derive_snapshot_azure()
     test_derive_snapshot_aws_falls_back_to_source()
+    test_environment_provider_override_matches_cli_resolution()
+    test_provider_defaults_to_aws_like_cli()
+    test_lab_resolution_precedence()
+    test_explicit_lab_rejects_unsafe_names()
+    test_real_scope_lab_uses_generic_attackbox()
+    test_session_lab_config_path_falls_back_and_refuses_env_escape()
     test_derive_snapshot_unknown_env_raises()
     test_seed_topology_from_goad_config()
     test_seed_topology_aws_has_no_bastion()

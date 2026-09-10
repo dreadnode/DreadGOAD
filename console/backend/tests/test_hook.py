@@ -125,6 +125,36 @@ def test_variant_hosts_correlate_by_role_key() -> None:
     print("PASS test_variant_hosts_correlate_by_role_key")
 
 
+def test_scope_attackbox_correlates_to_kali01() -> None:
+    instances = [
+        {
+            "name": "scope-dev-scope-range-kali-tools-vm",
+            "id": "az-scope-kali-tools",
+            "state": "running",
+            "private_ip": "10.50.10.99",
+        },
+        {
+            "name": "scope-dev-scope-range-kali01-vm",
+            "id": "az-scope-kali01",
+            "state": "running",
+            "private_ip": "10.50.10.10",
+        },
+        {
+            "name": "scope-dev-scope-range-kali-mirror-vm",
+            "id": "az-scope-kali-mirror",
+            "state": "running",
+            "private_ip": "10.50.10.98",
+        },
+    ]
+    out = map_range_status(_range(), instances, now="T")
+    attackbox = next(host for host in out["hosts"] if host["id"] == "attackbox")
+    assert attackbox["status"] == "running", attackbox
+    assert attackbox["cloud_id"] == "az-scope-kali01", attackbox
+    assert attackbox["cloud_name"] == "scope-dev-scope-range-kali01-vm", attackbox
+    assert attackbox["ip_private"] == "10.50.10.10", attackbox
+    print("PASS test_scope_attackbox_correlates_to_kali01")
+
+
 def test_hostname_substring_collision_does_not_mismatch() -> None:
     """'quantum' ⊂ 'quantum-web': keying on the role avoids the wrong VM."""
     out = map_range_status(_variant_range(), _VARIANT_INSTANCES, now="T")
@@ -737,6 +767,7 @@ async def test_reseed_adds_enabled_extension_nodes() -> None:
 
 def main() -> None:
     test_variant_hosts_correlate_by_role_key()
+    test_scope_attackbox_correlates_to_kali01()
     test_hostname_substring_collision_does_not_mismatch()
     test_parse_cloud_account_from_arm_ids()
     test_parse_cloud_account_prefers_cli_fields()

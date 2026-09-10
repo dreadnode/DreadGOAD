@@ -71,7 +71,7 @@ export interface Instance {
 export interface HealthCheck {
   name: string
   host: string
-  status: 'OK' | 'FAIL' | 'SKIP'
+  status: 'OK' | 'FAIL' | 'WARN' | 'SKIP'
   detail: string
 }
 
@@ -175,6 +175,7 @@ export interface HealthReportEvent {
   kind: 'health_report'
   passed: number
   failed: number
+  warned: number
   skipped: number
   checks: HealthCheck[]
 }

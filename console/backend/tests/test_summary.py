@@ -14,6 +14,19 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 from console.backend import command_runner, summary  # noqa: E402
 
 
+def test_validate_report_prefers_structured_stdout() -> None:
+    report = {
+        "report_type": "validation",
+        "total_checks": 1,
+        "passed": 1,
+        "failed": 0,
+        "warnings": 0,
+        "checks": [{"status": "PASS", "category": "Web", "name": "healthy"}],
+    }
+    output = '{"status":"PASS","name":"healthy"}\n' + json.dumps(report)
+    assert summary.parse_validate_report(output) == report
+
+
 def _instances(n: int) -> list[dict[str, str]]:
     return [
         {
@@ -316,7 +329,7 @@ def test_health_lists_failures_not_passes() -> None:
     )
     report = {"passed": 30, "failed": 1, "skipped": 0, "checks": checks}
     out = summary.summarize("/health", json.dumps(report))
-    assert out.startswith("health: 30 passed, 1 failed, 0 skipped"), out
+    assert out.startswith("health: 30 passed, 1 failed, 0 warned, 0 skipped"), out
     assert "smb" in out and "port closed" in out, "the failure must survive"
     assert "chk7" not in out, "passing checks should not be enumerated"
     assert "(30 passing checks not listed)" in out, out
@@ -611,6 +624,7 @@ def test_unknown_command_falls_back_to_clip() -> None:
 
 
 if __name__ == "__main__":
+    test_validate_report_prefers_structured_stdout()
     test_regression_seven_vms_all_survive()
     test_instances_scale_and_states()
     test_instances_surface_cloud_placement()

@@ -278,8 +278,11 @@ def load_manifest(path: pathlib.Path) -> dict[str, Any]:
                 raise ValueError(
                     f"host {host_id} check {index} has invalid timeout_seconds"
                 )
-            if "quick" in check and not isinstance(check["quick"], bool):
-                raise ValueError(f"host {host_id} check {index} has invalid quick flag")
+            for flag in ("quick", "health"):
+                if flag in check and not isinstance(check[flag], bool):
+                    raise ValueError(
+                        f"host {host_id} check {index} has invalid {flag} flag"
+                    )
     return manifest
 
 
@@ -305,6 +308,7 @@ def validate_infrastructure(
     manifest: dict[str, Any],
     env: str,
     resource_group: str,
+    health: bool = False,
 ) -> tuple[list[CheckResult], set[str]]:
     """Validate Azure topology and return the VM names eligible for remote checks."""
     results: list[CheckResult] = []
@@ -407,6 +411,9 @@ def validate_infrastructure(
         if power == "VM running":
             runnable.add(vm_name)
 
+        if health:
+            continue
+
         private_ip = vm.get("privateIps")
         results.append(
             result(
@@ -454,6 +461,9 @@ def validate_infrastructure(
                 host_id,
             )
         )
+
+    if health:
+        return results, runnable
 
     network = manifest["network"]
     vnet_name = render_template(network["vnet_name_template"], env)
@@ -613,17 +623,29 @@ def validate_infrastructure(
     return results, runnable
 
 
-def select_host_checks(host: dict[str, Any], quick: bool) -> dict[str, Any]:
+def select_host_checks(
+    host: dict[str, Any], quick: bool, health: bool = False
+) -> dict[str, Any]:
     """Return a copy of one host spec with the requested check subset."""
+    if quick and health:
+        raise ValueError("quick and health check subsets are mutually exclusive")
     checks = [
-        check for check in host["checks"] if not quick or check.get("quick") is True
+        check
+        for check in host["checks"]
+        if (
+            check.get("health") is True
+            if health
+            else not quick or check.get("quick") is True
+        )
     ]
     return {"id": host["id"], "checks": checks}
 
 
-def build_remote_launcher(host: dict[str, Any], quick: bool) -> str:
+def build_remote_launcher(
+    host: dict[str, Any], quick: bool, health: bool = False
+) -> str:
     """Build a shell-safe launcher containing the remote runner and host checks."""
-    spec = json.dumps(select_host_checks(host, quick), separators=(",", ":"))
+    spec = json.dumps(select_host_checks(host, quick, health), separators=(",", ":"))
     encoded_spec = base64.b64encode(spec.encode("utf-8")).decode("ascii")
     payload = f"SCOPE_VALIDATION_SPEC_B64={shlex.quote(encoded_spec)}\n{REMOTE_RUNNER}"
     encoded_payload = base64.b64encode(payload.encode("utf-8")).decode("ascii")
@@ -664,10 +686,21 @@ def run_host_checks(
     vm_name: str,
     resource_group: str,
     quick: bool,
+    health: bool = False,
 ) -> list[CheckResult]:
     """Execute selected checks in bounded Azure Run Command batches."""
     host_id = host["id"]
-    selected = select_host_checks(host, quick)["checks"]
+    selected = select_host_checks(host, quick, health)["checks"]
+    if not selected:
+        return [
+            result(
+                "FAIL",
+                "Validation",
+                "health checks are defined",
+                "manifest selected no checks for this host",
+                host_id,
+            )
+        ]
     results: list[CheckResult] = []
 
     for offset in range(0, len(selected), REMOTE_BATCH_SIZE):
@@ -758,6 +791,7 @@ def run_remote_checks(
     resource_group: str,
     runnable: set[str],
     quick: bool,
+    health: bool = False,
 ) -> list[CheckResult]:
     """Run host validation concurrently and return results in manifest order."""
     by_host: dict[str, list[CheckResult]] = {}
@@ -779,7 +813,7 @@ def run_remote_checks(
                 ]
                 continue
             futures[host["id"]] = executor.submit(
-                run_host_checks, azure, host, vm_name, resource_group, quick
+                run_host_checks, azure, host, vm_name, resource_group, quick, health
             )
         for host_id, future in futures.items():
             try:
@@ -820,6 +854,7 @@ def build_report(
     resource_group: str,
     subscription: str,
     quick: bool,
+    health: bool = False,
 ) -> dict[str, Any]:
     """Build the stable JSON report consumed by humans and future CLI integration."""
     counts = {
@@ -829,6 +864,8 @@ def build_report(
         "warnings": sum(item.status == "WARN" for item in results),
     }
     return {
+        "schema_version": 1,
+        "report_type": "health" if health else "validation",
         "validation_date": dt.datetime.now(dt.timezone.utc)
         .replace(microsecond=0)
         .isoformat(),
@@ -837,7 +874,7 @@ def build_report(
         "environment": env,
         "resource_group": resource_group,
         "subscription": subscription,
-        "mode": "quick" if quick else "full",
+        "mode": "health" if health else "quick" if quick else "full",
         **counts,
         "checks": [item.as_dict() for item in results],
     }
@@ -878,7 +915,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--manifest", type=pathlib.Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--output", type=pathlib.Path, default=None)
-    parser.add_argument("--quick", action="store_true", help="Run critical checks only")
+    subset = parser.add_mutually_exclusive_group()
+    subset.add_argument("--quick", action="store_true", help="Run critical checks only")
+    subset.add_argument(
+        "--health", action="store_true", help="Run core availability checks only"
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="Emit newline-delimited JSON only"
+    )
     parser.add_argument("--verbose", action="store_true")
     parser.add_argument(
         "--no-fail", action="store_true", help="Exit zero even when checks fail"
@@ -913,50 +957,81 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 2
 
     timestamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-    output = args.output or pathlib.Path(
-        f"/tmp/scope-range-validation-{timestamp}.json"
-    )
+    output = args.output
+    if output is None and not args.json:
+        output = pathlib.Path(f"/tmp/scope-range-validation-{timestamp}.json")
     azure = AzureCLI(args.az_bin, args.subscription, args.verbose)
 
-    print("==========================================")
-    print("SCOPE-RANGE Live Validation")
-    print("==========================================")
-    print(f"Environment: {env}")
-    print(f"Resource group: {resource_group}")
-    print(f"Mode: {'quick' if args.quick else 'full'}")
-    print()
+    if not args.json:
+        print("==========================================")
+        print("SCOPE-RANGE Live Validation")
+        print("==========================================")
+        print(f"Environment: {env}")
+        print(f"Resource group: {resource_group}")
+        print(f"Mode: {'health' if args.health else 'quick' if args.quick else 'full'}")
+        print()
 
     infrastructure, runnable = validate_infrastructure(
-        azure, manifest, env, resource_group
+        azure, manifest, env, resource_group, health=args.health
     )
     remote = run_remote_checks(
-        azure, manifest, env, resource_group, runnable, args.quick
+        azure, manifest, env, resource_group, runnable, args.quick, args.health
     )
     results = [*infrastructure, *remote]
     color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
-    for check in results:
-        print_result(check, color)
+    if args.json:
+        for check in results:
+            item = check.as_dict()
+            if args.health:
+                item["status"] = {"PASS": "OK", "WARN": "WARN"}.get(
+                    check.status, check.status
+                )
+                if item.get("host") == "kali01":
+                    item["host"] = "attackbox"
+            print(json.dumps(item, separators=(",", ":")), flush=True)
+    else:
+        for check in results:
+            print_result(check, color)
 
     try:
         account = azure.run_json(["account", "show"])
         subscription = str(account.get("id", args.subscription or "unknown"))
     except AzureCommandError:
         subscription = args.subscription or "unknown"
-    report = build_report(results, env, resource_group, subscription, args.quick)
-    try:
-        write_report(output, report)
-    except OSError as exc:
-        print(f"error: could not write report: {exc}", file=sys.stderr)
-        return 2
+    report = build_report(
+        results, env, resource_group, subscription, args.quick, args.health
+    )
+    if args.health:
+        report["checks"] = [
+            {
+                **item,
+                "status": {"PASS": "OK", "WARN": "WARN"}.get(
+                    item["status"], item["status"]
+                ),
+                **({"host": "attackbox"} if item.get("host") == "kali01" else {}),
+            }
+            for item in report["checks"]
+        ]
+        report["skipped"] = 0
+    if output is not None:
+        try:
+            write_report(output, report)
+        except OSError as exc:
+            print(f"error: could not write report: {exc}", file=sys.stderr)
+            return 2
 
-    print()
-    print("Validation Summary")
-    print("------------------")
-    print(f"Total: {report['total_checks']}")
-    print(f"Passed: {report['passed']}")
-    print(f"Failed: {report['failed']}")
-    print(f"Warnings: {report['warnings']}")
-    print(f"Results saved to: {output}")
+    if args.json:
+        print(json.dumps(report, separators=(",", ":")), flush=True)
+    else:
+        print()
+        print("Validation Summary")
+        print("------------------")
+        print(f"Total: {report['total_checks']}")
+        print(f"Passed: {report['passed']}")
+        print(f"Failed: {report['failed']}")
+        print(f"Warnings: {report['warnings']}")
+        if output is not None:
+            print(f"Results saved to: {output}")
 
     if report["failed"] and not args.no_fail:
         return 1

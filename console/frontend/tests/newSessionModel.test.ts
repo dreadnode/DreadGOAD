@@ -41,6 +41,7 @@ const base: NewSessionModelInput = {
   configOk: true,
   envChoice: 'existing',
   loadedProvider: 'aws',
+  loadedProviders: { existing: 'aws' },
   loadedRegions: { existing: 'us-east-1' },
   newEnv: '',
   source: 'ad/GOAD',
@@ -59,6 +60,17 @@ assert.deepEqual(attach.payload, { config_path: '/repo/dreadgoad.yaml', env: 'ex
 assert.ok(attach.effects.some(effect => effect.includes('no files are written')))
 assert.equal(attach.missingRegion, false)
 assert.equal(attach.credentialHint, 'AWS credentials are unavailable')
+
+const overriddenProvider = deriveNewSessionModel({
+  ...base,
+  envChoice: 'scope-dev',
+  envs: ['existing', 'scope-dev'],
+  loadedProviders: { existing: 'aws', 'scope-dev': 'azure' },
+  loadedRegions: { existing: 'us-east-1', 'scope-dev': 'centralus' },
+})
+assert.equal(overriddenProvider.effectiveProvider, 'azure')
+assert.equal(overriddenProvider.credentialHint, '')
+assert.equal(overriddenProvider.missingRegion, false)
 
 const newEnvironment = deriveNewSessionModel({
   ...base,
@@ -81,6 +93,20 @@ assert.deepEqual(newEnvironment.payload, {
   },
 })
 assert.ok(newEnvironment.effects.some(effect => effect.includes('redteam/<region>/')))
+
+const legacyNewEnvironment = deriveNewSessionModel({
+  ...base,
+  envChoice: NEW_ENV,
+  loadedProvider: '',
+  loadedProviders: { existing: 'aws' },
+  listing: {
+    ...listing,
+    configs: [{ ...listing.configs[0], provider: null }],
+  },
+  newEnv: 'legacy-redteam',
+})
+assert.equal(legacyNewEnvironment.effectiveProvider, 'aws')
+assert.equal(legacyNewEnvironment.credentialHint, 'AWS credentials are unavailable')
 
 const unsupportedLab: LabSummary = {
   name: 'Azure-only',

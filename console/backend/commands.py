@@ -40,12 +40,11 @@ class Command:
 
     name: str
     verb: tuple[str, ...]  # base CLI verb after `dreadgoad`
-    dispatch: str = "direct"  # "direct" (deterministic) | "agent"
+    dispatch: str = "direct"  # "direct" | "composite" | "agent"
     long_running: bool = False  # streamed + guarded cancel (§5.4)
     takes_args: bool = False
-    # Agent-dispatched composite commands do not map to one CLI verb. List the
-    # concrete run_dreadgoad commands the prompt may use so its constraints do
-    # not contradict the command-specific guidance.
+    # Composite commands list their deterministic child commands. Agent
+    # commands use the same field to constrain run_dreadgoad calls.
     agent_commands: tuple[str, ...] = ()
     # Whether a direct command's bounded output summary may be added to model
     # context. Authentication output is deliberately excluded.
@@ -161,13 +160,13 @@ REGISTRY: dict[str, Command] = {
         "/health",
         ("health-check", "--json"),
         long_running=True,
-        description="Check each host is reachable and Active Directory is serving",
-        detail="read-only; reports per host, so a failure is scoped to one machine",
+        description="Check each host and its lab-specific core services",
+        detail="read-only; uses the selected lab's health-check implementation",
     ),
     "/status": Command(
         "/status",
         (),
-        dispatch="agent",
+        dispatch="composite",
         long_running=True,
         agent_commands=("/instances", "/health"),
         description="Cloud power state + host-level health in one pass",
@@ -182,10 +181,10 @@ REGISTRY: dict[str, Command] = {
     ),
     "/validate": Command(
         "/validate",
-        ("validate",),
+        ("validate", "--json"),
         long_running=True,
-        description="Check the vulnerability configuration matches this variant",
-        detail="read-only; needs the variant's mapping.json and an inventory",
+        description="Check the selected lab against its complete expected state",
+        detail="read-only; uses the selected lab's validation implementation",
     ),
     "/exec": Command(
         "/exec",
