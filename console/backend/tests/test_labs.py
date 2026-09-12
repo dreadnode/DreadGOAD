@@ -67,6 +67,7 @@ async def test_discover_labs_shapes_the_cli_output() -> None:
         assert found[0]["dir"] == "ad/GOAD", found[0]
         assert found[0]["hosts"] == ["dc01", "dc02", "srv02"], found[0]
         assert found[0]["providers"] == ["aws", "azure"], found[0]
+        assert found[0]["variant_supported"] is True, found[0]
 
         # No config → runs at the repo root, because `lab list` treats its cwd
         # as the project root and needs one with an ad/ in it.
@@ -154,12 +155,44 @@ async def test_discover_labs_survives_a_missing_path_field() -> None:
     print("PASS test_discover_labs_survives_a_missing_path_field")
 
 
+async def test_service_ranges_are_not_variant_sources() -> None:
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        service_range = root / "ad" / "SCOPE-RANGE"
+        service_range.mkdir(parents=True)
+        (service_range / "range.yml").write_text(
+            "schema_version: 1\nkind: service-range\n"
+        )
+        payload = json.dumps(
+            [
+                {
+                    "name": "SCOPE-RANGE",
+                    "path": str(service_range),
+                    "providers": ["azure"],
+                    "hosts": ["web01"],
+                }
+            ]
+        )
+        run, _ = _capture(payload)
+        found = await labs.discover_labs(capture_command=run)  # type: ignore[arg-type]
+        assert found[0]["variant_supported"] is False, found[0]
+
+        try:
+            labs.require_variant_source_supported(root, "ad/SCOPE-RANGE")
+        except ValueError as exc:
+            assert "active-directory ranges" in str(exc), exc
+        else:
+            raise AssertionError("service range was accepted as a variant source")
+    print("PASS test_service_ranges_are_not_variant_sources")
+
+
 async def _main() -> None:
     await test_discover_labs_shapes_the_cli_output()
     await test_discover_labs_scopes_to_a_config_tree()
     await test_discover_labs_degrades_to_empty_rather_than_raising()
     await test_discover_labs_survives_a_spawn_that_raises()
     await test_discover_labs_survives_a_missing_path_field()
+    await test_service_ranges_are_not_variant_sources()
     print("ALL PASS")
 
 

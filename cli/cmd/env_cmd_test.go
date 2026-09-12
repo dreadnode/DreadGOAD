@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dreadnode/dreadgoad/internal/config"
 )
 
 // TestRepointInventoryDomainPointsAtTheVariant covers the failure where a
@@ -99,6 +101,36 @@ func TestVariantTargetForFollowsTheSource(t *testing.T) {
 		if got != want {
 			t.Errorf("variantTargetFor(%q) = %q, want %q", tt.source, got, want)
 		}
+	}
+}
+
+func TestScaffoldEnvRejectsServiceRangeBeforeWriting(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "ad", "SCOPE-RANGE")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "schema_version: 1\nkind: service-range\n"
+	if err := os.WriteFile(filepath.Join(source, "range.yml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{ProjectRoot: root, Provider: "azure"}
+
+	err := scaffoldEnv(
+		cfg,
+		"scope-variant",
+		"centralus",
+		"10.100.0.0/16",
+		"scope-dev",
+		"ad/SCOPE-RANGE",
+		true,
+		false,
+	)
+	if err == nil || !strings.Contains(err.Error(), "active-directory ranges") {
+		t.Fatalf("scaffoldEnv() error = %v, want unsupported range-kind error", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "infra")); !os.IsNotExist(statErr) {
+		t.Fatalf("unsupported scaffold wrote infrastructure: %v", statErr)
 	}
 }
 

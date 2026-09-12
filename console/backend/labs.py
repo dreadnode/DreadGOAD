@@ -20,7 +20,10 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 import typing as t
+
+import yaml
 
 from . import commands, paths, projectroot
 from .cli import Capture, capture
@@ -28,6 +31,47 @@ from .cli import Capture, capture
 # Written by the variant generator into every directory it produces. Presence is
 # what distinguishes a generated variant from a lab someone authored.
 _VARIANT_MARKER = "mapping.json"
+_RANGE_MANIFEST = "range.yml"
+_ACTIVE_DIRECTORY_KIND = "active-directory"
+
+
+def _variant_support(lab_path: str | Path) -> tuple[bool, str | None]:
+    """Return whether the GOAD variant generator supports ``lab_path``.
+
+    Older Active Directory labs may have no manifest, so absence remains
+    supported for compatibility. Once a range declares a kind, only
+    ``active-directory`` is accepted: the generator does not transform service
+    range infrastructure, Ansible roles, application data, or credentials.
+    """
+    if not str(lab_path):
+        return True, None
+    manifest_path = Path(lab_path) / _RANGE_MANIFEST
+    if not manifest_path.exists():
+        return True, None
+    try:
+        raw = yaml.safe_load(manifest_path.read_text())
+    except (OSError, yaml.YAMLError) as exc:
+        return False, f"cannot read range manifest {manifest_path}: {exc}"
+    kind = raw.get("kind") if isinstance(raw, dict) else None
+    if kind == _ACTIVE_DIRECTORY_KIND:
+        return True, None
+    if not kind:
+        return False, f"range manifest {manifest_path} has no kind"
+    return (
+        False,
+        "variants are only supported for active-directory ranges; "
+        f"{Path(lab_path).name} declares kind {kind!r}",
+    )
+
+
+def require_variant_source_supported(project_root: str | Path, source: str) -> None:
+    """Raise before console session creation mutates files for a bad source."""
+    source_path = Path(source or "ad/GOAD").expanduser()
+    if not source_path.is_absolute():
+        source_path = Path(project_root) / source_path
+    supported, reason = _variant_support(source_path)
+    if not supported:
+        raise ValueError(reason or f"variant source {source_path} is unsupported")
 
 
 async def discover_labs(
@@ -83,6 +127,7 @@ async def discover_labs(
             continue
         name = str(entry["name"])
         path = str(entry.get("path") or "")
+        variant_supported, _ = _variant_support(path)
         labs.append(
             {
                 "name": name,
@@ -93,6 +138,7 @@ async def discover_labs(
                 "dir": f"ad/{name}",
                 "providers": entry.get("providers") or [],
                 "hosts": entry.get("hosts") or [],
+                "variant_supported": variant_supported,
                 "generated": bool(path)
                 and os.path.isfile(os.path.join(path, _VARIANT_MARKER)),
             }

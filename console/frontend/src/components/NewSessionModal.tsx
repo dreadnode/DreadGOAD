@@ -82,6 +82,7 @@ export default function NewSessionModal({ cfg, onClose, onCreate }: {
     configTaken,
     sourceLab,
     sourceUnsupported,
+    sourceVariantUnsupported,
     variantTarget,
     missingRegion,
     valid,
@@ -196,10 +197,11 @@ export default function NewSessionModal({ cfg, onClose, onCreate }: {
                   // this was a path you had to already know.
                   label: `${l.name} — ${l.hosts.length} host${l.hosts.length === 1 ? '' : 's'}`
                     + (l.generated ? ' (generated variant)' : '')
+                    + (l.variant_supported === false ? ' — variants unavailable' : '')
                     + (labSupportsProvider(l, effectiveProvider) ? '' : ` — no ${effectiveProvider} support`),
                   // A lab with no terraform for this provider deploys nothing.
                   // Disabled rather than hidden so the reason is legible.
-                  disabled: !labSupportsProvider(l, effectiveProvider),
+                  disabled: l.variant_supported === false || !labSupportsProvider(l, effectiveProvider),
                 }))}
               />
             ) : (
@@ -209,6 +211,12 @@ export default function NewSessionModal({ cfg, onClose, onCreate }: {
               <div style={{ color: 'var(--dn-error)', fontSize: 11, marginTop: -8, marginBottom: 12 }}>
                 {sourceLab?.name} ships no {effectiveProvider} terraform
                 (has: {sourceLab?.providers.join(', ') || 'none'}) — it cannot be deployed by this config.
+              </div>
+            )}
+            {sourceVariantUnsupported && (
+              <div style={{ color: 'var(--dn-error)', fontSize: 11, marginTop: -8, marginBottom: 12 }}>
+                {sourceLab?.name} does not support randomized variants. Variants currently
+                support Active Directory ranges only.
               </div>
             )}
             <Field label="Variant name" value={variantName} onChange={setVariantName} placeholder={nm || 'defaults to the environment name'} />

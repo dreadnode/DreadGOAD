@@ -152,6 +152,19 @@ func validateEnvName(name string) error {
 }
 
 func scaffoldEnv(cfg *config.Config, envName, region, vpcCIDR, reference, variantSource string, useVariant, force bool) error {
+	if useVariant {
+		source := variantSource
+		if source == "" {
+			source = defaultVariantSource
+		}
+		if !filepath.IsAbs(source) {
+			source = filepath.Join(cfg.ProjectRoot, source)
+		}
+		if err := variant.ValidateSource(source); err != nil {
+			return fmt.Errorf("validate variant source: %w", err)
+		}
+	}
+
 	provider := cfg.ResolvedProvider()
 	infraBase := cfg.InfraBasePathForProvider(provider)
 	envDir := filepath.Join(infraBase, envName)

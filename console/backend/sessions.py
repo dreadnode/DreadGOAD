@@ -18,7 +18,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import configstore, labconfig, lifecycle, paths, scaffold
+from . import configstore, labconfig, labs, lifecycle, paths, projectroot, scaffold
 from .db import Database
 from .schemas import RangeDocument, SessionDocument, SessionSnapshot
 
@@ -122,6 +122,11 @@ class SessionService:
         label: str | None = None,
     ) -> SessionDocument:
         """Create-new-env flow: write the env into the yaml, then attach."""
+        if bool(env_fields.get("variant")):
+            root, _ = projectroot.resolve_root(config_path)
+            labs.require_variant_source_supported(
+                root, str(env_fields.get("variant_source") or "ad/GOAD")
+            )
         labconfig.write_new_env(config_path, env_name, env_fields, top_level)
         session = await self.create_session(
             config_path, env_name, model=model, label=label
@@ -242,6 +247,11 @@ class SessionService:
         a config the operator never successfully made.
         """
         path = str(configstore.path_for(config_name))
+        if bool(env_fields.get("variant")):
+            labs.require_variant_source_supported(
+                self.repo_root,
+                str(env_fields.get("variant_source") or "ad/GOAD"),
+            )
         labconfig.create_config(path, provider, env_name, env_fields, region=region)
         try:
             session = await self.create_session(

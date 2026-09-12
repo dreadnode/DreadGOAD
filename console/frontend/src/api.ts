@@ -75,6 +75,8 @@ export interface LabSummary {
   /** Providers the lab ships terraform for; a lab missing the session's provider cannot deploy. */
   providers: string[]
   hosts: string[]
+  /** Whether the GOAD-specific randomized variant generator supports this range kind. */
+  variant_supported: boolean
   /** True when this is itself a generated variant (it has a mapping.json). */
   generated: boolean
 }

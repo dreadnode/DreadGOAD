@@ -62,6 +62,7 @@ export interface NewSessionModel {
   configTaken: boolean
   sourceLab?: LabSummary
   sourceUnsupported: boolean
+  sourceVariantUnsupported: boolean
   variantTarget: string
   missingRegion: boolean
   valid: boolean
@@ -109,12 +110,13 @@ export function deriveNewSessionModel(input: NewSessionModelInput): NewSessionMo
   // only a known mismatch is grounds to reject the lab.
   const sourceLab = input.labList.find(lab => lab.dir === input.source.trim())
   const sourceUnsupported = !!sourceLab && !labSupportsProvider(sourceLab, effectiveProvider)
+  const sourceVariantUnsupported = sourceLab?.variant_supported === false
   const variantBase = input.source.trim() || 'ad/GOAD'
   const effectiveVariant = input.variantName.trim() || environmentName
   const variantTarget = effectiveVariant ? `${variantBase}-${effectiveVariant}` : ''
 
   const environmentValid = creatingEnv
-    ? (!!environmentName && !environmentCollides && !sourceUnsupported)
+    ? (!!environmentName && !environmentCollides && !sourceUnsupported && !sourceVariantUnsupported)
     : !!input.envChoice
   // Region is required here because the console does not supply a CLI override
   // and subsequent provider commands resolve it from the config.
@@ -189,6 +191,7 @@ export function deriveNewSessionModel(input: NewSessionModelInput): NewSessionMo
     configTaken,
     sourceLab,
     sourceUnsupported,
+    sourceVariantUnsupported,
     variantTarget,
     missingRegion,
     valid,

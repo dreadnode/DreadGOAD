@@ -113,6 +113,7 @@ const unsupportedLab: LabSummary = {
   dir: 'ad/AzureOnly',
   providers: ['azure'],
   hosts: ['dc'],
+  variant_supported: true,
   generated: false,
 }
 const rejectedSource = deriveNewSessionModel({
@@ -124,6 +125,25 @@ const rejectedSource = deriveNewSessionModel({
 })
 assert.equal(rejectedSource.sourceUnsupported, true)
 assert.equal(rejectedSource.valid, false)
+
+const serviceRange: LabSummary = {
+  name: 'SCOPE-RANGE',
+  dir: 'ad/SCOPE-RANGE',
+  providers: ['azure'],
+  hosts: ['web01', 'data01'],
+  variant_supported: false,
+  generated: false,
+}
+const rejectedServiceRange = deriveNewSessionModel({
+  ...base,
+  envChoice: NEW_ENV,
+  loadedProvider: 'azure',
+  newEnv: 'scope-variant',
+  source: serviceRange.dir,
+  labList: [serviceRange],
+})
+assert.equal(rejectedServiceRange.sourceVariantUnsupported, true)
+assert.equal(rejectedServiceRange.valid, false)
 
 const newConfig = deriveNewSessionModel({
   ...base,

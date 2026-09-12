@@ -262,6 +262,39 @@ async def test_create_new_env_writes_yaml_and_backs_up() -> None:
             await svc.db.close()
 
 
+async def test_create_new_env_rejects_service_range_before_writing() -> None:
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        cfg = tmp / "dreadgoad.yaml"
+        cfg.write_text(_YAML)
+        before = cfg.read_text()
+        svc = await _svc(tmp)
+        try:
+            try:
+                await svc.create_new_env_session(
+                    str(cfg),
+                    "scope-variant",
+                    env_fields={
+                        "variant": True,
+                        "variant_source": "ad/SCOPE-RANGE",
+                        "variant_target": "ad/SCOPE-RANGE-scope-variant",
+                    },
+                )
+            except ValueError as exc:
+                assert "active-directory ranges" in str(exc), exc
+            else:
+                raise AssertionError("service range was accepted as a variant source")
+
+            assert cfg.read_text() == before, "config changed before rejection"
+            assert not list(tmp.glob("dreadgoad.yaml.bak.*")), (
+                "backup proves config was written"
+            )
+            assert await svc.list_sessions() == [], "rejected request created a session"
+        finally:
+            await svc.db.close()
+    print("PASS test_create_new_env_rejects_service_range_before_writing")
+
+
 _YAML_GREENFIELD = """\
 provider: aws
 region: us-west-2
@@ -447,6 +480,7 @@ async def _main() -> None:
     await test_scaffold_retries_initialization_only_for_variants()
     await test_delete_refuses_working_dir_outside_session_root()
     await test_create_new_env_writes_yaml_and_backs_up()
+    await test_create_new_env_rejects_service_range_before_writing()
     await test_greenfield_seeds_infra_only()
     test_default_label_names_the_config_and_env()
     await test_create_config_session_writes_a_config_and_attaches()
