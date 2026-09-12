@@ -88,6 +88,26 @@ assert.equal(ended.command.s1, '')
 assert.equal(ended.turnStartedAt.s1, 0)
 assert.equal(ended.verbSeed.s1, 0)
 
+const disconnected = consoleEventReducer(active, { type: 'connection_lost' })
+assert.deepEqual(disconnected.processing, {})
+assert.deepEqual(disconnected.command, {})
+assert.deepEqual(disconnected.turnStartedAt, {})
+assert.deepEqual(disconnected.verbSeed, {})
+assert.equal(disconnected.messages.s1, active.messages.s1)
+
+const reconnected = receive(disconnected, {
+  kind: 'history',
+  session_id: 's1',
+  events: [],
+  active: true,
+  started_at: '2026-09-09T12:00:00Z',
+  command: '/up',
+  approval: null,
+})
+assert.equal(reconnected.processing.s1, true)
+assert.equal(reconnected.command.s1, '/up')
+assert.equal(reconnected.turnStartedAt.s1, Date.parse('2026-09-09T12:00:00Z'))
+
 const approval = receive(ended, {
   kind: 'approval_required',
   session_id: 's1',

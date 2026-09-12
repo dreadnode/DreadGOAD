@@ -29,6 +29,7 @@ export const initialConsoleEventState: ConsoleEventState = {
 export type ConsoleEventAction =
   | { type: 'receive'; sessionId: string; event: ChatEvent; now: number }
   | { type: 'turn_started'; sessionId: string; now: number }
+  | { type: 'connection_lost' }
   | { type: 'approval_sent'; sessionId: string; approvalId: string }
   | { type: 'session_removed'; sessionId: string }
 
@@ -168,6 +169,17 @@ export function consoleEventReducer(
         processing: { ...state.processing, [action.sessionId]: true },
         turnStartedAt: { ...state.turnStartedAt, [action.sessionId]: action.now },
         verbSeed: { ...state.verbSeed, [action.sessionId]: action.now },
+      }
+    case 'connection_lost':
+      // The server owns turn state. Once its socket is gone, continuing an
+      // optimistic stopwatch falsely claims work is still running. A reconnect
+      // immediately restores genuinely active turns from the history frame.
+      return {
+        ...state,
+        processing: {},
+        command: {},
+        turnStartedAt: {},
+        verbSeed: {},
       }
     case 'approval_sent':
       return state.approvals[action.sessionId]?.approval_id === action.approvalId

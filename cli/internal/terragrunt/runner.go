@@ -27,11 +27,14 @@ type Options struct {
 	WorkDir          string
 	TerragruntBinary string
 	TerraformBinary  string
-	AutoApprove      bool
-	NonInteractive   bool
-	ExcludeDirs      string
-	LogFile          string
-	Debug            bool
+	// Parallelism limits how many units a run --all command may execute at
+	// once. Zero leaves Terragrunt's default unchanged.
+	Parallelism    int
+	AutoApprove    bool
+	NonInteractive bool
+	ExcludeDirs    string
+	LogFile        string
+	Debug          bool
 	// BackendBootstrap tells Terragrunt to auto-provision the remote-state
 	// backend (S3 bucket / DynamoDB table) when it doesn't exist yet.
 	BackendBootstrap bool
@@ -99,23 +102,7 @@ func RunAll(ctx context.Context, opts Options) error {
 		}
 	}
 
-	// Terragrunt flags go before --, tofu flags go after the action.
-	args := []string{"run", "--all"}
-	// terragrunt v0.97+ auto-appends -auto-approve for run --all.
-	// Only add --no-auto-approve when the caller explicitly wants a prompt.
-	if !opts.AutoApprove && (opts.Action == "apply" || opts.Action == "destroy") {
-		args = append(args, "--no-auto-approve")
-	}
-	if opts.NonInteractive {
-		args = append(args, "--non-interactive")
-	}
-	if opts.BackendBootstrap {
-		args = append(args, "--backend-bootstrap")
-	}
-	args = append(args, "--", opts.Action)
-	if opts.Action == "init" {
-		args = append(args, "-upgrade")
-	}
+	args := buildRunAllArgs(opts)
 
 	slog.Info("running terragrunt run --all",
 		"action", opts.Action,
@@ -148,6 +135,31 @@ func RunAll(ctx context.Context, opts Options) error {
 		return commandError(fmt.Sprintf("terragrunt run --all %s failed", opts.Action), err, tail.String(), opts.TerragruntBinary)
 	}
 	return nil
+}
+
+func buildRunAllArgs(opts Options) []string {
+	// Terragrunt flags go before --, tofu flags go after the action.
+	args := []string{"run", "--all"}
+	// terragrunt v0.97+ auto-appends -auto-approve for run --all.
+	// Only add --no-auto-approve when the caller explicitly wants a prompt.
+	if !opts.AutoApprove && (opts.Action == "apply" || opts.Action == "destroy") {
+		args = append(args, "--no-auto-approve")
+	}
+	if opts.NonInteractive {
+		args = append(args, "--non-interactive")
+	}
+	if opts.BackendBootstrap {
+		args = append(args, "--backend-bootstrap")
+	}
+	if opts.Parallelism > 0 {
+		args = append(args, "--parallelism", fmt.Sprintf("%d", opts.Parallelism))
+	}
+	args = append(args, "--", opts.Action)
+	if opts.Action == "init" {
+		args = append(args, "-upgrade")
+	}
+
+	return args
 }
 
 func runAllInit(ctx context.Context, opts Options) error {

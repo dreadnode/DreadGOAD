@@ -50,7 +50,13 @@ export function useConsoleSessionEvents(
     for (const session of sessionsRef.current) resumeWith(send, session.id)
   }, [resumeWith])
 
-  const { status, send } = useWebSocket('/ws/chat', handleMessage, handleOpen)
+  const handleClose = useCallback(() => {
+    dispatch({ type: 'connection_lost' })
+  }, [])
+
+  const { status, send } = useWebSocket(
+    '/ws/chat', handleMessage, handleOpen, handleClose,
+  )
 
   const resume = useCallback((sessionId: string) => {
     if (status === 'connected') resumeWith(send, sessionId)

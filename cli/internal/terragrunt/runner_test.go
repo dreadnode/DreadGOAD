@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -90,6 +91,26 @@ func TestBuildArgs_NonInteractive(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected --non-interactive in args, got %v", args)
+	}
+}
+
+func TestBuildRunAllArgsParallelism(t *testing.T) {
+	args := buildRunAllArgs(Options{
+		Action:      "apply",
+		Parallelism: 1,
+	})
+	want := []string{"run", "--all", "--no-auto-approve", "--parallelism", "1", "--", "apply"}
+	if !slices.Equal(args, want) {
+		t.Fatalf("run-all args = %v, want %v", args, want)
+	}
+}
+
+func TestBuildRunAllArgsLeavesParallelismUnsetByDefault(t *testing.T) {
+	args := buildRunAllArgs(Options{Action: "apply"})
+	for _, arg := range args {
+		if arg == "--parallelism" {
+			t.Fatalf("default run-all args unexpectedly constrain parallelism: %v", args)
+		}
 	}
 }
 

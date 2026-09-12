@@ -62,8 +62,8 @@ export default function App() {
 
   const sendMessage = useCallback((content: string) => {
     if (!activeId) return
-    beginTurn(activeId)
-    send(JSON.stringify({ session_id: activeId, content }))
+    const sent = send(JSON.stringify({ session_id: activeId, content }))
+    if (sent) beginTurn(activeId)
   }, [activeId, beginTurn, send])
 
   const onCancel = useCallback(() => {

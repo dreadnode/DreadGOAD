@@ -269,6 +269,10 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 		Action:           action,
 		TerragruntBinary: cfg.Infra.TerragruntBinary,
 		TerraformBinary:  cfg.Infra.TerraformBinary,
+		// Bastion, controller, and Kali each own a subnet in the shared VNet.
+		// Azure serializes VNet mutations and rejects concurrent sibling applies
+		// with AnotherOperationInProgress, so keep Azure units deterministic.
+		Parallelism:      1,
 		NonInteractive:   true,
 		ExcludeDirs:      exclude,
 		BackendBootstrap: backendBootstrapAz,
