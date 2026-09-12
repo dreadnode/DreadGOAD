@@ -27,11 +27,14 @@ type Options struct {
 	WorkDir          string
 	TerragruntBinary string
 	TerraformBinary  string
-	AutoApprove      bool
-	NonInteractive   bool
-	ExcludeDirs      string
-	LogFile          string
-	Debug            bool
+	// Parallelism limits how many units a run --all command may execute at
+	// once. Zero leaves Terragrunt's default unchanged.
+	Parallelism    int
+	AutoApprove    bool
+	NonInteractive bool
+	ExcludeDirs    string
+	LogFile        string
+	Debug          bool
 	// BackendBootstrap tells Terragrunt to auto-provision the remote-state
 	// backend (S3 bucket / DynamoDB table) when it doesn't exist yet.
 	BackendBootstrap bool
@@ -150,6 +153,9 @@ func buildRunAllArgs(opts Options) []string {
 	}
 	if opts.BackendBootstrap {
 		args = append(args, "--backend-bootstrap")
+	}
+	if opts.Parallelism > 0 {
+		args = append(args, "--parallelism", fmt.Sprintf("%d", opts.Parallelism))
 	}
 	args = append(args, "--", opts.Action)
 	if opts.Action == "init" {
