@@ -30,6 +30,48 @@ The console invokes `dreadgoad range init-session` generically. Generated
 artifacts are written beneath the private console session directory rather than
 into the range source tree.
 
+## Range creation metadata
+
+The web console discovers range/provider choices from the same `range.yml`.
+Declare `display_name`, variant support, and one infrastructure entry per
+provider that `dreadgoad env create` can scaffold:
+
+```yaml
+schema_version: 1
+display_name: Example Range
+kind: service-range
+variants:
+  supported: false
+infrastructure:
+  azure:
+    deployment: example-deployment
+    scaffold_profile: template
+    template_environment: example-dev
+    default_region: centralus
+    network:
+      cidr: 10.60.0.0/16
+      editable: false
+lifecycle:
+  session_init: []
+```
+
+`template` copies the complete authored environment at
+`infra/azure/<deployment>/<template_environment>/<default_region>/` and renders
+the selected environment and region. The matching
+`providers/<provider>/inventory` is copied as `<env>-inventory`; it may use
+`{{env}}` and `{{region}}` placeholders. Those placeholders are preferred in
+copied text files. For existing templates, quoted values equal to
+`template_environment`, resource-name prefixes such as `example-dev-`, and
+quoted source-region values are also rendered without interpreting HCL.
+Template profiles currently require a fixed, private IPv4 `/16`; flexible CIDR
+generation belongs to the `active-directory` profile until a template-specific
+network renderer is added.
+
+Legacy Active Directory ranges may omit `infrastructure`; AWS and Azure then use
+the established `goad-deployment` templates. Their provider template must contain
+a `goad/<host>/terragrunt.hcl` module for every host declared by `config.json`.
+Discovery deliberately omits combinations that cannot be scaffolded completely.
+
 ## Inventory file : Inventory
 
 This is the ansible inventory file.

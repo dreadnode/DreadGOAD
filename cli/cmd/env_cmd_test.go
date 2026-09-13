@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/dreadnode/dreadgoad/internal/config"
+	"github.com/dreadnode/dreadgoad/internal/rangeconfig"
 )
 
 // TestRepointInventoryDomainPointsAtTheVariant covers the failure where a
@@ -82,6 +83,32 @@ func TestScaffoldInventoryLeavesDomainAloneWithoutVariant(t *testing.T) {
 	}
 }
 
+func TestScaffoldInventoryRepointsNonGOADBaseLab(t *testing.T) {
+	root := t.TempDir()
+	reference := "staging"
+	body := "[all:vars]\ndomain_name=GOAD\nenv=staging\nansible_aws_ssm_region=us-west-1\n[default]\ndc01 ansible_host=i-1234\n"
+	if err := os.WriteFile(filepath.Join(root, reference+"-inventory.example"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan := scaffoldPlan{Lab: "GOAD-Mini", Profile: rangeconfig.ProfileActiveDir}
+	if err := scaffoldInventoryForPlan(
+		"aws", root, plan, "mini", "us-east-1", reference, "", false,
+		map[string]bool{"dc01": true},
+	); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "mini-inventory"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(raw)
+	for _, want := range []string{"domain_name=GOAD-Mini", "env=mini", "ansible_aws_ssm_region=us-east-1", "ansible_host=PENDING"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("inventory does not contain %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestVariantTargetForFollowsTheSource(t *testing.T) {
 	tests := []struct {
 		source string
@@ -131,6 +158,182 @@ func TestScaffoldEnvRejectsServiceRangeBeforeWriting(t *testing.T) {
 	}
 	if _, statErr := os.Stat(filepath.Join(root, "infra")); !os.IsNotExist(statErr) {
 		t.Fatalf("unsupported scaffold wrote infrastructure: %v", statErr)
+	}
+}
+
+func TestTemplateProfileScaffoldsScopeWithoutGOADArtifacts(t *testing.T) {
+	root := t.TempDir()
+	lab := filepath.Join(root, "ad", "SCOPE-RANGE")
+	for _, dir := range []string{
+		filepath.Join(lab, "data"),
+		filepath.Join(lab, "providers", "azure"),
+		filepath.Join(root, "infra", "azure", "scope-range-deployment", "scope-dev", "centralus", "hosts", "web01"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fixtures := map[string]string{
+		filepath.Join(lab, "range.yml"): `schema_version: 1
+kind: service-range
+variants:
+  supported: false
+infrastructure:
+  azure:
+    deployment: scope-range-deployment
+    scaffold_profile: template
+    template_environment: scope-dev
+    default_region: centralus
+    network:
+      cidr: 10.50.0.0/16
+      editable: false
+`,
+		filepath.Join(lab, "data", "config.json"):                                                                                     `{"lab":{"hosts":{"web01":{}}}}`,
+		filepath.Join(lab, "providers", "azure", "inventory"):                                                                         "[all:vars]\nansible_ssh_private_key_file=~/.keys/azure-scope-dev-key\n[all]\nweb01 ansible_host=10.50.10.20\n",
+		filepath.Join(root, "infra", "azure", "scope-range-deployment", "scope-dev", "env.hcl"):                                       "locals { env = \"scope-dev\" key = \"azure-scope-dev-key\" }\n",
+		filepath.Join(root, "infra", "azure", "scope-range-deployment", "scope-dev", "centralus", "region.hcl"):                       "locals { location = \"centralus\" }\n",
+		filepath.Join(root, "infra", "azure", "scope-range-deployment", "scope-dev", "centralus", "hosts", "web01", "terragrunt.hcl"): "mock = \"scope-dev-centralus\"\nterraform {}\n",
+	}
+	for path, body := range fixtures {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := &config.Config{
+		ProjectRoot: root,
+		Env:         "kraken",
+		Environments: map[string]config.EnvironmentConfig{
+			"kraken": {Lab: "SCOPE-RANGE", Provider: "azure", Deployment: "scope-range-deployment"},
+		},
+	}
+	plan, err := resolveScaffoldPlan(cfg, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := scaffoldEnvWithPlan(cfg, plan, "kraken", "centralus", "10.50.0.0/16", "scope-dev", "", false, false); err != nil {
+		t.Fatal(err)
+	}
+	for path, contains := range map[string]string{
+		filepath.Join(root, "infra", "azure", "scope-range-deployment", "kraken", "env.hcl"):                                       "azure-kraken-key",
+		filepath.Join(root, "infra", "azure", "scope-range-deployment", "kraken", "centralus", "hosts", "web01", "terragrunt.hcl"): "terraform",
+		filepath.Join(root, "kraken-inventory"): "azure-kraken-key",
+	} {
+		raw, err := os.ReadFile(path)
+		if err != nil || !strings.Contains(string(raw), contains) {
+			t.Fatalf("%s = %q, %v; want %q", path, raw, err, contains)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "ad", "GOAD", "data", "kraken-overlay.json")); !os.IsNotExist(err) {
+		t.Fatalf("SCOPE scaffold created a GOAD overlay: %v", err)
+	}
+	rendered, err := os.ReadFile(filepath.Join(root, "infra", "azure", "scope-range-deployment", "kraken", "centralus", "hosts", "web01", "terragrunt.hcl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(rendered), "scope-dev") || !strings.Contains(string(rendered), "kraken-centralus") {
+		t.Fatalf("copied template literals were not rendered: %s", rendered)
+	}
+}
+
+func TestFailedScaffoldRemovesOnlyNewArtifacts(t *testing.T) {
+	root := t.TempDir()
+	lab := filepath.Join(root, "ad", "SCOPE-RANGE")
+	template := filepath.Join(root, "infra", "azure", "scope-range-deployment", "scope-dev")
+	for _, dir := range []string{
+		filepath.Join(template, "centralus", "hosts"),
+		filepath.Join(lab, "providers", "azure"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path, body := range map[string]string{
+		filepath.Join(lab, "range.yml"):                    "schema_version: 1\nkind: service-range\ninfrastructure:\n  azure:\n    deployment: scope-range-deployment\n    scaffold_profile: template\n    template_environment: scope-dev\n    network:\n      cidr: 10.50.0.0/16\n      editable: false\n",
+		filepath.Join(lab, "data", "config.json"):          "{}\n",
+		filepath.Join(template, "env.hcl"):                 "locals { env = \"scope-dev\" }\n",
+		filepath.Join(template, "centralus", "region.hcl"): "locals {}\n",
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := &config.Config{ProjectRoot: root, Env: "broken", Environments: map[string]config.EnvironmentConfig{
+		"broken": {Lab: "SCOPE-RANGE", Provider: "azure", Deployment: "scope-range-deployment"},
+	}}
+	plan, err := resolveScaffoldPlan(cfg, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = scaffoldEnvWithPlan(cfg, plan, "broken", "centralus", "10.50.0.0/16", "scope-dev", "", false, false)
+	if err == nil || !strings.Contains(err.Error(), "inventory") {
+		t.Fatalf("error = %v, want missing inventory", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "infra", "azure", "scope-range-deployment", "broken")); !os.IsNotExist(err) {
+		t.Fatalf("failed scaffold left infra behind: %v", err)
+	}
+}
+
+func TestRenderTemplateContentDoesNotReplaceReferenceSubstrings(t *testing.T) {
+	got := renderTemplateContent(
+		`env = "test" key = "azure-test-key" note = "latest" region = "centralus" explicit = "{{env}}/{{region}}"`,
+		"test", "kraken", "centralus", "eastus",
+	)
+	for _, want := range []string{`env = "kraken"`, `azure-kraken-key`, `note = "latest"`, `region = "eastus"`, `explicit = "kraken/eastus"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("rendered content %q does not contain %q", got, want)
+		}
+	}
+}
+
+func TestScaffoldUsesManifestDefaultTemplateRegion(t *testing.T) {
+	root := t.TempDir()
+	lab := filepath.Join(root, "ad", "SCOPE-RANGE")
+	template := filepath.Join(root, "infra", "azure", "scope-range-deployment", "scope-dev")
+	for _, dir := range []string{
+		filepath.Join(lab, "data"),
+		filepath.Join(lab, "providers", "azure"),
+		filepath.Join(template, "aaa-wrong", "hosts"),
+		filepath.Join(template, "centralus", "hosts"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path, body := range map[string]string{
+		filepath.Join(lab, "data", "config.json"):                   `{"lab":{"hosts":{}}}`,
+		filepath.Join(lab, "providers", "azure", "inventory"):       "[all:vars]\nenv={{env}}\n",
+		filepath.Join(template, "env.hcl"):                          `locals { env = "scope-dev" }`,
+		filepath.Join(template, "aaa-wrong", "region.hcl"):          `locals { source = "wrong" }`,
+		filepath.Join(template, "aaa-wrong", "hosts", "source.txt"): "wrong",
+		filepath.Join(template, "centralus", "region.hcl"):          `locals { source = "centralus" }`,
+		filepath.Join(template, "centralus", "hosts", "source.txt"): "correct",
+	} {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plan := scaffoldPlan{
+		Lab: "SCOPE-RANGE", LabPath: lab, Profile: rangeconfig.ProfileTemplate,
+		Spec: rangeconfig.ProviderSpec{
+			Deployment: "scope-range-deployment", ScaffoldProfile: rangeconfig.ProfileTemplate,
+			TemplateEnvironment: "scope-dev", DefaultRegion: "centralus",
+		},
+	}
+	cfg := &config.Config{ProjectRoot: root, Env: "kraken", Environments: map[string]config.EnvironmentConfig{
+		"kraken": {Lab: "SCOPE-RANGE", Provider: "azure", Deployment: "scope-range-deployment"},
+	}}
+	if err := scaffoldEnvWithPlan(cfg, plan, "kraken", "eastus", "10.50.0.0/16", "scope-dev", "", false, false); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "infra", "azure", "scope-range-deployment", "kraken", "eastus", "hosts", "source.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "correct" {
+		t.Fatalf("scaffold copied %q; want declared centralus template", raw)
 	}
 }
 

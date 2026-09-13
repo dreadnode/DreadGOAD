@@ -62,6 +62,13 @@ def preflight(
             f"infrastructure. Pick another name, or remove that directory."
         )
 
+    inventory = os.path.join(project_root, f"{env}-inventory")
+    if os.path.exists(inventory):
+        problems.append(
+            f"{inventory} already exists — environment names must be unique "
+            f"within a checkout. Pick another name, or remove that inventory."
+        )
+
     if variant_target:
         target = variant_target
         if not os.path.isabs(target):
@@ -120,6 +127,7 @@ async def scaffold_env(
     variant_target: str | None = None,
     vpc_cidr: str | None = None,
     provider: str = "",
+    deployment: str = DEFAULT_DEPLOYMENT,
     capture_command: Capture | None = None,
 ) -> tuple[bool, str]:
     """Scaffold ``env``'s infrastructure. Returns (ok, combined output).
@@ -136,7 +144,9 @@ async def scaffold_env(
         return False, "no region set for this environment; env create requires one"
 
     root, _ = projectroot.resolve_root(config_path)
-    problems = preflight(str(root), provider, env, variant_target)
+    problems = preflight(
+        str(root), provider, env, variant_target, deployment=deployment
+    )
     if problems:
         return False, "\n".join(problems)
 

@@ -41,7 +41,7 @@ export const WORKFLOW: WorkflowPhase[] = [
     commands: ['/validate'],
     detail:
       "Checks the selected lab's complete expected state. For GOAD this includes " +
-      'intentional vulnerabilities; for SCOPE-RANGE it includes services, apps, users, and seed data.',
+      'intentional vulnerabilities; for GOAT it includes services, apps, users, and seed data.',
   },
   {
     title: '4. Fix what is wrong',

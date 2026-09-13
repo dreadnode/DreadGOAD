@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import ipaddress
 import os
 import re
 import shutil
@@ -29,6 +30,51 @@ def _slug(s: str) -> str:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+_ENV_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_RFC1918_NETWORKS: tuple[ipaddress.IPv4Network, ...] = tuple(
+    ipaddress.IPv4Network(cidr)
+    for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+)
+
+
+def _validate_path_component(label: str, value: str) -> str:
+    value = value.strip()
+    if not value or not _ENV_NAME_RE.fullmatch(value):
+        raise ValueError(
+            f"{label} {value!r} is invalid; use letters, digits, dots, "
+            "hyphens, and underscores"
+        )
+    return value
+
+
+def _deterministic_cidr(env: str) -> str:
+    """Mirror Config.VpcCIDR for ASCII environment names."""
+    value = 0
+    for char in env:
+        value = (value * 31 + ord(char)) & 0xFF
+    return f"10.{value % 240 + 10}.0.0/16"
+
+
+def _validate_cidr(value: str) -> str:
+    """Validate the /16 IPv4 network assumed by both cloud scaffolders."""
+    try:
+        network = ipaddress.ip_network(value, strict=True)
+    except ValueError as exc:
+        raise ValueError(
+            f"VPC/VNet CIDR {value!r} is invalid; use a network such as 10.50.0.0/16"
+        ) from exc
+    if network.version != 4 or network.prefixlen != 16:
+        raise ValueError(
+            f"VPC/VNet CIDR {value!r} is unsupported; range scaffolding "
+            "currently requires an IPv4 /16"
+        )
+    if not any(network.subnet_of(private) for private in _RFC1918_NETWORKS):
+        raise ValueError(
+            f"VPC/VNet CIDR {value!r} is not private; use RFC 1918 address space"
+        )
+    return str(network)
 
 
 def default_label(config_path: str, env: str, snapshot: SessionSnapshot) -> str:
@@ -136,7 +182,7 @@ class SessionService:
 
     async def _scaffold_for(
         self, session: SessionDocument, env_fields: dict[str, t.Any]
-    ) -> None:
+    ) -> tuple[bool, str]:
         """Build the environment's infrastructure and record what happened.
 
         Failure is deliberately NOT fatal to session creation. The session and
@@ -160,7 +206,7 @@ class SessionService:
                     )
                 },
             )
-            return
+            return False, "no region is set for this environment"
 
         ok, output = await scaffold.scaffold_env(
             str(anchor["config_path"]),
@@ -171,6 +217,7 @@ class SessionService:
             variant_target=env_fields.get("variant_target"),
             vpc_cidr=env_fields.get("vpc_cidr"),
             provider=str(snapshot.get("provider") or ""),
+            deployment=str(snapshot.get("deployment") or "goad-deployment"),
         )
         await self.db.append_event(
             session["id"],
@@ -197,6 +244,125 @@ class SessionService:
             # The variant only exists now, so the topology seeded during
             # create_session above saw no lab config and holds infra nodes only.
             await self._reseed_topology(session)
+        return ok, output
+
+    async def create_range_session(
+        self,
+        range_name: str,
+        provider: str,
+        env_name: str,
+        *,
+        region: str | None = None,
+        customization: str = "standard",
+        vpc_cidr: str | None = None,
+        model: str | None = None,
+        label: str | None = None,
+    ) -> SessionDocument:
+        """Create a range-first managed environment and attach a session."""
+        env_name = _validate_path_component("environment name", env_name)
+        range_name = _validate_path_component("range name", range_name)
+        if provider not in configstore.PROVIDERS:
+            raise ValueError(
+                f"provider must be one of {', '.join(configstore.PROVIDERS)}"
+            )
+
+        catalog = await labs.discover_labs()
+        selected = next(
+            (entry for entry in catalog if entry.get("name") == range_name), None
+        )
+        if selected is None or selected.get("generated"):
+            raise ValueError(f"unknown base range {range_name!r}")
+        settings = (selected.get("provider_settings") or {}).get(provider)
+        if not isinstance(settings, dict):
+            raise ValueError(
+                f"range {range_name} cannot be created with provider {provider}"
+            )
+
+        deployment = _validate_path_component(
+            "deployment", str(settings.get("deployment") or "")
+        )
+        effective_region = _validate_path_component(
+            "region", str(region or settings.get("default_region") or "")
+        )
+        network = settings.get("network") or {}
+        fixed_cidr = str(network.get("cidr") or "")
+        editable = network.get("editable") is not False
+        requested_cidr = (vpc_cidr or "").strip()
+        if not editable and requested_cidr and requested_cidr != fixed_cidr:
+            raise ValueError(
+                f"range {range_name} requires VPC/VNet CIDR {fixed_cidr}; "
+                f"got {requested_cidr}"
+            )
+        effective_cidr = fixed_cidr if not editable else requested_cidr
+        effective_cidr = effective_cidr or fixed_cidr or _deterministic_cidr(env_name)
+        effective_cidr = _validate_cidr(effective_cidr)
+
+        if customization not in ("standard", "randomized"):
+            raise ValueError("customization must be 'standard' or 'randomized'")
+        use_variant = customization == "randomized"
+        if use_variant and selected.get("variant_supported") is not True:
+            raise ValueError(f"range {range_name} does not support randomized variants")
+
+        env_fields: dict[str, t.Any] = {
+            "lab": range_name,
+            "provider": provider,
+            "deployment": deployment,
+            "region": effective_region,
+            "vpc_cidr": effective_cidr,
+            "variant": use_variant,
+        }
+        variant_target: str | None = None
+        if use_variant:
+            variant_target = f"ad/{range_name}-{env_name}"
+            env_fields.update(
+                {
+                    "variant_source": f"ad/{range_name}",
+                    "variant_target": variant_target,
+                    "variant_name": env_name,
+                }
+            )
+
+        problems = scaffold.preflight(
+            self.repo_root,
+            provider,
+            env_name,
+            variant_target,
+            deployment=deployment,
+        )
+        if problems:
+            raise FileExistsError("\n".join(problems))
+
+        path = str(configstore.managed_path_for(range_name, provider, env_name))
+        labconfig.create_managed_config(path, env_name, env_fields)
+        try:
+            session = await self.create_session(
+                path,
+                env_name,
+                model=model,
+                label=label
+                or f"{env_name} · {selected.get('display_name') or range_name}",
+            )
+        except Exception:
+            with contextlib.suppress(OSError):
+                os.unlink(path)
+            raise
+
+        try:
+            ok, output = await self._scaffold_for(session, env_fields)
+            if not ok:
+                raise ValueError(
+                    f"could not prepare {range_name} environment {env_name}: {output}"
+                )
+        except Exception:
+            # This flow creates the config and session solely as preparation
+            # for the requested range. A failed or interrupted scaffold must
+            # unwind both so the same range name can be retried cleanly.
+            with contextlib.suppress(Exception):
+                await self.delete_session(session["id"])
+            with contextlib.suppress(OSError):
+                os.unlink(path)
+            raise
+        return session
 
     async def _initialize(self, session: SessionDocument) -> None:
         """Run and retain this range's declarative session initialization."""

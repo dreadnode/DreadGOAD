@@ -63,22 +63,57 @@ export interface ConfigSummary {
   provider?: string | null
   region?: string | null
   environments: string[]
+  environment_details?: EnvironmentSummary[]
   /** Set when the file could not be read or parsed; it is still listed. */
   error?: string | null
 }
 
-/** A lab that can be used as a `variant_source`, from `dreadgoad lab list --json`. */
+export interface ProviderRangeSettings {
+  deployment: string
+  scaffold_profile: 'active-directory' | 'template'
+  template_environment: string
+  default_region?: string
+  network?: { cidr?: string; editable?: boolean }
+}
+
+/** A base range discovered by `dreadgoad lab list --json`. */
 export interface LabSummary {
   name: string
+  display_name: string
+  kind: string
   /** Repo-relative dir — the value written to `variant_source`, e.g. `ad/GOAD`. */
   dir: string
   /** Providers the lab ships terraform for; a lab missing the session's provider cannot deploy. */
   providers: string[]
+  /** Provider combinations the current env scaffolder can actually create. */
+  provider_settings: Record<string, ProviderRangeSettings>
   hosts: string[]
   /** Whether the GOAD-specific randomized variant generator supports this range kind. */
   variant_supported: boolean
   /** True when this is itself a generated variant (it has a mapping.json). */
   generated: boolean
+}
+
+export interface EnvironmentSummary {
+  name: string
+  lab: string
+  provider: string
+  deployment: string
+  region?: string | null
+  variant: boolean
+  variant_name?: string | null
+  vpc_cidr?: string | null
+  config_path?: string
+  config_name?: string
+  config_source?: 'default' | 'managed' | 'session'
+}
+
+export interface SessionOptions {
+  ranges: LabSummary[]
+  environments: EnvironmentSummary[]
+  providers: string[]
+  credential_hints: Record<string, string | null>
+  regions: Record<string, string[]>
 }
 
 export interface ConfigListing {
@@ -156,6 +191,9 @@ export const api = {
     authenticatedFetch('/api/commands').then(r => json(r)),
 
   configs: (): Promise<ConfigListing> => authenticatedFetch('/api/configs').then(r => json<ConfigListing>(r)),
+
+  sessionOptions: (): Promise<SessionOptions> =>
+    authenticatedFetch('/api/session-options').then(r => json<SessionOptions>(r)),
 
   labs: (configPath?: string): Promise<{ labs: LabSummary[] }> =>
     authenticatedFetch('/api/labs' + (configPath ? `?config_path=${encodeURIComponent(configPath)}` : ''))

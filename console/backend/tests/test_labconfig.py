@@ -18,6 +18,7 @@ from console.backend.labconfig import (  # noqa: E402
     MAX_BACKUPS,
     backup_yaml,
     create_config,
+    create_managed_config,
     derive_snapshot,
     list_environments,
     merge_reseed,
@@ -113,6 +114,44 @@ def test_environment_provider_override_matches_cli_resolution() -> None:
     finally:
         os.unlink(tmp.name)
     print("PASS test_environment_provider_override_matches_cli_resolution")
+
+
+def test_managed_config_is_explicit_and_private() -> None:
+    with tempfile.TemporaryDirectory() as d:
+        path = pathlib.Path(d) / "managed.yaml"
+        create_managed_config(
+            str(path),
+            "kraken",
+            {
+                "lab": "SCOPE-RANGE",
+                "provider": "azure",
+                "deployment": "scope-range-deployment",
+                "region": "centralus",
+                "vpc_cidr": "10.50.0.0/16",
+                "variant": False,
+            },
+        )
+        listing = list_environments(str(path))
+        detail = listing["environment_details"][0]
+        assert listing["provider"] is None, "managed configs have no cloud default"
+        assert detail == {
+            "name": "kraken",
+            "lab": "SCOPE-RANGE",
+            "provider": "azure",
+            "deployment": "scope-range-deployment",
+            "region": "centralus",
+            "variant": False,
+            "variant_name": None,
+            "vpc_cidr": "10.50.0.0/16",
+        }, detail
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+        try:
+            create_managed_config(str(path), "other", {})
+            raise AssertionError("expected exclusive create to refuse an overwrite")
+        except FileExistsError:
+            pass
+    print("PASS test_managed_config_is_explicit_and_private")
 
 
 def test_provider_defaults_to_aws_like_cli() -> None:
@@ -749,6 +788,7 @@ if __name__ == "__main__":
     test_derive_snapshot_azure()
     test_derive_snapshot_aws_falls_back_to_source()
     test_environment_provider_override_matches_cli_resolution()
+    test_managed_config_is_explicit_and_private()
     test_provider_defaults_to_aws_like_cli()
     test_lab_resolution_precedence()
     test_explicit_lab_rejects_unsafe_names()

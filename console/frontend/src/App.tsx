@@ -150,7 +150,7 @@ export default function App() {
         />
       )}
       {!approval && showNew && cfg && (
-        <NewSessionModal cfg={cfg} onClose={() => setShowNew(false)} onCreate={createSession} />
+        <NewSessionModal onClose={() => setShowNew(false)} onCreate={createSession} />
       )}
       {!approval && showSettings && cfg && (
         <SettingsModal

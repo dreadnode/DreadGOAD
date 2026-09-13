@@ -1,192 +1,106 @@
 import assert from 'node:assert/strict'
-import type { AppConfig, ConfigListing, LabSummary } from '../src/api'
-import {
-  NEW_CONFIG,
-  NEW_ENV,
-  deriveNewSessionModel,
-  slugForConfig,
-  type NewSessionModelInput,
-} from '../src/newSessionModel'
+import { deriveNewSessionModel, type NewSessionModelInput } from '../src/newSessionModel'
+import type { SessionOptions } from '../src/api'
 
-const cfg: AppConfig = {
-  version: 'test',
-  default_model: 'test',
-  default_config_path: '/repo/dreadgoad.yaml',
-  api_key_set: true,
+const options: SessionOptions = {
   providers: ['aws', 'azure'],
-}
-
-const listing: ConfigListing = {
-  configs_root: '/managed',
-  providers: ['aws', 'azure'],
-  credential_hints: { aws: 'AWS credentials are unavailable', azure: null },
-  configs: [{
-    path: '/repo/dreadgoad.yaml',
-    name: 'dreadgoad.yaml',
-    source: 'default',
-    provider: 'aws',
-    environments: ['existing'],
+  credential_hints: { aws: null, azure: 'az login' },
+  regions: { aws: ['us-west-1'], azure: ['centralus'] },
+  environments: [{
+    name: 'scope-dev', lab: 'SCOPE-RANGE', provider: 'azure',
+    deployment: 'scope-range-deployment', region: 'centralus', variant: false,
+    config_path: '/repo/dreadgoad.yaml',
   }],
+  ranges: [
+    {
+      name: 'GOAD', display_name: 'GOAD', dir: 'ad/GOAD', kind: 'active-directory',
+      providers: ['aws', 'azure'], hosts: ['dc01'], variant_supported: true,
+      generated: false,
+      provider_settings: {
+        aws: {
+          deployment: 'goad-deployment', scaffold_profile: 'active-directory',
+          template_environment: 'staging', default_region: 'us-west-1',
+          network: { editable: true },
+        },
+        azure: {
+          deployment: 'goad-deployment', scaffold_profile: 'active-directory',
+          template_environment: 'test', default_region: 'centralus',
+          network: { editable: true },
+        },
+      },
+    },
+    {
+      name: 'SCOPE-RANGE', display_name: 'GOAT', dir: 'ad/SCOPE-RANGE',
+      kind: 'service-range', providers: ['azure'], hosts: ['web01'],
+      variant_supported: false, generated: false,
+      provider_settings: {
+        azure: {
+          deployment: 'scope-range-deployment', scaffold_profile: 'template',
+          template_environment: 'scope-dev', default_region: 'centralus',
+          network: { cidr: '10.50.0.0/16', editable: false },
+        },
+      },
+    },
+  ],
 }
 
 const base: NewSessionModelInput = {
-  cfg,
-  listing,
-  choice: '/repo/dreadgoad.yaml',
-  customPath: '',
-  newConfigName: '',
-  provider: 'aws',
-  region: '',
-  envs: ['existing'],
-  configOk: true,
-  envChoice: 'existing',
-  loadedProvider: 'aws',
-  loadedProviders: { existing: 'aws' },
-  loadedRegions: { existing: 'us-east-1' },
-  newEnv: '',
-  source: 'ad/GOAD',
-  labList: [],
-  variantName: '',
-  cidr: '10.100.0.0/16',
-  submitting: false,
+  options, mode: 'new', existingIndex: '', importPath: '', importEnvironment: '',
+  importReady: false, rangeName: '', provider: '', region: '',
+  environmentName: '', customization: 'standard', cidr: '', submitting: false,
 }
 
-assert.equal(slugForConfig('  My Azure_Lab!  '), 'my-azure-lab')
-assert.equal(slugForConfig('x'.repeat(60)).length, 48)
+const empty = deriveNewSessionModel(base)
+assert.equal(empty.valid, false)
+assert.equal(empty.effectiveProvider, '', 'AWS must not be selected before a range')
 
-const attach = deriveNewSessionModel(base)
-assert.equal(attach.valid, true)
-assert.deepEqual(attach.payload, { config_path: '/repo/dreadgoad.yaml', env: 'existing' })
-assert.ok(attach.effects.some(effect => effect.includes('no files are written')))
-assert.equal(attach.missingRegion, false)
-assert.equal(attach.credentialHint, 'AWS credentials are unavailable')
+const scope = deriveNewSessionModel({
+  ...base, rangeName: 'SCOPE-RANGE', environmentName: 'kraken',
+})
+assert.equal(scope.valid, true)
+assert.equal(scope.effectiveProvider, 'azure')
+assert.equal(scope.variantAvailable, false)
+assert.equal(scope.cidrEditable, false)
+assert.deepEqual(scope.payload, {
+  mode: 'create_range', range: 'SCOPE-RANGE', provider: 'azure',
+  region: 'centralus', env: 'kraken', customization: 'standard',
+  vpc_cidr: '10.50.0.0/16',
+})
 
-const overriddenProvider = deriveNewSessionModel({
-  ...base,
-  envChoice: 'scope-dev',
-  envs: ['existing', 'scope-dev'],
-  loadedProviders: { existing: 'aws', 'scope-dev': 'azure' },
-  loadedRegions: { existing: 'us-east-1', 'scope-dev': 'centralus' },
+const goadNeedsProvider = deriveNewSessionModel({
+  ...base, rangeName: 'GOAD', environmentName: 'redteam',
 })
-assert.equal(overriddenProvider.effectiveProvider, 'azure')
-assert.equal(overriddenProvider.credentialHint, '')
-assert.equal(overriddenProvider.missingRegion, false)
+assert.equal(goadNeedsProvider.valid, false)
+assert.equal(goadNeedsProvider.effectiveProvider, '')
 
-const newEnvironment = deriveNewSessionModel({
-  ...base,
-  envChoice: NEW_ENV,
-  newEnv: ' redteam ',
-  variantName: '',
-  cidr: ' ',
+const variant = deriveNewSessionModel({
+  ...base, rangeName: 'GOAD', provider: 'aws', environmentName: 'redteam',
+  customization: 'randomized',
 })
-assert.equal(newEnvironment.valid, true)
-assert.deepEqual(newEnvironment.payload, {
-  mode: 'new',
-  config_path: '/repo/dreadgoad.yaml',
-  env: 'redteam',
-  env_fields: {
-    variant: true,
-    variant_source: 'ad/GOAD',
-    variant_target: 'ad/GOAD-redteam',
-    variant_name: 'redteam',
-    vpc_cidr: '10.100.0.0/16',
-  },
-})
-assert.ok(newEnvironment.effects.some(effect => effect.includes('redteam/<region>/')))
+assert.equal(variant.valid, true)
+assert.equal(variant.effectiveRegion, 'us-west-1')
+assert.equal(variant.payload.customization, 'randomized')
 
-const legacyNewEnvironment = deriveNewSessionModel({
-  ...base,
-  envChoice: NEW_ENV,
-  loadedProvider: '',
-  loadedProviders: { existing: 'aws' },
-  listing: {
-    ...listing,
-    configs: [{ ...listing.configs[0], provider: null }],
-  },
-  newEnv: 'legacy-redteam',
+const existing = deriveNewSessionModel({
+  ...base, mode: 'existing', existingIndex: '0',
 })
-assert.equal(legacyNewEnvironment.effectiveProvider, 'aws')
-assert.equal(legacyNewEnvironment.credentialHint, 'AWS credentials are unavailable')
+assert.equal(existing.valid, true)
+assert.deepEqual(existing.payload, {
+  config_path: '/repo/dreadgoad.yaml', env: 'scope-dev',
+})
 
-const unsupportedLab: LabSummary = {
-  name: 'Azure-only',
-  dir: 'ad/AzureOnly',
-  providers: ['azure'],
-  hosts: ['dc'],
-  variant_supported: true,
-  generated: false,
-}
-const rejectedSource = deriveNewSessionModel({
-  ...base,
-  envChoice: NEW_ENV,
-  newEnv: 'redteam',
-  source: unsupportedLab.dir,
-  labList: [unsupportedLab],
+const imported = deriveNewSessionModel({
+  ...base, mode: 'import', importPath: '/other/dreadgoad.yaml',
+  importEnvironment: 'prod', importReady: true,
 })
-assert.equal(rejectedSource.sourceUnsupported, true)
-assert.equal(rejectedSource.valid, false)
+assert.equal(imported.valid, true)
+assert.deepEqual(imported.payload, {
+  config_path: '/other/dreadgoad.yaml', env: 'prod',
+})
 
-const serviceRange: LabSummary = {
-  name: 'SCOPE-RANGE',
-  dir: 'ad/SCOPE-RANGE',
-  providers: ['azure'],
-  hosts: ['web01', 'data01'],
-  variant_supported: false,
-  generated: false,
-}
-const rejectedServiceRange = deriveNewSessionModel({
-  ...base,
-  envChoice: NEW_ENV,
-  loadedProvider: 'azure',
-  newEnv: 'scope-variant',
-  source: serviceRange.dir,
-  labList: [serviceRange],
-})
-assert.equal(rejectedServiceRange.sourceVariantUnsupported, true)
-assert.equal(rejectedServiceRange.valid, false)
+assert.equal(deriveNewSessionModel({
+  ...base, mode: 'import', importPath: '/other/dreadgoad.yaml',
+  importEnvironment: 'prod', importReady: false,
+}).valid, false)
 
-const newConfig = deriveNewSessionModel({
-  ...base,
-  choice: NEW_CONFIG,
-  newConfigName: ' Azure Range ',
-  provider: 'azure',
-  region: ' eastus ',
-  newEnv: 'blue',
-  source: 'ad/GOAD-Light',
-  variantName: 'demo',
-})
-assert.equal(newConfig.valid, true)
-assert.deepEqual(newConfig.payload, {
-  mode: 'new_config',
-  config_name: 'Azure Range',
-  provider: 'azure',
-  region: 'eastus',
-  env: 'blue',
-  env_fields: {
-    variant: true,
-    variant_source: 'ad/GOAD-Light',
-    variant_target: 'ad/GOAD-Light-demo',
-    variant_name: 'demo',
-    vpc_cidr: '10.100.0.0/16',
-  },
-})
-assert.equal(newConfig.effects[0], 'create /managed/azure-range.yaml (provider azure, region eastus)')
-
-const duplicateConfig = deriveNewSessionModel({
-  ...base,
-  choice: NEW_CONFIG,
-  newConfigName: 'DreadGOAD',
-  region: 'us-east-1',
-  newEnv: 'new-env',
-})
-assert.equal(duplicateConfig.configTaken, true)
-assert.equal(duplicateConfig.valid, false)
-
-const incompleteExisting = deriveNewSessionModel({
-  ...base,
-  loadedRegions: {},
-})
-assert.equal(incompleteExisting.missingRegion, true)
-assert.equal(incompleteExisting.valid, true)
-
-console.log('PASS new-session derivation, validation, payload, and effect contracts')
+console.log('newSessionModel tests passed')

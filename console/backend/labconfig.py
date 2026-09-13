@@ -114,6 +114,23 @@ def list_environments(config_path: str) -> dict[str, t.Any]:
             name: resolve_region(settings, file_region)
             for name, settings in envs.items()
         },
+        "environment_details": [
+            {
+                "name": name,
+                "lab": resolve_base_lab(settings, data.get("lab")),
+                "provider": resolve_provider(settings, file_provider),
+                "deployment": resolve_deployment(settings, data),
+                "region": resolve_region(settings, file_region),
+                "variant": bool(isinstance(settings, dict) and settings.get("variant")),
+                "variant_name": (
+                    settings.get("variant_name") if isinstance(settings, dict) else None
+                ),
+                "vpc_cidr": (
+                    settings.get("vpc_cidr") if isinstance(settings, dict) else None
+                ),
+            }
+            for name, settings in envs.items()
+        ],
     }
 
 
@@ -167,6 +184,31 @@ def resolve_lab(env_settings: t.Any, file_lab: t.Any) -> str:
     return os.path.join("ad", lab)
 
 
+def resolve_base_lab(env_settings: t.Any, file_lab: t.Any) -> str:
+    """Return the authored base range name rather than a generated target."""
+    settings = env_settings if isinstance(env_settings, dict) else {}
+    lab = settings.get("lab") or file_lab
+    if not lab and settings.get("variant_source"):
+        lab = os.path.basename(str(settings["variant_source"]).rstrip("/"))
+    lab = lab or "GOAD"
+    if not isinstance(lab, str) or not _VALID_LAB_NAME.fullmatch(lab):
+        raise ValueError(
+            f"invalid lab name {lab!r}: use letters, numbers, underscores, and hyphens"
+        )
+    return lab
+
+
+def resolve_deployment(env_settings: t.Any, document: dict[str, t.Any]) -> str:
+    """Mirror ``Config.ResolvedDeployment`` for one environment."""
+    settings = env_settings if isinstance(env_settings, dict) else {}
+    if settings.get("deployment"):
+        return str(settings["deployment"])
+    infra = document.get("infra")
+    if isinstance(infra, dict) and infra.get("deployment"):
+        return str(infra["deployment"])
+    return "goad-deployment"
+
+
 def derive_snapshot(config_path: str, env: str) -> SessionSnapshot:
     """Build a session ``snapshot`` from ``(config_path, env)``.
 
@@ -204,6 +246,7 @@ def derive_snapshot(config_path: str, env: str) -> SessionSnapshot:
         "provider": provider,
         "region": region,
         "lab": lab,
+        "deployment": resolve_deployment(e, data),
         "variant_name": e.get("variant_name"),
         "vpc_cidr": e.get("vpc_cidr"),
         "attack_box": None,  # discovered post-deploy
@@ -509,6 +552,30 @@ def create_config(
     # Written 0o600, not the 0o644 of `dreadgoad config init` (config_cmd.go:112):
     # a proxmox password or ludus api_key can be added to this file later, and
     # widening permissions after the fact is a step nobody takes.
+    fd = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w") as f:
+        yaml.safe_dump(data, f, sort_keys=False)
+    return config_path
+
+
+def create_managed_config(
+    config_path: str,
+    env_name: str,
+    env_fields: dict[str, t.Any],
+) -> str:
+    """Create a private one-environment config owned by the console.
+
+    Every selector is stored on the environment itself, so it cannot inherit a
+    misleading provider, range, deployment, or region from file-level defaults.
+    """
+    if not env_name.strip():
+        raise ValueError("environment name is required")
+    if os.path.exists(config_path):
+        raise FileExistsError(
+            f"{config_path} already exists — refusing to overwrite it"
+        )
+    data = {"env": env_name, "environments": {env_name: env_fields}}
+    os.makedirs(os.path.dirname(config_path) or ".", exist_ok=True)
     fd = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, "w") as f:
         yaml.safe_dump(data, f, sort_keys=False)

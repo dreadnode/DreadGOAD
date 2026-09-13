@@ -128,16 +128,22 @@ async def discover_labs(
         name = str(entry["name"])
         path = str(entry.get("path") or "")
         variant_supported, _ = _variant_support(path)
+        cli_variant_supported = entry.get("variant_supported")
+        if isinstance(cli_variant_supported, bool):
+            variant_supported = cli_variant_supported
         labs.append(
             {
                 "name": name,
+                "display_name": str(entry.get("display_name") or name),
                 # What goes into `variant_source`, which is repo-relative while
                 # the CLI reports an absolute path. Labs always live at
                 # <project root>/ad/<name> (discovery.go:32,48), so this is a
                 # reconstruction rather than a guess.
                 "dir": f"ad/{name}",
                 "providers": entry.get("providers") or [],
+                "provider_settings": entry.get("provider_settings") or {},
                 "hosts": entry.get("hosts") or [],
+                "kind": str(entry.get("kind") or "active-directory"),
                 "variant_supported": variant_supported,
                 "generated": bool(path)
                 and os.path.isfile(os.path.join(path, _VARIANT_MARKER)),

@@ -2,16 +2,14 @@
 package lifecycle
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 
 	"github.com/dreadnode/dreadgoad/internal/config"
+	"github.com/dreadnode/dreadgoad/internal/rangeconfig"
 	"github.com/dreadnode/dreadgoad/internal/scoreboard"
-	"go.yaml.in/yaml/v3"
 )
 
 const (
@@ -25,21 +23,10 @@ var sessionInitActions = map[string]actionRunner{
 	actionGenerateAnswerKey: generateAnswerKey,
 }
 
-// ActionSpec names one allowlisted lifecycle action. Range manifests never
-// contain commands or script paths: selecting a config must not execute code
-// supplied by that config.
-type ActionSpec struct {
-	Action string `yaml:"action"`
-}
-
-// Manifest describes stable metadata and lifecycle behavior owned by a range.
-type Manifest struct {
-	SchemaVersion int    `yaml:"schema_version"`
-	Kind          string `yaml:"kind"`
-	Lifecycle     struct {
-		SessionInit []ActionSpec `yaml:"session_init"`
-	} `yaml:"lifecycle"`
-}
+// Keep the lifecycle package's existing internal names while sharing the
+// manifest schema with discovery and scaffolding.
+type ActionSpec = rangeconfig.ActionSpec
+type Manifest = rangeconfig.Manifest
 
 // Result is the machine-readable outcome of one initialization action.
 type Result struct {
@@ -125,26 +112,7 @@ func manifestCandidates(cfg *config.Config) []string {
 }
 
 func decodeManifest(raw []byte) (*Manifest, error) {
-	decoder := yaml.NewDecoder(bytes.NewReader(raw))
-	decoder.KnownFields(true)
-	var manifest Manifest
-	if err := decoder.Decode(&manifest); err != nil {
-		return nil, err
-	}
-	var extra any
-	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return nil, fmt.Errorf("multiple YAML documents are not supported")
-		}
-		return nil, err
-	}
-	if manifest.SchemaVersion != 1 {
-		return nil, fmt.Errorf("unsupported schema_version %d (expected 1)", manifest.SchemaVersion)
-	}
-	if manifest.Kind == "" {
-		return nil, fmt.Errorf("kind is required")
-	}
-	return &manifest, nil
+	return rangeconfig.Decode(raw)
 }
 
 func validateActions(actions []ActionSpec) error {

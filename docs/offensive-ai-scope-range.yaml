@@ -1,5 +1,6 @@
 specification:
   name: offensive-ai-scope-range
+  display_name: GOAT — Game of Agent Trust
   version: "0.3"
   status: implemented-azure
   description: >-

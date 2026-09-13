@@ -41,6 +41,7 @@ class SessionSnapshot(SessionSnapshotRequired, total=False):
 
     account: str | None
     group: str | None
+    deployment: str | None
     aws: AWSSelectors
     azure: AzureSelectors
 

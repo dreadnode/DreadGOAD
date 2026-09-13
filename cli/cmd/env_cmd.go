@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/dreadnode/dreadgoad/internal/config"
+	"github.com/dreadnode/dreadgoad/internal/rangeconfig"
 	"github.com/dreadnode/dreadgoad/internal/variant"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -26,18 +28,15 @@ var envCreateCmd = &cobra.Command{
 	Use:   "create <env-name>",
 	Short: "Create a new deployment environment",
 	Long: `Scaffold a new deployment environment with all required infrastructure
-and configuration files.
+and configuration files. The active environment's lab selects the range-owned
+scaffolding profile and provider template.
 
 Creates:
-  - infra/goad-deployment/{env}/env.hcl
-  - infra/goad-deployment/{env}/{region}/region.hcl
-  - infra/goad-deployment/{env}/{region}/network/terragrunt.hcl
-  - infra/goad-deployment/{env}/{region}/goad/{host}/terragrunt.hcl + templates
-  - ad/GOAD/data/{env}-overlay.json (or variant directory)
-  - {env}-inventory (Ansible inventory with PENDING instance IDs)
+  - infra/{provider}/{deployment}/{env}/ infrastructure (provider layout varies)
+  - a range-owned config or randomized Active Directory variant
+  - {env}-inventory
 
-Use --variant to generate a full randomized variant in ad/GOAD-{env}/.
-Without --variant, an overlay config is created from the dev overlay.`,
+Use --variant only with ranges that declare variant support.`,
 	Args: cobra.ExactArgs(1),
 	RunE: runEnvCreate,
 }
@@ -55,7 +54,7 @@ func init() {
 
 	envCreateCmd.Flags().String("region", "", "Region for the environment (e.g. us-west-2 for AWS, centralus for Azure)")
 	envCreateCmd.Flags().String("vpc-cidr", "", "VPC/VNet CIDR block (default: auto-assigned)")
-	envCreateCmd.Flags().String("reference", "staging", "Reference environment to copy infrastructure from (default: staging for AWS, test for Azure)")
+	envCreateCmd.Flags().String("reference", "staging", "Reference environment to copy infrastructure from (default: selected range metadata)")
 	envCreateCmd.Flags().Bool("variant", false, "Generate randomized variant config")
 	envCreateCmd.Flags().String("variant-source", defaultVariantSource, "Base lab to generate the variant from (with --variant)")
 	envCreateCmd.Flags().Bool("force", false, "Overwrite existing environment")
@@ -72,18 +71,6 @@ func runEnvCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	region, _ := cmd.Flags().GetString("region")
-	if region == "" {
-		region, err = cfg.ResolveRegion()
-		if err != nil {
-			return fmt.Errorf("env create requires a region: pass --region, set 'region' in dreadgoad.yaml, or export DREADGOAD_REGION")
-		}
-	}
-	vpcCIDR, _ := cmd.Flags().GetString("vpc-cidr")
-	reference, _ := cmd.Flags().GetString("reference")
-	if !cmd.Flags().Changed("reference") && cfg.ResolvedProvider() == "azure" {
-		reference = "test"
-	}
 	useVariant, _ := cmd.Flags().GetBool("variant")
 	force, _ := cmd.Flags().GetBool("force")
 	variantSource, _ := cmd.Flags().GetString("variant-source")
@@ -91,11 +78,92 @@ func runEnvCreate(cmd *cobra.Command, args []string) error {
 		variantSource = defaultVariantSource
 	}
 
+	plan, err := resolveScaffoldPlan(cfg, variantSource, useVariant)
+	if err != nil {
+		return err
+	}
+
+	region, _ := cmd.Flags().GetString("region")
+	if region == "" {
+		region = cfg.ResolvedRegion()
+	}
+	if region == "" {
+		region = plan.Spec.DefaultRegion
+	}
+	if err := validatePathComponent("region", region); err != nil {
+		return fmt.Errorf("env create requires a valid region: %w", err)
+	}
+
+	vpcCIDR, _ := cmd.Flags().GetString("vpc-cidr")
+	if plan.Spec.Network.CIDR != "" && !plan.Spec.NetworkEditable(plan.Profile == rangeconfig.ProfileActiveDir) {
+		if vpcCIDR != "" && vpcCIDR != plan.Spec.Network.CIDR {
+			return fmt.Errorf("range %s requires VPC/VNet CIDR %s; got %s", plan.Lab, plan.Spec.Network.CIDR, vpcCIDR)
+		}
+		vpcCIDR = plan.Spec.Network.CIDR
+	}
 	if vpcCIDR == "" {
 		vpcCIDR = cfg.VpcCIDR(envName)
 	}
 
-	return scaffoldEnv(cfg, envName, region, vpcCIDR, reference, variantSource, useVariant, force)
+	reference, _ := cmd.Flags().GetString("reference")
+	if !cmd.Flags().Changed("reference") {
+		reference = plan.Spec.TemplateEnvironment
+	}
+
+	return scaffoldEnvWithPlan(cfg, plan, envName, region, vpcCIDR, reference, variantSource, useVariant, force)
+}
+
+type scaffoldPlan struct {
+	Lab     string
+	LabPath string
+	Profile string
+	Spec    rangeconfig.ProviderSpec
+}
+
+func resolveScaffoldPlan(cfg *config.Config, variantSource string, useVariant bool) (scaffoldPlan, error) {
+	labName := cfg.ResolvedLab()
+	labPath := cfg.LabPath()
+	if useVariant && strings.TrimSpace(variantSource) != "" {
+		labPath = variantSource
+		if !filepath.IsAbs(labPath) {
+			labPath = filepath.Join(cfg.ProjectRoot, labPath)
+		}
+		labName = filepath.Base(filepath.Clean(labPath))
+	}
+
+	manifest, found, err := rangeconfig.Load(labPath)
+	if err != nil {
+		return scaffoldPlan{}, err
+	}
+	if !found {
+		manifest = &rangeconfig.Manifest{Kind: rangeconfig.KindActiveDirectory}
+	}
+	if useVariant && !manifest.SupportsVariants() {
+		return scaffoldPlan{}, fmt.Errorf("variants are not supported for range %s", labName)
+	}
+
+	provider := cfg.ResolvedProvider()
+	providerDir := filepath.Join(labPath, "providers", provider)
+	if info, err := os.Stat(providerDir); err != nil || !info.IsDir() {
+		return scaffoldPlan{}, fmt.Errorf("range %s does not support provider %s", labName, provider)
+	}
+	spec, ok := manifest.Provider(provider)
+	if !ok {
+		return scaffoldPlan{}, fmt.Errorf("range %s has no scaffolding metadata for provider %s", labName, provider)
+	}
+	return scaffoldPlan{
+		Lab:     labName,
+		LabPath: labPath,
+		Profile: spec.ScaffoldProfile,
+		Spec:    spec,
+	}, nil
+}
+
+func validatePathComponent(label, value string) error {
+	if value == "" || value == "." || value == ".." || strings.ContainsAny(value, `/\\`) || !envNameRe.MatchString(value) {
+		return fmt.Errorf("%s %q is not a safe directory name", label, value)
+	}
+	return nil
 }
 
 // defaultVariantSource is the base lab a variant is generated from when the
@@ -164,30 +232,138 @@ func scaffoldEnv(cfg *config.Config, envName, region, vpcCIDR, reference, varian
 			return fmt.Errorf("validate variant source: %w", err)
 		}
 	}
+	plan, err := resolveScaffoldPlan(cfg, variantSource, useVariant)
+	if err != nil {
+		return err
+	}
+	return scaffoldEnvWithPlan(cfg, plan, envName, region, vpcCIDR, reference, variantSource, useVariant, force)
+}
+
+func scaffoldEnvWithPlan(cfg *config.Config, plan scaffoldPlan, envName, region, vpcCIDR, reference, variantSource string, useVariant, force bool) error {
+	if err := validateEnvName(envName); err != nil {
+		return err
+	}
+	if err := validatePathComponent("region", region); err != nil {
+		return err
+	}
+	if err := validatePathComponent("reference environment", reference); err != nil {
+		return err
+	}
+	if useVariant {
+		source := variantSource
+		if source == "" {
+			source = defaultVariantSource
+		}
+		if !filepath.IsAbs(source) {
+			source = filepath.Join(cfg.ProjectRoot, source)
+		}
+		if err := variant.ValidateSource(source); err != nil {
+			return fmt.Errorf("validate variant source: %w", err)
+		}
+	}
 
 	provider := cfg.ResolvedProvider()
-	infraBase := cfg.InfraBasePathForProvider(provider)
+	deployment := plan.Spec.Deployment
+	if configured := cfg.ActiveEnvironment().Deployment; configured != "" {
+		deployment = configured
+	}
+	infraBase := infraBaseForDeployment(cfg.ProjectRoot, provider, deployment)
 	envDir := filepath.Join(infraBase, envName)
 	regionDir := filepath.Join(envDir, region)
+	invPath := filepath.Join(cfg.ProjectRoot, envName+"-inventory")
 
 	if _, err := os.Stat(envDir); err == nil && !force {
 		return fmt.Errorf("environment %q already exists at %s\nUse --force to overwrite", envName, envDir)
 	}
+	if _, err := os.Stat(invPath); err == nil && !force {
+		return fmt.Errorf("inventory for environment %q already exists at %s\nUse --force to overwrite", envName, invPath)
+	}
+	if !force && useVariant {
+		target := variantTargetFor(cfg.ProjectRoot, envName, variantSource)
+		if _, err := os.Stat(target); err == nil {
+			return fmt.Errorf("variant target already exists at %s", target)
+		}
+	}
+	if !force && !useVariant && plan.Profile == rangeconfig.ProfileActiveDir && plan.Lab == "GOAD" {
+		overlay := filepath.Join(cfg.ProjectRoot, "ad", "GOAD", "data", envName+"-overlay.json")
+		if _, err := os.Stat(overlay); err == nil {
+			return fmt.Errorf("lab overlay already exists at %s", overlay)
+		}
+	}
 
-	refRegionDir := findReferenceRegion(infraBase, reference)
+	refRegionDir := findReferenceRegion(infraBase, reference, plan.Spec.DefaultRegion)
 	if refRegionDir == "" {
 		return fmt.Errorf("reference environment %q not found in %s", reference, infraBase)
+	}
+	if plan.Profile == rangeconfig.ProfileActiveDir {
+		labSource := plan.LabPath
+		if useVariant && variantSource != "" {
+			labSource = variantSource
+			if !filepath.IsAbs(labSource) {
+				labSource = filepath.Join(cfg.ProjectRoot, labSource)
+			}
+		}
+		if missing := missingTemplateHosts(refRegionDir, labHostKeysFromPath(labSource)); len(missing) > 0 {
+			return fmt.Errorf("range %s cannot be scaffolded from %s for %s; template has no modules for: %s", plan.Lab, reference, provider, strings.Join(missing, ", "))
+		}
+	}
+
+	// Everything below creates only paths proven absent above. If a later step
+	// fails, remove precisely those new artifacts so retrying does not require
+	// manual surgery. --force retains its historical in-place semantics and is
+	// therefore deliberately excluded from automatic cleanup.
+	succeeded := false
+	cleanupPaths := []string{envDir, invPath}
+	if useVariant {
+		cleanupPaths = append(cleanupPaths, variantTargetFor(cfg.ProjectRoot, envName, variantSource))
+	} else if plan.Profile == rangeconfig.ProfileActiveDir && plan.Lab == "GOAD" {
+		cleanupPaths = append(cleanupPaths, filepath.Join(cfg.ProjectRoot, "ad", "GOAD", "data", envName+"-overlay.json"))
+	}
+	if !force {
+		defer func() {
+			if succeeded {
+				return
+			}
+			for _, path := range cleanupPaths {
+				if err := os.RemoveAll(path); err != nil {
+					slog.Warn("could not clean failed environment scaffold", "path", path, "error", err)
+				}
+			}
+		}()
 	}
 
 	printEnvSummary(provider, envName, region, vpcCIDR, reference, useVariant)
 
-	hostFilter := labHostKeys(cfg.ProjectRoot, variantSource)
-
-	if err := scaffoldHCL(provider, envDir, regionDir, envName, region, vpcCIDR, hostFilter); err != nil {
-		return err
+	labSource := plan.LabPath
+	if useVariant && variantSource != "" {
+		labSource = variantSource
+		if !filepath.IsAbs(labSource) {
+			labSource = filepath.Join(cfg.ProjectRoot, labSource)
+		}
 	}
-	if err := copyInfrastructure(refRegionDir, regionDir, hostFilter); err != nil {
-		return fmt.Errorf("copy infrastructure: %w", err)
+	hostFilter := labHostKeysFromPath(labSource)
+
+	switch plan.Profile {
+	case rangeconfig.ProfileActiveDir:
+		if err := scaffoldHCL(provider, envDir, regionDir, envName, region, vpcCIDR, hostFilter); err != nil {
+			return err
+		}
+		if err := copyInfrastructure(refRegionDir, regionDir, hostFilter); err != nil {
+			return fmt.Errorf("copy infrastructure: %w", err)
+		}
+		labDataName := plan.Lab
+		if useVariant {
+			labDataName = filepath.Base(variantTargetFor(cfg.ProjectRoot, envName, variantSource))
+		}
+		if err := repointInfrastructureLab(regionDir, labDataName); err != nil {
+			return fmt.Errorf("point infrastructure at range config: %w", err)
+		}
+	case rangeconfig.ProfileTemplate:
+		if err := scaffoldTemplateInfrastructure(refRegionDir, envDir, regionDir, reference, envName, region); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("unsupported scaffold profile %q", plan.Profile)
 	}
 	if hostFilter != nil {
 		color.Green("  Copied infrastructure from %s (filtered to %d hosts)", reference, len(hostFilter))
@@ -195,21 +371,64 @@ func scaffoldEnv(cfg *config.Config, envName, region, vpcCIDR, reference, varian
 		color.Green("  Copied infrastructure from %s", reference)
 	}
 
-	configPath, err := scaffoldLabConfig(cfg.ProjectRoot, envName, variantSource, useVariant)
+	configPath, err := scaffoldLabConfigForPlan(cfg.ProjectRoot, plan, envName, variantSource, useVariant)
 	if err != nil {
 		return err
 	}
 
-	invPath := filepath.Join(cfg.ProjectRoot, envName+"-inventory")
-	if err := scaffoldInventory(
-		provider, cfg.ProjectRoot, envName, region, reference, variantSource, useVariant,
+	if err := scaffoldInventoryForPlan(
+		provider, cfg.ProjectRoot, plan, envName, region, reference, variantSource, useVariant, hostFilter,
 	); err != nil {
 		return err
 	}
 	color.Green("  Created inventory: %s", filepath.Base(invPath))
 
 	printNextSteps(provider, envName, region, envDir, configPath, invPath)
+	succeeded = true
 	return nil
+}
+
+func infraBaseForDeployment(projectRoot, provider, deployment string) string {
+	if provider == "azure" {
+		return filepath.Join(projectRoot, "infra", "azure", deployment)
+	}
+	return filepath.Join(projectRoot, "infra", deployment)
+}
+
+func missingTemplateHosts(refRegionDir string, hosts map[string]bool) []string {
+	var missing []string
+	for host := range hosts {
+		if info, err := os.Stat(filepath.Join(refRegionDir, "goad", host)); err != nil || !info.IsDir() {
+			missing = append(missing, host)
+		}
+	}
+	sort.Strings(missing)
+	return missing
+}
+
+func repointInfrastructureLab(regionDir, labName string) error {
+	if labName == "GOAD" {
+		return nil
+	}
+	old := "/ad/GOAD/data/"
+	newValue := "/ad/" + labName + "/data/"
+	return filepath.WalkDir(regionDir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || filepath.Ext(path) != ".hcl" {
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		updated := strings.ReplaceAll(string(raw), old, newValue)
+		if updated == string(raw) {
+			return nil
+		}
+		return os.WriteFile(path, []byte(updated), 0o644)
+	})
 }
 
 func printEnvSummary(provider, envName, region, vpcCIDR, reference string, useVariant bool) {
@@ -266,6 +485,128 @@ func scaffoldLabConfig(projectRoot, envName, variantSource string, useVariant bo
 	return configPath, nil
 }
 
+func scaffoldLabConfigForPlan(projectRoot string, plan scaffoldPlan, envName, variantSource string, useVariant bool) (string, error) {
+	if useVariant {
+		return scaffoldLabConfig(projectRoot, envName, variantSource, true)
+	}
+	if plan.Profile == rangeconfig.ProfileActiveDir && plan.Lab == "GOAD" {
+		return scaffoldLabConfig(projectRoot, envName, variantSource, false)
+	}
+	// Non-variant ranges consume their authored base config directly. Creating a
+	// GOAD overlay here would silently point a service range or GOAD-Light at the
+	// wrong data tree.
+	configPath := filepath.Join(plan.LabPath, "data", "config.json")
+	if _, err := os.Stat(configPath); err != nil {
+		return "", fmt.Errorf("range base config: %w", err)
+	}
+	color.Green("  Using range config: %s", configPath)
+	return configPath, nil
+}
+
+func scaffoldTemplateInfrastructure(srcRegionDir, envDir, regionDir, reference, envName, region string) error {
+	if err := os.MkdirAll(envDir, 0o755); err != nil {
+		return fmt.Errorf("create environment directory: %w", err)
+	}
+	sourceEnv := filepath.Dir(srcRegionDir)
+	envTemplate, err := os.ReadFile(filepath.Join(sourceEnv, "env.hcl"))
+	if err != nil {
+		return fmt.Errorf("read template env.hcl: %w", err)
+	}
+	// Template profiles are authored as complete, working environments. Render
+	// only explicit placeholders, quoted tokens, and resource-name prefixes so a
+	// short reference name cannot corrupt unrelated HCL substrings.
+	renderedEnv := renderTemplateContent(string(envTemplate), reference, envName, filepath.Base(srcRegionDir), region)
+	if err := os.WriteFile(filepath.Join(envDir, "env.hcl"), []byte(renderedEnv), 0o644); err != nil {
+		return fmt.Errorf("write env.hcl: %w", err)
+	}
+	if err := createAzureRegionHCL(regionDir, region); err != nil {
+		return fmt.Errorf("create region.hcl: %w", err)
+	}
+	if err := copyInfrastructure(srcRegionDir, regionDir, nil); err != nil {
+		return fmt.Errorf("copy template infrastructure: %w", err)
+	}
+	return renderTemplateTree(regionDir, reference, envName, filepath.Base(srcRegionDir), region)
+}
+
+func renderTemplateTree(root, reference, envName, templateRegion, region string) error {
+	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		rendered := renderTemplateContent(string(raw), reference, envName, templateRegion, region)
+		if rendered == string(raw) {
+			return nil
+		}
+		return os.WriteFile(path, []byte(rendered), 0o644)
+	})
+}
+
+func renderTemplateContent(content, reference, envName, templateRegion, region string) string {
+	// Prefer explicit placeholders. Prefix and quoted-token replacements keep
+	// existing authored templates compatible without turning a short reference
+	// such as "test" into an unsafe global substring replacement.
+	content = strings.ReplaceAll(content, "{{env}}", envName)
+	content = strings.ReplaceAll(content, reference+"-", envName+"-")
+	content = strings.ReplaceAll(content, fmt.Sprintf("%q", reference), fmt.Sprintf("%q", envName))
+	content = strings.ReplaceAll(content, "{{region}}", region)
+	content = strings.ReplaceAll(content, fmt.Sprintf("%q", templateRegion), fmt.Sprintf("%q", region))
+	return content
+}
+
+func scaffoldInventoryForPlan(provider, projectRoot string, plan scaffoldPlan, envName, region, reference, variantSource string, useVariant bool, hostFilter map[string]bool) error {
+	if plan.Profile == rangeconfig.ProfileActiveDir {
+		if err := scaffoldInventory(provider, projectRoot, envName, region, reference, variantSource, useVariant); err != nil {
+			return err
+		}
+		if !useVariant && plan.Lab != "GOAD" {
+			if err := repointInventoryDomainTo(projectRoot, envName, plan.Lab); err != nil {
+				return fmt.Errorf("repoint inventory domain_name: %w", err)
+			}
+		}
+		return filterInventoryHosts(filepath.Join(projectRoot, envName+"-inventory"), hostFilter)
+	}
+	template := filepath.Join(plan.LabPath, "providers", provider, "inventory")
+	raw, err := os.ReadFile(template)
+	if err != nil {
+		return fmt.Errorf("read range inventory template: %w", err)
+	}
+	content := renderTemplateContent(string(raw), reference, envName, plan.Spec.DefaultRegion, region)
+	destination := filepath.Join(projectRoot, envName+"-inventory")
+	if err := os.WriteFile(destination, []byte(content), 0o644); err != nil {
+		return fmt.Errorf("write range inventory: %w", err)
+	}
+	return nil
+}
+
+func filterInventoryHosts(path string, keep map[string]bool) error {
+	if keep == nil {
+		return nil
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	all := map[string]bool{"dc01": true, "dc02": true, "dc03": true, "srv01": true, "srv02": true, "srv03": true, "ws01": true, "lx01": true}
+	lines := strings.Split(string(raw), "\n")
+	out := lines[:0]
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		fields := strings.Fields(trimmed)
+		if len(fields) > 0 && all[strings.ToLower(fields[0])] && !keep[strings.ToLower(fields[0])] {
+			continue
+		}
+		out = append(out, line)
+	}
+	return os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o644)
+}
+
 func scaffoldInventory(
 	provider, projectRoot, envName, region, reference, variantSource string, useVariant bool,
 ) error {
@@ -302,12 +643,16 @@ func scaffoldInventory(
 // trade this bug for a worse one. domain_name is the only functional difference
 // between the two.
 func repointInventoryDomain(projectRoot, envName, variantSource string) error {
+	target := filepath.Base(variantTargetFor(projectRoot, envName, variantSource))
+	return repointInventoryDomainTo(projectRoot, envName, target)
+}
+
+func repointInventoryDomainTo(projectRoot, envName, target string) error {
 	invPath := filepath.Join(projectRoot, envName+"-inventory")
 	data, err := os.ReadFile(invPath)
 	if err != nil {
 		return err
 	}
-	target := filepath.Base(variantTargetFor(projectRoot, envName, variantSource))
 	updated := variant.RepointDomainName(string(data), target)
 	if updated == string(data) {
 		return nil
@@ -406,8 +751,15 @@ func runEnvList(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func findReferenceRegion(infraBase, reference string) string {
+func findReferenceRegion(infraBase, reference, preferredRegion string) string {
 	refDir := filepath.Join(infraBase, reference)
+	if preferredRegion != "" {
+		preferred := filepath.Join(refDir, preferredRegion)
+		if _, err := os.Stat(filepath.Join(preferred, "region.hcl")); err == nil {
+			return preferred
+		}
+		return ""
+	}
 	entries, err := os.ReadDir(refDir)
 	if err != nil {
 		return ""
@@ -466,6 +818,10 @@ func labHostKeys(projectRoot, variantSource string) map[string]bool {
 	if !filepath.IsAbs(source) {
 		source = filepath.Join(projectRoot, source)
 	}
+	return labHostKeysFromPath(source)
+}
+
+func labHostKeysFromPath(source string) map[string]bool {
 	data, err := os.ReadFile(filepath.Join(source, "data", "config.json"))
 	if err != nil {
 		return nil

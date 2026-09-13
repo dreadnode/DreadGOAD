@@ -37,8 +37,16 @@ Launch from the repo root:
 
 The launcher creates `.venv`, installs `console/backend/requirements.txt` (prefers
 `uv`), builds the SPA, and serves it plus the API from one uvicorn process. Open
-`http://localhost:24749`, create a session (point it at a `dreadgoad.yaml` + an
-environment name), and drive it with `/` commands or plain text.
+`http://localhost:24749`, choose **Create a new environment**, then select the
+range, provider, region, and environment name. The console writes a private,
+one-environment config under `.dreadgoad/console/configs/`, scaffolds the
+matching infrastructure and inventory, and opens the session. It does not
+deploy anything until `/up` is confirmed.
+
+Already-configured environments appear under **Use an existing environment**.
+An external config that the console has never seen can still be attached through
+**Import a config path (advanced)**; this is a compatibility path, not required
+for normal range creation.
 
 ## Environment variables
 

@@ -1,11 +1,13 @@
-# SCOPE-RANGE on Azure
+# GOAT — Game of Agent Trust
 
-SCOPE-RANGE is a six-host Linux environment for exercising offensive AI agents
+**GOAT** (**Game of Agent Trust**) is the user-facing name for the internally
+stable `SCOPE-RANGE` lab. It is a six-host Linux environment for exercising offensive AI agents
 against a connected set of applications, databases, development platforms,
 storage systems, and infrastructure services. Its fictional scenario follows
 the Dreadnode Biology Division and Project KRAKEN, a deep-ocean program breeding
 massive, aggressive octopuses. It is deployed alongside the existing GOAD labs
-and selected through the normal DreadGOAD environment configuration.
+and selected by range name in the DreadGOAD web console or through the normal
+CLI environment configuration.
 
 The environment contains synthetic identities and data only. Its credentials
 are intentionally deterministic and must never be reused outside the range.
@@ -89,22 +91,32 @@ it is both the agent workstation and the private-network provisioning hop.
 
 ## Web console
 
-Launch the console from the repository root and create a session using the
-repository's `dreadgoad.yaml` and the `scope-dev` environment:
+Launch the console from the repository root:
 
 ```bash
 ./dreadgoad-console
 ```
 
-The console resolves `scope-dev` to SCOPE-RANGE on Azure and uses the same CLI,
-state, inventory, validation manifest, and range-owned session lifecycle as a
-terminal workflow. The main commands are:
+In **New Session**, choose **Create a new environment**, select **GOAT**, and
+name the environment. GOAT currently supports Azure, so the provider is selected
+automatically; its `centralus` region and fixed `10.50.0.0/16` network are shown
+from the range manifest. GOAT does not support randomized variants, so no
+variant control is shown.
+
+The console creates a private config under `.dreadgoad/console/configs/`, copies
+the authored GOAT infrastructure template to the new environment, creates its
+inventory, and opens a session. This preparation does not create Azure resources;
+use `/up` when ready to deploy. Existing CLI-created environments remain
+selectable through **Use an existing environment**.
+
+The session uses the same CLI, state, inventory, validation manifest, and
+range-owned lifecycle as a terminal workflow. The main commands are:
 
 | Command | Behavior for SCOPE-RANGE |
 | --- | --- |
 | `/up` | Deploy and provision the complete range after operator confirmation |
-| `/instances` | Show Azure power state for the SCOPE hosts |
-| `/health` | Run the SCOPE-specific core availability checks |
+| `/instances` | Show Azure power state for the GOAT hosts |
+| `/health` | Run the GOAT-specific core availability checks |
 | `/status` | Run `/instances` followed by `/health` |
 | `/validate` | Check Azure topology, Linux services, applications, users, and seeded data |
 | `/start [host]` | Start the whole range or one named host |
@@ -113,7 +125,7 @@ terminal workflow. The main commands are:
 | `/destroy [host]` | Destroy the range or one named host after operator confirmation |
 
 These command names are range-agnostic at the console surface. The backend
-selects the SCOPE-specific inspection and validation implementations from the
+selects the GOAT-specific inspection and validation implementations from the
 session's configured lab. SCOPE-RANGE declares no session initialization hooks,
 so creating a console session does not generate a GOAD answer key or modify the
 range. See the [console guide](https://github.com/dreadnode/DreadGOAD/blob/main/console/README.md)
@@ -179,7 +191,7 @@ AZURE_SUBSCRIPTION_ID="<subscription-id>" \
 payload because it includes the range's synthetic credentials.
 
 The CLI dispatches `SCOPE-RANGE` to `scripts/validate-scope-range-live.py` and
-forwards `--quick`, `--output`, `--verbose`, and `--no-fail`. The SCOPE validator
+forwards `--quick`, `--output`, `--verbose`, and `--no-fail`. The GOAT validator
 always streams plain output, so `--plain` is accepted as a no-op. Continuous
 `--poll` mode remains specific to the GOAD live dashboard and is rejected for
 SCOPE-RANGE.
