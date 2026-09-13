@@ -150,7 +150,7 @@ module "asg_deployment" {
 | Name | Version |
 | ---- | ------- |
 | <a name="provider_aws"></a> [aws](#provider\_aws) | 6.63.0 |
-| <a name="provider_http"></a> [http](#provider\_http) | 3.6.1 |
+| <a name="provider_http"></a> [http](#provider\_http) | 3.6.2 |
 
 ## Modules
 
