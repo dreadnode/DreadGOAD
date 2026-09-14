@@ -19,6 +19,7 @@ include {
 inputs = {
   additional_tags = {
     Project     = "DreadGOAD"
+    Range       = "GOAD"
     Environment = local.env
   }
   deployment_name = local.deployment_name

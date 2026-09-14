@@ -10,7 +10,7 @@ func TestProviderRangeTagFollowsManifest(t *testing.T) {
 	root := t.TempDir()
 	for lab, body := range map[string]string{
 		"service": "schema_version: 1\nkind: service-range\ndiscovery:\n  range_tag: GOAT\n",
-		"ad":      "schema_version: 1\nkind: active-directory\n",
+		"ad":      "schema_version: 1\nkind: active-directory\ndiscovery:\n  range_tag: GOAD\n",
 	} {
 		dir := filepath.Join(root, "ad", lab)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -26,7 +26,7 @@ func TestProviderRangeTagFollowsManifest(t *testing.T) {
 		want string
 	}{
 		{lab: "service", want: "GOAT"},
-		{lab: "ad", want: ""},
+		{lab: "ad", want: "GOAD"},
 		{lab: "legacy-without-manifest", want: ""},
 	}
 	for _, test := range tests {
@@ -42,7 +42,7 @@ func TestProviderRangeTagFollowsManifest(t *testing.T) {
 	}
 }
 
-func TestProviderRangeTagRequiresServiceRangeIdentity(t *testing.T) {
+func TestProviderRangeTagRequiresManifestIdentity(t *testing.T) {
 	root := t.TempDir()
 	dir := filepath.Join(root, "ad", "service")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -52,6 +52,6 @@ func TestProviderRangeTagRequiresServiceRangeIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := (&Config{ProjectRoot: root, Lab: "service"}).providerRangeTag(); err == nil {
-		t.Fatal("service range without discovery.range_tag must fail")
+		t.Fatal("range manifest without discovery.range_tag must fail")
 	}
 }

@@ -113,6 +113,7 @@ inputs = {
     Project      = "DreadGOAD"
     Role         = "MemberServer"
     Lab          = "${local.deployment_name}"
+    Range        = "GOAD"
     Name         = "${local.deployment_name}-${local.hostname}"
     Domain       = local.domain
     ComputerName = local.hostname

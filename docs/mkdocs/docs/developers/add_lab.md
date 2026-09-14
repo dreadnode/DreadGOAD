@@ -147,7 +147,7 @@ cannot provide executable paths. Active Directory ranges may omit it and use
 the legacy AD inspector. Service ranges must select a profile so health and
 validation never silently fall back to AD-specific checks.
 
-`discovery.range_tag` is required for service ranges. Every cloud instance in
+`discovery.range_tag` is required for every manifest-backed range. Every cloud instance in
 the range must carry `Range=<range_tag>`; AWS and Azure discovery combine that
 identity with the selected environment so commands cannot cross range
 boundaries. The value is independent of the range's directory name and display

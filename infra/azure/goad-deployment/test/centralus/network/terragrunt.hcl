@@ -24,5 +24,6 @@ inputs = {
 
   additional_tags = {
     Project = "DreadGOAD"
+    Range   = "GOAD"
   }
 }

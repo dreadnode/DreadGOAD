@@ -96,8 +96,8 @@ func (c *Config) providerRangeTag() (string, error) {
 	if !found {
 		return "", nil
 	}
-	if manifest.Kind == rangeconfig.KindServiceRange && manifest.Discovery.RangeTag == "" {
-		return "", fmt.Errorf("service range %s must declare discovery.range_tag", c.ResolvedLab())
+	if manifest.Discovery.RangeTag == "" {
+		return "", fmt.Errorf("range %s must declare discovery.range_tag", c.ResolvedLab())
 	}
 	return manifest.Discovery.RangeTag, nil
 }
