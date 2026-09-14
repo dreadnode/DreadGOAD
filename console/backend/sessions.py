@@ -65,7 +65,7 @@ def _validate_cidr(value: str) -> str:
         raise ValueError(
             f"VPC/VNet CIDR {value!r} is invalid; use a network such as 10.50.0.0/16"
         ) from exc
-    if network.version != 4 or network.prefixlen != 16:
+    if not isinstance(network, ipaddress.IPv4Network) or network.prefixlen != 16:
         raise ValueError(
             f"VPC/VNet CIDR {value!r} is unsupported; range scaffolding "
             "currently requires an IPv4 /16"
