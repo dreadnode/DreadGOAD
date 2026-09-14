@@ -3,6 +3,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
 import {
   ConnectRequest,
+  DEFAULT_VIEW_MODE,
   DetailRequest,
   HostNode,
   buildNodes,
@@ -19,6 +20,8 @@ const host = (id: string, role: string, status = 'running'): RangeHost => ({
   status,
   health: 'unknown',
 })
+
+assert.equal(DEFAULT_VIEW_MODE, 'table')
 
 const range: RangeDoc = {
   session_id: 'session-1',
