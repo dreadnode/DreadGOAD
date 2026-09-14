@@ -20,11 +20,11 @@ func init() {
 			return nil, err
 		}
 		return &AzureProvider{
-			client:               client,
-			env:                  opts.Env,
-			lab:                  opts.Lab,
-			filterInstancesByLab: opts.FilterInstancesByLab,
-			inventoryPath:        opts.InventoryPath,
+			client:        client,
+			env:           opts.Env,
+			lab:           opts.Lab,
+			rangeTag:      opts.RangeTag,
+			inventoryPath: opts.InventoryPath,
 		}, nil
 	})
 }
@@ -40,11 +40,11 @@ func init() {
 // hot path; managed Run Commands took ~15–30s per call versus sub-second
 // for WinRM through the existing tunnel.
 type AzureProvider struct {
-	client               *Client
-	env                  string
-	lab                  string
-	filterInstancesByLab bool
-	inventoryPath        string
+	client        *Client
+	env           string
+	lab           string
+	rangeTag      string
+	inventoryPath string
 
 	winrmOnce sync.Once
 	winrm     *winrmRunner
@@ -72,7 +72,7 @@ func (p *AzureProvider) DiscoverInstances(ctx context.Context, env string) ([]pr
 	if err != nil {
 		return nil, err
 	}
-	return provider.FilterInstancesByLab(toProviderInstances(instances), p.lab, p.filterInstancesByLab), nil
+	return provider.FilterInstancesByRange(toProviderInstances(instances), p.rangeTag), nil
 }
 
 func (p *AzureProvider) DiscoverAllInstances(ctx context.Context, env string) ([]provider.Instance, error) {
@@ -80,7 +80,7 @@ func (p *AzureProvider) DiscoverAllInstances(ctx context.Context, env string) ([
 	if err != nil {
 		return nil, err
 	}
-	return provider.FilterInstancesByLab(toProviderInstances(instances), p.lab, p.filterInstancesByLab), nil
+	return provider.FilterInstancesByRange(toProviderInstances(instances), p.rangeTag), nil
 }
 
 func (p *AzureProvider) FindInstanceByHostname(ctx context.Context, env, hostname string) (*provider.Instance, error) {

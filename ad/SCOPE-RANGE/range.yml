@@ -5,6 +5,8 @@ variants:
   supported: false
 inspection:
   profile: goat
+discovery:
+  range_tag: GOAT
 infrastructure:
   aws:
     deployment: scope-range-deployment

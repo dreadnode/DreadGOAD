@@ -20,7 +20,7 @@ inputs = {
 
   additional_tags = {
     Project    = "DreadGOAD"
-    Lab        = "SCOPE-RANGE"
+    Range      = "GOAT"
     Deployment = "scope-range-deployment"
   }
 }

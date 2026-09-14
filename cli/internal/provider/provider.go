@@ -6,16 +6,15 @@ import (
 	"time"
 )
 
-// FilterInstancesByLab narrows discovery for range types that use the selected
-// lab name as their provider-side Lab tag. Callers leave filtering disabled for
-// legacy AD ranges, whose provider tags do not consistently match lab names.
-func FilterInstancesByLab(instances []Instance, lab string, enabled bool) []Instance {
-	if !enabled || lab == "" {
+// FilterInstancesByRange narrows discovery to an exact provider-side Range
+// tag. An empty range tag preserves discovery for manifests that do not opt in.
+func FilterInstancesByRange(instances []Instance, rangeTag string) []Instance {
+	if rangeTag == "" {
 		return instances
 	}
 	out := make([]Instance, 0, len(instances))
 	for _, instance := range instances {
-		if strings.EqualFold(instance.Tags["Lab"], lab) {
+		if strings.EqualFold(instance.Tags["Range"], rangeTag) {
 			out = append(out, instance)
 		}
 	}

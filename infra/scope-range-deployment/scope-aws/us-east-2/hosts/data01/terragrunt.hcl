@@ -41,7 +41,7 @@ inputs = {
     hostname = local.host.hostname
   })
   additional_tags = {
-    Lab        = "SCOPE-RANGE"
+    Range      = "GOAT"
     Deployment = "scope-range-deployment"
     Role       = local.host.role
   }

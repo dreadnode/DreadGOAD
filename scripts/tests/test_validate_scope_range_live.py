@@ -128,10 +128,12 @@ class InfrastructureAWS:
         self.manifest = manifest
         self.public_host = public_host
         self.duplicate_host = duplicate_host
+        self.calls: list[list[str]] = []
 
     def run_json(self, args: list[str], *, timeout: int = 600) -> object:
         """Return the AWS object selected by the requested command."""
         del timeout
+        self.calls.append(args)
         env = self.manifest["aws"]["default_environment"]
         if args[:2] == ["sts", "get-caller-identity"]:
             return {
@@ -618,8 +620,9 @@ class InfrastructureTests(unittest.TestCase):
         self.assertIn("public_ips=none", nat_check.detail)
 
     def test_expected_aws_private_topology_passes(self) -> None:
+        aws = InfrastructureAWS(self.manifest)
         checks, runnable = validator.validate_aws_infrastructure(
-            InfrastructureAWS(self.manifest),
+            aws,
             self.manifest,
             self.manifest["aws"]["default_environment"],
         )
@@ -628,6 +631,11 @@ class InfrastructureTests(unittest.TestCase):
             [check for check in checks if check.status == "FAIL"],
             [(check.name, check.detail) for check in checks if check.status == "FAIL"],
         )
+        vpc_call = next(
+            call for call in aws.calls if call[:2] == ["ec2", "describe-vpcs"]
+        )
+        self.assertIn("Name=tag:Range,Values=GOAT", vpc_call)
+        self.assertFalse(any("tag:Lab" in argument for argument in vpc_call))
 
     def test_aws_public_workload_address_fails(self) -> None:
         checks, _ = validator.validate_aws_infrastructure(

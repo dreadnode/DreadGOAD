@@ -61,6 +61,12 @@ type InspectionSpec struct {
 	Profile string `yaml:"profile,omitempty" json:"profile,omitempty"`
 }
 
+// DiscoverySpec declares the stable provider-side tag identifying a range.
+// Cloud providers scope instances by Range=<range_tag> when it is present.
+type DiscoverySpec struct {
+	RangeTag string `yaml:"range_tag,omitempty" json:"range_tag,omitempty"`
+}
+
 // Manifest is the shared, strict range.yml schema used by discovery,
 // scaffolding, and session lifecycle handling.
 type Manifest struct {
@@ -70,6 +76,7 @@ type Manifest struct {
 	Variants       VariantSpec             `yaml:"variants,omitempty" json:"variants"`
 	Infrastructure map[string]ProviderSpec `yaml:"infrastructure,omitempty" json:"infrastructure"`
 	Inspection     InspectionSpec          `yaml:"inspection,omitempty" json:"inspection,omitempty"`
+	Discovery      DiscoverySpec           `yaml:"discovery,omitempty" json:"discovery,omitempty"`
 	Lifecycle      struct {
 		SessionInit []ActionSpec `yaml:"session_init" json:"session_init"`
 	} `yaml:"lifecycle" json:"lifecycle"`
@@ -107,6 +114,10 @@ func Decode(raw []byte) (*Manifest, error) {
 	}
 	if manifest.Inspection.Profile != "" && !pathComponent.MatchString(manifest.Inspection.Profile) {
 		return nil, fmt.Errorf("inspection.profile %q is not a safe identifier", manifest.Inspection.Profile)
+	}
+	manifest.Discovery.RangeTag = strings.TrimSpace(manifest.Discovery.RangeTag)
+	if manifest.Discovery.RangeTag != "" && !pathComponent.MatchString(manifest.Discovery.RangeTag) {
+		return nil, fmt.Errorf("discovery.range_tag %q is not a safe tag value", manifest.Discovery.RangeTag)
 	}
 	return &manifest, nil
 }

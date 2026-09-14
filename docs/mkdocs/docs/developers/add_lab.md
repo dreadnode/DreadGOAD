@@ -120,6 +120,8 @@ variants:
   supported: false
 inspection:
   profile: example-range             # registered CLI health/validation profile
+discovery:
+  range_tag: EXAMPLE                  # stable Range tag on cloud resources
 infrastructure:
   azure:
     deployment: example-deployment
@@ -144,6 +146,12 @@ the console from offering a range it can only partially create.
 cannot provide executable paths. Active Directory ranges may omit it and use
 the legacy AD inspector. Service ranges must select a profile so health and
 validation never silently fall back to AD-specific checks.
+
+`discovery.range_tag` is required for service ranges. Every cloud instance in
+the range must carry `Range=<range_tag>`; AWS and Azure discovery combine that
+identity with the selected environment so commands cannot cross range
+boundaries. The value is independent of the range's directory name and display
+name, allowing either to change without altering cloud identity.
 
 `template` profiles currently require a fixed private IPv4 `/16` and must not
 set `network.editable: true`. The template owns its subnet layout, so accepting

@@ -24,18 +24,18 @@ func init() {
 			return nil, err
 		}
 		return &AWSProvider{
-			client:               client,
-			lab:                  opts.Lab,
-			filterInstancesByLab: opts.FilterInstancesByLab,
+			client:   client,
+			lab:      opts.Lab,
+			rangeTag: opts.RangeTag,
 		}, nil
 	})
 }
 
 // AWSProvider adapts the existing AWS Client to the Provider interface.
 type AWSProvider struct {
-	client               *Client
-	lab                  string
-	filterInstancesByLab bool
+	client   *Client
+	lab      string
+	rangeTag string
 }
 
 // Client returns the underlying AWS client for SSM-specific operations
@@ -59,7 +59,7 @@ func (p *AWSProvider) DiscoverInstances(ctx context.Context, env string) ([]prov
 	if err != nil {
 		return nil, err
 	}
-	return provider.FilterInstancesByLab(toProviderInstances(instances), p.lab, p.filterInstancesByLab), nil
+	return provider.FilterInstancesByRange(toProviderInstances(instances), p.rangeTag), nil
 }
 
 func (p *AWSProvider) DiscoverAllInstances(ctx context.Context, env string) ([]provider.Instance, error) {
@@ -67,7 +67,7 @@ func (p *AWSProvider) DiscoverAllInstances(ctx context.Context, env string) ([]p
 	if err != nil {
 		return nil, err
 	}
-	return provider.FilterInstancesByLab(toProviderInstances(instances), p.lab, p.filterInstancesByLab), nil
+	return provider.FilterInstancesByRange(toProviderInstances(instances), p.rangeTag), nil
 }
 
 func (p *AWSProvider) FindInstanceByHostname(ctx context.Context, env, hostname string) (*provider.Instance, error) {

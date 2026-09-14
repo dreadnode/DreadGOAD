@@ -58,7 +58,7 @@ inputs = {
   })
   tags = {
     Project    = "DreadGOAD"
-    Lab        = "SCOPE-RANGE"
+    Range      = "GOAT"
     Deployment = "scope-range-deployment"
     Role       = local.host.role
   }

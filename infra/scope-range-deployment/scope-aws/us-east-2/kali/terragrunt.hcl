@@ -24,7 +24,7 @@ inputs = {
   env              = local.env_vars.locals.env
   deployment_name  = local.env_vars.locals.deployment_name
   instance_name    = "kali01"
-  lab_name         = "SCOPE-RANGE"
+  lab_name         = "GOAT"
   instance_type    = local.env_vars.locals.kali_instance_type
   root_volume_size = 100
   vpc_id           = dependency.network.outputs.vpc_id
@@ -34,7 +34,7 @@ inputs = {
 
   additional_tags = {
     Project    = "DreadGOAD"
-    Lab        = "SCOPE-RANGE"
+    Range      = "GOAT"
     Deployment = "scope-range-deployment"
   }
 }

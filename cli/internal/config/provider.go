@@ -22,11 +22,11 @@ func (c *Config) NewProvider(ctx context.Context) (provider.Provider, error) {
 	opts := provider.ConstructorOpts{}
 	opts.Lab = c.ResolvedLab()
 	if name == provider.NameAWS || name == provider.NameAzure {
-		filterByLab, err := c.filterProviderInstancesByLab()
+		rangeTag, err := c.providerRangeTag()
 		if err != nil {
 			return nil, err
 		}
-		opts.FilterInstancesByLab = filterByLab
+		opts.RangeTag = rangeTag
 	}
 
 	switch name {
@@ -88,10 +88,16 @@ func (c *Config) NewProvider(ctx context.Context) (provider.Provider, error) {
 	return provider.New(ctx, name, opts)
 }
 
-func (c *Config) filterProviderInstancesByLab() (bool, error) {
+func (c *Config) providerRangeTag() (string, error) {
 	manifest, found, err := rangeconfig.Load(c.LabPath())
 	if err != nil {
-		return false, err
+		return "", err
 	}
-	return found && manifest.Kind == rangeconfig.KindServiceRange, nil
+	if !found {
+		return "", nil
+	}
+	if manifest.Kind == rangeconfig.KindServiceRange && manifest.Discovery.RangeTag == "" {
+		return "", fmt.Errorf("service range %s must declare discovery.range_tag", c.ResolvedLab())
+	}
+	return manifest.Discovery.RangeTag, nil
 }

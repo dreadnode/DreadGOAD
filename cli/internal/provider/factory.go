@@ -21,11 +21,8 @@ type ConstructorOpts struct {
 	Region     string // AWS region or empty for non-AWS providers
 	AWSProfile string // optional AWS shared-config profile
 	Env        string // dreadgoad env name (used by providers that need to scope side-channel state — Azure WinRM tunnel + inventory lookup)
-	Lab        string // active lab name used to scope provider discovery
-	// FilterInstancesByLab is enabled for range types whose infrastructure uses
-	// the selected lab name as its provider-side Lab tag. Legacy AD ranges share
-	// deployment tags and must retain environment-only discovery.
-	FilterInstancesByLab bool
+	Lab        string // active lab name used in provider diagnostics
+	RangeTag   string // optional Range tag used to scope provider discovery
 
 	// Proxmox-specific
 	ProxmoxAPIURL string

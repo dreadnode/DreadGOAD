@@ -971,7 +971,7 @@ def validate_aws_infrastructure(
                 "describe-vpcs",
                 "--filters",
                 "Name=tag:Project,Values=DreadGOAD",
-                "Name=tag:Lab,Values=SCOPE-RANGE",
+                "Name=tag:Range,Values=GOAT",
                 f"Name=tag:Name,Values={env}-{deployment}",
             ]
         ).get("Vpcs", [])

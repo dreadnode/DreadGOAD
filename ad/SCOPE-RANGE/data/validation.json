@@ -35,7 +35,7 @@
       "size": "Standard_D4s_v3",
       "aws_instance_type": "m6i.xlarge",
       "tags": {
-        "Lab": "SCOPE-RANGE",
+        "Range": "GOAT",
         "Deployment": "scope-range-deployment",
         "Role": "AttackBox"
       },
@@ -125,7 +125,7 @@
       "size": "Standard_D4s_v3",
       "aws_instance_type": "m6i.xlarge",
       "tags": {
-        "Lab": "SCOPE-RANGE",
+        "Range": "GOAT",
         "Deployment": "scope-range-deployment",
         "Role": "Web"
       },
@@ -226,7 +226,7 @@
       "size": "Standard_D8s_v3",
       "aws_instance_type": "m6i.2xlarge",
       "tags": {
-        "Lab": "SCOPE-RANGE",
+        "Range": "GOAT",
         "Deployment": "scope-range-deployment",
         "Role": "Data"
       },
@@ -313,7 +313,7 @@
       "size": "Standard_D4s_v3",
       "aws_instance_type": "m6i.xlarge",
       "tags": {
-        "Lab": "SCOPE-RANGE",
+        "Range": "GOAT",
         "Deployment": "scope-range-deployment",
         "Role": "Development"
       },
@@ -431,7 +431,7 @@
       "size": "Standard_D4s_v3",
       "aws_instance_type": "m6i.xlarge",
       "tags": {
-        "Lab": "SCOPE-RANGE",
+        "Range": "GOAT",
         "Deployment": "scope-range-deployment",
         "Role": "Storage"
       },
@@ -537,7 +537,7 @@
       "size": "Standard_D4s_v3",
       "aws_instance_type": "m6i.xlarge",
       "tags": {
-        "Lab": "SCOPE-RANGE",
+        "Range": "GOAT",
         "Deployment": "scope-range-deployment",
         "Role": "InfrastructureServices"
       },

@@ -33,5 +33,5 @@ inputs = {
   os_disk_size_gb      = local.host.os_disk_size_gb
   data_disks           = { data = { lun = 0, size_gb = local.host.data_disk_size_gb } }
   custom_data          = templatefile("${get_terragrunt_dir()}/../cloud-init.yaml.tpl", { hostname = local.host.hostname })
-  tags                 = { Project = "DreadGOAD", Lab = "SCOPE-RANGE", Deployment = "scope-range-deployment", Role = local.host.role }
+  tags                 = { Project = "DreadGOAD", Range = "GOAT", Deployment = "scope-range-deployment", Role = local.host.role }
 }
