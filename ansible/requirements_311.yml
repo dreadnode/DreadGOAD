@@ -18,4 +18,4 @@ azure-mgmt-network
 boto3
 # Proxmox
 proxmoxer
-requests
+requests[socks]

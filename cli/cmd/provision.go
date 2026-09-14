@@ -163,6 +163,11 @@ func preflightChecks(ctx context.Context, cfg *config.Config, limit string) erro
 	if err := doctor.CheckAnsibleCoreVersion(cfg.ResolvedProvider()); err != nil {
 		return fmt.Errorf("ansible-core version check failed: %w", err)
 	}
+	if cfg.ResolvedProvider() == provider.NameAzure {
+		if err := doctor.CheckPSRPDependencies(); err != nil {
+			return fmt.Errorf("ansible PSRP dependency check failed: %w", err)
+		}
+	}
 	if err := ansible.InstallRequirements(cfg.ProjectRoot); err != nil {
 		return fmt.Errorf("ansible dependency install failed: %w", err)
 	}

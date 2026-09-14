@@ -493,12 +493,18 @@ func copyInfrastructure(srcRegionDir, dstRegionDir string, hostFilter map[string
 			return nil
 		}
 
-		// Skip host directories that the target lab doesn't define.
-		// Host dirs live at goad/<host>/ — exactly two path segments.
+		// Skip Terragrunt host units that the target lab doesn't define. Other
+		// direct children of goad/ contain shared assets needed by those units.
 		if hostFilter != nil && d.IsDir() {
 			parts := strings.Split(relPath, string(filepath.Separator))
 			if len(parts) == 2 && parts[0] == "goad" && !hostFilter[parts[1]] {
-				return filepath.SkipDir
+				_, statErr := os.Stat(filepath.Join(path, "terragrunt.hcl"))
+				switch {
+				case statErr == nil:
+					return filepath.SkipDir
+				case !os.IsNotExist(statErr):
+					return statErr
+				}
 			}
 		}
 
