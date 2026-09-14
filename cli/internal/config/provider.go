@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/dreadnode/dreadgoad/internal/provider"
+	"github.com/dreadnode/dreadgoad/internal/rangeconfig"
 
 	// Register provider constructors.
 	_ "github.com/dreadnode/dreadgoad/internal/aws"
@@ -30,6 +31,11 @@ func (c *Config) NewProvider(ctx context.Context) (provider.Provider, error) {
 		opts.Region = region
 
 	case provider.NameAzure:
+		manifest, found, err := rangeconfig.Load(c.LabPath())
+		if err != nil {
+			return nil, err
+		}
+		opts.FilterInstancesByLab = found && manifest.Kind != rangeconfig.KindActiveDirectory
 		region, err := c.ResolveRegion()
 		if err != nil {
 			return nil, err

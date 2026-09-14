@@ -13,17 +13,17 @@ func TestFilterProviderInstancesByLab(t *testing.T) {
 		{ID: "other", Tags: map[string]string{"Lab": "OTHER"}},
 	}
 
-	legacy := filterProviderInstancesByLab(instances, "GOAD")
+	legacy := filterProviderInstancesByLab(instances, "GOAD-Light", false)
 	if len(legacy) != len(instances) {
-		t.Fatalf("GOAD compatibility filter returned %d instances, want %d", len(legacy), len(instances))
+		t.Fatalf("legacy AD compatibility filter returned %d instances, want %d", len(legacy), len(instances))
 	}
 
-	scope := filterProviderInstancesByLab(instances, "scope-range")
+	scope := filterProviderInstancesByLab(instances, "scope-range", true)
 	if len(scope) != 1 || scope[0].ID != "scope" {
 		t.Fatalf("scope filter = %#v, want only scope", scope)
 	}
 
-	if got := filterProviderInstancesByLab(instances, "missing"); len(got) != 0 {
+	if got := filterProviderInstancesByLab(instances, "missing", true); len(got) != 0 {
 		t.Fatalf("missing lab filter returned %#v, want empty", got)
 	}
 }

@@ -20,10 +20,11 @@ func init() {
 			return nil, err
 		}
 		return &AzureProvider{
-			client:        client,
-			env:           opts.Env,
-			lab:           opts.Lab,
-			inventoryPath: opts.InventoryPath,
+			client:               client,
+			env:                  opts.Env,
+			lab:                  opts.Lab,
+			filterInstancesByLab: opts.FilterInstancesByLab,
+			inventoryPath:        opts.InventoryPath,
 		}, nil
 	})
 }
@@ -39,10 +40,11 @@ func init() {
 // hot path; managed Run Commands took ~15–30s per call versus sub-second
 // for WinRM through the existing tunnel.
 type AzureProvider struct {
-	client        *Client
-	env           string
-	lab           string
-	inventoryPath string
+	client               *Client
+	env                  string
+	lab                  string
+	filterInstancesByLab bool
+	inventoryPath        string
 
 	winrmOnce sync.Once
 	winrm     *winrmRunner
@@ -70,7 +72,7 @@ func (p *AzureProvider) DiscoverInstances(ctx context.Context, env string) ([]pr
 	if err != nil {
 		return nil, err
 	}
-	return filterProviderInstancesByLab(toProviderInstances(instances), p.lab), nil
+	return filterProviderInstancesByLab(toProviderInstances(instances), p.lab, p.filterInstancesByLab), nil
 }
 
 func (p *AzureProvider) DiscoverAllInstances(ctx context.Context, env string) ([]provider.Instance, error) {
@@ -78,7 +80,7 @@ func (p *AzureProvider) DiscoverAllInstances(ctx context.Context, env string) ([
 	if err != nil {
 		return nil, err
 	}
-	return filterProviderInstancesByLab(toProviderInstances(instances), p.lab), nil
+	return filterProviderInstancesByLab(toProviderInstances(instances), p.lab, p.filterInstancesByLab), nil
 }
 
 func (p *AzureProvider) FindInstanceByHostname(ctx context.Context, env, hostname string) (*provider.Instance, error) {
@@ -95,12 +97,11 @@ func (p *AzureProvider) FindInstanceByHostname(ctx context.Context, env, hostnam
 	return nil, fmt.Errorf("instance not found for hostname %s in lab %s", hostname, p.lab)
 }
 
-// filterProviderInstancesByLab keeps legacy GOAD discovery unchanged because
-// older deployments used several non-canonical Lab tag values. New labs use
-// their exact selected name, which prevents lifecycle commands from crossing
-// deployment boundaries when environments overlap.
-func filterProviderInstancesByLab(instances []provider.Instance, lab string) []provider.Instance {
-	if lab == "" || strings.EqualFold(lab, "GOAD") {
+// filterProviderInstancesByLab narrows discovery for range types that use the
+// selected lab name as their provider-side Lab tag. Legacy AD ranges share
+// deployment tags, so their callers leave filtering disabled.
+func filterProviderInstancesByLab(instances []provider.Instance, lab string, enabled bool) []provider.Instance {
+	if !enabled || lab == "" {
 		return instances
 	}
 	out := make([]provider.Instance, 0, len(instances))

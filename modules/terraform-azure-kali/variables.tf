@@ -47,7 +47,7 @@ variable "private_ip_address" {
   default     = null
 
   validation {
-    condition     = var.private_ip_address == null || can(cidrhost("${var.private_ip_address}/32", 0))
+    condition     = var.private_ip_address == null || can(cidrnetmask("${var.private_ip_address}/32"))
     error_message = "private_ip_address must be a valid IPv4 address or null."
   }
 }
@@ -58,7 +58,7 @@ variable "kali_subnet_cidr" {
   default     = "10.8.4.0/28"
 
   validation {
-    condition     = can(cidrhost(var.kali_subnet_cidr, 0))
+    condition     = can(cidrnetmask(var.kali_subnet_cidr))
     error_message = "kali_subnet_cidr must be a valid IPv4 CIDR block."
   }
 }

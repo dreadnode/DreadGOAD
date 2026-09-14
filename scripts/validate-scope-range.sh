@@ -74,7 +74,7 @@ done
 env \
   GOCACHE="$scratch/go-build" \
   GOMODCACHE="$scratch/go-mod" \
-  go -C cli test ./internal/config ./internal/lab ./internal/aws ./internal/azure ./cmd
+  go -C cli test ./...
 
 ansible-galaxy collection build ansible --output-path "$scratch" --force >/dev/null
 env ANSIBLE_COLLECTIONS_PATH="$scratch/collections" ansible-galaxy collection install \
