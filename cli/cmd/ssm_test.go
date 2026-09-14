@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -52,7 +54,16 @@ func TestResolveSSMHostFallsBackToDiscovery(t *testing.T) {
 }
 
 func TestResolveSSMProviderOptionsPrefersInventoryRegion(t *testing.T) {
-	cfg := &config.Config{Region: "us-west-2"}
+	root := t.TempDir()
+	labDir := filepath.Join(root, "ad", "GOAD")
+	if err := os.MkdirAll(labDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := []byte("schema_version: 1\nkind: active-directory\ndiscovery:\n  range_tag: GOAD\n")
+	if err := os.WriteFile(filepath.Join(labDir, "range.yml"), manifest, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{ProjectRoot: root, Lab: "GOAD", Region: "us-west-2"}
 	inv := &inventory.Inventory{Vars: map[string]string{
 		"ansible_aws_ssm_region": "us-east-2",
 	}}
@@ -63,6 +74,9 @@ func TestResolveSSMProviderOptionsPrefersInventoryRegion(t *testing.T) {
 	}
 	if opts.Region != "us-east-2" {
 		t.Fatalf("resolveSSMProviderOptions() region = %q, want us-east-2", opts.Region)
+	}
+	if opts.RangeTag != "GOAD" {
+		t.Fatalf("resolveSSMProviderOptions() range tag = %q, want GOAD", opts.RangeTag)
 	}
 }
 

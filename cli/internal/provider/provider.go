@@ -7,18 +7,26 @@ import (
 )
 
 // FilterInstancesByRange narrows discovery to an exact provider-side Range
-// tag. An empty range tag preserves discovery for manifests that do not opt in.
+// tag. Config-backed AWS and Azure providers reject empty identities before
+// construction; the empty case remains for direct test/provider construction.
 func FilterInstancesByRange(instances []Instance, rangeTag string) []Instance {
 	if rangeTag == "" {
 		return instances
 	}
 	out := make([]Instance, 0, len(instances))
 	for _, instance := range instances {
-		if strings.EqualFold(instance.Tags["Range"], rangeTag) {
+		if MatchesRangeTag(instance.Tags, rangeTag) {
 			out = append(out, instance)
 		}
 	}
 	return out
+}
+
+// MatchesRangeTag reports whether provider tags carry the exact range
+// identity. Tag values are intentionally case-sensitive to prevent two
+// distinct manifest identities from overlapping.
+func MatchesRangeTag(tags map[string]string, rangeTag string) bool {
+	return rangeTag != "" && tags["Range"] == rangeTag
 }
 
 // Instance represents a discovered VM/instance from any provider.
