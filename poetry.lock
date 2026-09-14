@@ -1031,6 +1031,40 @@ docs = ["sphinx", "sphinx-rtd-theme", "zope.interface"]
 tests = ["coverage[toml] (==5.0.4)", "pytest (>=6.0.0,<7.0.0)"]
 
 [[package]]
+name = "pypsrp"
+version = "0.8.1"
+description = "PowerShell Remoting Protocol and WinRM for Python"
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "pypsrp-0.8.1-py3-none-any.whl", hash = "sha256:0101345ceb415896fed9b056e7b77d65312089ddc73c4286247ccf1859d4bc4d"},
+    {file = "pypsrp-0.8.1.tar.gz", hash = "sha256:f5500acd11dfe742d51b7fbb61321ba721038a300d67763dc52babe709db65e7"},
+]
+
+[package.dependencies]
+cryptography = "*"
+pyspnego = "<1.0.0"
+requests = ">=2.9.1"
+
+[package.extras]
+credssp = ["requests-credssp (>=2.0.0)"]
+kerberos = ["pyspnego[kerberos]"]
+
+[[package]]
+name = "pysocks"
+version = "1.7.1"
+description = "A Python SOCKS client module. See https://github.com/Anorov/PySocks for more information."
+optional = false
+python-versions = ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*"
+groups = ["main"]
+files = [
+    {file = "PySocks-1.7.1-py27-none-any.whl", hash = "sha256:08e69f092cc6dbe92a0fdd16eeb9b9ffbc13cadfe5ca4c7bd92ffb078b293299"},
+    {file = "PySocks-1.7.1-py3-none-any.whl", hash = "sha256:2725bd0a9925919b9b51739eea5f9e2bae91e83288108a9ad338b2e3a4435ee5"},
+    {file = "PySocks-1.7.1.tar.gz", hash = "sha256:3f8804571ebe159c380ac6de37643bb4685970655d3bba243530d6558b799aa0"},
+]
+
+[[package]]
 name = "pyspnego"
 version = "0.11.2"
 description = "Windows Negotiate Authentication Client and Server"
@@ -1239,6 +1273,7 @@ files = [
 certifi = ">=2017.4.17"
 charset_normalizer = ">=2,<4"
 idna = ">=2.5,<4"
+PySocks = {version = ">=1.5.6,<1.5.7 || >1.5.7", optional = true, markers = "extra == \"socks\""}
 urllib3 = ">=1.21.1,<3"
 
 [package.extras]
@@ -1262,6 +1297,7 @@ files = [
 certifi = ">=2017.4.17"
 charset_normalizer = ">=2,<4"
 idna = ">=2.5,<4"
+PySocks = {version = ">=1.5.6,<1.5.7 || >1.5.7", optional = true, markers = "extra == \"socks\""}
 urllib3 = ">=1.21.1,<3"
 
 [package.extras]
@@ -1285,6 +1321,7 @@ files = [
 certifi = ">=2023.5.7"
 charset_normalizer = ">=2,<4"
 idna = ">=2.5,<4"
+PySocks = {version = ">=1.5.6,<1.5.7 || >1.5.7", optional = true, markers = "extra == \"socks\""}
 urllib3 = ">=1.26,<3"
 
 [package.extras]
@@ -1655,4 +1692,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.8"
-content-hash = "9f85dcf9a5a9ff330e7cd1400050dd118219a1a34743f1ffa9d92ff594945c3e"
+content-hash = "8bba22fe2bc867751724580a29c6a0cc320981ff935cbac255abc426ff8c3595"

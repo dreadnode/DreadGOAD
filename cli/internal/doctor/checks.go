@@ -514,9 +514,19 @@ func checkPyPSRP() CheckResult {
 
 var ansiblePythonPattern = regexp.MustCompile(`(?m)^\s*python version = .*\]\s+\(([^\r\n]+)\)\s*$`)
 
+const commandErrorOutputLimit = 4096
+
 func ansiblePythonExecutable() (string, error) {
 	out, err := exec.Command("ansible-playbook", "--version").CombinedOutput()
 	if err != nil {
+		detail := strings.TrimSpace(string(out))
+		detailRunes := []rune(detail)
+		if len(detailRunes) > commandErrorOutputLimit {
+			detail = string(detailRunes[:commandErrorOutputLimit]) + "..."
+		}
+		if detail != "" {
+			return "", fmt.Errorf("run ansible-playbook --version: %w: %s", err, detail)
+		}
 		return "", fmt.Errorf("run ansible-playbook --version: %w", err)
 	}
 	match := ansiblePythonPattern.FindStringSubmatch(string(out))

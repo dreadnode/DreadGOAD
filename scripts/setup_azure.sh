@@ -7,8 +7,7 @@ sudo apt-get install -y git python3-venv python3-pip sshpass
 #source .venv/bin/activate
 
 python3 -m pip install --upgrade pip
-python3 -m pip install 'ansible-core>=2.20.0,<2.21.0'
-python3 -m pip install pywinrm
+python3 -m pip install 'ansible-core>=2.20.0,<2.21.0' pywinrm pypsrp 'requests[socks]' || exit 1
 
 /home/goad/.local/bin/ansible-galaxy collection install -r /home/goad/GOAD/ansible/requirements.yml
 

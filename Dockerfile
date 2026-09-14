@@ -5,7 +5,7 @@ RUN apt-get update \
 
 RUN pip install --upgrade pip
 RUN pip install 'ansible-core>=2.20.0,<2.21.0'
-RUN pip install pywinrm
+RUN pip install pywinrm pypsrp 'requests[socks]'
 
 RUN apt-get update -y && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
