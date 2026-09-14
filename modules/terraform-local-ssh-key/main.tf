@@ -2,7 +2,10 @@ resource "terraform_data" "key_directory" {
   triggers_replace = dirname(var.private_key_path)
 
   provisioner "local-exec" {
-    command = "mkdir -p -- ${jsonencode(dirname(var.private_key_path))}"
+    command = "mkdir -p -- \"$KEY_DIRECTORY\""
+    environment = {
+      KEY_DIRECTORY = dirname(var.private_key_path)
+    }
   }
 }
 

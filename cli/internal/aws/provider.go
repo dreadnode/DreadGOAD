@@ -23,13 +23,19 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
-		return &AWSProvider{client: client}, nil
+		return &AWSProvider{
+			client:               client,
+			lab:                  opts.Lab,
+			filterInstancesByLab: opts.FilterInstancesByLab,
+		}, nil
 	})
 }
 
 // AWSProvider adapts the existing AWS Client to the Provider interface.
 type AWSProvider struct {
-	client *Client
+	client               *Client
+	lab                  string
+	filterInstancesByLab bool
 }
 
 // Client returns the underlying AWS client for SSM-specific operations
@@ -53,7 +59,7 @@ func (p *AWSProvider) DiscoverInstances(ctx context.Context, env string) ([]prov
 	if err != nil {
 		return nil, err
 	}
-	return toProviderInstances(instances), nil
+	return provider.FilterInstancesByLab(toProviderInstances(instances), p.lab, p.filterInstancesByLab), nil
 }
 
 func (p *AWSProvider) DiscoverAllInstances(ctx context.Context, env string) ([]provider.Instance, error) {
@@ -61,16 +67,21 @@ func (p *AWSProvider) DiscoverAllInstances(ctx context.Context, env string) ([]p
 	if err != nil {
 		return nil, err
 	}
-	return toProviderInstances(instances), nil
+	return provider.FilterInstancesByLab(toProviderInstances(instances), p.lab, p.filterInstancesByLab), nil
 }
 
 func (p *AWSProvider) FindInstanceByHostname(ctx context.Context, env, hostname string) (*provider.Instance, error) {
-	inst, err := p.client.FindInstanceByHostnameAll(ctx, env, hostname)
+	instances, err := p.DiscoverAllInstances(ctx, env)
 	if err != nil {
 		return nil, err
 	}
-	pi := toProviderInstance(*inst)
-	return &pi, nil
+	wanted := strings.ToUpper(hostname)
+	for i := range instances {
+		if strings.Contains(strings.ToUpper(instances[i].Name), wanted) {
+			return &instances[i], nil
+		}
+	}
+	return nil, fmt.Errorf("instance not found for hostname %s in lab %s", hostname, p.lab)
 }
 
 func (p *AWSProvider) StartInstances(ctx context.Context, ids []string) error {

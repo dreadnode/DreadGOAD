@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/dreadnode/dreadgoad/internal/config"
+	"github.com/dreadnode/dreadgoad/internal/rangeconfig"
 	"github.com/spf13/cobra"
 )
 
@@ -18,11 +19,37 @@ type labInspector interface {
 	validate(context.Context, *cobra.Command, *config.Config, validateOpts) error
 }
 
-func inspectorFor(cfg *config.Config) labInspector {
-	if cfg.ResolvedLab() == "SCOPE-RANGE" {
-		return scopeRangeInspector{}
+const (
+	inspectionProfileActiveDirectory = "active-directory"
+	inspectionProfileGOAT            = "goat"
+)
+
+var inspectionProfiles = map[string]labInspector{
+	inspectionProfileActiveDirectory: goadInspector{},
+	inspectionProfileGOAT:            scopeRangeInspector{},
+}
+
+func inspectorFor(cfg *config.Config) (labInspector, error) {
+	manifest, found, err := rangeconfig.Load(cfg.LabPath())
+	if err != nil {
+		return nil, err
 	}
-	return goadInspector{}
+	profile := inspectionProfileActiveDirectory
+	if found {
+		profile = manifest.Inspection.Profile
+		if profile == "" {
+			if manifest.Kind == rangeconfig.KindActiveDirectory {
+				profile = inspectionProfileActiveDirectory
+			} else {
+				return nil, fmt.Errorf("range %s must declare inspection.profile", cfg.ResolvedLab())
+			}
+		}
+	}
+	inspector, ok := inspectionProfiles[profile]
+	if !ok {
+		return nil, fmt.Errorf("range %s uses unsupported inspection profile %q", cfg.ResolvedLab(), profile)
+	}
+	return inspector, nil
 }
 
 type goadInspector struct{}

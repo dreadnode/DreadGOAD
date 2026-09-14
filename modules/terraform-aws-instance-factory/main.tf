@@ -66,15 +66,6 @@ resource "aws_instance" "this" {
     http_tokens   = var.require_imdsv2 ? "required" : "optional"
   }
 
-  lifecycle {
-    create_before_destroy = true
-
-    precondition {
-      condition     = var.private_ip == null || !local.create_asg
-      error_message = "private_ip can only be set for a standalone instance."
-    }
-  }
-
   tags = merge(
     local.common_tags,
     {

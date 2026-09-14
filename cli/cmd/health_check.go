@@ -74,7 +74,11 @@ func runHealthCheck(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return inspectorFor(cfg).health(ctx, cmd, cfg, jsonOut)
+	inspector, err := inspectorFor(cfg)
+	if err != nil {
+		return err
+	}
+	return inspector.health(ctx, cmd, cfg, jsonOut)
 }
 
 func runGOADHealthCheck(

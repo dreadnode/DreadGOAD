@@ -1,16 +1,60 @@
 package cmd
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/dreadnode/dreadgoad/internal/config"
 )
 
-func TestInspectorForSelectedLab(t *testing.T) {
-	if _, ok := inspectorFor(&config.Config{Lab: "SCOPE-RANGE"}).(scopeRangeInspector); !ok {
-		t.Fatal("SCOPE-RANGE must use its Linux workload inspector")
+func TestInspectorForSelectedProfile(t *testing.T) {
+	root := t.TempDir()
+	writeInspectionManifest(t, root, "service", "schema_version: 1\nkind: service-range\ninspection:\n  profile: goat\n")
+	writeInspectionManifest(t, root, "ad", "schema_version: 1\nkind: active-directory\n")
+
+	service, err := inspectorFor(&config.Config{ProjectRoot: root, Lab: "service"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, ok := inspectorFor(&config.Config{Lab: "GOAD"}).(goadInspector); !ok {
-		t.Fatal("GOAD must retain the Active Directory inspector")
+	if _, ok := service.(scopeRangeInspector); !ok {
+		t.Fatal("goat profile must use its Linux workload inspector")
+	}
+
+	ad, err := inspectorFor(&config.Config{ProjectRoot: root, Lab: "ad"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := ad.(goadInspector); !ok {
+		t.Fatal("active-directory kind must retain the AD inspector")
+	}
+}
+
+func TestInspectorForRejectsUnconfiguredServiceRange(t *testing.T) {
+	root := t.TempDir()
+	writeInspectionManifest(t, root, "service", "schema_version: 1\nkind: service-range\n")
+
+	if _, err := inspectorFor(&config.Config{ProjectRoot: root, Lab: "service"}); err == nil {
+		t.Fatal("service range without inspection.profile must fail")
+	}
+}
+
+func TestInspectorForRejectsUnsupportedProfile(t *testing.T) {
+	root := t.TempDir()
+	writeInspectionManifest(t, root, "service", "schema_version: 1\nkind: service-range\ninspection:\n  profile: unknown\n")
+
+	if _, err := inspectorFor(&config.Config{ProjectRoot: root, Lab: "service"}); err == nil {
+		t.Fatal("unsupported inspection.profile must fail")
+	}
+}
+
+func writeInspectionManifest(t *testing.T, root, lab, body string) {
+	t.Helper()
+	dir := filepath.Join(root, "ad", lab)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "range.yml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

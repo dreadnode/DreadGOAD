@@ -118,6 +118,8 @@ display_name: Example Range
 kind: service-range                 # or active-directory
 variants:
   supported: false
+inspection:
+  profile: example-range             # registered CLI health/validation profile
 infrastructure:
   azure:
     deployment: example-deployment
@@ -137,6 +139,11 @@ profile, every host in `data/config.json` must have a corresponding Terragrunt
 host module in the reference environment. `dreadgoad lab list --json` only
 advertises provider combinations that pass these structural checks, preventing
 the console from offering a range it can only partially create.
+
+`inspection.profile` names an implementation registered by the CLI; manifests
+cannot provide executable paths. Active Directory ranges may omit it and use
+the legacy AD inspector. Service ranges must select a profile so health and
+validation never silently fall back to AD-specific checks.
 
 `template` profiles currently require a fixed private IPv4 `/16` and must not
 set `network.editable: true`. The template owns its subnet layout, so accepting

@@ -55,6 +55,12 @@ type ProviderSpec struct {
 	Network             NetworkSpec `yaml:"network,omitempty" json:"network,omitempty"`
 }
 
+// InspectionSpec selects an allowlisted health/validation implementation.
+// The manifest names the profile; the CLI owns the executable registry.
+type InspectionSpec struct {
+	Profile string `yaml:"profile,omitempty" json:"profile,omitempty"`
+}
+
 // Manifest is the shared, strict range.yml schema used by discovery,
 // scaffolding, and session lifecycle handling.
 type Manifest struct {
@@ -63,6 +69,7 @@ type Manifest struct {
 	Kind           string                  `yaml:"kind" json:"kind"`
 	Variants       VariantSpec             `yaml:"variants,omitempty" json:"variants"`
 	Infrastructure map[string]ProviderSpec `yaml:"infrastructure,omitempty" json:"infrastructure"`
+	Inspection     InspectionSpec          `yaml:"inspection,omitempty" json:"inspection,omitempty"`
 	Lifecycle      struct {
 		SessionInit []ActionSpec `yaml:"session_init" json:"session_init"`
 	} `yaml:"lifecycle" json:"lifecycle"`
@@ -97,6 +104,9 @@ func Decode(raw []byte) (*Manifest, error) {
 		if err := validateProviderSpec(provider, spec); err != nil {
 			return nil, err
 		}
+	}
+	if manifest.Inspection.Profile != "" && !pathComponent.MatchString(manifest.Inspection.Profile) {
+		return nil, fmt.Errorf("inspection.profile %q is not a safe identifier", manifest.Inspection.Profile)
 	}
 	return &manifest, nil
 }

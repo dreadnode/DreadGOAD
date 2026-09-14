@@ -6,6 +6,22 @@ import (
 	"time"
 )
 
+// FilterInstancesByLab narrows discovery for range types that use the selected
+// lab name as their provider-side Lab tag. Callers leave filtering disabled for
+// legacy AD ranges, whose provider tags do not consistently match lab names.
+func FilterInstancesByLab(instances []Instance, lab string, enabled bool) []Instance {
+	if !enabled || lab == "" {
+		return instances
+	}
+	out := make([]Instance, 0, len(instances))
+	for _, instance := range instances {
+		if strings.EqualFold(instance.Tags["Lab"], lab) {
+			out = append(out, instance)
+		}
+	}
+	return out
+}
+
 // Instance represents a discovered VM/instance from any provider.
 type Instance struct {
 	ID        string // provider-specific identifier (EC2 instance ID, Proxmox VMID, etc.)

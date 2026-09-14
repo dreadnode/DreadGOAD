@@ -33,7 +33,7 @@ variable "private_ip" {
   type        = string
 
   validation {
-    condition     = can(cidrhost("${var.private_ip}/32", 0))
+    condition     = can(cidrnetmask("${var.private_ip}/32"))
     error_message = "private_ip must be a valid IPv4 address."
   }
 }

@@ -21,6 +21,13 @@ func (c *Config) NewProvider(ctx context.Context) (provider.Provider, error) {
 
 	opts := provider.ConstructorOpts{}
 	opts.Lab = c.ResolvedLab()
+	if name == provider.NameAWS || name == provider.NameAzure {
+		filterByLab, err := c.filterProviderInstancesByLab()
+		if err != nil {
+			return nil, err
+		}
+		opts.FilterInstancesByLab = filterByLab
+	}
 
 	switch name {
 	case provider.NameAWS:
@@ -31,11 +38,6 @@ func (c *Config) NewProvider(ctx context.Context) (provider.Provider, error) {
 		opts.Region = region
 
 	case provider.NameAzure:
-		manifest, found, err := rangeconfig.Load(c.LabPath())
-		if err != nil {
-			return nil, err
-		}
-		opts.FilterInstancesByLab = found && manifest.Kind != rangeconfig.KindActiveDirectory
 		region, err := c.ResolveRegion()
 		if err != nil {
 			return nil, err
@@ -84,4 +86,12 @@ func (c *Config) NewProvider(ctx context.Context) (provider.Provider, error) {
 	}
 
 	return provider.New(ctx, name, opts)
+}
+
+func (c *Config) filterProviderInstancesByLab() (bool, error) {
+	manifest, found, err := rangeconfig.Load(c.LabPath())
+	if err != nil {
+		return false, err
+	}
+	return found && manifest.Kind == rangeconfig.KindServiceRange, nil
 }

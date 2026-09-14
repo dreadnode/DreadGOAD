@@ -144,7 +144,11 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	return inspectorFor(cfg).validate(ctx, cmd, cfg, opts)
+	inspector, err := inspectorFor(cfg)
+	if err != nil {
+		return err
+	}
+	return inspector.validate(ctx, cmd, cfg, opts)
 }
 
 func runGOADValidate(

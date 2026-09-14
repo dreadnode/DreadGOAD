@@ -72,7 +72,7 @@ func (p *AzureProvider) DiscoverInstances(ctx context.Context, env string) ([]pr
 	if err != nil {
 		return nil, err
 	}
-	return filterProviderInstancesByLab(toProviderInstances(instances), p.lab, p.filterInstancesByLab), nil
+	return provider.FilterInstancesByLab(toProviderInstances(instances), p.lab, p.filterInstancesByLab), nil
 }
 
 func (p *AzureProvider) DiscoverAllInstances(ctx context.Context, env string) ([]provider.Instance, error) {
@@ -80,7 +80,7 @@ func (p *AzureProvider) DiscoverAllInstances(ctx context.Context, env string) ([
 	if err != nil {
 		return nil, err
 	}
-	return filterProviderInstancesByLab(toProviderInstances(instances), p.lab, p.filterInstancesByLab), nil
+	return provider.FilterInstancesByLab(toProviderInstances(instances), p.lab, p.filterInstancesByLab), nil
 }
 
 func (p *AzureProvider) FindInstanceByHostname(ctx context.Context, env, hostname string) (*provider.Instance, error) {
@@ -95,22 +95,6 @@ func (p *AzureProvider) FindInstanceByHostname(ctx context.Context, env, hostnam
 		}
 	}
 	return nil, fmt.Errorf("instance not found for hostname %s in lab %s", hostname, p.lab)
-}
-
-// filterProviderInstancesByLab narrows discovery for range types that use the
-// selected lab name as their provider-side Lab tag. Legacy AD ranges share
-// deployment tags, so their callers leave filtering disabled.
-func filterProviderInstancesByLab(instances []provider.Instance, lab string, enabled bool) []provider.Instance {
-	if !enabled || lab == "" {
-		return instances
-	}
-	out := make([]provider.Instance, 0, len(instances))
-	for _, instance := range instances {
-		if strings.EqualFold(instance.Tags["Lab"], lab) {
-			out = append(out, instance)
-		}
-	}
-	return out
 }
 
 func (p *AzureProvider) StartInstances(ctx context.Context, ids []string) error {

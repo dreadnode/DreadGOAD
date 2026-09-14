@@ -3,6 +3,8 @@ display_name: GOAT
 kind: service-range
 variants:
   supported: false
+inspection:
+  profile: goat
 infrastructure:
   aws:
     deployment: scope-range-deployment
