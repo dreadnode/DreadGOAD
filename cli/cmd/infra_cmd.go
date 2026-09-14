@@ -409,6 +409,10 @@ func runInfraActionAWS(cmd *cobra.Command, cfg *config.Config, action string) er
 	}
 
 	backendBootstrap, _ := cmd.Flags().GetBool("backend-bootstrap")
+	// GOAT is presented as a turnkey console range. Its account-qualified
+	// backend is safe to create automatically and must exist before the first
+	// plan/apply can run.
+	backendBootstrap = shouldBootstrapAWSBackend(cfg, action, backendBootstrap)
 
 	opts := terragrunt.Options{
 		Action:           action,
@@ -473,6 +477,16 @@ func runInfraActionAWS(cmd *cobra.Command, cfg *config.Config, action string) er
 	return nil
 }
 
+func shouldBootstrapAWSBackend(cfg *config.Config, action string, requested bool) bool {
+	if requested {
+		return true
+	}
+	if cfg.ResolvedLab() != "SCOPE-RANGE" {
+		return false
+	}
+	return action == "init" || action == "plan" || action == "apply"
+}
+
 // deleteSSMBucket removes the S3 bucket the Ansible SSM connection plugin
 // used for file transfer. Called after a successful infra destroy.
 func deleteSSMBucket(ctx context.Context, cfg *config.Config) error {
@@ -484,7 +498,7 @@ func deleteSSMBucket(ctx context.Context, cfg *config.Config) error {
 		return nil
 	}
 	bucket := parsed.SSMBucketName()
-	if bucket == "" {
+	if bucket == "" || strings.EqualFold(strings.TrimSpace(bucket), "AUTO") {
 		return nil
 	}
 	region := parsed.Region()
@@ -716,6 +730,10 @@ func runInfraValidate(cmd *cobra.Command, args []string) error {
 	}
 
 	switch cfg.ResolvedProvider() {
+	case "aws":
+		if cfg.ResolvedLab() == "SCOPE-RANGE" {
+			return runInfraValidateScopeAWS(cfg)
+		}
 	case "ludus":
 		return runInfraValidateLudus(cfg)
 	case "proxmox":
@@ -738,6 +756,42 @@ func runInfraValidate(cmd *cobra.Command, args []string) error {
 	if !result.OK() {
 		return fmt.Errorf("validation failed")
 	}
+	return nil
+}
+
+func runInfraValidateScopeAWS(cfg *config.Config) error {
+	region, err := cfg.ResolveRegion()
+	if err != nil {
+		return fmt.Errorf("resolve AWS region: %w", err)
+	}
+	baseDir := filepath.Join(cfg.ProjectRoot, "infra", cfg.ResolvedDeployment())
+	workDir := filepath.Join(baseDir, cfg.Env, region)
+	requiredFiles := []string{
+		filepath.Join(baseDir, "host.hcl"),
+		filepath.Join(baseDir, "host-registry.yaml"),
+		filepath.Join(baseDir, cfg.Env, "env.hcl"),
+		filepath.Join(workDir, "region.hcl"),
+		filepath.Join(workDir, "network", "terragrunt.hcl"),
+		filepath.Join(workDir, "kali", "terragrunt.hcl"),
+	}
+	for _, host := range []string{"data01", "dev01", "services01", "storage01", "web01"} {
+		requiredFiles = append(requiredFiles, filepath.Join(workDir, "hosts", host, "terragrunt.hcl"))
+	}
+	var missing []string
+	for _, path := range requiredFiles {
+		if info, statErr := os.Stat(path); statErr != nil || info.IsDir() {
+			missing = append(missing, path)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf(
+			"SCOPE-RANGE AWS deployment is incomplete in %s; missing files: %s",
+			workDir,
+			strings.Join(missing, ", "),
+		)
+	}
+	color.Green("SCOPE-RANGE AWS deployment structure is complete (%s/%s).", cfg.Env, region)
+	fmt.Println("Run './scripts/validate-scope-range.sh' for Terraform, Terragrunt, Ansible, and Go validation.")
 	return nil
 }
 

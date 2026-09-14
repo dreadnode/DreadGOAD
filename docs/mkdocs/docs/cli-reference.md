@@ -475,7 +475,7 @@ dreadgoad verify-trusts
 
 Validate the selected lab.
 
-GOAD labs check their intended vulnerability configurations and use a live dashboard when stdout is a TTY. GOAT (`SCOPE-RANGE`) checks its Azure topology plus expected Linux hosts, services, applications, databases, storage, and seeded data, and always streams plain output.
+GOAD labs check their intended vulnerability configurations and use a live dashboard when stdout is a TTY. GOAT (`SCOPE-RANGE`) checks its Azure or AWS topology plus expected Linux hosts, services, applications, databases, storage, and seeded data, and always streams plain output.
 
 | Flag | Description |
 |------|-------------|

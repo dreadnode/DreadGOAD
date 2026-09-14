@@ -69,7 +69,7 @@ func TestParsePollInterval(t *testing.T) {
 }
 
 func TestScopeRangeValidatorArgs(t *testing.T) {
-	cfg := &config.Config{ProjectRoot: "/repo", Env: "scope-dev"}
+	cfg := &config.Config{ProjectRoot: "/repo", Env: "scope-dev", Provider: "aws", Region: "us-west-2"}
 	got, err := scopeRangeValidatorArgs(cfg, validateOpts{
 		outputPath: "/tmp/report with spaces.json",
 		quick:      true,
@@ -84,6 +84,8 @@ func TestScopeRangeValidatorArgs(t *testing.T) {
 	want := []string{
 		filepath.Join("/repo", "scripts", "validate-scope-range-live.py"),
 		"--env", "scope-dev",
+		"--provider", "aws",
+		"--region", "us-west-2",
 		"--output", "/tmp/report with spaces.json",
 		"--quick",
 		"--verbose",

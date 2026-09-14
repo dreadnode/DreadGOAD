@@ -232,6 +232,52 @@ func TestRunInfraValidateAzureScopeRange(t *testing.T) {
 	}
 }
 
+func TestRunInfraValidateAWSScopeRange(t *testing.T) {
+	root := t.TempDir()
+	cfg := &config.Config{
+		ProjectRoot: root,
+		Env:         "scope-aws",
+		Environments: map[string]config.EnvironmentConfig{
+			"scope-aws": {
+				Lab:        "SCOPE-RANGE",
+				Provider:   "aws",
+				Deployment: "scope-range-deployment",
+				Region:     "us-east-2",
+			},
+		},
+	}
+	baseDir := filepath.Join(root, "infra", "scope-range-deployment")
+	workDir := filepath.Join(baseDir, "scope-aws", "us-east-2")
+	files := []string{
+		filepath.Join(baseDir, "host.hcl"),
+		filepath.Join(baseDir, "host-registry.yaml"),
+		filepath.Join(baseDir, "scope-aws", "env.hcl"),
+		filepath.Join(workDir, "region.hcl"),
+		filepath.Join(workDir, "network", "terragrunt.hcl"),
+		filepath.Join(workDir, "kali", "terragrunt.hcl"),
+	}
+	for _, host := range []string{"data01", "dev01", "services01", "storage01", "web01"} {
+		files = append(files, filepath.Join(workDir, "hosts", host, "terragrunt.hcl"))
+	}
+	for _, path := range files {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("# test\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := runInfraValidateScopeAWS(cfg); err != nil {
+		t.Fatalf("runInfraValidateScopeAWS() error: %v", err)
+	}
+	if err := os.Remove(filepath.Join(workDir, "hosts", "web01", "terragrunt.hcl")); err != nil {
+		t.Fatal(err)
+	}
+	if err := runInfraValidateScopeAWS(cfg); err == nil || !strings.Contains(err.Error(), "web01") {
+		t.Fatalf("missing web01 error = %v", err)
+	}
+}
+
 func TestShouldEnableAWSKali(t *testing.T) {
 	kaliDir := filepath.Join(t.TempDir(), "kali")
 	if err := os.Mkdir(kaliDir, 0o755); err != nil {
@@ -257,5 +303,24 @@ func TestShouldEnableAWSKali(t *testing.T) {
 				t.Fatalf("shouldEnableAWSKali(%v, %q, %q) = %v, want %v", tt.requested, tt.action, tt.path, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestShouldBootstrapAWSBackendForGOAT(t *testing.T) {
+	goat := &config.Config{Lab: "SCOPE-RANGE"}
+	goad := &config.Config{Lab: "GOAD"}
+	for _, action := range []string{"init", "plan", "apply"} {
+		if !shouldBootstrapAWSBackend(goat, action, false) {
+			t.Fatalf("GOAT %s should bootstrap its backend", action)
+		}
+	}
+	if shouldBootstrapAWSBackend(goat, "destroy", false) {
+		t.Fatal("GOAT destroy should not try to bootstrap a missing backend")
+	}
+	if shouldBootstrapAWSBackend(goad, "apply", false) {
+		t.Fatal("ordinary GOAD apply changed its opt-in bootstrap behavior")
+	}
+	if !shouldBootstrapAWSBackend(goad, "apply", true) {
+		t.Fatal("explicit backend bootstrap was ignored")
 	}
 }

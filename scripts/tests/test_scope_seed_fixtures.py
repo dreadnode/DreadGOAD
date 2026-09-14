@@ -15,6 +15,12 @@ MARIADB_SEED = ROOT / "ansible/roles/scope_range_data/files/init-mariadb.sql"
 MONGO_SEED = ROOT / "ansible/roles/scope_range_data/files/init-mongo.js"
 VALIDATION_MANIFEST = ROOT / "ad/SCOPE-RANGE/data/validation.json"
 KALI_SMOKE_TEST = ROOT / "ansible/roles/scope_range_kali/files/scope-range-smoke.sh"
+AZURE_INVENTORY = ROOT / "ad/SCOPE-RANGE/providers/azure/inventory"
+AWS_INVENTORY = ROOT / "ad/SCOPE-RANGE/providers/aws/inventory"
+DNS_OPTIONS = (
+    ROOT / "ansible/roles/scope_range_services/templates/named.conf.options.j2"
+)
+SERVICES_PLAYBOOK = ROOT / "ansible/playbooks/scope-services.yml"
 VENDOR_CONTACTS = ROOT / "ansible/roles/scope_range_storage/files/vendor-contacts.csv"
 
 
@@ -118,6 +124,20 @@ class ScopeSeedFixtureTests(unittest.TestCase):
         for collection in ("experiments", "telemetry", "specimens", "dive_logs"):
             self.assertIn(f"db.{collection}.countDocuments", mongo_check)
         self.assertIn("scope-seed-v2", VALIDATION_MANIFEST.read_text(encoding="utf-8"))
+
+    def test_dns_forwarder_uses_each_provider_native_resolver(self) -> None:
+        """AWS must never inherit Azure's platform-only DNS resolver."""
+        azure_inventory = AZURE_INVENTORY.read_text(encoding="utf-8")
+        aws_inventory = AWS_INVENTORY.read_text(encoding="utf-8")
+        dns_options = DNS_OPTIONS.read_text(encoding="utf-8")
+        services_playbook = SERVICES_PLAYBOOK.read_text(encoding="utf-8")
+
+        self.assertIn("range_upstream_dns=168.63.129.16", azure_inventory)
+        self.assertIn("range_upstream_dns=10.50.0.2", aws_inventory)
+        self.assertNotIn("168.63.129.16", aws_inventory)
+        expected_expression = "range_upstream_dns | default('168.63.129.16')"
+        self.assertIn(f"forwarders {{ {{{{ {expected_expression} }}}}; }};", dns_options)
+        self.assertIn(f"FallbackDNS={{{{ {expected_expression} }}}}", services_playbook)
 
 
 if __name__ == "__main__":

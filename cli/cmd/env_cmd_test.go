@@ -235,6 +235,72 @@ infrastructure:
 	}
 }
 
+func TestTemplateProfileScaffoldsAWSRegionAndInventory(t *testing.T) {
+	root := t.TempDir()
+	lab := filepath.Join(root, "ad", "SCOPE-RANGE")
+	template := filepath.Join(root, "infra", "scope-range-deployment", "scope-aws", "us-east-2")
+	for _, dir := range []string{
+		filepath.Join(lab, "data"),
+		filepath.Join(lab, "providers", "aws"),
+		filepath.Join(template, "hosts", "web01"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path, body := range map[string]string{
+		filepath.Join(lab, "range.yml"): `schema_version: 1
+kind: service-range
+variants:
+  supported: false
+infrastructure:
+  aws:
+    deployment: scope-range-deployment
+    scaffold_profile: template
+    template_environment: scope-aws
+    default_region: us-east-2
+    network:
+      cidr: 10.50.0.0/16
+      editable: false
+`,
+		filepath.Join(lab, "data", "config.json"):                   `{"lab":{"hosts":{"web01":{}}}}`,
+		filepath.Join(lab, "providers", "aws", "inventory"):         "[all:vars]\nansible_aws_ssm_region={{region}}\nansible_aws_ssm_bucket_name=AUTO\nenv={{env}}\n[all]\nweb01 ansible_host=PENDING\n",
+		filepath.Join(filepath.Dir(template), "env.hcl"):            `locals { env = "scope-aws" deployment_name = "goat" }`,
+		filepath.Join(template, "region.hcl"):                       `locals { aws_region = "us-east-2" }`,
+		filepath.Join(template, "hosts", "web01", "terragrunt.hcl"): `name = "scope-aws-goat-web01"`,
+	} {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := &config.Config{ProjectRoot: root, Env: "kraken", Environments: map[string]config.EnvironmentConfig{
+		"kraken": {Lab: "SCOPE-RANGE", Provider: "aws", Deployment: "scope-range-deployment"},
+	}}
+	plan, err := resolveScaffoldPlan(cfg, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := scaffoldEnvWithPlan(cfg, plan, "kraken", "us-west-2", "10.50.0.0/16", "scope-aws", "", false, false); err != nil {
+		t.Fatal(err)
+	}
+	regionHCL, err := os.ReadFile(filepath.Join(root, "infra", "scope-range-deployment", "kraken", "us-west-2", "region.hcl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(regionHCL), `aws_region = "us-west-2"`) || strings.Contains(string(regionHCL), "location") {
+		t.Fatalf("AWS region.hcl = %q", regionHCL)
+	}
+	inventory, err := os.ReadFile(filepath.Join(root, "kraken-inventory"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"ansible_aws_ssm_region=us-west-2", "ansible_aws_ssm_bucket_name=AUTO", "env=kraken"} {
+		if !strings.Contains(string(inventory), want) {
+			t.Fatalf("AWS inventory %q does not contain %q", inventory, want)
+		}
+	}
+}
+
 func TestFailedScaffoldRemovesOnlyNewArtifacts(t *testing.T) {
 	root := t.TempDir()
 	lab := filepath.Join(root, "ad", "SCOPE-RANGE")

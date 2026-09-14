@@ -4,6 +4,6 @@ options {
   allow-recursion { 10.50.0.0/16; 127.0.0.0/8; };
   listen-on { any; };
   listen-on-v6 { none; };
-  forwarders { 168.63.129.16; };
+  forwarders { {{ range_upstream_dns | default('168.63.129.16') }}; };
   dnssec-validation auto;
 };

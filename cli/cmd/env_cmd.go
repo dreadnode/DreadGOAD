@@ -359,7 +359,7 @@ func scaffoldEnvWithPlan(cfg *config.Config, plan scaffoldPlan, envName, region,
 			return fmt.Errorf("point infrastructure at range config: %w", err)
 		}
 	case rangeconfig.ProfileTemplate:
-		if err := scaffoldTemplateInfrastructure(refRegionDir, envDir, regionDir, reference, envName, region); err != nil {
+		if err := scaffoldTemplateInfrastructure(provider, refRegionDir, envDir, regionDir, reference, envName, region); err != nil {
 			return err
 		}
 	default:
@@ -503,7 +503,7 @@ func scaffoldLabConfigForPlan(projectRoot string, plan scaffoldPlan, envName, va
 	return configPath, nil
 }
 
-func scaffoldTemplateInfrastructure(srcRegionDir, envDir, regionDir, reference, envName, region string) error {
+func scaffoldTemplateInfrastructure(provider, srcRegionDir, envDir, regionDir, reference, envName, region string) error {
 	if err := os.MkdirAll(envDir, 0o755); err != nil {
 		return fmt.Errorf("create environment directory: %w", err)
 	}
@@ -519,8 +519,14 @@ func scaffoldTemplateInfrastructure(srcRegionDir, envDir, regionDir, reference, 
 	if err := os.WriteFile(filepath.Join(envDir, "env.hcl"), []byte(renderedEnv), 0o644); err != nil {
 		return fmt.Errorf("write env.hcl: %w", err)
 	}
-	if err := createAzureRegionHCL(regionDir, region); err != nil {
-		return fmt.Errorf("create region.hcl: %w", err)
+	if provider == "azure" {
+		if err := createAzureRegionHCL(regionDir, region); err != nil {
+			return fmt.Errorf("create region.hcl: %w", err)
+		}
+	} else {
+		if err := createRegionHCL(regionDir, region); err != nil {
+			return fmt.Errorf("create region.hcl: %w", err)
+		}
 	}
 	if err := copyInfrastructure(srcRegionDir, regionDir, nil); err != nil {
 		return fmt.Errorf("copy template infrastructure: %w", err)

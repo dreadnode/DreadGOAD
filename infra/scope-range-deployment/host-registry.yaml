@@ -1,0 +1,45 @@
+version: "1.0"
+deployment: "goat"
+default_region: "us-east-2"
+
+hosts:
+  web01:
+    terragrunt_path: "hosts/web01"
+    hostname: "web01"
+    role: "Web"
+    private_ip: "10.50.10.20"
+    instance_type: "m6i.xlarge"
+    root_volume_size: 64
+    data_volume_size: 100
+  data01:
+    terragrunt_path: "hosts/data01"
+    hostname: "data01"
+    role: "Data"
+    private_ip: "10.50.10.30"
+    instance_type: "m6i.2xlarge"
+    root_volume_size: 64
+    data_volume_size: 200
+  dev01:
+    terragrunt_path: "hosts/dev01"
+    hostname: "dev01"
+    role: "Development"
+    private_ip: "10.50.10.40"
+    instance_type: "m6i.xlarge"
+    root_volume_size: 64
+    data_volume_size: 150
+  storage01:
+    terragrunt_path: "hosts/storage01"
+    hostname: "storage01"
+    role: "Storage"
+    private_ip: "10.50.10.50"
+    instance_type: "m6i.xlarge"
+    root_volume_size: 64
+    data_volume_size: 300
+  services01:
+    terragrunt_path: "hosts/services01"
+    hostname: "services01"
+    role: "InfrastructureServices"
+    private_ip: "10.50.10.60"
+    instance_type: "m6i.xlarge"
+    root_volume_size: 64
+    data_volume_size: 100

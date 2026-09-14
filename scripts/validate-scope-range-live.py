@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate a deployed Azure SCOPE-RANGE against its expected-state manifest."""
+"""Validate a deployed Azure or AWS SCOPE-RANGE against its expected-state manifest."""
 
 from __future__ import annotations
 
@@ -25,7 +25,10 @@ from typing import Any, Sequence
 
 SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 DEFAULT_MANIFEST = SCRIPT_DIR.parent / "ad" / "SCOPE-RANGE" / "data" / "validation.json"
-DEFAULT_INFRA_ROOT = SCRIPT_DIR.parent / "infra" / "azure" / "scope-range-deployment"
+DEFAULT_AZURE_INFRA_ROOT = (
+    SCRIPT_DIR.parent / "infra" / "azure" / "scope-range-deployment"
+)
+DEFAULT_AWS_INFRA_ROOT = SCRIPT_DIR.parent / "infra" / "scope-range-deployment"
 ENV_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
 DEPLOYMENT_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
 DEPLOYMENT_HCL_PATTERN = re.compile(
@@ -34,6 +37,7 @@ DEPLOYMENT_HCL_PATTERN = re.compile(
 )
 REMOTE_RESULT_PREFIX = "SCOPE_RESULT "
 AZURE_TIMEOUT_SECONDS = 600
+AWS_TIMEOUT_SECONDS = 600
 REMOTE_BATCH_SIZE = 5
 REQUIRED_NETWORK_FIELDS = {
     "vnet_name_template",
@@ -115,6 +119,10 @@ class AzureCommandError(RuntimeError):
     """Raised when an Azure CLI command fails or returns invalid JSON."""
 
 
+class AWSCommandError(RuntimeError):
+    """Raised when an AWS CLI command fails or returns invalid JSON."""
+
+
 class AzureCLI:
     """Small JSON-only wrapper around the Azure CLI."""
 
@@ -162,6 +170,47 @@ class AzureCLI:
             raise AzureCommandError("Azure CLI returned invalid JSON") from exc
 
 
+class AWSCLI:
+    """Small JSON-only wrapper around the AWS CLI."""
+
+    def __init__(self, executable: str, region: str, verbose: bool) -> None:
+        self.executable = executable
+        self.region = region
+        self.verbose = verbose
+
+    def run_json(
+        self, args: Sequence[str], *, timeout: int = AWS_TIMEOUT_SECONDS
+    ) -> Any:
+        """Run an AWS CLI command and decode its JSON response."""
+        command = [self.executable, *args, "--region", self.region, "--output", "json"]
+        if self.verbose:
+            print(f"DEBUG: {shlex.join(redact_aws_command(command))}", file=sys.stderr)
+        command_env = os.environ.copy()
+        command_env["AWS_PAGER"] = ""
+        try:
+            completed = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                env=command_env,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise AWSCommandError(f"AWS command timed out after {timeout}s") from exc
+        if completed.returncode != 0:
+            detail = (
+                completed.stderr.strip()
+                or completed.stdout.strip()
+                or "unknown AWS CLI error"
+            )
+            raise AWSCommandError(detail)
+        try:
+            return json.loads(completed.stdout)
+        except json.JSONDecodeError as exc:
+            raise AWSCommandError("AWS CLI returned invalid JSON") from exc
+
+
 def redact_azure_command(command: Sequence[str]) -> list[str]:
     """Redact remote scripts, which contain encoded synthetic credentials."""
     redacted = list(command)
@@ -174,8 +223,23 @@ def redact_azure_command(command: Sequence[str]) -> list[str]:
     return redacted
 
 
-def validate_name_template(template: object, label: str) -> str:
+def redact_aws_command(command: Sequence[str]) -> list[str]:
+    """Redact SSM parameters, which contain encoded synthetic credentials."""
+    redacted = list(command)
+    try:
+        parameters_index = redacted.index("--parameters") + 1
+    except ValueError:
+        return redacted
+    if parameters_index < len(redacted):
+        redacted[parameters_index] = "<remote-validation-payload>"
+    return redacted
+
+
+def validate_name_template(
+    template: object, label: str, fields: set[str] | None = None
+) -> str:
     """Require a name template parameterized by environment and deployment."""
+    allowed_fields = fields or {"env", "deployment"}
     if not isinstance(template, str):
         raise ValueError(f"{label} must be a string")
     try:
@@ -183,23 +247,26 @@ def validate_name_template(template: object, label: str) -> str:
     except ValueError as exc:
         raise ValueError(f"{label} is invalid: {template!r}") from exc
     fields = [item for item in parsed if item[1] is not None]
-    if {field_name for _, field_name, _, _ in fields} != {"env", "deployment"} or any(
-        field_name not in {"env", "deployment"} or format_spec or conversion
+    if {field_name for _, field_name, _, _ in fields} != allowed_fields or any(
+        field_name not in allowed_fields or format_spec or conversion
         for _, field_name, format_spec, conversion in fields
     ):
         raise ValueError(
-            f"{label} must contain only env and deployment replacement fields"
+            f"{label} must contain exactly these replacement fields: {sorted(allowed_fields)}"
         )
     try:
-        rendered = template.format(env="scope-validation", deployment="goat")
+        rendered = template.format(
+            env="scope-validation", deployment="goat", host="web01"
+        )
     except (AttributeError, IndexError, KeyError, ValueError) as exc:
         raise ValueError(f"{label} is invalid: {template!r}") from exc
-    if "scope-validation" not in rendered or "goat" not in rendered:
-        raise ValueError(f"{label} must include env and deployment fields")
+    expected_values = {"env": "scope-validation", "deployment": "goat", "host": "web01"}
+    if any(expected_values[field] not in rendered for field in allowed_fields):
+        raise ValueError(f"{label} must include every declared replacement field")
     return template
 
 
-def load_manifest(path: pathlib.Path) -> dict[str, Any]:
+def load_manifest(path: pathlib.Path, provider: str = "azure") -> dict[str, Any]:
     """Load and structurally validate the SCOPE-RANGE manifest."""
     try:
         manifest = json.loads(path.read_text(encoding="utf-8"))
@@ -208,10 +275,12 @@ def load_manifest(path: pathlib.Path) -> dict[str, Any]:
     except json.JSONDecodeError as exc:
         raise ValueError(f"manifest is invalid JSON: {exc}") from exc
 
-    if manifest.get("schema_version") != 1:
-        raise ValueError("manifest schema_version must be 1")
-    if manifest.get("lab") != "SCOPE-RANGE" or manifest.get("provider") != "azure":
-        raise ValueError("manifest must describe the Azure SCOPE-RANGE lab")
+    if manifest.get("schema_version") != 2:
+        raise ValueError("manifest schema_version must be 2")
+    if manifest.get("lab") != "SCOPE-RANGE" or provider not in manifest.get(
+        "providers", []
+    ):
+        raise ValueError(f"manifest must describe the {provider} SCOPE-RANGE lab")
     default_environment = manifest.get("default_environment")
     if not isinstance(default_environment, str) or not ENV_NAME_PATTERN.fullmatch(
         default_environment
@@ -239,6 +308,30 @@ def load_manifest(path: pathlib.Path) -> dict[str, Any]:
     ]
     for index, template in enumerate(network_templates):
         validate_name_template(template, f"manifest network name template {index}")
+    aws = manifest.get("aws")
+    if not isinstance(aws, dict):
+        raise ValueError("manifest AWS definition is incomplete")
+    for field in (
+        "default_environment",
+        "default_region",
+        "instance_name_template",
+        "vpc_cidr",
+        "public_subnets",
+        "private_subnets",
+        "required_vpc_endpoints",
+    ):
+        if field not in aws:
+            raise ValueError(f"manifest AWS definition requires {field}")
+    if not ENV_NAME_PATTERN.fullmatch(str(aws["default_environment"])):
+        raise ValueError("manifest AWS default_environment is invalid")
+    validate_name_template(
+        aws["instance_name_template"],
+        "manifest AWS instance_name_template",
+        {"env", "deployment", "host"},
+    )
+    for field in ("public_subnets", "private_subnets", "required_vpc_endpoints"):
+        if not isinstance(aws[field], list) or not aws[field]:
+            raise ValueError(f"manifest AWS {field} must be a non-empty list")
     hosts = manifest.get("hosts")
     if not isinstance(hosts, list) or not hosts:
         raise ValueError("manifest must contain at least one host")
@@ -261,13 +354,18 @@ def load_manifest(path: pathlib.Path) -> dict[str, Any]:
         if vm_template in seen_vm_templates:
             raise ValueError(f"duplicate VM template: {vm_template}")
         seen_vm_templates.add(vm_template)
-        for field in ("private_ip", "size", "tags"):
+        for field in ("private_ip", "size", "aws_instance_type", "tags"):
             if field not in host:
                 raise ValueError(f"host {host_id} requires {field}")
         if not isinstance(host["private_ip"], str) or not host["private_ip"]:
             raise ValueError(f"host {host_id} has invalid private_ip")
         if not isinstance(host["size"], str) or not host["size"]:
             raise ValueError(f"host {host_id} has invalid size")
+        if (
+            not isinstance(host["aws_instance_type"], str)
+            or not host["aws_instance_type"]
+        ):
+            raise ValueError(f"host {host_id} has invalid aws_instance_type")
         if not isinstance(host["tags"], dict):
             raise ValueError(f"host {host_id} has invalid tags")
         checks = host.get("checks")
@@ -300,7 +398,9 @@ def load_manifest(path: pathlib.Path) -> dict[str, Any]:
 
 
 def resolve_deployment_name(
-    manifest: dict[str, Any], env: str, infra_root: pathlib.Path = DEFAULT_INFRA_ROOT
+    manifest: dict[str, Any],
+    env: str,
+    infra_root: pathlib.Path = DEFAULT_AZURE_INFRA_ROOT,
 ) -> str:
     """Resolve the resource prefix while retaining legacy environment support."""
     env_file = infra_root / env / "env.hcl"
@@ -320,6 +420,15 @@ def render_template(template: str, env: str, deployment: str = "goat") -> str:
         return template.format(env=env, deployment=deployment)
     except (AttributeError, IndexError, KeyError, ValueError) as exc:
         raise ValueError(f"invalid manifest template {template!r}") from exc
+
+
+def render_aws_instance_name(
+    manifest: dict[str, Any], host_id: str, env: str, deployment: str = "goat"
+) -> str:
+    """Render the AWS EC2 Name tag for a manifest host."""
+    return manifest["aws"]["instance_name_template"].format(
+        env=env, deployment=deployment, host=host_id
+    )
 
 
 def result(
@@ -655,6 +764,390 @@ def validate_infrastructure(
     return results, runnable
 
 
+def tags_to_dict(tags: object) -> dict[str, str]:
+    """Convert an AWS tag list to a plain mapping."""
+    if not isinstance(tags, list):
+        return {}
+    return {
+        str(item.get("Key")): str(item.get("Value"))
+        for item in tags
+        if isinstance(item, dict) and item.get("Key") is not None
+    }
+
+
+def validate_aws_infrastructure(
+    aws: AWSCLI,
+    manifest: dict[str, Any],
+    env: str,
+    deployment: str = "goat",
+    health: bool = False,
+) -> tuple[list[CheckResult], dict[str, str]]:
+    """Validate AWS topology and return remotely runnable host instance IDs."""
+    results: list[CheckResult] = []
+    runnable: dict[str, str] = {}
+    try:
+        identity = aws.run_json(["sts", "get-caller-identity"])
+        results.append(
+            result(
+                "PASS",
+                "AWS",
+                "authenticated AWS account",
+                f"{identity.get('Account', 'unknown')} ({identity.get('Arn', 'unknown')})",
+            )
+        )
+    except AWSCommandError as exc:
+        results.append(result("FAIL", "AWS", "authenticated AWS account", str(exc)))
+        return results, runnable
+
+    try:
+        response = aws.run_json(
+            [
+                "ec2",
+                "describe-instances",
+                "--filters",
+                "Name=tag:Project,Values=DreadGOAD",
+                f"Name=tag:Environment,Values={env}",
+                "Name=instance-state-name,Values=pending,running,stopping,stopped",
+            ]
+        )
+    except AWSCommandError as exc:
+        results.append(
+            result("FAIL", "Discovery", "enumerate range EC2 instances", str(exc))
+        )
+        return results, runnable
+
+    instances = [
+        instance
+        for reservation in response.get("Reservations", [])
+        for instance in reservation.get("Instances", [])
+        if isinstance(instance, dict)
+    ]
+    names = [
+        tags_to_dict(instance.get("Tags")).get("Name", "") for instance in instances
+    ]
+    name_counts = collections.Counter(name for name in names if name)
+    by_name = {
+        name: instance for name, instance in zip(names, instances, strict=True) if name
+    }
+    expected_names = {
+        render_aws_instance_name(manifest, host["id"], env, deployment)
+        for host in manifest["hosts"]
+    }
+    actual_names = set(name_counts)
+    exact_instances = (
+        actual_names == expected_names
+        and len(instances) == len(expected_names)
+        and all(count == 1 for count in name_counts.values())
+    )
+    results.append(
+        result(
+            "PASS" if exact_instances else "FAIL",
+            "Discovery",
+            "exact EC2 instance set",
+            f"expected={sorted(expected_names)} actual={dict(sorted(name_counts.items()))}",
+        )
+    )
+
+    running_ids: dict[str, str] = {}
+    for host in manifest["hosts"]:
+        host_id = host["id"]
+        name = render_aws_instance_name(manifest, host_id, env, deployment)
+        instance = by_name.get(name)
+        if instance is None:
+            results.append(
+                result("FAIL", "Discovery", "EC2 instance exists", name, host_id)
+            )
+            continue
+        results.append(
+            result("PASS", "Discovery", "EC2 instance exists", name, host_id)
+        )
+        state = instance.get("State", {}).get("Name")
+        results.append(
+            result(
+                "PASS" if state == "running" else "FAIL",
+                "Discovery",
+                "EC2 instance is running",
+                str(state),
+                host_id,
+            )
+        )
+        instance_id = str(instance.get("InstanceId", ""))
+        if state == "running" and instance_id:
+            running_ids[host_id] = instance_id
+        if health:
+            continue
+        private_ip = str(instance.get("PrivateIpAddress", ""))
+        results.append(
+            result(
+                "PASS" if private_ip == host["private_ip"] else "FAIL",
+                "Network",
+                "private IP matches manifest",
+                f"expected={host['private_ip']} actual={private_ip or 'none'}",
+                host_id,
+            )
+        )
+        public_ip = str(instance.get("PublicIpAddress", ""))
+        results.append(
+            result(
+                "PASS" if not public_ip else "FAIL",
+                "Network",
+                "workload instance has no public IP",
+                public_ip or "none",
+                host_id,
+            )
+        )
+        instance_type = str(instance.get("InstanceType", ""))
+        results.append(
+            result(
+                "PASS" if instance_type == host["aws_instance_type"] else "FAIL",
+                "Compute",
+                "EC2 instance type matches manifest",
+                f"expected={host['aws_instance_type']} actual={instance_type}",
+                host_id,
+            )
+        )
+        actual_tags = tags_to_dict(instance.get("Tags"))
+        required_tags = {
+            **host["tags"],
+            "Project": "DreadGOAD",
+            "Environment": env,
+            "OS": "Linux",
+        }
+        mismatches = [
+            f"{key}={actual_tags.get(key)!r}"
+            for key, expected in required_tags.items()
+            if actual_tags.get(key) != expected
+        ]
+        results.append(
+            result(
+                "PASS" if not mismatches else "FAIL",
+                "Metadata",
+                "required AWS tags match manifest",
+                "all required tags match" if not mismatches else ", ".join(mismatches),
+                host_id,
+            )
+        )
+
+    if running_ids:
+        try:
+            ssm = aws.run_json(
+                [
+                    "ssm",
+                    "describe-instance-information",
+                    "--filters",
+                    "Key=InstanceIds,Values=" + ",".join(running_ids.values()),
+                ]
+            )
+            ping = {
+                item.get("InstanceId"): item.get("PingStatus")
+                for item in ssm.get("InstanceInformationList", [])
+            }
+            for host_id, instance_id in running_ids.items():
+                status = ping.get(instance_id, "NotManaged")
+                results.append(
+                    result(
+                        "PASS" if status == "Online" else "FAIL",
+                        "Transport",
+                        "SSM agent is online",
+                        str(status),
+                        host_id,
+                    )
+                )
+                if status == "Online":
+                    runnable[host_id] = instance_id
+        except AWSCommandError as exc:
+            results.append(
+                result("FAIL", "Transport", "enumerate SSM agents", str(exc))
+            )
+
+    if health:
+        return results, runnable
+
+    expected = manifest["aws"]
+    try:
+        vpcs = aws.run_json(
+            [
+                "ec2",
+                "describe-vpcs",
+                "--filters",
+                "Name=tag:Project,Values=DreadGOAD",
+                "Name=tag:Lab,Values=SCOPE-RANGE",
+                f"Name=tag:Name,Values={env}-{deployment}",
+            ]
+        ).get("Vpcs", [])
+        exact_vpc = len(vpcs) == 1 and vpcs[0].get("CidrBlock") == expected["vpc_cidr"]
+        results.append(
+            result(
+                "PASS" if exact_vpc else "FAIL",
+                "Network",
+                "dedicated VPC CIDR matches manifest",
+                f"count={len(vpcs)} cidrs={[vpc.get('CidrBlock') for vpc in vpcs]}",
+            )
+        )
+        if len(vpcs) != 1:
+            return results, runnable
+        vpc_id = vpcs[0]["VpcId"]
+    except AWSCommandError as exc:
+        results.append(
+            result("FAIL", "Network", "dedicated VPC CIDR matches manifest", str(exc))
+        )
+        return results, runnable
+
+    private_subnet_ids: set[str] = set()
+    try:
+        subnets = aws.run_json(
+            ["ec2", "describe-subnets", "--filters", f"Name=vpc-id,Values={vpc_id}"]
+        ).get("Subnets", [])
+        actual_public = sorted(
+            subnet.get("CidrBlock")
+            for subnet in subnets
+            if tags_to_dict(subnet.get("Tags")).get("Type") == "public"
+        )
+        actual_private = sorted(
+            subnet.get("CidrBlock")
+            for subnet in subnets
+            if tags_to_dict(subnet.get("Tags")).get("Type") == "private"
+        )
+        private_subnet_ids = {
+            str(subnet.get("SubnetId"))
+            for subnet in subnets
+            if tags_to_dict(subnet.get("Tags")).get("Type") == "private"
+            and subnet.get("SubnetId")
+        }
+        valid_subnets = (
+            actual_public == sorted(expected["public_subnets"])
+            and actual_private == sorted(expected["private_subnets"])
+            and all(
+                not subnet.get("MapPublicIpOnLaunch")
+                for subnet in subnets
+                if tags_to_dict(subnet.get("Tags")).get("Type") == "private"
+            )
+        )
+        results.append(
+            result(
+                "PASS" if valid_subnets else "FAIL",
+                "Network",
+                "public and private subnets match manifest",
+                f"public={actual_public} private={actual_private}",
+            )
+        )
+    except AWSCommandError as exc:
+        results.append(result("FAIL", "Network", "enumerate VPC subnets", str(exc)))
+
+    try:
+        gateways = aws.run_json(
+            [
+                "ec2",
+                "describe-nat-gateways",
+                "--filter",
+                f"Name=vpc-id,Values={vpc_id}",
+                "Name=state,Values=available",
+            ]
+        ).get("NatGateways", [])
+        results.append(
+            result(
+                "PASS" if len(gateways) == 1 else "FAIL",
+                "Network",
+                "exactly one available NAT gateway exists",
+                f"count={len(gateways)}",
+            )
+        )
+    except AWSCommandError as exc:
+        results.append(result("FAIL", "Network", "enumerate NAT gateways", str(exc)))
+
+    try:
+        route_tables = aws.run_json(
+            [
+                "ec2",
+                "describe-route-tables",
+                "--filters",
+                f"Name=vpc-id,Values={vpc_id}",
+            ]
+        ).get("RouteTables", [])
+        private_tables = [
+            table
+            for table in route_tables
+            if tags_to_dict(table.get("Tags")).get("Name") == f"{env}-{deployment}"
+            and any(
+                route.get("NatGatewayId")
+                and route.get("DestinationCidrBlock") == "0.0.0.0/0"
+                for route in table.get("Routes", [])
+            )
+            and any(
+                association.get("SubnetId") in private_subnet_ids
+                for association in table.get("Associations", [])
+            )
+        ]
+        results.append(
+            result(
+                "PASS" if len(private_tables) == 1 else "FAIL",
+                "Network",
+                "private subnet has the expected NAT default route",
+                f"matching_route_tables={len(private_tables)}",
+            )
+        )
+    except AWSCommandError as exc:
+        results.append(result("FAIL", "Network", "enumerate VPC routes", str(exc)))
+
+    try:
+        endpoints = aws.run_json(
+            [
+                "ec2",
+                "describe-vpc-endpoints",
+                "--filters",
+                f"Name=vpc-id,Values={vpc_id}",
+            ]
+        ).get("VpcEndpoints", [])
+        actual_services = {
+            str(endpoint.get("ServiceName", "")).rsplit(".", 1)[-1]
+            for endpoint in endpoints
+            if endpoint.get("State") == "available"
+        }
+        required_services = set(expected["required_vpc_endpoints"])
+        results.append(
+            result(
+                "PASS" if required_services.issubset(actual_services) else "FAIL",
+                "Network",
+                "required private AWS service endpoints are available",
+                f"required={sorted(required_services)} actual={sorted(actual_services)}",
+            )
+        )
+    except AWSCommandError as exc:
+        results.append(result("FAIL", "Network", "enumerate VPC endpoints", str(exc)))
+
+    try:
+        groups = aws.run_json(
+            [
+                "ec2",
+                "describe-security-groups",
+                "--filters",
+                f"Name=vpc-id,Values={vpc_id}",
+            ]
+        ).get("SecurityGroups", [])
+        public_ingress = []
+        for group in groups:
+            for permission in group.get("IpPermissions", []):
+                for ip_range in permission.get("IpRanges", []):
+                    cidr = ip_range.get("CidrIp", "")
+                    if cidr == "0.0.0.0/0":
+                        public_ingress.append(str(group.get("GroupId", "unknown")))
+                for ip_range in permission.get("Ipv6Ranges", []):
+                    if ip_range.get("CidrIpv6") == "::/0":
+                        public_ingress.append(str(group.get("GroupId", "unknown")))
+        results.append(
+            result(
+                "PASS" if not public_ingress else "FAIL",
+                "Network",
+                "security groups expose no public IPv4 ingress",
+                "none" if not public_ingress else ",".join(sorted(set(public_ingress))),
+            )
+        )
+    except AWSCommandError as exc:
+        results.append(result("FAIL", "Network", "enumerate security groups", str(exc)))
+
+    return results, runnable
+
+
 def select_host_checks(
     host: dict[str, Any], quick: bool, health: bool = False
 ) -> dict[str, Any]:
@@ -816,6 +1309,129 @@ def run_host_checks(
     return results
 
 
+def run_aws_host_checks(
+    aws: AWSCLI,
+    host: dict[str, Any],
+    instance_id: str,
+    quick: bool,
+    health: bool = False,
+) -> list[CheckResult]:
+    """Execute selected checks in bounded AWS SSM shell-command batches."""
+    host_id = host["id"]
+    selected = select_host_checks(host, quick, health)["checks"]
+    if not selected:
+        return [
+            result(
+                "FAIL",
+                "Validation",
+                "health checks are defined",
+                "manifest selected no checks for this host",
+                host_id,
+            )
+        ]
+    results: list[CheckResult] = []
+    terminal_statuses = {
+        "Success",
+        "Cancelled",
+        "TimedOut",
+        "Failed",
+        "Cancelling",
+    }
+    for offset in range(0, len(selected), REMOTE_BATCH_SIZE):
+        batch = selected[offset : offset + REMOTE_BATCH_SIZE]
+        launcher = build_remote_launcher({"id": host_id, "checks": batch}, quick=False)
+        batch_number = offset // REMOTE_BATCH_SIZE + 1
+        try:
+            response = aws.run_json(
+                [
+                    "ssm",
+                    "send-command",
+                    "--instance-ids",
+                    instance_id,
+                    "--document-name",
+                    "AWS-RunShellScript",
+                    "--parameters",
+                    json.dumps({"commands": [launcher]}, separators=(",", ":")),
+                    "--timeout-seconds",
+                    str(
+                        min(
+                            3600,
+                            sum(check.get("timeout_seconds", 30) for check in batch)
+                            + 60,
+                        )
+                    ),
+                ]
+            )
+            command_id = response.get("Command", {}).get("CommandId")
+            if not command_id:
+                raise AWSCommandError("SSM send-command returned no command ID")
+            deadline = time.monotonic() + AWS_TIMEOUT_SECONDS
+            invocation: dict[str, Any] = {}
+            while time.monotonic() < deadline:
+                try:
+                    current = aws.run_json(
+                        [
+                            "ssm",
+                            "get-command-invocation",
+                            "--command-id",
+                            str(command_id),
+                            "--instance-id",
+                            instance_id,
+                        ],
+                        timeout=60,
+                    )
+                except AWSCommandError as exc:
+                    if "InvocationDoesNotExist" in str(exc):
+                        time.sleep(2)
+                        continue
+                    raise
+                if isinstance(current, dict):
+                    invocation = current
+                if invocation.get("Status") in terminal_statuses:
+                    break
+                time.sleep(2)
+            else:
+                raise AWSCommandError("SSM command polling timed out")
+
+            stdout = str(invocation.get("StandardOutputContent", ""))
+            parsed = parse_remote_results(stdout, host_id)
+            results.extend(parsed)
+            expected_identities = collections.Counter(
+                (check["category"], check["name"]) for check in batch
+            )
+            actual_identities = collections.Counter(
+                (check.category, check.name) for check in parsed
+            )
+            if actual_identities != expected_identities:
+                detail = (
+                    f"batch={batch_number} expected={len(batch)} actual={len(parsed)} "
+                    f"ssm_status={invocation.get('Status', 'unknown')}"
+                )
+                stderr = str(invocation.get("StandardErrorContent", "")).strip()
+                if stderr:
+                    detail += f" stderr={stderr[:500]}"
+                results.append(
+                    result(
+                        "FAIL",
+                        "Validation",
+                        "remote validation returned every expected result",
+                        detail,
+                        host_id,
+                    )
+                )
+        except AWSCommandError as exc:
+            results.append(
+                result(
+                    "FAIL",
+                    "Transport",
+                    "remote validation command completed",
+                    f"batch={batch_number}: {exc}",
+                    host_id,
+                )
+            )
+    return results
+
+
 def run_remote_checks(
     azure: AzureCLI,
     manifest: dict[str, Any],
@@ -868,6 +1484,52 @@ def run_remote_checks(
     return ordered
 
 
+def run_aws_remote_checks(
+    aws: AWSCLI,
+    manifest: dict[str, Any],
+    runnable: dict[str, str],
+    quick: bool,
+    health: bool = False,
+) -> list[CheckResult]:
+    """Run AWS host validation concurrently and preserve manifest ordering."""
+    by_host: dict[str, list[CheckResult]] = {}
+    futures: dict[str, concurrent.futures.Future[list[CheckResult]]] = {}
+    with concurrent.futures.ThreadPoolExecutor(
+        max_workers=len(manifest["hosts"])
+    ) as executor:
+        for host in manifest["hosts"]:
+            host_id = host["id"]
+            instance_id = runnable.get(host_id)
+            if not instance_id:
+                by_host[host_id] = [
+                    result(
+                        "FAIL",
+                        "Transport",
+                        "remote validation command completed",
+                        "instance is missing, not running, or not online in SSM",
+                        host_id,
+                    )
+                ]
+                continue
+            futures[host_id] = executor.submit(
+                run_aws_host_checks, aws, host, instance_id, quick, health
+            )
+        for host_id, future in futures.items():
+            try:
+                by_host[host_id] = future.result()
+            except Exception as exc:  # noqa: BLE001 - transport isolation is intentional
+                by_host[host_id] = [
+                    result(
+                        "FAIL",
+                        "Transport",
+                        "remote validation command completed",
+                        str(exc),
+                        host_id,
+                    )
+                ]
+    return [check for host in manifest["hosts"] for check in by_host[host["id"]]]
+
+
 def print_result(check: CheckResult, color: bool) -> None:
     """Render one result in the GOAD validator's PASS/FAIL/WARN style."""
     symbols = {"PASS": "✓", "FAIL": "✗", "WARN": "⚠"}
@@ -888,6 +1550,8 @@ def build_report(
     subscription: str,
     quick: bool,
     health: bool = False,
+    provider_name: str = "azure",
+    region: str = "",
 ) -> dict[str, Any]:
     """Build the stable JSON report consumed by humans and future CLI integration."""
     counts = {
@@ -903,10 +1567,12 @@ def build_report(
         .replace(microsecond=0)
         .isoformat(),
         "lab": "SCOPE-RANGE",
-        "provider": "azure",
+        "provider": provider_name,
         "environment": env,
-        "resource_group": resource_group,
-        "subscription": subscription,
+        "resource_group": resource_group if provider_name == "azure" else "",
+        "subscription": subscription if provider_name == "azure" else "",
+        "aws_account": subscription if provider_name == "aws" else "",
+        "region": region,
         "mode": "health" if health else "quick" if quick else "full",
         **counts,
         "checks": [item.as_dict() for item in results],
@@ -938,18 +1604,27 @@ def build_parser() -> argparse.ArgumentParser:
         "--env", default=os.environ.get("ENV"), help="DreadGOAD environment"
     )
     parser.add_argument(
+        "--provider",
+        choices=("azure", "aws"),
+        default=os.environ.get("DREADGOAD_PROVIDER", "azure"),
+    )
+    parser.add_argument(
         "--deployment-name",
         default=None,
-        help="Azure resource-name component (normally read from the environment HCL)",
+        help="Cloud resource-name component (normally read from the environment HCL)",
     )
     parser.add_argument("--resource-group", default=os.environ.get("RESOURCE_GROUP"))
     parser.add_argument(
         "--subscription", default=os.environ.get("AZURE_SUBSCRIPTION_ID")
     )
+    parser.add_argument("--region", default=os.environ.get("AWS_REGION"))
     parser.add_argument(
         "--az-bin",
         default=os.environ.get("AZ_BIN", "az"),
         help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--aws-bin", default=os.environ.get("AWS_BIN", "aws"), help=argparse.SUPPRESS
     )
     parser.add_argument("--manifest", type=pathlib.Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--output", type=pathlib.Path, default=None)
@@ -975,7 +1650,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     """Run SCOPE-RANGE validation and return a process exit status."""
     args = build_parser().parse_args(argv)
     try:
-        manifest = load_manifest(args.manifest)
+        manifest = load_manifest(args.manifest, args.provider)
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -983,7 +1658,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"SCOPE-RANGE validation manifest is valid: {args.manifest}")
         return 0
 
-    env = args.env or manifest["default_environment"]
+    provider_name = args.provider
+    env = args.env or (
+        manifest["aws"]["default_environment"]
+        if provider_name == "aws"
+        else manifest["default_environment"]
+    )
     if not ENV_NAME_PATTERN.fullmatch(env):
         print(f"error: invalid environment name: {env!r}", file=sys.stderr)
         return 2
@@ -997,45 +1677,70 @@ def main(argv: Sequence[str] | None = None) -> int:
         deployment = args.deployment_name
     else:
         try:
-            deployment = resolve_deployment_name(manifest, env)
+            infra_root = (
+                DEFAULT_AWS_INFRA_ROOT
+                if provider_name == "aws"
+                else DEFAULT_AZURE_INFRA_ROOT
+            )
+            deployment = resolve_deployment_name(manifest, env, infra_root)
         except ValueError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
-    resource_group = args.resource_group or render_template(
-        manifest["resource_group_template"], env, deployment
-    )
-    if shutil.which(args.az_bin) is None:
-        print(f"error: Azure CLI ({args.az_bin}) is required", file=sys.stderr)
-        return 2
+    resource_group = ""
+    region = ""
+    if provider_name == "azure":
+        resource_group = args.resource_group or render_template(
+            manifest["resource_group_template"], env, deployment
+        )
+        if shutil.which(args.az_bin) is None:
+            print(f"error: Azure CLI ({args.az_bin}) is required", file=sys.stderr)
+            return 2
+    else:
+        region = args.region or manifest["aws"]["default_region"]
+        if shutil.which(args.aws_bin) is None:
+            print(f"error: AWS CLI ({args.aws_bin}) is required", file=sys.stderr)
+            return 2
 
     timestamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
     output = args.output
     if output is None and not args.json:
         output = pathlib.Path(f"/tmp/scope-range-validation-{timestamp}.json")
-    azure = AzureCLI(args.az_bin, args.subscription, args.verbose)
-
     if not args.json:
         print("==========================================")
         print("SCOPE-RANGE Live Validation")
         print("==========================================")
         print(f"Environment: {env}")
-        print(f"Resource group: {resource_group}")
+        print(f"Provider: {provider_name}")
+        if provider_name == "azure":
+            print(f"Resource group: {resource_group}")
+        else:
+            print(f"Region: {region}")
         print(f"Mode: {'health' if args.health else 'quick' if args.quick else 'full'}")
         print()
 
-    infrastructure, runnable = validate_infrastructure(
-        azure, manifest, env, resource_group, deployment, health=args.health
-    )
-    remote = run_remote_checks(
-        azure,
-        manifest,
-        env,
-        resource_group,
-        runnable,
-        args.quick,
-        deployment,
-        args.health,
-    )
+    if provider_name == "azure":
+        cloud = AzureCLI(args.az_bin, args.subscription, args.verbose)
+        infrastructure, runnable_azure = validate_infrastructure(
+            cloud, manifest, env, resource_group, deployment, health=args.health
+        )
+        remote = run_remote_checks(
+            cloud,
+            manifest,
+            env,
+            resource_group,
+            runnable_azure,
+            args.quick,
+            deployment,
+            args.health,
+        )
+    else:
+        cloud = AWSCLI(args.aws_bin, region, args.verbose)
+        infrastructure, runnable_aws = validate_aws_infrastructure(
+            cloud, manifest, env, deployment, health=args.health
+        )
+        remote = run_aws_remote_checks(
+            cloud, manifest, runnable_aws, args.quick, args.health
+        )
     results = [*infrastructure, *remote]
     color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
     if args.json:
@@ -1053,12 +1758,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             print_result(check, color)
 
     try:
-        account = azure.run_json(["account", "show"])
-        subscription = str(account.get("id", args.subscription or "unknown"))
-    except AzureCommandError:
+        if provider_name == "azure":
+            account = cloud.run_json(["account", "show"])
+            subscription = str(account.get("id", args.subscription or "unknown"))
+        else:
+            account = cloud.run_json(["sts", "get-caller-identity"])
+            subscription = str(account.get("Account", "unknown"))
+    except (AzureCommandError, AWSCommandError):
         subscription = args.subscription or "unknown"
     report = build_report(
-        results, env, resource_group, subscription, args.quick, args.health
+        results,
+        env,
+        resource_group,
+        subscription,
+        args.quick,
+        args.health,
+        provider_name,
+        region,
     )
     if args.health:
         report["checks"] = [

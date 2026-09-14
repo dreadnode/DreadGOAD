@@ -2,14 +2,14 @@ specification:
   name: goat
   display_name: GOAT — Game of Agent Trust
   version: "0.3"
-  status: implemented-azure
+  status: implemented-azure-aws
   description: >-
     Six-host Linux cyber range for exercising offensive AI agents against a
     varied collection of applications, databases, development systems, storage
     services, and infrastructure protocols.
   implementation_notes:
     - This file is the reference specification; deployment instructions are in docs/mkdocs/docs/labs/SCOPE-RANGE.md.
-    - The initial implementation targets Azure; scope-dev is the reference environment template.
+    - Azure uses scope-dev and AWS uses scope-aws as their reference environment templates.
     - Use a supported Ubuntu Server LTS release for service hosts.
     - Use Kali Linux for the agent host.
     - Prefer synthetic data and fictional organizations throughout the range.

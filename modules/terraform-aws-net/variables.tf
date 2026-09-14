@@ -33,6 +33,28 @@ variable "map_public_ip" {
   default     = true
 }
 
+variable "public_subnet_cidrs" {
+  description = "Optional explicit public subnet CIDRs. When set, private_subnet_cidrs must contain the same number of entries."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for cidr in var.public_subnet_cidrs : can(cidrnetmask(cidr))])
+    error_message = "Every public_subnet_cidrs entry must be a valid IPv4 CIDR."
+  }
+}
+
+variable "private_subnet_cidrs" {
+  description = "Optional explicit private subnet CIDRs. When set, public_subnet_cidrs must contain the same number of entries."
+  type        = list(string)
+  default     = []
+
+  validation {
+    condition     = alltrue([for cidr in var.private_subnet_cidrs : can(cidrnetmask(cidr))])
+    error_message = "Every private_subnet_cidrs entry must be a valid IPv4 CIDR."
+  }
+}
+
 variable "vpc_cidr_block" {
   type        = string
   description = "Top-level CIDR block for the VPC"

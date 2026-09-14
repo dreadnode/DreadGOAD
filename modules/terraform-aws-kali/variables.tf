@@ -23,6 +23,29 @@ variable "subnet_id" {
   type        = string
 }
 
+variable "private_ip" {
+  description = "Optional fixed private IPv4 address for the attack box."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.private_ip == null || can(cidrhost("${var.private_ip}/32", 0))
+    error_message = "private_ip must be a valid IPv4 address or null."
+  }
+}
+
+variable "instance_name" {
+  description = "Optional logical instance name. The existing dreadgoad-kali name remains the default."
+  type        = string
+  default     = ""
+}
+
+variable "lab_name" {
+  description = "Lab tag value. Defaults to the historical <deployment>-goad value."
+  type        = string
+  default     = ""
+}
+
 variable "instance_type" {
   description = "EC2 instance type for the Kali attack box."
   type        = string

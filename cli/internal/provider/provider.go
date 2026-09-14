@@ -136,6 +136,14 @@ type OutOfBandRunner interface {
 	OutOfBandChannel() string
 }
 
+// InstanceOutOfBandRunner is an optional refinement for providers whose
+// control-plane interpreter depends on instance metadata. AWS uses the OS tag
+// to select AWS-RunShellScript for Linux and AWS-RunPowerShellScript for
+// Windows. Callers fall back to OutOfBandRunner when this is not implemented.
+type InstanceOutOfBandRunner interface {
+	RunCommandOutOfBandOnInstance(ctx context.Context, instance Instance, command string, timeout time.Duration) (*CommandResult, error)
+}
+
 // Session represents an active remote session.
 type Session struct {
 	SessionID  string

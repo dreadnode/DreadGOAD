@@ -26,7 +26,7 @@ var validateCmd = &cobra.Command{
 
 For GOAD labs, checks run against live instances to confirm that the intended
 vulnerability configurations are present. For SCOPE-RANGE, validation checks
-the Azure topology and the expected users, services, applications, databases,
+the selected cloud topology and the expected users, services, applications, databases,
 storage, seeded data, and cross-host workflows on all six Linux hosts.
 
 GOAD validation checks credentials, Kerberos, SMB, delegation, MSSQL (linked servers, impersonation,
@@ -252,7 +252,14 @@ func scopeRangeValidatorArgs(cfg *config.Config, opts validateOpts) ([]string, e
 	}
 
 	script := filepath.Join(cfg.ProjectRoot, "scripts", "validate-scope-range-live.py")
-	args := []string{script, "--env", cfg.Env}
+	args := []string{script, "--env", cfg.Env, "--provider", cfg.ResolvedProvider()}
+	if cfg.ResolvedProvider() == provider.NameAWS {
+		region, err := cfg.ResolveRegion()
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, "--region", region)
+	}
 	if opts.outputPath != "" {
 		args = append(args, "--output", opts.outputPath)
 	}

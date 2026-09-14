@@ -45,25 +45,82 @@
     - /opt/scope-range
     - /srv/range
 
-- name: Check for the Azure data disk
-  ansible.builtin.stat:
-    path: /dev/disk/azure/scsi1/lun0
-  register: scope_data_disk
+- name: Discover the provider-managed non-root range data disk
+  ansible.builtin.shell:
+    cmd: |
+      set -o pipefail
+      if [ -e /dev/disk/azure/scsi1/lun0 ]; then
+        printf '%s\n' /dev/disk/azure/scsi1/lun0
+        exit 0
+      fi
 
-- name: Format the Azure data disk when present
+      root_source=$(findmnt -n -o SOURCE /)
+      root_parent=$(lsblk -no PKNAME "$root_source" | head -n1)
+      if [ -n "$root_parent" ]; then
+        root_disk=$(readlink -f "/dev/$root_parent")
+      else
+        root_disk=$(readlink -f "$root_source")
+      fi
+
+      candidates=()
+      for link in /dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_vol*; do
+        [ -e "$link" ] || continue
+        [ "$(lsblk -dn -o TYPE "$(readlink -f "$link")")" = disk ] || continue
+        [ "$(readlink -f "$link")" = "$root_disk" ] && continue
+        candidates+=("$link")
+      done
+      case "${#candidates[@]}" in
+        0) exit 0 ;;
+        1) printf '%s\n' "${candidates[0]}" ;;
+        *) printf 'ambiguous provider-managed data disks: %s\n' "${candidates[*]}" >&2; exit 2 ;;
+      esac
+    executable: /bin/bash
+  register: scope_data_disk_discovery
+  changed_when: false
+  failed_when: scope_data_disk_discovery.rc not in [0, 2]
+
+- name: Reject ambiguous range data disk layouts
+  ansible.builtin.fail:
+    msg: "Refusing to select a data disk because discovery was ambiguous: {{ scope_data_disk_discovery.stderr }}"
+  when: scope_data_disk_discovery.rc == 2
+
+- name: Record the discovered range data disk
+  ansible.builtin.set_fact:
+    scope_data_disk: "{{ scope_data_disk_discovery.stdout | trim }}"
+
+- name: Inspect the range data disk filesystem
+  ansible.builtin.command:
+    cmd: "lsblk -dn -o FSTYPE {{ scope_data_disk }}"
+  register: scope_data_disk_filesystem
+  changed_when: false
+  when: scope_data_disk | length > 0
+
+- name: Reject an unexpected range data disk filesystem
+  ansible.builtin.assert:
+    that:
+      - scope_data_disk_filesystem.stdout | trim in ['', 'ext4']
+    fail_msg: >-
+      Refusing to alter {{ scope_data_disk }} because it contains an unexpected
+      {{ scope_data_disk_filesystem.stdout | trim }} filesystem.
+  when: scope_data_disk | length > 0
+
+- name: Create an ext4 filesystem only on a blank provider-managed data disk
   community.general.filesystem:
     fstype: ext4
-    dev: /dev/disk/azure/scsi1/lun0
-  when: scope_data_disk.stat.exists
+    dev: "{{ scope_data_disk }}"
+    force: false
+  when:
+    - scope_data_disk | length > 0
+    - scope_data_disk_filesystem.stdout | trim == ''
 
 - name: Mount the range data disk
   ansible.posix.mount:
     path: /srv/range
-    src: /dev/disk/azure/scsi1/lun0
+    src: "{{ scope_data_disk }}"
     fstype: ext4
     opts: defaults,nofail
     state: mounted
-  when: scope_data_disk.stat.exists
+  when: scope_data_disk | length > 0
 
 - name: Publish deterministic bootstrap host mappings
   ansible.builtin.blockinfile:

@@ -30,7 +30,7 @@ class FakeAzure:
         self.responses = response if isinstance(response, list) else [response]
         self.calls: list[tuple[list[str], int]] = []
 
-    def run_json(self, args: list[str], *, timeout: int) -> object:
+    def run_json(self, args: list[str], *, timeout: int = 600) -> object:
         """Record one invocation and return its configured response."""
         self.calls.append((args, timeout))
         return self.responses[len(self.calls) - 1]
@@ -115,6 +115,123 @@ class InfrastructureAzure:
         raise AssertionError(f"unexpected Azure command: {args}")
 
 
+class InfrastructureAWS:
+    """AWS stand-in with a complete six-host private topology."""
+
+    def __init__(
+        self,
+        manifest: dict[str, Any],
+        *,
+        public_host: bool = False,
+        duplicate_host: bool = False,
+    ) -> None:
+        self.manifest = manifest
+        self.public_host = public_host
+        self.duplicate_host = duplicate_host
+
+    def run_json(self, args: list[str], *, timeout: int = 600) -> object:
+        """Return the AWS object selected by the requested command."""
+        del timeout
+        env = self.manifest["aws"]["default_environment"]
+        if args[:2] == ["sts", "get-caller-identity"]:
+            return {
+                "Account": "123456789012",
+                "Arn": "arn:aws:iam::123456789012:user/test",
+            }
+        if args[:2] == ["ec2", "describe-instances"]:
+            instances = []
+            for host in self.manifest["hosts"]:
+                tags = {
+                    **host["tags"],
+                    "Name": validator.render_aws_instance_name(
+                        self.manifest, host["id"], env
+                    ),
+                    "Project": "DreadGOAD",
+                    "Environment": env,
+                    "OS": "Linux",
+                }
+                instance = {
+                    "InstanceId": f"i-{host['id']}",
+                    "InstanceType": host["aws_instance_type"],
+                    "PrivateIpAddress": host["private_ip"],
+                    "State": {"Name": "running"},
+                    "Tags": [
+                        {"Key": key, "Value": value} for key, value in tags.items()
+                    ],
+                }
+                if self.public_host and host["id"] == "web01":
+                    instance["PublicIpAddress"] = "203.0.113.10"
+                instances.append(instance)
+                if self.duplicate_host and host["id"] == "web01":
+                    duplicate = dict(instance)
+                    duplicate["InstanceId"] = "i-web01-orphan"
+                    instances.append(duplicate)
+            return {"Reservations": [{"Instances": instances}]}
+        if args[:2] == ["ssm", "describe-instance-information"]:
+            return {
+                "InstanceInformationList": [
+                    {"InstanceId": f"i-{host['id']}", "PingStatus": "Online"}
+                    for host in self.manifest["hosts"]
+                ]
+            }
+        if args[:2] == ["ec2", "describe-vpcs"]:
+            return {"Vpcs": [{"VpcId": "vpc-goat", "CidrBlock": "10.50.0.0/16"}]}
+        if args[:2] == ["ec2", "describe-subnets"]:
+            return {
+                "Subnets": [
+                    {
+                        "SubnetId": "subnet-public",
+                        "CidrBlock": "10.50.0.0/24",
+                        "MapPublicIpOnLaunch": True,
+                        "Tags": [{"Key": "Type", "Value": "public"}],
+                    },
+                    {
+                        "SubnetId": "subnet-private",
+                        "CidrBlock": "10.50.10.0/24",
+                        "MapPublicIpOnLaunch": False,
+                        "Tags": [{"Key": "Type", "Value": "private"}],
+                    },
+                ]
+            }
+        if args[:2] == ["ec2", "describe-nat-gateways"]:
+            return {"NatGateways": [{"NatGatewayId": "nat-goat"}]}
+        if args[:2] == ["ec2", "describe-route-tables"]:
+            return {
+                "RouteTables": [
+                    {
+                        "Tags": [{"Key": "Name", "Value": f"{env}-goat"}],
+                        "Routes": [
+                            {
+                                "DestinationCidrBlock": "0.0.0.0/0",
+                                "NatGatewayId": "nat-goat",
+                            }
+                        ],
+                        "Associations": [{"SubnetId": "subnet-private"}],
+                    }
+                ]
+            }
+        if args[:2] == ["ec2", "describe-vpc-endpoints"]:
+            return {
+                "VpcEndpoints": [
+                    {
+                        "ServiceName": f"com.amazonaws.us-east-2.{service}",
+                        "State": "available",
+                    }
+                    for service in self.manifest["aws"]["required_vpc_endpoints"]
+                ]
+            }
+        if args[:2] == ["ec2", "describe-security-groups"]:
+            return {
+                "SecurityGroups": [
+                    {
+                        "GroupId": "sg-goat",
+                        "IpPermissions": [{"IpRanges": [{"CidrIp": "10.50.0.0/16"}]}],
+                    }
+                ]
+            }
+        raise AssertionError(f"unexpected AWS command: {args}")
+
+
 class ManifestTests(unittest.TestCase):
     """Exercise the deployed-state contract and its validation."""
 
@@ -125,6 +242,8 @@ class ManifestTests(unittest.TestCase):
         hosts = {host["id"]: host for host in self.manifest["hosts"]}
 
         self.assertEqual(self.manifest["deployment_name"], "goat")
+        self.assertEqual(set(self.manifest["providers"]), {"azure", "aws"})
+        self.assertEqual(self.manifest["aws"]["default_region"], "us-east-2")
         deployment = validator.resolve_deployment_name(
             self.manifest, self.manifest["default_environment"]
         )
@@ -304,6 +423,25 @@ class RemoteExecutionTests(unittest.TestCase):
             'bash -o pipefail -c "$command_text" </dev/null', validator.REMOTE_RUNNER
         )
 
+    def test_aws_remote_checks_use_linux_ssm_document(self) -> None:
+        line = (
+            'SCOPE_RESULT {"status":"PASS","category":"Data",'
+            '"name":"first check","detail":"expected state present"}'
+        )
+        aws = FakeAzure(
+            [
+                {"Command": {"CommandId": "command-1"}},
+                {"Status": "Success", "StandardOutputContent": line},
+            ]
+        )
+
+        checks = validator.run_aws_host_checks(aws, self.host, "i-data01", quick=True)
+
+        self.assertEqual([check.status for check in checks], ["PASS"])
+        send_args = aws.calls[0][0]
+        self.assertIn("AWS-RunShellScript", send_args)
+        self.assertNotIn("AWS-RunPowerShellScript", send_args)
+
     def test_verbose_command_redacts_remote_payload(self) -> None:
         command = ["az", "vm", "run-command", "invoke", "--scripts", "encoded-secret"]
 
@@ -478,6 +616,44 @@ class InfrastructureTests(unittest.TestCase):
         )
         self.assertEqual(nat_check.status, "FAIL")
         self.assertIn("public_ips=none", nat_check.detail)
+
+    def test_expected_aws_private_topology_passes(self) -> None:
+        checks, runnable = validator.validate_aws_infrastructure(
+            InfrastructureAWS(self.manifest),
+            self.manifest,
+            self.manifest["aws"]["default_environment"],
+        )
+        self.assertEqual(len(runnable), 6)
+        self.assertFalse(
+            [check for check in checks if check.status == "FAIL"],
+            [(check.name, check.detail) for check in checks if check.status == "FAIL"],
+        )
+
+    def test_aws_public_workload_address_fails(self) -> None:
+        checks, _ = validator.validate_aws_infrastructure(
+            InfrastructureAWS(self.manifest, public_host=True),
+            self.manifest,
+            self.manifest["aws"]["default_environment"],
+        )
+        public_check = next(
+            check
+            for check in checks
+            if check.host == "web01"
+            and check.name == "workload instance has no public IP"
+        )
+        self.assertEqual(public_check.status, "FAIL")
+
+    def test_aws_duplicate_name_tag_fails_exact_instance_set(self) -> None:
+        checks, _ = validator.validate_aws_infrastructure(
+            InfrastructureAWS(self.manifest, duplicate_host=True),
+            self.manifest,
+            self.manifest["aws"]["default_environment"],
+        )
+        exact_check = next(
+            check for check in checks if check.name == "exact EC2 instance set"
+        )
+        self.assertEqual(exact_check.status, "FAIL")
+        self.assertIn("scope-aws-goat-web01': 2", exact_check.detail)
 
 
 class ReportTests(unittest.TestCase):

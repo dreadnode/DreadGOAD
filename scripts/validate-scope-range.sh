@@ -48,21 +48,33 @@ env PYTHONPYCACHEPREFIX="$scratch/python-cache" \
 tofu fmt -check -recursive modules/terraform-azure-linux-instance
 tofu fmt -check -recursive modules/terraform-local-ssh-key
 tofu fmt -check -recursive modules/terraform-azure-kali
+tofu fmt -check -recursive modules/terraform-aws-instance-factory
+tofu fmt -check -recursive modules/terraform-aws-net
+tofu fmt -check -recursive modules/terraform-aws-kali
+tofu fmt -check -recursive modules/terraform-aws-linux-instance
 terragrunt hcl fmt --check --diff --working-dir infra/azure/scope-range-deployment
 terragrunt hcl validate --working-dir infra/azure/scope-range-deployment
+terragrunt hcl fmt --check --diff --working-dir infra/scope-range-deployment
 
 for module in \
   modules/terraform-azure-linux-instance \
   modules/terraform-local-ssh-key \
-  modules/terraform-azure-kali; do
+  modules/terraform-azure-kali \
+  modules/terraform-aws-instance-factory \
+  modules/terraform-aws-net \
+  modules/terraform-aws-kali \
+  modules/terraform-aws-linux-instance; do
   tofu -chdir="$module" init -backend=false -input=false >/dev/null
   tofu -chdir="$module" validate
 done
 
+./scripts/validate-scope-range-live.py --provider azure --manifest-only >/dev/null
+./scripts/validate-scope-range-live.py --provider aws --manifest-only >/dev/null
+
 env \
   GOCACHE="$scratch/go-build" \
   GOMODCACHE="$scratch/go-mod" \
-  go -C cli test ./internal/config ./internal/lab ./internal/azure ./cmd
+  go -C cli test ./internal/config ./internal/lab ./internal/aws ./internal/azure ./cmd
 
 ansible-galaxy collection build ansible --output-path "$scratch" --force >/dev/null
 env ANSIBLE_COLLECTIONS_PATH="$scratch/collections" ansible-galaxy collection install \
@@ -83,6 +95,16 @@ for playbook in \
     ansible-playbook \
       --inventory ad/SCOPE-RANGE/providers/azure/inventory \
       --syntax-check "ansible/playbooks/$playbook"
+done
+
+for inventory in \
+  ad/SCOPE-RANGE/providers/azure/inventory \
+  ad/SCOPE-RANGE/providers/aws/inventory; do
+  env \
+    ANSIBLE_CONFIG="$repo_root/ansible/ansible.cfg" \
+    ANSIBLE_COLLECTIONS_PATH="$scratch/collections" \
+    ANSIBLE_LOCAL_TEMP="$scratch/ansible-local" \
+    ansible-inventory --inventory "$inventory" --list >/dev/null
 done
 
 echo "SCOPE-RANGE static validation passed."

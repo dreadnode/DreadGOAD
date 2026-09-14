@@ -31,6 +31,7 @@ resource "aws_instance" "this" {
   instance_type               = var.instance_type
   key_name                    = local.create_key_pair ? aws_key_pair.this[0].key_name : null
   subnet_id                   = var.subnet_id
+  private_ip                  = var.private_ip
   vpc_security_group_ids      = concat([aws_security_group.this.id], var.additional_security_group_ids)
   iam_instance_profile        = var.enable_ssm && var.instance_profile == "" ? aws_iam_instance_profile.ssm[0].name : var.instance_profile
   ebs_optimized               = var.ebs_optimized
@@ -67,6 +68,11 @@ resource "aws_instance" "this" {
 
   lifecycle {
     create_before_destroy = true
+
+    precondition {
+      condition     = var.private_ip == null || !local.create_asg
+      error_message = "private_ip can only be set for a standalone instance."
+    }
   }
 
   tags = merge(

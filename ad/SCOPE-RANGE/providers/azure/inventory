@@ -6,6 +6,7 @@ ansible_ssh_private_key_file=~/.dreadgoad/keys/azure-scope-dev-goat-admin
 ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
 range_domain=range.test
 range_dns_server=10.50.10.60
+range_upstream_dns=168.63.129.16
 
 [scope_range]
 kali01 ansible_host=10.50.10.10 ansible_user=kali

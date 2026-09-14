@@ -4,6 +4,14 @@ kind: service-range
 variants:
   supported: false
 infrastructure:
+  aws:
+    deployment: scope-range-deployment
+    scaffold_profile: template
+    template_environment: scope-aws
+    default_region: us-east-2
+    network:
+      cidr: 10.50.0.0/16
+      editable: false
   azure:
     deployment: scope-range-deployment
     scaffold_profile: template

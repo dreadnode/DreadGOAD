@@ -389,3 +389,49 @@ func TestSortedPairsIsStable(t *testing.T) {
 		}
 	}
 }
+
+func TestAutomaticSSMBucketNameIsDeterministicAndS3Safe(t *testing.T) {
+	short := automaticSSMBucketName("123456789012", "scope-aws", "us-east-2")
+	if short != "dreadgoad-goat-123456789012-scope-aws-us-east-2-ssm" {
+		t.Fatalf("short bucket = %q", short)
+	}
+	long := automaticSSMBucketName(
+		"123456789012",
+		"GOAT_environment_with_a_name_that_is_far_too_long_for_an_s3_bucket",
+		"us-east-2",
+	)
+	if len(long) > 63 || strings.ContainsAny(long, "_ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
+		t.Fatalf("unsafe bucket name %q (length %d)", long, len(long))
+	}
+	if long != automaticSSMBucketName(
+		"123456789012",
+		"GOAT_environment_with_a_name_that_is_far_too_long_for_an_s3_bucket",
+		"us-east-2",
+	) {
+		t.Fatal("automatic bucket name is not deterministic")
+	}
+}
+
+func TestMaterializeSSMBucketNameIsAtomicAndOneShot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "goat-inventory")
+	if err := os.WriteFile(path, []byte("[all:vars]\nansible_aws_ssm_bucket_name=AUTO\nenv=goat\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := materializeSSMBucketName(path, "dreadgoad-goat-123-us-east-2-ssm"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "ansible_aws_ssm_bucket_name=dreadgoad-goat-123-us-east-2-ssm") {
+		t.Fatalf("materialized inventory = %q", raw)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("inventory mode = %v, %v; want 0600", info.Mode().Perm(), err)
+	}
+	if err := materializeSSMBucketName(path, "another-bucket"); err == nil {
+		t.Fatal("second materialization unexpectedly replaced an explicit bucket")
+	}
+}

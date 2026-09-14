@@ -1,7 +1,7 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "lab": "SCOPE-RANGE",
-  "provider": "azure",
+  "providers": ["azure", "aws"],
   "default_environment": "scope-dev",
   "deployment_name": "goat",
   "resource_group_template": "{env}-{deployment}-rg",
@@ -18,15 +18,26 @@
       "{env}-{deployment}-nat-pip"
     ]
   },
+  "aws": {
+    "default_environment": "scope-aws",
+    "default_region": "us-east-2",
+    "instance_name_template": "{env}-{deployment}-{host}",
+    "vpc_cidr": "10.50.0.0/16",
+    "public_subnets": ["10.50.0.0/24"],
+    "private_subnets": ["10.50.10.0/24"],
+    "required_vpc_endpoints": ["ssm", "ssmmessages", "ec2messages", "s3"]
+  },
   "hosts": [
     {
       "id": "kali01",
       "vm_name_template": "{env}-{deployment}-kali01-vm",
       "private_ip": "10.50.10.10",
       "size": "Standard_D4s_v3",
+      "aws_instance_type": "m6i.xlarge",
       "tags": {
         "Lab": "SCOPE-RANGE",
-        "Deployment": "scope-range-deployment"
+        "Deployment": "scope-range-deployment",
+        "Role": "AttackBox"
       },
       "checks": [
         {
@@ -112,6 +123,7 @@
       "vm_name_template": "{env}-{deployment}-web01-vm",
       "private_ip": "10.50.10.20",
       "size": "Standard_D4s_v3",
+      "aws_instance_type": "m6i.xlarge",
       "tags": {
         "Lab": "SCOPE-RANGE",
         "Deployment": "scope-range-deployment",
@@ -212,6 +224,7 @@
       "vm_name_template": "{env}-{deployment}-data01-vm",
       "private_ip": "10.50.10.30",
       "size": "Standard_D8s_v3",
+      "aws_instance_type": "m6i.2xlarge",
       "tags": {
         "Lab": "SCOPE-RANGE",
         "Deployment": "scope-range-deployment",
@@ -298,6 +311,7 @@
       "vm_name_template": "{env}-{deployment}-dev01-vm",
       "private_ip": "10.50.10.40",
       "size": "Standard_D4s_v3",
+      "aws_instance_type": "m6i.xlarge",
       "tags": {
         "Lab": "SCOPE-RANGE",
         "Deployment": "scope-range-deployment",
@@ -415,6 +429,7 @@
       "vm_name_template": "{env}-{deployment}-storage01-vm",
       "private_ip": "10.50.10.50",
       "size": "Standard_D4s_v3",
+      "aws_instance_type": "m6i.xlarge",
       "tags": {
         "Lab": "SCOPE-RANGE",
         "Deployment": "scope-range-deployment",
@@ -520,6 +535,7 @@
       "vm_name_template": "{env}-{deployment}-services01-vm",
       "private_ip": "10.50.10.60",
       "size": "Standard_D4s_v3",
+      "aws_instance_type": "m6i.xlarge",
       "tags": {
         "Lab": "SCOPE-RANGE",
         "Deployment": "scope-range-deployment",

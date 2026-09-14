@@ -46,7 +46,14 @@ func (scopeRangeInspector) health(
 ) error {
 	args := []string{
 		filepath.Join(cfg.ProjectRoot, "scripts", "validate-scope-range-live.py"),
-		"--env", cfg.Env, "--health",
+		"--env", cfg.Env, "--provider", cfg.ResolvedProvider(), "--health",
+	}
+	if cfg.ResolvedProvider() == "aws" {
+		region, err := cfg.ResolveRegion()
+		if err != nil {
+			return err
+		}
+		args = append(args, "--region", region)
 	}
 	if jsonOut {
 		args = append(args, "--json")

@@ -25,7 +25,7 @@
         group: root
         mode: "0755"
 
-    - name: Configure range DNS with Azure fallback
+    - name: Configure range DNS with provider-native fallback
       ansible.builtin.copy:
         dest: /etc/systemd/resolved.conf.d/scope-range.conf
         owner: root
@@ -34,7 +34,7 @@
         content: |
           [Resolve]
           DNS={{ range_dns_server }}
-          FallbackDNS=168.63.129.16
+          FallbackDNS={{ range_upstream_dns | default('168.63.129.16') }}
           Domains=~range.test
       notify: Restart systemd-resolved
 

@@ -480,6 +480,13 @@ def _range_catalog() -> list[dict[str, object]]:
             "generated": False,
             "variant_supported": False,
             "provider_settings": {
+                "aws": {
+                    "deployment": "scope-range-deployment",
+                    "scaffold_profile": "template",
+                    "template_environment": "scope-aws",
+                    "default_region": "us-east-2",
+                    "network": {"cidr": "10.50.0.0/16", "editable": False},
+                },
                 "azure": {
                     "deployment": "scope-range-deployment",
                     "scaffold_profile": "template",
@@ -556,6 +563,22 @@ async def test_create_range_session_scaffolds_scope_from_explicit_metadata() -> 
             assert env["provider"] == "azure"
             assert env["deployment"] == "scope-range-deployment"
             assert env["variant"] is False
+
+            aws_session = await svc.create_range_session(
+                "SCOPE-RANGE", "aws", "unit-goat-aws"
+            )
+            assert aws_session["snapshot"]["provider"] == "aws", aws_session
+            assert aws_session["snapshot"]["region"] == "us-east-2", aws_session
+            assert aws_session["snapshot"]["vpc_cidr"] == "10.50.0.0/16"
+            assert len(calls) == 2, calls
+            assert calls[1][1]["provider"] == "aws"
+            assert calls[1][1]["deployment"] == "scope-range-deployment"
+            aws_config = pathlib.Path(aws_session["anchor"]["config_path"])
+            aws_data = yaml.safe_load(aws_config.read_text())
+            aws_env = aws_data["environments"]["unit-goat-aws"]
+            assert aws_env["provider"] == "aws"
+            assert aws_env["region"] == "us-east-2"
+            assert aws_env["lab"] == "SCOPE-RANGE"
         finally:
             sessions_module.labs.discover_labs = original_discover
             sessions_module.scaffold.scaffold_env = original_scaffold
@@ -622,7 +645,10 @@ async def test_create_range_session_rejects_bad_policy_before_writes() -> None:
         sessions_module.labs.discover_labs = discovered
         try:
             cases = [
-                ({"range_name": "SCOPE-RANGE", "provider": "aws"}, "cannot be created"),
+                (
+                    {"range_name": "SCOPE-RANGE", "provider": "proxmox"},
+                    "provider must be one of",
+                ),
                 (
                     {
                         "range_name": "SCOPE-RANGE",

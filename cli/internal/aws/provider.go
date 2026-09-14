@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -108,6 +109,31 @@ func (p *AWSProvider) RunCommandOutOfBand(ctx context.Context, instanceID, comma
 	return p.RunCommand(ctx, instanceID, command, timeout)
 }
 
+// RunCommandOutOfBandOnInstance selects the SSM document from the instance's
+// explicit OS tag. Existing GOAD instances default to PowerShell when the tag
+// is absent, preserving the established Windows behavior.
+func (p *AWSProvider) RunCommandOutOfBandOnInstance(ctx context.Context, instance provider.Instance, command string, timeout time.Duration) (*provider.CommandResult, error) {
+	var result *CommandResult
+	var err error
+	if awsInstanceUsesShell(instance) {
+		result, err = p.client.RunShellCommand(ctx, instance.ID, command, timeout)
+	} else {
+		result, err = p.client.RunPowerShellCommand(ctx, instance.ID, command, timeout)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return provider.CleanResult(&provider.CommandResult{
+		Status: result.Status,
+		Stdout: result.Stdout,
+		Stderr: result.Stderr,
+	}), nil
+}
+
+func awsInstanceUsesShell(instance provider.Instance) bool {
+	return strings.EqualFold(strings.TrimSpace(instance.Tags["OS"]), "Linux")
+}
+
 // OutOfBandChannel implements provider.OutOfBandRunner.
 func (p *AWSProvider) OutOfBandChannel() string { return "AWS SSM" }
 
@@ -199,10 +225,12 @@ func (p *AWSProvider) CheckSSMStatus(ctx context.Context, instanceIDs []string) 
 
 // Compile-time interface checks.
 var (
-	_ provider.Provider         = (*AWSProvider)(nil)
-	_ provider.SessionManager   = (*AWSProvider)(nil)
-	_ provider.InteractiveShell = (*AWSProvider)(nil)
-	_ provider.SSMRecovery      = (*AWSProvider)(nil)
+	_ provider.Provider                = (*AWSProvider)(nil)
+	_ provider.OutOfBandRunner         = (*AWSProvider)(nil)
+	_ provider.InstanceOutOfBandRunner = (*AWSProvider)(nil)
+	_ provider.SessionManager          = (*AWSProvider)(nil)
+	_ provider.InteractiveShell        = (*AWSProvider)(nil)
+	_ provider.SSMRecovery             = (*AWSProvider)(nil)
 )
 
 func toProviderInstance(i Instance) provider.Instance {
