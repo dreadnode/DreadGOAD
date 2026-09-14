@@ -189,10 +189,10 @@ infrastructure:
       editable: false
 `,
 		filepath.Join(lab, "data", "config.json"):                                                                                     `{"lab":{"hosts":{"web01":{}}}}`,
-		filepath.Join(lab, "providers", "azure", "inventory"):                                                                         "[all:vars]\nansible_ssh_private_key_file=~/.keys/azure-scope-dev-key\n[all]\nweb01 ansible_host=10.50.10.20\n",
-		filepath.Join(root, "infra", "azure", "scope-range-deployment", "scope-dev", "env.hcl"):                                       "locals { env = \"scope-dev\" key = \"azure-scope-dev-key\" }\n",
+		filepath.Join(lab, "providers", "azure", "inventory"):                                                                         "[all:vars]\nansible_ssh_private_key_file=~/.keys/azure-scope-dev-goat-admin\n[all]\nweb01 ansible_host=10.50.10.20\n",
+		filepath.Join(root, "infra", "azure", "scope-range-deployment", "scope-dev", "env.hcl"):                                       "locals { env = \"scope-dev\" deployment_name = \"goat\" key = \"azure-scope-dev-goat-admin\" }\n",
 		filepath.Join(root, "infra", "azure", "scope-range-deployment", "scope-dev", "centralus", "region.hcl"):                       "locals { location = \"centralus\" }\n",
-		filepath.Join(root, "infra", "azure", "scope-range-deployment", "scope-dev", "centralus", "hosts", "web01", "terragrunt.hcl"): "mock = \"scope-dev-centralus\"\nterraform {}\n",
+		filepath.Join(root, "infra", "azure", "scope-range-deployment", "scope-dev", "centralus", "hosts", "web01", "terragrunt.hcl"): "mock = \"scope-dev-goat-rg\"\nterraform {}\n",
 	}
 	for path, body := range fixtures {
 		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
@@ -214,9 +214,9 @@ infrastructure:
 		t.Fatal(err)
 	}
 	for path, contains := range map[string]string{
-		filepath.Join(root, "infra", "azure", "scope-range-deployment", "kraken", "env.hcl"):                                       "azure-kraken-key",
+		filepath.Join(root, "infra", "azure", "scope-range-deployment", "kraken", "env.hcl"):                                       "azure-kraken-goat-admin",
 		filepath.Join(root, "infra", "azure", "scope-range-deployment", "kraken", "centralus", "hosts", "web01", "terragrunt.hcl"): "terraform",
-		filepath.Join(root, "kraken-inventory"): "azure-kraken-key",
+		filepath.Join(root, "kraken-inventory"): "azure-kraken-goat-admin",
 	} {
 		raw, err := os.ReadFile(path)
 		if err != nil || !strings.Contains(string(raw), contains) {
@@ -230,7 +230,7 @@ infrastructure:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(rendered), "scope-dev") || !strings.Contains(string(rendered), "kraken-centralus") {
+	if strings.Contains(string(rendered), "scope-dev") || !strings.Contains(string(rendered), "kraken-goat-rg") {
 		t.Fatalf("copied template literals were not rendered: %s", rendered)
 	}
 }

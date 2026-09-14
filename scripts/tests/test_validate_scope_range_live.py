@@ -124,6 +124,19 @@ class ManifestTests(unittest.TestCase):
     def test_real_manifest_covers_all_six_hosts(self) -> None:
         hosts = {host["id"]: host for host in self.manifest["hosts"]}
 
+        self.assertEqual(self.manifest["deployment_name"], "goat")
+        deployment = validator.resolve_deployment_name(
+            self.manifest, self.manifest["default_environment"]
+        )
+        self.assertEqual(deployment, "goat")
+        self.assertEqual(
+            validator.render_template(
+                self.manifest["resource_group_template"],
+                self.manifest["default_environment"],
+                deployment,
+            ),
+            "scope-dev-goat-rg",
+        )
         self.assertEqual(
             set(hosts),
             {"kali01", "web01", "data01", "dev01", "storage01", "services01"},
@@ -178,6 +191,30 @@ class ManifestTests(unittest.TestCase):
         self.assertTrue(
             all("/etc/fstab" in check["command"] for check in persistent_mounts)
         )
+
+    def test_environment_hcl_preserves_legacy_resource_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            infra_root = pathlib.Path(temp_dir)
+            env_dir = infra_root / "legacy"
+            env_dir.mkdir()
+            (env_dir / "env.hcl").write_text(
+                'locals {\n  deployment_name = "scope-range"\n}\n',
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                validator.resolve_deployment_name(self.manifest, "legacy", infra_root),
+                "scope-range",
+            )
+
+    def test_missing_environment_hcl_uses_goat_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            self.assertEqual(
+                validator.resolve_deployment_name(
+                    self.manifest, "new-range", pathlib.Path(temp_dir)
+                ),
+                "goat",
+            )
 
     def test_duplicate_host_is_rejected(self) -> None:
         manifest = json.loads(json.dumps(self.manifest))
@@ -312,7 +349,7 @@ class RemoteExecutionTests(unittest.TestCase):
             azure,
             self.host,
             "scope-dev-data01",
-            "scope-dev-scope-range-rg",
+            "scope-dev-goat-rg",
             quick=False,
         )
 
@@ -331,7 +368,7 @@ class RemoteExecutionTests(unittest.TestCase):
             azure,
             self.host,
             "scope-dev-data01",
-            "scope-dev-scope-range-rg",
+            "scope-dev-goat-rg",
             quick=False,
         )
 
@@ -380,7 +417,7 @@ class RemoteExecutionTests(unittest.TestCase):
             azure,
             host,
             "scope-dev-data01",
-            "scope-dev-scope-range-rg",
+            "scope-dev-goat-rg",
             quick=False,
         )
 
@@ -400,7 +437,7 @@ class InfrastructureTests(unittest.TestCase):
             InfrastructureAzure(self.manifest),
             self.manifest,
             self.manifest["default_environment"],
-            "scope-dev-scope-range-rg",
+            "scope-dev-goat-rg",
         )
 
         nat_check = next(
@@ -416,7 +453,7 @@ class InfrastructureTests(unittest.TestCase):
             InfrastructureAzure(self.manifest, wrong_nat=True),
             self.manifest,
             self.manifest["default_environment"],
-            "scope-dev-scope-range-rg",
+            "scope-dev-goat-rg",
         )
 
         nat_check = next(
@@ -431,7 +468,7 @@ class InfrastructureTests(unittest.TestCase):
             InfrastructureAzure(self.manifest, missing_nat_public_ip=True),
             self.manifest,
             self.manifest["default_environment"],
-            "scope-dev-scope-range-rg",
+            "scope-dev-goat-rg",
         )
 
         nat_check = next(
@@ -455,7 +492,7 @@ class ReportTests(unittest.TestCase):
         report = validator.build_report(
             checks,
             "scope-dev",
-            "scope-dev-scope-range-rg",
+            "scope-dev-goat-rg",
             "subscription-id",
             quick=True,
         )

@@ -86,8 +86,11 @@ environments:
 ```
 
 The shared SSH key is generated during infrastructure apply at
-`~/.dreadgoad/keys/azure-scope-dev-scope-range-admin`. Kali is mandatory because
-it is both the agent workstation and the private-network provisioning hop.
+`~/.dreadgoad/keys/azure-scope-dev-goat-admin`. Azure resources use the
+`<environment>-goat-*` prefix, including the `scope-dev-goat-rg` resource group.
+New service hosts use the `goatadmin` infrastructure account. Kali is mandatory
+because it is both the agent workstation and the private-network provisioning
+hop.
 
 ## Web console
 
@@ -225,3 +228,7 @@ outside both the repository and the disposable Terragrunt cache. The CLI keeps
 that tree private and automatically migrates the checkout-local state path used
 by early SCOPE-RANGE builds. Back up this directory while a range is live: it is
 the record the normal CLI destroy path needs to clean up the deployment.
+The state directory retains its original internal name for compatibility.
+Existing environments whose `env.hcl` uses the former `scope-range` resource
+prefix and SSH key name remain supported; newly created environments use
+`goat`.

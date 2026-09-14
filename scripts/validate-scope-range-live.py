@@ -25,7 +25,13 @@ from typing import Any, Sequence
 
 SCRIPT_DIR = pathlib.Path(__file__).resolve().parent
 DEFAULT_MANIFEST = SCRIPT_DIR.parent / "ad" / "SCOPE-RANGE" / "data" / "validation.json"
+DEFAULT_INFRA_ROOT = SCRIPT_DIR.parent / "infra" / "azure" / "scope-range-deployment"
 ENV_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
+DEPLOYMENT_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
+DEPLOYMENT_HCL_PATTERN = re.compile(
+    r'^\s*deployment_name\s*=\s*"([a-zA-Z0-9][a-zA-Z0-9_-]*)"\s*(?:#.*)?$',
+    re.MULTILINE,
+)
 REMOTE_RESULT_PREFIX = "SCOPE_RESULT "
 AZURE_TIMEOUT_SECONDS = 600
 REMOTE_BATCH_SIZE = 5
@@ -169,7 +175,7 @@ def redact_azure_command(command: Sequence[str]) -> list[str]:
 
 
 def validate_name_template(template: object, label: str) -> str:
-    """Require a format template whose only replacement field is ``env``."""
+    """Require a name template parameterized by environment and deployment."""
     if not isinstance(template, str):
         raise ValueError(f"{label} must be a string")
     try:
@@ -177,17 +183,19 @@ def validate_name_template(template: object, label: str) -> str:
     except ValueError as exc:
         raise ValueError(f"{label} is invalid: {template!r}") from exc
     fields = [item for item in parsed if item[1] is not None]
-    if not fields or any(
-        field_name != "env" or format_spec or conversion
+    if {field_name for _, field_name, _, _ in fields} != {"env", "deployment"} or any(
+        field_name not in {"env", "deployment"} or format_spec or conversion
         for _, field_name, format_spec, conversion in fields
     ):
-        raise ValueError(f"{label} must contain only the env replacement field")
+        raise ValueError(
+            f"{label} must contain only env and deployment replacement fields"
+        )
     try:
-        rendered = template.format(env="scope-validation")
+        rendered = template.format(env="scope-validation", deployment="goat")
     except (AttributeError, IndexError, KeyError, ValueError) as exc:
         raise ValueError(f"{label} is invalid: {template!r}") from exc
-    if "scope-validation" not in rendered:
-        raise ValueError(f"{label} must include the env replacement field")
+    if "scope-validation" not in rendered or "goat" not in rendered:
+        raise ValueError(f"{label} must include env and deployment fields")
     return template
 
 
@@ -209,6 +217,11 @@ def load_manifest(path: pathlib.Path) -> dict[str, Any]:
         default_environment
     ):
         raise ValueError("manifest must contain a valid default_environment")
+    deployment_name = manifest.get("deployment_name")
+    if not isinstance(deployment_name, str) or not DEPLOYMENT_NAME_PATTERN.fullmatch(
+        deployment_name
+    ):
+        raise ValueError("manifest must contain a valid deployment_name")
     validate_name_template(
         manifest.get("resource_group_template"), "manifest resource_group_template"
     )
@@ -286,10 +299,25 @@ def load_manifest(path: pathlib.Path) -> dict[str, Any]:
     return manifest
 
 
-def render_template(template: str, env: str) -> str:
-    """Render a manifest name template with only the validated environment."""
+def resolve_deployment_name(
+    manifest: dict[str, Any], env: str, infra_root: pathlib.Path = DEFAULT_INFRA_ROOT
+) -> str:
+    """Resolve the resource prefix while retaining legacy environment support."""
+    env_file = infra_root / env / "env.hcl"
     try:
-        return template.format(env=env)
+        content = env_file.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return manifest["deployment_name"]
+    matches = DEPLOYMENT_HCL_PATTERN.findall(content)
+    if len(matches) != 1:
+        raise ValueError(f"{env_file} must define exactly one deployment_name")
+    return matches[0]
+
+
+def render_template(template: str, env: str, deployment: str = "goat") -> str:
+    """Render a validated manifest name template."""
+    try:
+        return template.format(env=env, deployment=deployment)
     except (AttributeError, IndexError, KeyError, ValueError) as exc:
         raise ValueError(f"invalid manifest template {template!r}") from exc
 
@@ -308,6 +336,7 @@ def validate_infrastructure(
     manifest: dict[str, Any],
     env: str,
     resource_group: str,
+    deployment: str = "goat",
     health: bool = False,
 ) -> tuple[list[CheckResult], set[str]]:
     """Validate Azure topology and return the VM names eligible for remote checks."""
@@ -366,7 +395,8 @@ def validate_infrastructure(
         if isinstance(vm_name, str) and vm_name:
             vm_by_name[vm_name] = vm
     expected_names = {
-        render_template(host["vm_name_template"], env) for host in manifest["hosts"]
+        render_template(host["vm_name_template"], env, deployment)
+        for host in manifest["hosts"]
     }
     actual_names = set(vm_by_name)
     unexpected = sorted(actual_names - expected_names)
@@ -387,7 +417,7 @@ def validate_infrastructure(
 
     for host in manifest["hosts"]:
         host_id = host["id"]
-        vm_name = render_template(host["vm_name_template"], env)
+        vm_name = render_template(host["vm_name_template"], env, deployment)
         vm = vm_by_name.get(vm_name)
         if vm is None:
             results.append(
@@ -466,7 +496,7 @@ def validate_infrastructure(
         return results, runnable
 
     network = manifest["network"]
-    vnet_name = render_template(network["vnet_name_template"], env)
+    vnet_name = render_template(network["vnet_name_template"], env, deployment)
     workload_nat_gateway = ""
     try:
         vnet = azure.run_json(
@@ -509,7 +539,7 @@ def validate_infrastructure(
             )
         )
         workload_subnet_name = render_template(
-            network["workload_subnet_name_template"], env
+            network["workload_subnet_name_template"], env, deployment
         )
         workload_subnet = next(
             (
@@ -525,9 +555,11 @@ def validate_infrastructure(
     except AzureCommandError as exc:
         results.append(result("FAIL", "Network", "VNet configuration", str(exc)))
 
-    nat_gateway_name = render_template(network["nat_gateway_name_template"], env)
+    nat_gateway_name = render_template(
+        network["nat_gateway_name_template"], env, deployment
+    )
     expected_nat_public_ip = render_template(
-        network["nat_public_ip_name_template"], env
+        network["nat_public_ip_name_template"], env, deployment
     )
     try:
         nat_gateway = azure.run_json(
@@ -578,7 +610,7 @@ def validate_infrastructure(
         )
         actual_pip_names = {item.get("name") for item in public_ips if item.get("name")}
         expected_pip_names = {
-            render_template(template, env)
+            render_template(template, env, deployment)
             for template in network["expected_public_ip_names"]
         }
         results.append(
@@ -592,7 +624,7 @@ def validate_infrastructure(
     except AzureCommandError as exc:
         results.append(result("FAIL", "Network", "enumerate public IPs", str(exc)))
 
-    bastion_name = f"{env}-scope-range-bastion"
+    bastion_name = f"{env}-{deployment}-bastion"
     try:
         bastion = azure.run_json(
             [
@@ -791,6 +823,7 @@ def run_remote_checks(
     resource_group: str,
     runnable: set[str],
     quick: bool,
+    deployment: str = "goat",
     health: bool = False,
 ) -> list[CheckResult]:
     """Run host validation concurrently and return results in manifest order."""
@@ -800,7 +833,7 @@ def run_remote_checks(
         max_workers=len(manifest["hosts"])
     ) as executor:
         for host in manifest["hosts"]:
-            vm_name = render_template(host["vm_name_template"], env)
+            vm_name = render_template(host["vm_name_template"], env, deployment)
             if vm_name not in runnable:
                 by_host[host["id"]] = [
                     result(
@@ -904,6 +937,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--env", default=os.environ.get("ENV"), help="DreadGOAD environment"
     )
+    parser.add_argument(
+        "--deployment-name",
+        default=None,
+        help="Azure resource-name component (normally read from the environment HCL)",
+    )
     parser.add_argument("--resource-group", default=os.environ.get("RESOURCE_GROUP"))
     parser.add_argument(
         "--subscription", default=os.environ.get("AZURE_SUBSCRIPTION_ID")
@@ -949,8 +987,22 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not ENV_NAME_PATTERN.fullmatch(env):
         print(f"error: invalid environment name: {env!r}", file=sys.stderr)
         return 2
+    if args.deployment_name is not None:
+        if not DEPLOYMENT_NAME_PATTERN.fullmatch(args.deployment_name):
+            print(
+                f"error: invalid deployment name: {args.deployment_name!r}",
+                file=sys.stderr,
+            )
+            return 2
+        deployment = args.deployment_name
+    else:
+        try:
+            deployment = resolve_deployment_name(manifest, env)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
     resource_group = args.resource_group or render_template(
-        manifest["resource_group_template"], env
+        manifest["resource_group_template"], env, deployment
     )
     if shutil.which(args.az_bin) is None:
         print(f"error: Azure CLI ({args.az_bin}) is required", file=sys.stderr)
@@ -972,10 +1024,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         print()
 
     infrastructure, runnable = validate_infrastructure(
-        azure, manifest, env, resource_group, health=args.health
+        azure, manifest, env, resource_group, deployment, health=args.health
     )
     remote = run_remote_checks(
-        azure, manifest, env, resource_group, runnable, args.quick, args.health
+        azure,
+        manifest,
+        env,
+        resource_group,
+        runnable,
+        args.quick,
+        deployment,
+        args.health,
     )
     results = [*infrastructure, *remote]
     color = sys.stdout.isatty() and "NO_COLOR" not in os.environ

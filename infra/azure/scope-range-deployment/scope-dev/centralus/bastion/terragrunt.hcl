@@ -9,10 +9,10 @@ terraform {
 dependency "network" {
   config_path = "../network"
   mock_outputs = {
-    resource_group_name = "scope-dev-scope-range-rg"
+    resource_group_name = "scope-dev-goat-rg"
     location            = "centralus"
-    vnet_id             = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/scope-dev-scope-range-rg/providers/Microsoft.Network/virtualNetworks/scope-dev-scope-range-vnet"
-    vnet_name           = "scope-dev-scope-range-vnet"
+    vnet_id             = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/scope-dev-goat-rg/providers/Microsoft.Network/virtualNetworks/scope-dev-goat-vnet"
+    vnet_name           = "scope-dev-goat-vnet"
   }
   mock_outputs_allowed_terraform_commands = ["init", "validate", "plan"]
 }

@@ -930,9 +930,12 @@ func startAzureSOCKSTunnel(ctx context.Context, cfg *config.Config) (closableTun
 	if cfg.ResolvedLab() == "SCOPE-RANGE" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return nil, nil, fmt.Errorf("resolve home directory for scope-range SSH key: %w", err)
+			return nil, nil, fmt.Errorf("resolve home directory for GOAT SSH key: %w", err)
 		}
-		keyPath := filepath.Join(home, ".dreadgoad", "keys", fmt.Sprintf("azure-%s-scope-range-admin", cfg.Env))
+		keyPath, err := resolveGOATOperatorKeyPath(home, cfg.Env)
+		if err != nil {
+			return nil, nil, err
+		}
 		fmt.Println("Opening Azure Bastion → Kali → SOCKS5 chain for Linux range provisioning...")
 		tunnel, err := azure.StartScopeProvisionTunnel(ctx, azProv.Client(), cfg.Env, keyPath)
 		if err != nil {
@@ -958,6 +961,22 @@ func startAzureSOCKSTunnel(ctx context.Context, cfg *config.Config) (closableTun
 		"ansible_port":                 "5985",
 	}
 	return tunnel, vars, nil
+}
+
+func resolveGOATOperatorKeyPath(home, env string) (string, error) {
+	keysDir := filepath.Join(home, ".dreadgoad", "keys")
+	goatPath := filepath.Join(keysDir, fmt.Sprintf("azure-%s-goat-admin", env))
+	legacyPath := filepath.Join(keysDir, fmt.Sprintf("azure-%s-scope-range-admin", env))
+	for _, candidate := range []string{goatPath, legacyPath} {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		} else if !os.IsNotExist(err) {
+			return "", fmt.Errorf("inspect GOAT operator key %s: %w", candidate, err)
+		}
+	}
+	// Return the current convention so the downstream error tells operators
+	// where a newly scaffolded environment should have created its key.
+	return goatPath, nil
 }
 
 func scopeProvisionVars(keyPath, socksAddr string) map[string]string {

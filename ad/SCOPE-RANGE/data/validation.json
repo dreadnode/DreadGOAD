@@ -3,24 +3,25 @@
   "lab": "SCOPE-RANGE",
   "provider": "azure",
   "default_environment": "scope-dev",
-  "resource_group_template": "{env}-scope-range-rg",
+  "deployment_name": "goat",
+  "resource_group_template": "{env}-{deployment}-rg",
   "network": {
-    "vnet_name_template": "{env}-scope-range-vnet",
-    "workload_subnet_name_template": "{env}-scope-range-private",
-    "nat_gateway_name_template": "{env}-scope-range-nat",
-    "nat_public_ip_name_template": "{env}-scope-range-nat-pip",
+    "vnet_name_template": "{env}-{deployment}-vnet",
+    "workload_subnet_name_template": "{env}-{deployment}-private",
+    "nat_gateway_name_template": "{env}-{deployment}-nat",
+    "nat_public_ip_name_template": "{env}-{deployment}-nat-pip",
     "vnet_cidr": "10.50.0.0/16",
     "workload_subnet": "10.50.10.0/24",
     "bastion_subnet": "10.50.20.0/26",
     "expected_public_ip_names": [
-      "{env}-scope-range-bastion-pip",
-      "{env}-scope-range-nat-pip"
+      "{env}-{deployment}-bastion-pip",
+      "{env}-{deployment}-nat-pip"
     ]
   },
   "hosts": [
     {
       "id": "kali01",
-      "vm_name_template": "{env}-scope-range-kali01-vm",
+      "vm_name_template": "{env}-{deployment}-kali01-vm",
       "private_ip": "10.50.10.10",
       "size": "Standard_D4s_v3",
       "tags": {
@@ -108,7 +109,7 @@
     },
     {
       "id": "web01",
-      "vm_name_template": "{env}-scope-range-web01-vm",
+      "vm_name_template": "{env}-{deployment}-web01-vm",
       "private_ip": "10.50.10.20",
       "size": "Standard_D4s_v3",
       "tags": {
@@ -208,7 +209,7 @@
     },
     {
       "id": "data01",
-      "vm_name_template": "{env}-scope-range-data01-vm",
+      "vm_name_template": "{env}-{deployment}-data01-vm",
       "private_ip": "10.50.10.30",
       "size": "Standard_D8s_v3",
       "tags": {
@@ -294,7 +295,7 @@
     },
     {
       "id": "dev01",
-      "vm_name_template": "{env}-scope-range-dev01-vm",
+      "vm_name_template": "{env}-{deployment}-dev01-vm",
       "private_ip": "10.50.10.40",
       "size": "Standard_D4s_v3",
       "tags": {
@@ -411,7 +412,7 @@
     },
     {
       "id": "storage01",
-      "vm_name_template": "{env}-scope-range-storage01-vm",
+      "vm_name_template": "{env}-{deployment}-storage01-vm",
       "private_ip": "10.50.10.50",
       "size": "Standard_D4s_v3",
       "tags": {
@@ -516,7 +517,7 @@
     },
     {
       "id": "services01",
-      "vm_name_template": "{env}-scope-range-services01-vm",
+      "vm_name_template": "{env}-{deployment}-services01-vm",
       "private_ip": "10.50.10.60",
       "size": "Standard_D4s_v3",
       "tags": {

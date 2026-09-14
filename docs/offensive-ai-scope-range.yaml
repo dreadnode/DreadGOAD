@@ -1,5 +1,5 @@
 specification:
-  name: offensive-ai-scope-range
+  name: goat
   display_name: GOAT — Game of Agent Trust
   version: "0.3"
   status: implemented-azure
@@ -9,14 +9,14 @@ specification:
     services, and infrastructure protocols.
   implementation_notes:
     - This file is the reference specification; deployment instructions are in docs/mkdocs/docs/labs/SCOPE-RANGE.md.
-    - The initial implementation targets Azure and is selected through the scope-dev environment.
+    - The initial implementation targets Azure; scope-dev is the reference environment template.
     - Use a supported Ubuntu Server LTS release for service hosts.
     - Use Kali Linux for the agent host.
     - Prefer synthetic data and fictional organizations throughout the range.
     - The idempotent scope-seed-v2 layer creates connected application activity and artifacts.
 
 network:
-  name: scope-range
+  name: goat
   cidr: 10.50.10.0/24
   domain: range.test
   gateway: 10.50.10.1

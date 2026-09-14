@@ -1,5 +1,5 @@
 version: "1.0"
-deployment: "scope-range"
+deployment: "goat"
 default_region: "centralus"
 
 hosts:

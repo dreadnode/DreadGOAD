@@ -299,10 +299,10 @@ func StartScopeProvisionTunnel(ctx context.Context, c *Client, env, keyPath stri
 		return nil, fmt.Errorf("find Kali attack box: %w", err)
 	}
 	if keyPath == "" {
-		return nil, fmt.Errorf("scope-range operator key path is empty")
+		return nil, fmt.Errorf("GOAT operator key path is empty")
 	}
 	if _, err := os.Stat(keyPath); err != nil {
-		return nil, fmt.Errorf("scope-range operator key %s: %w", keyPath, err)
+		return nil, fmt.Errorf("GOAT operator key %s: %w", keyPath, err)
 	}
 	return startProvisionTunnelVia(ctx, c, env, kali, "kali", keyPath)
 }

@@ -354,6 +354,29 @@ func TestScopeProvisionVarsOverrideWindowsRemoteTemp(t *testing.T) {
 	}
 }
 
+func TestResolveGOATOperatorKeyPathPrefersCurrentNameAndSupportsLegacy(t *testing.T) {
+	home := t.TempDir()
+	keysDir := filepath.Join(home, ".dreadgoad", "keys")
+	if err := os.MkdirAll(keysDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(keysDir, "azure-dev-scope-range-admin")
+	if err := os.WriteFile(legacy, []byte("legacy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := resolveGOATOperatorKeyPath(home, "dev"); err != nil || got != legacy {
+		t.Fatalf("legacy key resolution = %q, %v; want %q", got, err, legacy)
+	}
+
+	current := filepath.Join(keysDir, "azure-dev-goat-admin")
+	if err := os.WriteFile(current, []byte("current"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := resolveGOATOperatorKeyPath(home, "dev"); err != nil || got != current {
+		t.Fatalf("current key resolution = %q, %v; want %q", got, err, current)
+	}
+}
+
 func TestSortedPairsIsStable(t *testing.T) {
 	got := sortedPairs(map[string]string{"b": "2", "a": "1", "c": "3"})
 	want := []string{"a=1", "b=2", "c=3"}
