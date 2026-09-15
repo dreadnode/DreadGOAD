@@ -56,9 +56,9 @@ Key features:
   — used to land warpgate-built attacker images (e.g. `ares-golden-azure`)
   without re-provisioning toolchains at boot
 - NSG locks SSH ingress to the AzureBastionSubnet only
-- cloud-init bootstraps `ansible-core`, `pywinrm`, `pypsrp`, and the GOAD
-  Galaxy collections into `/opt/ansible-venv` (skip-able when the gallery
-  image already ships them)
+- cloud-init bootstraps `ansible-core`, `pywinrm`, `pypsrp`, SOCKS support, and
+  the GOAD Galaxy collections into `/opt/ansible-venv` (skip-able when the
+  gallery image already ships them)
 - SSH key authentication only — no password auth
 - Terragrunt-compatible structure
 

@@ -1,0 +1,76 @@
+package doctor
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"unicode/utf8"
+)
+
+func TestCheckPyPSRPUsesAnsiblePython(t *testing.T) {
+	binDir := filepath.Join(t.TempDir(), "bin (with spaces)")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pythonPath := filepath.Join(binDir, "ansible-python")
+	pythonScript := "#!/bin/sh\nif [ \"$1\" != \"-c\" ] || [ \"$2\" != \"import pypsrp; import socks\" ]; then exit 2; fi\n"
+	if err := os.WriteFile(pythonPath, []byte(pythonScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ansibleScript := "#!/bin/sh\nprintf '%s\\n' 'ansible-playbook [core 2.20.8]' " +
+		"'  python version = 3.14.7 (main, build) [Clang] (" + pythonPath + ")'\n"
+	if err := os.WriteFile(filepath.Join(binDir, "ansible-playbook"), []byte(ansibleScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+
+	result := checkPyPSRP()
+	if result.Status != "pass" {
+		t.Fatalf("status = %q, want pass; message: %s", result.Status, result.Message)
+	}
+	if !strings.Contains(result.Message, pythonPath) {
+		t.Errorf("message = %q, want Ansible Python path %q", result.Message, pythonPath)
+	}
+}
+
+func TestAnsiblePythonExecutableRejectsUnparseableOutput(t *testing.T) {
+	binDir := t.TempDir()
+	script := "#!/bin/sh\nprintf '%s\\n' 'ansible-playbook version unavailable'\n"
+	if err := os.WriteFile(filepath.Join(binDir, "ansible-playbook"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+
+	_, err := ansiblePythonExecutable()
+	if err == nil || !strings.Contains(err.Error(), "python executable not found") {
+		t.Fatalf("error = %v, want missing Python executable error", err)
+	}
+}
+
+func TestAnsiblePythonExecutableReportsBoundedCommandFailure(t *testing.T) {
+	binDir := t.TempDir()
+	visibleDetail := "failed to load Ansible configuration"
+	truncatedDetail := strings.Repeat("界", commandErrorOutputLimit+1)
+	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s' '%s%s' >&2\nexit 1\n", visibleDetail, truncatedDetail)
+	if err := os.WriteFile(filepath.Join(binDir, "ansible-playbook"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir)
+
+	_, err := ansiblePythonExecutable()
+	if err == nil {
+		t.Fatal("ansiblePythonExecutable() error = nil, want command failure")
+	}
+	message := err.Error()
+	if !strings.Contains(message, visibleDetail) {
+		t.Errorf("error = %q, want command output %q", message, visibleDetail)
+	}
+	if !strings.HasSuffix(message, "...") {
+		t.Errorf("error = %q, want truncated output", message)
+	}
+	if !utf8.ValidString(message) {
+		t.Error("error contains invalid UTF-8 after truncation")
+	}
+}

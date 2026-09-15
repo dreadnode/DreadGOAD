@@ -466,3 +466,43 @@ func TestCreateAzureEnvHCLSetsGOADInstanceSizes(t *testing.T) {
 		t.Errorf("D4s_v3 count = %d, want 1", got)
 	}
 }
+
+func TestCopyInfrastructureFiltersHostUnitsButPreservesSharedAssets(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "source")
+	dst := filepath.Join(t.TempDir(), "destination")
+	files := map[string]string{
+		"goad/dc01/terragrunt.hcl":                "dc01",
+		"goad/dc02/terragrunt.hcl":                "dc02",
+		"goad/templates/bootstrap.ps1.tpl":        "bootstrap",
+		"goad/support/scripts/configure-host.ps1": "support",
+		"network/terragrunt.hcl":                  "network",
+	}
+	for name, content := range files {
+		path := filepath.Join(src, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("create source directory for %s: %v", name, err)
+		}
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write source file %s: %v", name, err)
+		}
+	}
+
+	if err := copyInfrastructure(src, dst, map[string]bool{"dc01": true}); err != nil {
+		t.Fatalf("copyInfrastructure() error = %v", err)
+	}
+
+	for _, name := range []string{
+		"goad/dc01/terragrunt.hcl",
+		"goad/templates/bootstrap.ps1.tpl",
+		"goad/support/scripts/configure-host.ps1",
+		"network/terragrunt.hcl",
+	} {
+		if _, err := os.Stat(filepath.Join(dst, filepath.FromSlash(name))); err != nil {
+			t.Errorf("expected %s to be copied: %v", name, err)
+		}
+	}
+
+	if _, err := os.Stat(filepath.Join(dst, "goad", "dc02")); !os.IsNotExist(err) {
+		t.Errorf("excluded host directory exists or could not be checked: %v", err)
+	}
+}
