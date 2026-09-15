@@ -2,6 +2,7 @@ package variant
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -223,6 +224,9 @@ func TestGeneratorEndToEnd(t *testing.T) {
 	if err := gen.Run(); err != nil {
 		t.Fatalf("generator failed: %v", err)
 	}
+	if !gen.CreatedTarget() {
+		t.Fatal("successful generator did not report ownership of its target")
+	}
 
 	if _, err := os.Stat(filepath.Join(targetDir, "data", "config.json")); err != nil {
 		t.Fatal("config.json not created in target")
@@ -276,9 +280,13 @@ func TestGeneratorFailureLeavesNoCompletionMarker(t *testing.T) {
 		t.Skipf("create broken symlink fixture: %v", err)
 	}
 
-	err := NewGenerator(sourceDir, targetDir, "test-failure").Run()
+	gen := NewGenerator(sourceDir, targetDir, "test-failure")
+	err := gen.Run()
 	if err == nil || !strings.Contains(err.Error(), "process broken.bin") {
 		t.Fatalf("Run() error = %v, want target write failure", err)
+	}
+	if !gen.CreatedTarget() {
+		t.Fatal("generator did not report ownership of its partial target")
 	}
 	complete, checkErr := IsComplete(targetDir)
 	if checkErr != nil {
@@ -345,9 +353,13 @@ func TestGeneratorRejectsExistingTargetWithoutModification(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := NewGenerator(sourceDir, targetDir, "test-existing-target").Run()
+	gen := NewGenerator(sourceDir, targetDir, "test-existing-target")
+	err := gen.Run()
 	if err == nil || !strings.Contains(err.Error(), "variant target already exists") {
 		t.Fatalf("Run() error = %v, want existing-target rejection", err)
+	}
+	if gen.CreatedTarget() {
+		t.Fatal("generator claimed ownership of a pre-existing target")
 	}
 	data, readErr := os.ReadFile(sentinel)
 	if readErr != nil || string(data) != "unchanged" {
@@ -697,5 +709,48 @@ func TestFirstnameCollisionNoOverwrite(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestServiceRangeRejectedBeforeWritingTarget(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "service-range")
+	targetDir := filepath.Join(tmpDir, "generated")
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "schema_version: 1\nkind: service-range\n"
+	if err := os.WriteFile(filepath.Join(sourceDir, "range.yml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := NewGenerator(sourceDir, targetDir, "unsupported").Run()
+	if err == nil || !strings.Contains(err.Error(), "variants are only supported for active-directory ranges") {
+		t.Fatalf("Run() error = %v, want unsupported range-kind error", err)
+	}
+	if _, statErr := os.Stat(targetDir); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("unsupported generator created target %s: %v", targetDir, statErr)
+	}
+}
+
+func TestValidateSourceAllowsActiveDirectoryAndLegacyLabs(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		manifest string
+	}{
+		{name: "explicit active-directory", manifest: "schema_version: 1\nkind: active-directory\n"},
+		{name: "legacy manifest absent"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			sourceDir := t.TempDir()
+			if tt.manifest != "" {
+				if err := os.WriteFile(filepath.Join(sourceDir, "range.yml"), []byte(tt.manifest), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := ValidateSource(sourceDir); err != nil {
+				t.Fatalf("ValidateSource() rejected supported lab: %v", err)
+			}
+		})
 	}
 }

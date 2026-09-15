@@ -29,19 +29,21 @@ function formatTokens(n: number): string {
 const HEALTH_COLOR: Record<string, string> = {
   OK: 'var(--dn-success)',
   FAIL: 'var(--dn-error)',
+  WARN: 'var(--dn-warning)',
   SKIP: 'var(--dn-text-muted)',
 }
 
 function HealthReport({ ev }: { ev: HealthReportEvent }) {
   const checks = ev.checks ?? []
   const failed = ev.failed ?? 0
-  const summaryColor = failed > 0 ? 'var(--dn-error)' : 'var(--dn-success)'
+  const warned = ev.warned ?? 0
+  const summaryColor = failed > 0 ? 'var(--dn-error)' : warned > 0 ? 'var(--dn-warning)' : 'var(--dn-success)'
   return (
     <div style={{ marginBottom: 8 }}>
       <div style={{ marginBottom: 4 }}>
         <Badge text="HEALTH" color="var(--dg-interactive)" />
         <span style={{ color: summaryColor, fontSize: 12 }}>
-          {ev.passed ?? 0} passed · {failed} failed · {ev.skipped ?? 0} skipped
+          {ev.passed ?? 0} passed · {failed} failed · {warned} warned · {ev.skipped ?? 0} skipped
         </span>
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'auto auto 1fr', gap: '2px 10px', fontSize: 11, marginLeft: 12 }}>

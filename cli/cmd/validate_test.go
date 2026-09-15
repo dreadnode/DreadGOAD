@@ -1,10 +1,20 @@
 package cmd
 
 import (
+	"os"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestValidationWarningWriterKeepsJSONStdoutClean(t *testing.T) {
+	if got := validationWarningWriter(true); got != os.Stderr {
+		t.Fatalf("validationWarningWriter(true) = %v, want stderr", got)
+	}
+	if got := validationWarningWriter(false); got != os.Stdout {
+		t.Fatalf("validationWarningWriter(false) = %v, want stdout", got)
+	}
+}
 
 func TestParsePollInterval(t *testing.T) {
 	tests := []struct {

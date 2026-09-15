@@ -43,6 +43,7 @@ def test_argv_injects_config_and_env() -> None:
 def test_argv_multiword_and_flag_verbs() -> None:
     assert _argv("/reset")[5:] == ["lab", "reset"]
     assert _argv("/instances")[5:] == ["lab", "status", "--json"]
+    assert _argv("/validate")[5:] == ["validate", "--json"]
     # /scrub carries --apply by default; see test_scrub_applies_by_default.
     assert _argv("/scrub")[5:] == ["score", "reset", "--apply"]
     print("PASS test_argv_multiword_and_flag_verbs")
@@ -164,6 +165,7 @@ def test_dispatch_and_agent_commands() -> None:
     assert commands.REGISTRY["/up"].dispatch == "agent"
     assert commands.REGISTRY["/variant"].dispatch == "agent"
     assert commands.REGISTRY["/instances"].dispatch == "direct"
+    assert commands.REGISTRY["/status"].dispatch == "composite"
     assert commands.REGISTRY["/destroy"].dispatch == "direct"
     # The agent-dispatch (expand-to-prompt) set = the mutating/arg-flexible ones.
     agent_dispatch = {n for n, c in commands.REGISTRY.items() if c.dispatch == "agent"}
@@ -179,8 +181,6 @@ def test_dispatch_and_agent_commands() -> None:
         "/exec",
         # /restart needs a hostname pulled out of the operator's phrasing.
         "/restart",
-        # /status runs /instances then /health via the agent in one turn.
-        "/status",
     }, agent_dispatch
     # Only concrete CLI commands are tool-runnable. /login opens an interactive
     # browser flow; /status is a composite prompt expanded to two concrete reads.
@@ -195,9 +195,9 @@ def test_dispatch_and_agent_commands() -> None:
         "/status has no CLI verb and must be expanded before the tool call"
     )
     for name, command in commands.REGISTRY.items():
-        if command.dispatch == "agent" and not command.verb:
+        if command.dispatch == "composite":
             assert command.agent_commands, (
-                f"composite agent command {name} must declare its tool commands"
+                f"composite command {name} must declare its child commands"
             )
     print("PASS test_dispatch_and_agent_commands")
 
@@ -214,12 +214,6 @@ def test_expand_command_prompt() -> None:
         "/provision", []
     )
 
-    status = commands.expand_command_prompt("/status", [])
-    assert "command='/instances' with args=[]" in status, status
-    assert "command='/health' with args=[]" in status, status
-    assert status.index("command='/instances'") < status.index("command='/health'")
-    assert "Do NOT call command='/status'" in status, status
-    assert "run exactly these steps in order" in status, status
     print("PASS test_expand_command_prompt")
 
 
@@ -545,7 +539,7 @@ def test_anchor_cannot_be_overridden_by_extra_args() -> None:
 
     # The scope detector itself must not confuse a longer flag with --config.
     # /exec's separate allowlist still rejects --configure as unsupported.
-    assert commands._scope_override_flag("--configure") is None
+    assert commands._find_override_flag("--configure") is None
     assert _argv("/scrub", ["--purge-ad"])[5:] == [
         "score",
         "reset",
@@ -1232,6 +1226,48 @@ async def test_spawn_and_stream_success_returns_result() -> None:
     print("PASS test_spawn_and_stream_success_returns_result")
 
 
+async def test_score_uses_session_answer_key_unless_explicitly_overridden() -> None:
+    from console.backend import command_runner
+
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        session = {
+            "session_dir": str(root),
+            "anchor": {"config_path": "/repo/dreadgoad.yaml", "env": "dev"},
+        }
+        key = root / "artifacts" / "answer_key.json"
+        key.parent.mkdir()
+        key.write_text("{}")
+
+        original_fetch = command_runner.fetch.fetch_report
+
+        async def fake_fetch(_session, _remote, _capture):  # noqa: ANN001, ANN202
+            return 0, str(root / "report.jsonl"), "fetched"
+
+        command_runner.fetch.fetch_report = fake_fetch
+        try:
+            prepared = await command_runner._prepare_extra(
+                session, "s-test", "/score", ["/home/kali/report.jsonl"]
+            )
+            assert prepared == [
+                str(root / "report.jsonl"),
+                "--answer-key",
+                str(key),
+            ]
+
+            explicit = await command_runner._prepare_extra(
+                session,
+                "s-test",
+                "/score",
+                ["/home/kali/report.jsonl", "--answer-key=/repo/custom.json"],
+            )
+            assert explicit[-1] == "--answer-key=/repo/custom.json", explicit
+            assert explicit.count("--answer-key") == 0, explicit
+        finally:
+            command_runner.fetch.fetch_report = original_fetch
+    print("PASS test_score_uses_session_answer_key_unless_explicitly_overridden")
+
+
 def main() -> None:
     test_argv_injects_config_and_env()
     test_argv_multiword_and_flag_verbs()
@@ -1276,6 +1312,7 @@ def main() -> None:
         asyncio.run(test_check_credentials_azure_error_discrimination())
         asyncio.run(test_spawn_and_stream_oserror_returns_not_started())
         asyncio.run(test_spawn_and_stream_success_returns_result())
+        asyncio.run(test_score_uses_session_answer_key_unless_explicitly_overridden())
     else:
         print("SKIP command_runner tests (dreadnode not installed)")
     test_system_prompt_covers_the_registry()

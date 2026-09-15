@@ -36,6 +36,7 @@ const nodeTypes = { host: HostNode }
 const TICK_MS = 30_000
 
 type ViewMode = 'graph' | 'table'
+export const DEFAULT_VIEW_MODE: ViewMode = 'table'
 
 interface HeaderField {
   label: string
@@ -74,7 +75,7 @@ export default function RangeView(
   const [error, setError] = useState<string | null>(null)
   const [connectHost, setConnectHost] = useState<RangeHost | null>(null)
   const [detailNode, setDetailNode] = useState<string | null>(null)
-  const [viewMode, setViewMode] = useState<ViewMode>('graph')
+  const [viewMode, setViewMode] = useState<ViewMode>(DEFAULT_VIEW_MODE)
   const loadRef = useRef<() => void>(() => {})
   const activeSessionRef = useRef(sessionId)
   activeSessionRef.current = sessionId

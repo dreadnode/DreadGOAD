@@ -29,7 +29,7 @@ variable "controller_subnet_cidr" {
   default     = "10.8.3.0/28"
 
   validation {
-    condition     = can(cidrhost(var.controller_subnet_cidr, 0))
+    condition     = can(cidrnetmask(var.controller_subnet_cidr))
     error_message = "controller_subnet_cidr must be a valid IPv4 CIDR block."
   }
 }

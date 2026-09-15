@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -22,13 +23,19 @@ func init() {
 		if err != nil {
 			return nil, err
 		}
-		return &AWSProvider{client: client}, nil
+		return &AWSProvider{
+			client:   client,
+			lab:      opts.Lab,
+			rangeTag: opts.RangeTag,
+		}, nil
 	})
 }
 
 // AWSProvider adapts the existing AWS Client to the Provider interface.
 type AWSProvider struct {
-	client *Client
+	client   *Client
+	lab      string
+	rangeTag string
 }
 
 // Client returns the underlying AWS client for SSM-specific operations
@@ -52,7 +59,7 @@ func (p *AWSProvider) DiscoverInstances(ctx context.Context, env string) ([]prov
 	if err != nil {
 		return nil, err
 	}
-	return toProviderInstances(instances), nil
+	return provider.FilterInstancesByRange(toProviderInstances(instances), p.rangeTag), nil
 }
 
 func (p *AWSProvider) DiscoverAllInstances(ctx context.Context, env string) ([]provider.Instance, error) {
@@ -60,16 +67,21 @@ func (p *AWSProvider) DiscoverAllInstances(ctx context.Context, env string) ([]p
 	if err != nil {
 		return nil, err
 	}
-	return toProviderInstances(instances), nil
+	return provider.FilterInstancesByRange(toProviderInstances(instances), p.rangeTag), nil
 }
 
 func (p *AWSProvider) FindInstanceByHostname(ctx context.Context, env, hostname string) (*provider.Instance, error) {
-	inst, err := p.client.FindInstanceByHostnameAll(ctx, env, hostname)
+	instances, err := p.DiscoverAllInstances(ctx, env)
 	if err != nil {
 		return nil, err
 	}
-	pi := toProviderInstance(*inst)
-	return &pi, nil
+	wanted := strings.ToUpper(hostname)
+	for i := range instances {
+		if strings.Contains(strings.ToUpper(instances[i].Name), wanted) {
+			return &instances[i], nil
+		}
+	}
+	return nil, fmt.Errorf("instance not found for hostname %s in lab %s", hostname, p.lab)
 }
 
 func (p *AWSProvider) StartInstances(ctx context.Context, ids []string) error {
@@ -106,6 +118,31 @@ func (p *AWSProvider) RunCommand(ctx context.Context, instanceID, command string
 // that guarantee rather than assume it — on Azure the two differ.
 func (p *AWSProvider) RunCommandOutOfBand(ctx context.Context, instanceID, command string, timeout time.Duration) (*provider.CommandResult, error) {
 	return p.RunCommand(ctx, instanceID, command, timeout)
+}
+
+// RunCommandOutOfBandOnInstance selects the SSM document from the instance's
+// explicit OS tag. Existing GOAD instances default to PowerShell when the tag
+// is absent, preserving the established Windows behavior.
+func (p *AWSProvider) RunCommandOutOfBandOnInstance(ctx context.Context, instance provider.Instance, command string, timeout time.Duration) (*provider.CommandResult, error) {
+	var result *CommandResult
+	var err error
+	if awsInstanceUsesShell(instance) {
+		result, err = p.client.RunShellCommand(ctx, instance.ID, command, timeout)
+	} else {
+		result, err = p.client.RunPowerShellCommand(ctx, instance.ID, command, timeout)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return provider.CleanResult(&provider.CommandResult{
+		Status: result.Status,
+		Stdout: result.Stdout,
+		Stderr: result.Stderr,
+	}), nil
+}
+
+func awsInstanceUsesShell(instance provider.Instance) bool {
+	return strings.EqualFold(strings.TrimSpace(instance.Tags["OS"]), "Linux")
 }
 
 // OutOfBandChannel implements provider.OutOfBandRunner.
@@ -199,10 +236,12 @@ func (p *AWSProvider) CheckSSMStatus(ctx context.Context, instanceIDs []string) 
 
 // Compile-time interface checks.
 var (
-	_ provider.Provider         = (*AWSProvider)(nil)
-	_ provider.SessionManager   = (*AWSProvider)(nil)
-	_ provider.InteractiveShell = (*AWSProvider)(nil)
-	_ provider.SSMRecovery      = (*AWSProvider)(nil)
+	_ provider.Provider                = (*AWSProvider)(nil)
+	_ provider.OutOfBandRunner         = (*AWSProvider)(nil)
+	_ provider.InstanceOutOfBandRunner = (*AWSProvider)(nil)
+	_ provider.SessionManager          = (*AWSProvider)(nil)
+	_ provider.InteractiveShell        = (*AWSProvider)(nil)
+	_ provider.SSMRecovery             = (*AWSProvider)(nil)
 )
 
 func toProviderInstance(i Instance) provider.Instance {

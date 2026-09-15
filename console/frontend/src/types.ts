@@ -45,6 +45,7 @@ export interface RangeHost {
   cloud_id?: string | null
   cloud_name?: string | null   // provider VM name, e.g. env-dreadgoad-DC01-vm
   key?: string                 // config key / CLI host role, e.g. dc01
+  os?: string | null           // explicit lab metadata; absent on older ranges
   last_checked_at?: string | null
 }
 
@@ -71,7 +72,7 @@ export interface Instance {
 export interface HealthCheck {
   name: string
   host: string
-  status: 'OK' | 'FAIL' | 'SKIP'
+  status: 'OK' | 'FAIL' | 'WARN' | 'SKIP'
   detail: string
 }
 
@@ -175,6 +176,7 @@ export interface HealthReportEvent {
   kind: 'health_report'
   passed: number
   failed: number
+  warned: number
   skipped: number
   checks: HealthCheck[]
 }

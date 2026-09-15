@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -14,6 +15,54 @@ import (
 	"github.com/gruntwork-io/terratest/modules/terraform"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSubnetReplacementLifecycle(t *testing.T) {
+	for _, resource := range []struct {
+		file        string
+		declaration string
+	}{
+		{file: "../main.tf", declaration: `resource "aws_subnet" "public"`},
+		{file: "../main.tf", declaration: `resource "aws_subnet" "private"`},
+		{file: "../main.tf", declaration: `resource "aws_subnet" "pod"`},
+		{file: "../main.tf", declaration: `resource "aws_nat_gateway" "main"`},
+		{file: "../endpoints.tf", declaration: `resource "aws_vpc_endpoint" "endpoints"`},
+	} {
+		raw, err := os.ReadFile(resource.file)
+		require.NoError(t, err)
+		block := terraformResourceBlock(t, string(raw), resource.declaration)
+		require.NotContains(
+			t,
+			block,
+			"create_before_destroy",
+			"%s cannot force create-before-destroy onto a fixed-CIDR subnet",
+			resource.declaration,
+		)
+	}
+}
+
+func terraformResourceBlock(t *testing.T, source, declaration string) string {
+	t.Helper()
+	start := strings.Index(source, declaration)
+	require.NotEqual(t, -1, start, "missing %s", declaration)
+
+	openOffset := strings.Index(source[start:], "{")
+	require.NotEqual(t, -1, openOffset, "missing opening brace for %s", declaration)
+	open := start + openOffset
+	depth := 0
+	for offset, char := range source[open:] {
+		switch char {
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return source[start : open+offset+1]
+			}
+		}
+	}
+	t.Fatalf("missing closing brace for %s", declaration)
+	return ""
+}
 
 const (
 	awsRegion          = "us-east-2"

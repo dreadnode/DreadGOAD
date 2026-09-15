@@ -157,9 +157,14 @@ func buildShellRunner(ctx context.Context, cmd *cobra.Command, cfg *config.Confi
 		if err != nil {
 			return nil, err
 		}
+		rangeTag, err := cfg.ProviderRangeTag()
+		if err != nil {
+			return nil, err
+		}
 		prov, err := provider.New(ctx, provider.NameAWS, provider.ConstructorOpts{
 			Region:     region,
 			AWSProfile: profile,
+			RangeTag:   rangeTag,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("create AWS provider: %w", err)
@@ -222,12 +227,13 @@ func buildAzureRunner(ctx context.Context, cmd *cobra.Command, cfg *config.Confi
 		return nil, fmt.Errorf("no Azure Bastion found for env=%s", cfg.Env)
 	}
 
-	// Discover Kali VM if not explicitly provided.
+	// Discover Kali VM through the range-scoped provider if not explicitly provided.
 	if vmResourceID == "" {
-		kali, err := client.DiscoverKali(ctx, cfg.Env)
+		instances, err := prov.DiscoverInstances(ctx, cfg.Env)
 		if err != nil {
 			return nil, fmt.Errorf("discover kali: %w", err)
 		}
+		kali := provider.FindInstanceByRole(instances, "AttackBox")
 		if kali == nil {
 			return nil, fmt.Errorf("no Kali attack box (Role=AttackBox) found for env=%s", cfg.Env)
 		}

@@ -8,6 +8,7 @@ Create the following structure inside `ad/<lab_name>/`:
 
 ```text
 ad/<lab_name>/
+    range.yml                       # range kind, creation policy, lifecycle hooks
     data/
         config.json                 # JSON containing all the lab information
         inventory                   # global lab inventory file with the VM groups and the main variables
@@ -104,4 +105,59 @@ The `data/inventory_disable_vagrant` inventory is used by the `disable_vagrant.y
 
 ## Lab discovery
 
-The CLI discovers labs automatically by scanning the `ad/` directory. No additional registration step is needed. Run `dreadgoad lab list` to confirm your lab appears. The lab name is derived from the directory name.
+The CLI discovers labs automatically by scanning the `ad/` directory. No
+additional central registration step is needed. The lab name is derived from the
+directory name.
+
+To make a range available in the web console's **Create a new environment**
+workflow, declare the provider scaffolding contract in `range.yml`:
+
+```yaml
+schema_version: 1
+display_name: Example Range
+kind: service-range                 # or active-directory
+variants:
+  supported: false
+inspection:
+  profile: example-range             # registered CLI health/validation profile
+discovery:
+  range_tag: EXAMPLE                  # stable Range tag on cloud resources
+infrastructure:
+  azure:
+    deployment: example-deployment
+    scaffold_profile: template      # complete authored environment template
+    template_environment: example-dev
+    default_region: centralus
+    network:
+      cidr: 10.60.0.0/16
+      editable: false
+lifecycle:
+  session_init: []
+```
+
+The provider must also have `providers/<provider>/inventory`, and the referenced
+template must exist below `infra/`. For the legacy `active-directory` scaffold
+profile, every host in `data/config.json` must have a corresponding Terragrunt
+host module in the reference environment. `dreadgoad lab list --json` only
+advertises provider combinations that pass these structural checks, preventing
+the console from offering a range it can only partially create.
+
+`inspection.profile` names an implementation registered by the CLI; manifests
+cannot provide executable paths. Active Directory ranges may omit it and use
+the legacy AD inspector. Service ranges must select a profile so health and
+validation never silently fall back to AD-specific checks.
+
+`discovery.range_tag` is required for every manifest-backed range. Every cloud instance in
+the range must carry `Range=<range_tag>`; AWS and Azure discovery combine that
+identity with the selected environment so commands cannot cross range
+boundaries. The value is independent of the range's directory name and display
+name, allowing either to change without altering cloud identity.
+
+`template` profiles currently require a fixed private IPv4 `/16` and must not
+set `network.editable: true`. The template owns its subnet layout, so accepting
+an arbitrary CIDR without a range-specific renderer would make the config and
+the copied infrastructure disagree.
+
+Run `dreadgoad lab list --json` to confirm the range appears and inspect its
+`provider_settings`. Then exercise `dreadgoad --config <path> --env <name> env
+create <name>` in a disposable checkout before exposing it to console users.

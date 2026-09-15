@@ -8,15 +8,20 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/dreadnode/dreadgoad/internal/rangeconfig"
 	"go.yaml.in/yaml/v3"
 )
 
 // Lab represents a discovered DreadGOAD lab definition.
 type Lab struct {
-	Name      string   `json:"name"`
-	Path      string   `json:"path"`
-	Providers []string `json:"providers"`
-	Hosts     []string `json:"hosts"`
+	Name             string                              `json:"name"`
+	DisplayName      string                              `json:"display_name"`
+	Path             string                              `json:"path"`
+	Kind             string                              `json:"kind"`
+	Providers        []string                            `json:"providers"`
+	ProviderSettings map[string]rangeconfig.ProviderSpec `json:"provider_settings"`
+	Hosts            []string                            `json:"hosts"`
+	VariantSupported bool                                `json:"variant_supported"`
 }
 
 // labConfig is the minimal structure of ad/<lab>/data/config.json.
@@ -36,49 +41,149 @@ func DiscoverLabs(projectRoot string) ([]Lab, error) {
 	}
 
 	var labs []Lab
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
+	for _, entry := range entries {
+		lab, include, err := discoverLab(projectRoot, adDir, entry)
+		if err != nil {
+			return nil, err
 		}
-		name := e.Name()
-		if name == "TEMPLATE" || strings.Contains(name, "-variant-") {
-			continue
+		if include {
+			labs = append(labs, lab)
 		}
-
-		labPath := filepath.Join(adDir, name)
-		lab := Lab{
-			Name: name,
-			Path: labPath,
-		}
-
-		provDir := filepath.Join(labPath, "providers")
-		if provEntries, err := os.ReadDir(provDir); err == nil {
-			for _, p := range provEntries {
-				if p.IsDir() {
-					lab.Providers = append(lab.Providers, p.Name())
-				}
-			}
-			sort.Strings(lab.Providers)
-		}
-
-		configPath := filepath.Join(labPath, "data", "config.json")
-		if data, err := os.ReadFile(configPath); err == nil {
-			var cfg labConfig
-			if json.Unmarshal(data, &cfg) == nil {
-				for host := range cfg.Lab.Hosts {
-					lab.Hosts = append(lab.Hosts, host)
-				}
-				sort.Strings(lab.Hosts)
-			}
-		}
-
-		labs = append(labs, lab)
 	}
 
 	sort.Slice(labs, func(i, j int) bool {
 		return labs[i].Name < labs[j].Name
 	})
 	return labs, nil
+}
+
+func discoverLab(projectRoot, adDir string, entry os.DirEntry) (Lab, bool, error) {
+	if !entry.IsDir() {
+		return Lab{}, false, nil
+	}
+	name := entry.Name()
+	if name == "TEMPLATE" || strings.Contains(name, "-variant-") {
+		return Lab{}, false, nil
+	}
+
+	labPath := filepath.Join(adDir, name)
+	// Generated variants are not base ranges. Their names are user-defined,
+	// so a filename marker is authoritative while the substring check above
+	// keeps compatibility with old incomplete GOAD-variant-* directories.
+	if fileExists(filepath.Join(labPath, "mapping.json")) ||
+		fileExists(filepath.Join(labPath, ".dreadgoad-variant-complete")) {
+		return Lab{}, false, nil
+	}
+
+	manifest, found, err := rangeconfig.Load(labPath)
+	if err != nil {
+		return Lab{}, false, err
+	}
+	if !found {
+		// Pre-manifest labs are Active Directory ranges for compatibility.
+		manifest = &rangeconfig.Manifest{Kind: rangeconfig.KindActiveDirectory}
+	}
+	lab := Lab{
+		Name:             name,
+		DisplayName:      manifest.EffectiveDisplayName(name),
+		Path:             labPath,
+		Kind:             manifest.Kind,
+		ProviderSettings: make(map[string]rangeconfig.ProviderSpec),
+		VariantSupported: manifest.SupportsVariants(),
+	}
+	discoverLabProviders(labPath, manifest, &lab)
+	configReady := discoverLabHosts(labPath, &lab)
+	filterLabProviderSettings(projectRoot, labPath, configReady, &lab)
+	return lab, true, nil
+}
+
+func discoverLabProviders(labPath string, manifest *rangeconfig.Manifest, lab *Lab) {
+	providerEntries, err := os.ReadDir(filepath.Join(labPath, "providers"))
+	if err != nil {
+		return
+	}
+	for _, entry := range providerEntries {
+		if !entry.IsDir() {
+			continue
+		}
+		provider := entry.Name()
+		lab.Providers = append(lab.Providers, provider)
+		if spec, ok := manifest.Provider(provider); ok {
+			lab.ProviderSettings[provider] = spec
+		}
+	}
+	sort.Strings(lab.Providers)
+}
+
+func discoverLabHosts(labPath string, lab *Lab) bool {
+	data, err := os.ReadFile(filepath.Join(labPath, "data", "config.json"))
+	if err != nil {
+		return false
+	}
+	var cfg labConfig
+	if json.Unmarshal(data, &cfg) != nil {
+		return false
+	}
+	for host := range cfg.Lab.Hosts {
+		lab.Hosts = append(lab.Hosts, host)
+	}
+	sort.Strings(lab.Hosts)
+	return true
+}
+
+func filterLabProviderSettings(projectRoot, labPath string, configReady bool, lab *Lab) {
+	// A provider directory means the authored lab has provider assets; it does
+	// not guarantee the modern env-create template can represent every host.
+	// Only advertise creation metadata when the template is complete.
+	for provider, spec := range lab.ProviderSettings {
+		inventory := filepath.Join(labPath, "providers", provider, "inventory")
+		if !configReady || !fileExists(inventory) || !templateSupportsLab(projectRoot, provider, spec, lab.Hosts) {
+			delete(lab.ProviderSettings, provider)
+		}
+	}
+}
+
+func templateSupportsLab(projectRoot, provider string, spec rangeconfig.ProviderSpec, hosts []string) bool {
+	base := filepath.Join(projectRoot, "infra", spec.Deployment)
+	if provider == "azure" {
+		base = filepath.Join(projectRoot, "infra", "azure", spec.Deployment)
+	}
+	templateRoot := filepath.Join(base, spec.TemplateEnvironment)
+	var regionDir string
+	if spec.DefaultRegion != "" {
+		candidate := filepath.Join(templateRoot, spec.DefaultRegion)
+		if fileExists(filepath.Join(candidate, "region.hcl")) {
+			regionDir = candidate
+		}
+	} else {
+		entries, err := os.ReadDir(templateRoot)
+		if err != nil {
+			return false
+		}
+		for _, entry := range entries {
+			if entry.IsDir() && fileExists(filepath.Join(templateRoot, entry.Name(), "region.hcl")) {
+				regionDir = filepath.Join(templateRoot, entry.Name())
+				break
+			}
+		}
+	}
+	if regionDir == "" || !fileExists(filepath.Join(templateRoot, "env.hcl")) {
+		return false
+	}
+	if spec.ScaffoldProfile != rangeconfig.ProfileActiveDir {
+		return true
+	}
+	for _, host := range hosts {
+		if !fileExists(filepath.Join(regionDir, "goad", host, "terragrunt.hcl")) {
+			return false
+		}
+	}
+	return true
+}
+
+func fileExists(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && !info.IsDir()
 }
 
 // LoadPlaybookConfig reads playbooks.yml and returns lab-specific playbook lists.

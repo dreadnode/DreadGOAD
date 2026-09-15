@@ -104,11 +104,18 @@ Manage deployment environments.
 
 #### `env create`
 
-Create a new deployment environment.
+Create a new deployment environment. The selected environment's `lab` and
+`provider` determine the range-owned scaffolding profile, template environment,
+deployment directory, default region, network policy, and variant support from
+`ad/<lab>/range.yml`.
 
 ```bash
-dreadgoad env create <env-name>
+dreadgoad --config <path> --env <env-name> env create <env-name>
 ```
+
+The web console manages this configuration automatically. Direct CLI users must
+define the environment before scaffolding it. `--reference` overrides the
+range's declared template only for an intentional custom seed.
 
 #### `env list`
 
@@ -129,7 +136,8 @@ Manage DreadGOAD infrastructure via Terragrunt. Operates on the `infra/` directo
 | Flag | Description |
 |------|-------------|
 | `-d, --deployment string` | Deployment name |
-| `--with-kali` | Include the optional Kali attack box (AWS or Azure; plan/apply/destroy) |
+| `--with-kali` | Include the optional Kali attack box (AWS or Azure) |
+| `--with-bastion` | Include Azure Bastion |
 
 #### `infra init`
 
@@ -229,9 +237,9 @@ dreadgoad ami clean-resources [template]
 
 ### provision
 
-Run GOAD provisioning playbooks with retry logic.
+Run the selected lab's provisioning playbooks.
 
-Runs Ansible playbooks to provision Active Directory infrastructure with error-specific retry strategies, SSM session management, and idle timeout monitoring.
+Runs the lab's Ansible playbooks with error-specific retry strategies, provider-specific private network access, and idle timeout monitoring.
 
 | Flag | Description |
 |------|-------------|
@@ -465,16 +473,15 @@ dreadgoad verify-trusts
 
 ### validate
 
-Validate GOAD vulnerability configurations.
+Validate the selected lab.
 
-Checks credentials, Kerberos, SMB, delegation, MSSQL, ADCS, ACLs, trusts, SID filtering, scheduled tasks, LLMNR/NBT-NS, GPO abuse, gMSA, LAPS, and services. When stdout is a TTY, results stream into a live dashboard with a per-category breakdown; pass `--plain` to fall back to line-by-line output.
+Active Directory labs check their intended vulnerability configurations and use a live dashboard when stdout is a TTY. Range manifests select the inspection implementation used for other lab families.
 
 | Flag | Description |
 |------|-------------|
-| `--format string` | Output format: `table` or `json` (default `"table"`) |
 | `--no-fail` | Don't exit with error on failed checks |
 | `--output string` | JSON report output path |
-| `--quick` | Quick validation of critical vulnerabilities only |
+| `--quick` | Run critical validation checks only |
 | `--verbose` | Enable verbose output |
 | `--plain` | Disable the live dashboard; stream results to stdout |
 | `--poll string` | Re-run cadence inside the live dashboard (Go duration like `1m`, `5m`, or `never`; minimum `1m`, default `never`) |

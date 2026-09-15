@@ -6,6 +6,7 @@ Standalone:  python console/backend/tests/test_sessions.py
 from __future__ import annotations
 
 import asyncio
+import copy
 import os
 import pathlib
 import stat
@@ -14,7 +15,7 @@ import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
-from console.backend import configstore, paths  # noqa: E402
+from console.backend import configstore, paths, sessions as sessions_module  # noqa: E402
 from console.backend.db import Database  # noqa: E402
 from console.backend.sessions import SessionService, default_label  # noqa: E402
 
@@ -136,6 +137,75 @@ async def test_delete_session_removes_dir_and_rows() -> None:
             print("PASS test_delete_session_removes_dir_and_rows")
         finally:
             await svc.db.close()
+
+
+async def test_create_session_records_initialization_results() -> None:
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        cfg = tmp / "dreadgoad.yaml"
+        cfg.write_text(_YAML)
+        svc = await _svc(tmp)
+        original = sessions_module.lifecycle.initialize_session
+
+        async def initialized(_session, _root):  # noqa: ANN001, ANN202
+            return [
+                {
+                    "action": "generate_answer_key",
+                    "status": "completed",
+                    "message": "generated 12 scoring objectives",
+                }
+            ]
+
+        sessions_module.lifecycle.initialize_session = initialized
+        try:
+            session = await svc.create_session(str(cfg), "staging")
+            events = await svc.db.get_events(session["id"])
+            init_events = [
+                event
+                for event in events
+                if (event.get("payload") or {}).get("initialization")
+            ]
+            assert len(init_events) == 1, init_events
+            payload = init_events[0]["payload"]
+            assert payload["initialization"]["status"] == "completed", payload
+            assert "generated 12" in payload["content"], payload
+        finally:
+            sessions_module.lifecycle.initialize_session = original
+            await svc.db.close()
+    print("PASS test_create_session_records_initialization_results")
+
+
+async def test_scaffold_retries_initialization_only_for_variants() -> None:
+    """Only a variant is pending until its generated config is scaffolded."""
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        cfg = tmp / "dreadgoad.yaml"
+        cfg.write_text(_YAML)
+        svc = await _svc(tmp)
+        session = await svc.create_session(str(cfg), "staging")
+        initialized: list[str] = []
+        original_scaffold = sessions_module.scaffold.scaffold_env
+        original_initialize = svc._initialize
+
+        async def scaffolded(*_args, **_kwargs):  # noqa: ANN002, ANN003, ANN202
+            return True, "ok"
+
+        async def initialize(current):  # noqa: ANN001, ANN202
+            initialized.append(current["id"])
+
+        sessions_module.scaffold.scaffold_env = scaffolded
+        svc._initialize = initialize  # type: ignore[method-assign]
+        try:
+            await svc._scaffold_for(session, {"variant": False})
+            assert initialized == [], initialized
+
+            await svc._scaffold_for(session, {"variant": True})
+            assert initialized == [session["id"]], initialized
+        finally:
+            sessions_module.scaffold.scaffold_env = original_scaffold
+            svc._initialize = original_initialize  # type: ignore[method-assign]
+            await svc.db.close()
+    print("PASS test_scaffold_retries_initialization_only_for_variants")
 
 
 async def test_delete_refuses_working_dir_outside_session_root() -> None:
@@ -370,10 +440,394 @@ async def test_create_config_session_rolls_back_on_failure() -> None:
                 os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = saved
 
 
+def _range_catalog() -> list[dict[str, object]]:
+    return [
+        {
+            "name": "SERVICE",
+            "display_name": "SERVICE",
+            "generated": False,
+            "variant_supported": False,
+            "provider_settings": {
+                "aws": {
+                    "deployment": "service-deployment",
+                    "scaffold_profile": "template",
+                    "template_environment": "service-aws",
+                    "default_region": "us-east-2",
+                    "network": {"cidr": "10.50.0.0/16", "editable": False},
+                },
+                "azure": {
+                    "deployment": "service-deployment",
+                    "scaffold_profile": "template",
+                    "template_environment": "service-dev",
+                    "default_region": "centralus",
+                    "network": {"cidr": "10.50.0.0/16", "editable": False},
+                },
+            },
+        },
+        {
+            "name": "GOAD",
+            "display_name": "GOAD",
+            "generated": False,
+            "variant_supported": True,
+            "provider_settings": {
+                "aws": {
+                    "deployment": "goad-deployment",
+                    "scaffold_profile": "active-directory",
+                    "template_environment": "staging",
+                    "default_region": "us-west-1",
+                    "network": {"editable": True},
+                },
+                "azure": {
+                    "deployment": "goad-deployment",
+                    "scaffold_profile": "active-directory",
+                    "template_environment": "test",
+                    "default_region": "centralus",
+                    "network": {"editable": True},
+                },
+            },
+        },
+    ]
+
+
+def test_range_creation_plan_is_pure_and_complete() -> None:
+    catalog = _range_catalog()
+    original = copy.deepcopy(catalog)
+
+    plan = sessions_module._resolve_range_creation_plan(
+        catalog,
+        sessions_module.RangeCreationRequest(
+            range_name="SERVICE", provider="azure", env_name=" unit-service "
+        ),
+    )
+    assert plan.range_name == "SERVICE"
+    assert plan.env_name == "unit-service"
+    assert plan.deployment == "service-deployment"
+    assert plan.region == "centralus"
+    assert plan.vpc_cidr == "10.50.0.0/16"
+    assert plan.variant_target is None
+    assert plan.default_label == "unit-service · SERVICE"
+    assert plan.environment_fields() == {
+        "lab": "SERVICE",
+        "provider": "azure",
+        "deployment": "service-deployment",
+        "region": "centralus",
+        "vpc_cidr": "10.50.0.0/16",
+        "variant": False,
+    }
+
+    variant = sessions_module._resolve_range_creation_plan(
+        catalog,
+        sessions_module.RangeCreationRequest(
+            range_name="GOAD",
+            provider="aws",
+            env_name="variant-one",
+            customization="randomized",
+            vpc_cidr="10.77.0.0/16",
+        ),
+    )
+    assert variant.variant_source == "ad/GOAD"
+    assert variant.variant_target == "ad/GOAD-variant-one"
+    assert variant.environment_fields()["variant_name"] == "variant-one"
+
+    fields = plan.environment_fields()
+    fields["region"] = "mutated"
+    assert plan.region == "centralus", "rendered fields must not mutate the plan"
+    assert catalog == original, "planning must not mutate catalog metadata"
+    print("PASS test_range_creation_plan_is_pure_and_complete")
+
+
+def test_range_creation_plan_rejects_malformed_catalog_metadata() -> None:
+    malformed = {
+        "name": "BROKEN",
+        "display_name": "Broken",
+        "generated": False,
+        "variant_supported": False,
+        "provider_settings": {
+            "azure": {
+                "deployment": "service-deployment",
+                "default_region": "centralus",
+                "network": ["10.50.0.0/16"],
+            }
+        },
+    }
+    try:
+        sessions_module._resolve_range_creation_plan(
+            [malformed],
+            sessions_module.RangeCreationRequest(
+                range_name="BROKEN", provider="azure", env_name="broken-one"
+            ),
+        )
+        raise AssertionError("accepted non-mapping network metadata")
+    except ValueError as exc:
+        assert "invalid network settings" in str(exc), exc
+    print("PASS test_range_creation_plan_rejects_malformed_catalog_metadata")
+
+
+async def test_create_range_session_scaffolds_service_from_explicit_metadata() -> None:
+    saved = os.environ.get("DREADGOAD_CONSOLE_STATE_ROOT")
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = str(tmp / "state")
+        svc = await _svc(tmp)
+        original_discover = sessions_module.labs.discover_labs
+        original_scaffold = sessions_module.scaffold.scaffold_env
+        calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+        async def discovered():  # noqa: ANN202
+            return _range_catalog()
+
+        async def scaffolded(*args: object, **kwargs: object):
+            calls.append((args, kwargs))
+            return True, "prepared"
+
+        sessions_module.labs.discover_labs = discovered
+        sessions_module.scaffold.scaffold_env = scaffolded
+        try:
+            session = await svc.create_range_session("SERVICE", "azure", "unit-service")
+            assert session["label"] == "unit-service · SERVICE", session
+            assert session["snapshot"]["provider"] == "azure", session
+            assert session["snapshot"].get("deployment") == "service-deployment"
+            assert session["snapshot"]["vpc_cidr"] == "10.50.0.0/16"
+            assert len(calls) == 1, calls
+            assert calls[0][1]["deployment"] == "service-deployment"
+            assert calls[0][1]["vpc_cidr"] == "10.50.0.0/16"
+            assert calls[0][1]["variant"] is False
+
+            import yaml
+
+            config_path = pathlib.Path(session["anchor"]["config_path"])
+            data = yaml.safe_load(config_path.read_text())
+            env = data["environments"]["unit-service"]
+            assert "provider" not in data, "managed config must not imply AWS"
+            assert env["lab"] == "SERVICE"
+            assert env["provider"] == "azure"
+            assert env["deployment"] == "service-deployment"
+            assert env["variant"] is False
+
+            aws_session = await svc.create_range_session(
+                "SERVICE", "aws", "unit-service-aws"
+            )
+            assert aws_session["snapshot"]["provider"] == "aws", aws_session
+            assert aws_session["snapshot"]["region"] == "us-east-2", aws_session
+            assert aws_session["snapshot"]["vpc_cidr"] == "10.50.0.0/16"
+            assert len(calls) == 2, calls
+            assert calls[1][1]["provider"] == "aws"
+            assert calls[1][1]["deployment"] == "service-deployment"
+            aws_config = pathlib.Path(aws_session["anchor"]["config_path"])
+            aws_data = yaml.safe_load(aws_config.read_text())
+            aws_env = aws_data["environments"]["unit-service-aws"]
+            assert aws_env["provider"] == "aws"
+            assert aws_env["region"] == "us-east-2"
+            assert aws_env["lab"] == "SERVICE"
+        finally:
+            sessions_module.labs.discover_labs = original_discover
+            sessions_module.scaffold.scaffold_env = original_scaffold
+            await svc.db.close()
+            os.environ.pop("DREADGOAD_CONSOLE_STATE_ROOT", None)
+            if saved is not None:
+                os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = saved
+    print("PASS test_create_range_session_scaffolds_service_from_explicit_metadata")
+
+
+async def test_create_range_session_builds_supported_variant() -> None:
+    saved = os.environ.get("DREADGOAD_CONSOLE_STATE_ROOT")
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = str(tmp / "state")
+        svc = await _svc(tmp)
+        original_discover = sessions_module.labs.discover_labs
+        original_scaffold = sessions_module.scaffold.scaffold_env
+        seen: dict[str, object] = {}
+
+        async def discovered():  # noqa: ANN202
+            return _range_catalog()
+
+        async def scaffolded(*_args: object, **kwargs: object):
+            seen.update(kwargs)
+            return True, "prepared"
+
+        sessions_module.labs.discover_labs = discovered
+        sessions_module.scaffold.scaffold_env = scaffolded
+        try:
+            session = await svc.create_range_session(
+                "GOAD",
+                "aws",
+                "unit-goad-variant",
+                customization="randomized",
+                vpc_cidr="10.77.0.0/16",
+            )
+            assert session["snapshot"]["region"] == "us-west-1"
+            assert session["snapshot"]["lab"] == "ad/GOAD-unit-goad-variant"
+            assert seen["variant"] is True
+            assert seen["variant_source"] == "ad/GOAD"
+            assert seen["variant_target"] == "ad/GOAD-unit-goad-variant"
+        finally:
+            sessions_module.labs.discover_labs = original_discover
+            sessions_module.scaffold.scaffold_env = original_scaffold
+            await svc.db.close()
+            os.environ.pop("DREADGOAD_CONSOLE_STATE_ROOT", None)
+            if saved is not None:
+                os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = saved
+    print("PASS test_create_range_session_builds_supported_variant")
+
+
+async def test_create_range_session_rejects_bad_policy_before_writes() -> None:
+    saved = os.environ.get("DREADGOAD_CONSOLE_STATE_ROOT")
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = str(tmp / "state")
+        svc = await _svc(tmp)
+        original_discover = sessions_module.labs.discover_labs
+
+        async def discovered():  # noqa: ANN202
+            return _range_catalog()
+
+        sessions_module.labs.discover_labs = discovered
+        try:
+            cases = [
+                (
+                    {"range_name": "SERVICE", "provider": "proxmox"},
+                    "provider must be one of",
+                ),
+                (
+                    {
+                        "range_name": "SERVICE",
+                        "provider": "azure",
+                        "customization": "randomized",
+                    },
+                    "does not support randomized",
+                ),
+                (
+                    {
+                        "range_name": "SERVICE",
+                        "provider": "azure",
+                        "vpc_cidr": "10.99.0.0/16",
+                    },
+                    "requires VPC/VNet CIDR",
+                ),
+                (
+                    {
+                        "range_name": "GOAD",
+                        "provider": "aws",
+                        "vpc_cidr": "10.2.0.0/24",
+                    },
+                    "requires an IPv4 /16",
+                ),
+                (
+                    {
+                        "range_name": "GOAD",
+                        "provider": "aws",
+                        "vpc_cidr": "127.0.0.0/16",
+                    },
+                    "use RFC 1918",
+                ),
+            ]
+            for index, (kwargs, expected) in enumerate(cases):
+                try:
+                    await svc.create_range_session(
+                        env_name=f"unit-rejected-{index}", **kwargs
+                    )
+                    raise AssertionError(f"accepted {kwargs}")
+                except ValueError as exc:
+                    assert expected in str(exc), (kwargs, exc)
+            assert await svc.list_sessions() == []
+            assert list(paths.configs_root().glob("*.yaml")) == []
+        finally:
+            sessions_module.labs.discover_labs = original_discover
+            await svc.db.close()
+            os.environ.pop("DREADGOAD_CONSOLE_STATE_ROOT", None)
+            if saved is not None:
+                os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = saved
+    print("PASS test_create_range_session_rejects_bad_policy_before_writes")
+
+
+async def test_create_range_session_rolls_back_failed_scaffold() -> None:
+    saved = os.environ.get("DREADGOAD_CONSOLE_STATE_ROOT")
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = str(tmp / "state")
+        svc = await _svc(tmp)
+        original_discover = sessions_module.labs.discover_labs
+        original_scaffold = sessions_module.scaffold.scaffold_env
+
+        async def discovered():  # noqa: ANN202
+            return _range_catalog()
+
+        async def failed(*_args: object, **_kwargs: object):
+            return False, "template is incomplete"
+
+        sessions_module.labs.discover_labs = discovered
+        sessions_module.scaffold.scaffold_env = failed
+        try:
+            try:
+                await svc.create_range_session(
+                    "SERVICE", "azure", "unit-failed-service"
+                )
+                raise AssertionError("failed scaffold unexpectedly created a session")
+            except ValueError as exc:
+                assert "template is incomplete" in str(exc), exc
+            assert await svc.list_sessions() == []
+            assert list(paths.configs_root().glob("*.yaml")) == []
+            assert not any(svc.sessions_root.iterdir()), "session directory survived"
+        finally:
+            sessions_module.labs.discover_labs = original_discover
+            sessions_module.scaffold.scaffold_env = original_scaffold
+            await svc.db.close()
+            os.environ.pop("DREADGOAD_CONSOLE_STATE_ROOT", None)
+            if saved is not None:
+                os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = saved
+    print("PASS test_create_range_session_rolls_back_failed_scaffold")
+
+
+async def test_create_range_session_rolls_back_scaffold_exception() -> None:
+    saved = os.environ.get("DREADGOAD_CONSOLE_STATE_ROOT")
+    with tempfile.TemporaryDirectory() as d:
+        tmp = pathlib.Path(d)
+        os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = str(tmp / "state")
+        svc = await _svc(tmp)
+        original_discover = sessions_module.labs.discover_labs
+        original_scaffold = sessions_module.scaffold.scaffold_env
+        boom = RuntimeError("scaffolder crashed")
+
+        async def discovered():  # noqa: ANN202
+            return _range_catalog()
+
+        async def failed(*_args: object, **_kwargs: object):
+            raise boom
+
+        sessions_module.labs.discover_labs = discovered
+        sessions_module.scaffold.scaffold_env = failed
+        try:
+            try:
+                await svc.create_range_session(
+                    "SERVICE", "azure", "unit-crashed-service"
+                )
+                raise AssertionError(
+                    "scaffold exception unexpectedly created a session"
+                )
+            except RuntimeError as exc:
+                assert exc is boom, exc
+            assert await svc.list_sessions() == []
+            assert list(paths.configs_root().glob("*.yaml")) == []
+            assert not any(svc.sessions_root.iterdir()), "session directory survived"
+        finally:
+            sessions_module.labs.discover_labs = original_discover
+            sessions_module.scaffold.scaffold_env = original_scaffold
+            await svc.db.close()
+            os.environ.pop("DREADGOAD_CONSOLE_STATE_ROOT", None)
+            if saved is not None:
+                os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = saved
+    print("PASS test_create_range_session_rolls_back_scaffold_exception")
+
+
 async def _main() -> None:
+    test_range_creation_plan_is_pure_and_complete()
+    test_range_creation_plan_rejects_malformed_catalog_metadata()
     await test_create_attach_session()
     await test_service_repairs_existing_session_directory_modes()
     await test_delete_session_removes_dir_and_rows()
+    await test_create_session_records_initialization_results()
+    await test_scaffold_retries_initialization_only_for_variants()
     await test_delete_refuses_working_dir_outside_session_root()
     await test_create_new_env_writes_yaml_and_backs_up()
     await test_greenfield_seeds_infra_only()
@@ -381,6 +835,11 @@ async def _main() -> None:
     await test_create_config_session_writes_a_config_and_attaches()
     await test_create_config_session_refuses_a_taken_name()
     await test_create_config_session_rolls_back_on_failure()
+    await test_create_range_session_scaffolds_service_from_explicit_metadata()
+    await test_create_range_session_builds_supported_variant()
+    await test_create_range_session_rejects_bad_policy_before_writes()
+    await test_create_range_session_rolls_back_failed_scaffold()
+    await test_create_range_session_rolls_back_scaffold_exception()
     print("ALL PASS")
 
 

@@ -204,7 +204,11 @@ func resolveSSMProviderOptions(cfg *config.Config, inv *inventory.Inventory) (pr
 	if err != nil {
 		return provider.ConstructorOpts{}, err
 	}
-	return provider.ConstructorOpts{Region: region}, nil
+	rangeTag, err := cfg.ProviderRangeTag()
+	if err != nil {
+		return provider.ConstructorOpts{}, err
+	}
+	return provider.ConstructorOpts{Region: region, RangeTag: rangeTag}, nil
 }
 
 func resolveSSMHost(ctx context.Context, prov provider.Provider, env string, inv *inventory.Inventory, hostName string) (*provider.Instance, error) {

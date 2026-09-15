@@ -41,6 +41,7 @@ class SessionSnapshot(SessionSnapshotRequired, total=False):
 
     account: str | None
     group: str | None
+    deployment: str | None
     aws: AWSSelectors
     azure: AzureSelectors
 
@@ -82,9 +83,10 @@ class RangeHostRequired(t.TypedDict):
 
 
 class RangeHost(RangeHostRequired, total=False):
-    """Topology host; old persisted rows may predate role-key storage."""
+    """Topology host; old persisted rows may predate optional metadata."""
 
     key: str
+    os: str | None
 
 
 def new_range_host(
@@ -94,6 +96,7 @@ def new_range_host(
     role: str,
     source: str,
     domain: str | None,
+    operating_system: str | None = None,
 ) -> RangeHost:
     """Build a topology host with consistent initial dynamic state."""
     return {
@@ -103,6 +106,7 @@ def new_range_host(
         "role": role,
         "source": source,
         "domain": domain,
+        "os": operating_system,
         "status": "unknown",
         "health": "unknown",
         "ip_private": None,

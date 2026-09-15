@@ -68,6 +68,38 @@ async def get_configs(request: Request) -> dict[str, t.Any]:
     }
 
 
+@router.get("/api/session-options")
+async def get_session_options(request: Request) -> dict[str, t.Any]:
+    """Return range-first creation choices and flattened existing anchors."""
+    listing = await get_configs(request)
+    existing: list[dict[str, t.Any]] = []
+    for config in listing["configs"]:
+        for detail in config.get("environment_details") or []:
+            existing.append(
+                {
+                    **detail,
+                    "config_path": config["path"],
+                    "config_name": config["name"],
+                    "config_source": config["source"],
+                }
+            )
+    existing.sort(
+        key=lambda item: (
+            str(item.get("name") or "").lower(),
+            str(item.get("lab") or "").lower(),
+            str(item.get("provider") or "").lower(),
+            str(item.get("config_path") or ""),
+        )
+    )
+    return {
+        "ranges": await labs.discover_labs(),
+        "environments": existing,
+        "providers": listing["providers"],
+        "credential_hints": listing["credential_hints"],
+        "regions": listing["regions"],
+    }
+
+
 @router.get("/api/labs")
 async def get_labs(config_path: str | None = None) -> dict[str, t.Any]:
     """List labs available as a variant source, for the new-environment form.

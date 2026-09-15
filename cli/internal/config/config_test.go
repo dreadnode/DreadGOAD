@@ -101,6 +101,82 @@ func TestResolveRegion(t *testing.T) {
 	}
 }
 
+func TestResolvedLabPrecedence(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  *Config
+		want string
+	}{
+		{name: "default", cfg: &Config{}, want: "GOAD"},
+		{name: "top level", cfg: &Config{Lab: "GOAD-Light"}, want: "GOAD-Light"},
+		{
+			name: "environment override",
+			cfg: &Config{
+				Env: "service-dev",
+				Lab: "GOAD",
+				Environments: map[string]EnvironmentConfig{
+					"service-dev": {Lab: "SERVICE"},
+				},
+			},
+			want: "SERVICE",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.cfg.ResolvedLab(); got != tt.want {
+				t.Fatalf("ResolvedLab() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestValidateLabName(t *testing.T) {
+	for _, valid := range []string{"GOAD", "GOAD-Light", "SERVICE_RANGE", "lab123"} {
+		if err := ValidateLabName(valid); err != nil {
+			t.Errorf("ValidateLabName(%q) unexpected error: %v", valid, err)
+		}
+	}
+	for _, invalid := range []string{"", "../GOAD", "GOAD/Light", ".", "bad range", "GOAD.Light"} {
+		if err := ValidateLabName(invalid); err == nil {
+			t.Errorf("ValidateLabName(%q) = nil, want error", invalid)
+		}
+	}
+}
+
+func TestEnvironmentOverridesProviderAndDeployment(t *testing.T) {
+	cfg := &Config{
+		Env:      "service-dev",
+		Provider: "aws",
+		Infra:    InfraConfig{Deployment: "goad-deployment"},
+		Environments: map[string]EnvironmentConfig{
+			"service-dev": {
+				Provider:   "azure",
+				Deployment: "service-deployment",
+			},
+		},
+	}
+
+	if got := cfg.ResolvedProvider(); got != "azure" {
+		t.Errorf("ResolvedProvider() = %q, want azure", got)
+	}
+	if got := cfg.ResolvedDeployment(); got != "service-deployment" {
+		t.Errorf("ResolvedDeployment() = %q, want service-deployment", got)
+	}
+	want := filepath.Join(cfg.ProjectRoot, "infra", "azure", "service-deployment")
+	if got := cfg.InfraBasePathForProvider("azure"); got != want {
+		t.Errorf("InfraBasePathForProvider(azure) = %q, want %q", got, want)
+	}
+}
+
+func TestLabConfigDataDirUsesActiveLab(t *testing.T) {
+	cfg := &Config{ProjectRoot: "/repo", Lab: "SERVICE"}
+	want := filepath.Join("/repo", "ad", "SERVICE", "data")
+	if got := cfg.labConfigDataDir(); got != want {
+		t.Errorf("labConfigDataDir() = %q, want %q", got, want)
+	}
+}
+
 func TestGetRegionOverridePrecedence(t *testing.T) {
 	t.Run("an explicit --region beats DREADGOAD_REGION", func(t *testing.T) {
 		Reset()
