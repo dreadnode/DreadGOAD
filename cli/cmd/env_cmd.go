@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -110,7 +111,15 @@ func runEnvCreate(cmd *cobra.Command, args []string) error {
 		reference = plan.Spec.TemplateEnvironment
 	}
 
-	return scaffoldEnvWithPlan(cfg, plan, envName, region, vpcCIDR, reference, variantSource, useVariant, force)
+	return scaffoldEnvWithPlan(cfg, plan, scaffoldRequest{
+		envName:       envName,
+		region:        region,
+		vpcCIDR:       vpcCIDR,
+		reference:     reference,
+		variantSource: variantSource,
+		useVariant:    useVariant,
+		force:         force,
+	})
 }
 
 type scaffoldPlan struct {
@@ -118,6 +127,68 @@ type scaffoldPlan struct {
 	LabPath string
 	Profile string
 	Spec    rangeconfig.ProviderSpec
+}
+
+// scaffoldRequest holds the operator-selected values for one environment.
+// Keeping them named prevents provider, region, reference, and variant values
+// from being accidentally swapped as the request moves through scaffolding.
+type scaffoldRequest struct {
+	envName       string
+	region        string
+	vpcCIDR       string
+	reference     string
+	variantSource string
+	useVariant    bool
+	force         bool
+}
+
+// scaffoldContext combines a validated request with the paths and provider
+// metadata derived from it. Scaffold helpers consume this single coherent
+// value instead of independently reconstructing paths from positional strings.
+type scaffoldContext struct {
+	scaffoldRequest
+	projectRoot        string
+	plan               scaffoldPlan
+	provider           string
+	envDir             string
+	regionDir          string
+	inventoryPath      string
+	referenceRegionDir string
+	hostFilter         map[string]bool
+}
+
+// scaffoldArtifacts records only paths atomically claimed by this invocation.
+// A failed scaffold may safely remove these paths without touching artifacts
+// created by another process between preflight and creation.
+type scaffoldArtifacts struct {
+	paths []string
+}
+
+func (artifacts *scaffoldArtifacts) reserveDirectory(path string) error {
+	if err := os.Mkdir(path, 0o755); err != nil {
+		return err
+	}
+	artifacts.paths = append(artifacts.paths, path)
+	return nil
+}
+
+func (artifacts *scaffoldArtifacts) reserveFile(path string) error {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		if removeErr := os.Remove(path); removeErr != nil {
+			return fmt.Errorf("close reserved file: %w; remove reservation: %v", err, removeErr)
+		}
+		return fmt.Errorf("close reserved file: %w", err)
+	}
+	artifacts.paths = append(artifacts.paths, path)
+	return nil
+}
+
+func (artifacts *scaffoldArtifacts) track(path string) {
+	artifacts.paths = append(artifacts.paths, path)
 }
 
 func resolveScaffoldPlan(cfg *config.Config, variantSource string, useVariant bool) (scaffoldPlan, error) {
@@ -219,9 +290,9 @@ func validateEnvName(name string) error {
 	return nil
 }
 
-func scaffoldEnv(cfg *config.Config, envName, region, vpcCIDR, reference, variantSource string, useVariant, force bool) error {
-	if useVariant {
-		source := variantSource
+func scaffoldEnv(cfg *config.Config, request scaffoldRequest) error {
+	if request.useVariant {
+		source := request.variantSource
 		if source == "" {
 			source = defaultVariantSource
 		}
@@ -232,91 +303,122 @@ func scaffoldEnv(cfg *config.Config, envName, region, vpcCIDR, reference, varian
 			return fmt.Errorf("validate variant source: %w", err)
 		}
 	}
-	plan, err := resolveScaffoldPlan(cfg, variantSource, useVariant)
+	plan, err := resolveScaffoldPlan(cfg, request.variantSource, request.useVariant)
 	if err != nil {
 		return err
 	}
-	return scaffoldEnvWithPlan(cfg, plan, envName, region, vpcCIDR, reference, variantSource, useVariant, force)
+	return scaffoldEnvWithPlan(cfg, plan, request)
 }
 
-func scaffoldEnvWithPlan(cfg *config.Config, plan scaffoldPlan, envName, region, vpcCIDR, reference, variantSource string, useVariant, force bool) error {
-	if err := validateScaffoldRequest(cfg.ProjectRoot, envName, region, reference, variantSource, useVariant); err != nil {
+func scaffoldEnvWithPlan(cfg *config.Config, plan scaffoldPlan, request scaffoldRequest) error {
+	ctx, err := newScaffoldContext(cfg, plan, request)
+	if err != nil {
 		return err
 	}
-	provider := cfg.ResolvedProvider()
-	deployment := scaffoldDeployment(cfg, plan)
-	infraBase := infraBaseForDeployment(cfg.ProjectRoot, provider, deployment)
-	envDir := filepath.Join(infraBase, envName)
-	regionDir := filepath.Join(envDir, region)
-	invPath := filepath.Join(cfg.ProjectRoot, envName+"-inventory")
-
-	if err := ensureScaffoldTargetsAvailable(cfg.ProjectRoot, plan, envName, variantSource, envDir, invPath, useVariant, force); err != nil {
+	if err := ensureScaffoldTargetsAvailable(ctx); err != nil {
+		return err
+	}
+	if err := resolveScaffoldReference(&ctx); err != nil {
 		return err
 	}
 
-	refRegionDir := findReferenceRegion(infraBase, reference, plan.Spec.DefaultRegion)
-	if refRegionDir == "" {
-		return fmt.Errorf("reference environment %q not found in %s", reference, infraBase)
+	// Atomically claim each top-level artifact before writing it. This both
+	// closes the preflight/create race and gives rollback an exact ownership
+	// list. --force retains its historical in-place semantics and therefore
+	// deliberately skips reservations and automatic cleanup.
+	artifacts := scaffoldArtifacts{}
+	if !ctx.force {
+		if err := artifacts.reserveDirectory(ctx.envDir); err != nil {
+			return fmt.Errorf("reserve environment directory %s: %w", ctx.envDir, err)
+		}
 	}
-	labSource := scaffoldLabSource(cfg.ProjectRoot, plan, variantSource, useVariant)
-	hostFilter := labHostKeysFromPath(labSource)
-	if err := validateScaffoldTemplateHosts(plan, refRegionDir, reference, provider, hostFilter); err != nil {
-		return err
-	}
-
-	// Everything below creates only paths proven absent above. If a later step
-	// fails, remove precisely those new artifacts so retrying does not require
-	// manual surgery. --force retains its historical in-place semantics and is
-	// therefore deliberately excluded from automatic cleanup.
 	succeeded := false
-	cleanupPaths := scaffoldCleanupPaths(cfg.ProjectRoot, plan, envName, variantSource, envDir, invPath, useVariant)
-	defer cleanupFailedScaffold(&succeeded, force, cleanupPaths)
+	defer cleanupFailedScaffold(&succeeded, &artifacts)
 
-	printEnvSummary(provider, envName, region, vpcCIDR, reference, useVariant)
+	printEnvSummary(ctx.provider, ctx.envName, ctx.region, ctx.vpcCIDR, ctx.reference, ctx.useVariant)
 
-	if err := scaffoldPlanInfrastructure(
-		cfg.ProjectRoot, plan, provider, envDir, regionDir, refRegionDir,
-		envName, region, vpcCIDR, reference, variantSource, useVariant, hostFilter,
-	); err != nil {
+	if err := scaffoldPlanInfrastructure(ctx); err != nil {
 		return err
 	}
-	if hostFilter != nil {
-		color.Green("  Copied infrastructure from %s (filtered to %d hosts)", reference, len(hostFilter))
+	if ctx.hostFilter != nil {
+		color.Green("  Copied infrastructure from %s (filtered to %d hosts)", ctx.reference, len(ctx.hostFilter))
 	} else {
-		color.Green("  Copied infrastructure from %s", reference)
+		color.Green("  Copied infrastructure from %s", ctx.reference)
 	}
 
-	configPath, err := scaffoldLabConfigForPlan(cfg.ProjectRoot, plan, envName, variantSource, useVariant)
+	if !ctx.force && !ctx.useVariant && ctx.plan.Profile == rangeconfig.ProfileActiveDir && ctx.plan.Lab == "GOAD" {
+		overlay := filepath.Join(ctx.projectRoot, "ad", "GOAD", "data", ctx.envName+"-overlay.json")
+		if err := artifacts.reserveFile(overlay); err != nil {
+			return fmt.Errorf("reserve lab overlay %s: %w", overlay, err)
+		}
+	}
+	configPath, err := scaffoldLabConfigForPlan(ctx, &artifacts)
 	if err != nil {
 		return err
 	}
 
-	if err := scaffoldInventoryForPlan(
-		provider, cfg.ProjectRoot, plan, envName, region, reference, variantSource, useVariant, hostFilter,
-	); err != nil {
+	if !ctx.force {
+		if err := artifacts.reserveFile(ctx.inventoryPath); err != nil {
+			return fmt.Errorf("reserve inventory %s: %w", ctx.inventoryPath, err)
+		}
+	}
+	if err := scaffoldInventoryForPlan(ctx); err != nil {
 		return err
 	}
-	color.Green("  Created inventory: %s", filepath.Base(invPath))
+	color.Green("  Created inventory: %s", filepath.Base(ctx.inventoryPath))
 
-	printNextSteps(provider, envName, region, envDir, configPath, invPath)
+	printNextSteps(ctx.provider, ctx.envName, ctx.region, ctx.envDir, configPath, ctx.inventoryPath)
 	succeeded = true
 	return nil
 }
 
-func validateScaffoldRequest(projectRoot, envName, region, reference, variantSource string, useVariant bool) error {
-	if err := validateEnvName(envName); err != nil {
+func newScaffoldContext(cfg *config.Config, plan scaffoldPlan, request scaffoldRequest) (scaffoldContext, error) {
+	if err := validateScaffoldRequest(cfg.ProjectRoot, request); err != nil {
+		return scaffoldContext{}, err
+	}
+	provider := cfg.ResolvedProvider()
+	deployment := scaffoldDeployment(cfg, plan)
+	infraBase := infraBaseForDeployment(cfg.ProjectRoot, provider, deployment)
+	ctx := scaffoldContext{
+		scaffoldRequest: request,
+		projectRoot:     cfg.ProjectRoot,
+		plan:            plan,
+		provider:        provider,
+		envDir:          filepath.Join(infraBase, request.envName),
+		inventoryPath:   filepath.Join(cfg.ProjectRoot, request.envName+"-inventory"),
+	}
+	ctx.regionDir = filepath.Join(ctx.envDir, request.region)
+	return ctx, nil
+}
+
+func resolveScaffoldReference(ctx *scaffoldContext) error {
+	infraBase := filepath.Dir(ctx.envDir)
+	ctx.referenceRegionDir = findReferenceRegion(infraBase, ctx.reference, ctx.plan.Spec.DefaultRegion)
+	if ctx.referenceRegionDir == "" {
+		return fmt.Errorf("reference environment %q not found in %s", ctx.reference, infraBase)
+	}
+	labSource := scaffoldLabSource(ctx.projectRoot, ctx.plan, ctx.variantSource, ctx.useVariant)
+	ctx.hostFilter = labHostKeysFromPath(labSource)
+	if err := validateScaffoldTemplateHosts(*ctx); err != nil {
 		return err
 	}
-	if err := validatePathComponent("region", region); err != nil {
+	return nil
+}
+
+func validateScaffoldRequest(projectRoot string, request scaffoldRequest) error {
+	if err := validateEnvName(request.envName); err != nil {
 		return err
 	}
-	if err := validatePathComponent("reference environment", reference); err != nil {
+	if err := validatePathComponent("region", request.region); err != nil {
 		return err
 	}
-	if !useVariant {
+	if err := validatePathComponent("reference environment", request.reference); err != nil {
+		return err
+	}
+	if !request.useVariant {
 		return nil
 	}
-	source := variantSource
+	source := request.variantSource
 	if source == "" {
 		source = defaultVariantSource
 	}
@@ -336,35 +438,57 @@ func scaffoldDeployment(cfg *config.Config, plan scaffoldPlan) string {
 	return plan.Spec.Deployment
 }
 
-func ensureScaffoldTargetsAvailable(
-	projectRoot string,
-	plan scaffoldPlan,
-	envName, variantSource, envDir, invPath string,
-	useVariant, force bool,
-) error {
-	if force {
+func ensureScaffoldTargetsAvailable(ctx scaffoldContext) error {
+	if ctx.force {
 		return nil
 	}
-	if _, err := os.Stat(envDir); err == nil {
-		return fmt.Errorf("environment %q already exists at %s\nUse --force to overwrite", envName, envDir)
+	exists, err := scaffoldTargetExists(ctx.envDir)
+	if err != nil {
+		return fmt.Errorf("inspect environment target %s: %w", ctx.envDir, err)
 	}
-	if _, err := os.Stat(invPath); err == nil {
-		return fmt.Errorf("inventory for environment %q already exists at %s\nUse --force to overwrite", envName, invPath)
+	if exists {
+		return fmt.Errorf("environment %q already exists at %s\nUse --force to overwrite", ctx.envName, ctx.envDir)
 	}
-	if useVariant {
-		target := variantTargetFor(projectRoot, envName, variantSource)
-		if _, err := os.Stat(target); err == nil {
+	exists, err = scaffoldTargetExists(ctx.inventoryPath)
+	if err != nil {
+		return fmt.Errorf("inspect inventory target %s: %w", ctx.inventoryPath, err)
+	}
+	if exists {
+		return fmt.Errorf("inventory for environment %q already exists at %s\nUse --force to overwrite", ctx.envName, ctx.inventoryPath)
+	}
+	if ctx.useVariant {
+		target := variantTargetFor(ctx.projectRoot, ctx.envName, ctx.variantSource)
+		exists, err = scaffoldTargetExists(target)
+		if err != nil {
+			return fmt.Errorf("inspect variant target %s: %w", target, err)
+		}
+		if exists {
 			return fmt.Errorf("variant target already exists at %s", target)
 		}
 		return nil
 	}
-	if plan.Profile == rangeconfig.ProfileActiveDir && plan.Lab == "GOAD" {
-		overlay := filepath.Join(projectRoot, "ad", "GOAD", "data", envName+"-overlay.json")
-		if _, err := os.Stat(overlay); err == nil {
+	if ctx.plan.Profile == rangeconfig.ProfileActiveDir && ctx.plan.Lab == "GOAD" {
+		overlay := filepath.Join(ctx.projectRoot, "ad", "GOAD", "data", ctx.envName+"-overlay.json")
+		exists, err = scaffoldTargetExists(overlay)
+		if err != nil {
+			return fmt.Errorf("inspect lab overlay target %s: %w", overlay, err)
+		}
+		if exists {
 			return fmt.Errorf("lab overlay already exists at %s", overlay)
 		}
 	}
 	return nil
+}
+
+func scaffoldTargetExists(path string) (bool, error) {
+	_, err := os.Lstat(path)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
 }
 
 func scaffoldLabSource(projectRoot string, plan scaffoldPlan, variantSource string, useVariant bool) string {
@@ -377,78 +501,53 @@ func scaffoldLabSource(projectRoot string, plan scaffoldPlan, variantSource stri
 	return filepath.Join(projectRoot, variantSource)
 }
 
-func validateScaffoldTemplateHosts(
-	plan scaffoldPlan,
-	refRegionDir, reference, provider string,
-	hostFilter map[string]bool,
-) error {
-	if plan.Profile != rangeconfig.ProfileActiveDir {
+func validateScaffoldTemplateHosts(ctx scaffoldContext) error {
+	if ctx.plan.Profile != rangeconfig.ProfileActiveDir {
 		return nil
 	}
-	missing := missingTemplateHosts(refRegionDir, hostFilter)
+	missing := missingTemplateHosts(ctx.referenceRegionDir, ctx.hostFilter)
 	if len(missing) == 0 {
 		return nil
 	}
 	return fmt.Errorf(
 		"range %s cannot be scaffolded from %s for %s; template has no modules for: %s",
-		plan.Lab, reference, provider, strings.Join(missing, ", "),
+		ctx.plan.Lab, ctx.reference, ctx.provider, strings.Join(missing, ", "),
 	)
 }
 
-func scaffoldCleanupPaths(
-	projectRoot string,
-	plan scaffoldPlan,
-	envName, variantSource, envDir, invPath string,
-	useVariant bool,
-) []string {
-	paths := []string{envDir, invPath}
-	if useVariant {
-		return append(paths, variantTargetFor(projectRoot, envName, variantSource))
-	}
-	if plan.Profile == rangeconfig.ProfileActiveDir && plan.Lab == "GOAD" {
-		return append(paths, filepath.Join(projectRoot, "ad", "GOAD", "data", envName+"-overlay.json"))
-	}
-	return paths
-}
-
-func cleanupFailedScaffold(succeeded *bool, force bool, paths []string) {
-	if *succeeded || force {
+func cleanupFailedScaffold(succeeded *bool, artifacts *scaffoldArtifacts) {
+	if *succeeded {
 		return
 	}
-	for _, path := range paths {
+	for index := len(artifacts.paths) - 1; index >= 0; index-- {
+		path := artifacts.paths[index]
 		if err := os.RemoveAll(path); err != nil {
 			slog.Warn("could not clean failed environment scaffold", "path", path, "error", err)
 		}
 	}
 }
 
-func scaffoldPlanInfrastructure(
-	projectRoot string,
-	plan scaffoldPlan,
-	provider, envDir, regionDir, refRegionDir, envName, region, vpcCIDR, reference, variantSource string,
-	useVariant bool,
-	hostFilter map[string]bool,
-) error {
-	switch plan.Profile {
+func scaffoldPlanInfrastructure(ctx scaffoldContext) error {
+	switch ctx.plan.Profile {
 	case rangeconfig.ProfileActiveDir:
-		if err := scaffoldHCL(provider, envDir, regionDir, envName, region, vpcCIDR, hostFilter); err != nil {
+		if err := scaffoldHCL(ctx); err != nil {
 			return err
 		}
-		if err := copyInfrastructure(refRegionDir, regionDir, hostFilter); err != nil {
+		if err := copyInfrastructure(ctx.referenceRegionDir, ctx.regionDir, ctx.hostFilter); err != nil {
 			return fmt.Errorf("copy infrastructure: %w", err)
 		}
-		labDataName := plan.Lab
-		if useVariant {
-			labDataName = filepath.Base(variantTargetFor(projectRoot, envName, variantSource))
+		labDataName := ctx.plan.Lab
+		if ctx.useVariant {
+			labDataName = filepath.Base(variantTargetFor(ctx.projectRoot, ctx.envName, ctx.variantSource))
 		}
-		if err := repointInfrastructureLab(regionDir, labDataName); err != nil {
+		if err := repointInfrastructureLab(ctx.regionDir, labDataName); err != nil {
 			return fmt.Errorf("point infrastructure at range config: %w", err)
 		}
 		return nil
 	case rangeconfig.ProfileTemplate:
-		return scaffoldTemplateInfrastructure(provider, refRegionDir, envDir, regionDir, reference, envName, region)
+		return scaffoldTemplateInfrastructure(ctx)
 	default:
-		return fmt.Errorf("unsupported scaffold profile %q", plan.Profile)
+		return fmt.Errorf("unsupported scaffold profile %q", ctx.plan.Profile)
 	}
 }
 
@@ -509,57 +608,61 @@ func printEnvSummary(provider, envName, region, vpcCIDR, reference string, useVa
 	fmt.Println()
 }
 
-func scaffoldHCL(provider, envDir, regionDir, envName, region, vpcCIDR string, hostFilter map[string]bool) error {
-	if provider == "azure" {
-		if err := createAzureEnvHCL(envDir, envName, vpcCIDR, hostFilter); err != nil {
+func scaffoldHCL(ctx scaffoldContext) error {
+	if ctx.provider == "azure" {
+		if err := createAzureEnvHCL(ctx.envDir, ctx.envName, ctx.vpcCIDR, ctx.hostFilter); err != nil {
 			return fmt.Errorf("create env.hcl: %w", err)
 		}
 		color.Green("  Created env.hcl (Azure)")
-		if err := createAzureRegionHCL(regionDir, region); err != nil {
+		if err := createAzureRegionHCL(ctx.regionDir, ctx.region); err != nil {
 			return fmt.Errorf("create region.hcl: %w", err)
 		}
-		color.Green("  Created %s/region.hcl (location=%s)", region, region)
+		color.Green("  Created %s/region.hcl (location=%s)", ctx.region, ctx.region)
 	} else {
-		if err := createEnvHCL(envDir, envName, vpcCIDR); err != nil {
+		if err := createEnvHCL(ctx.envDir, ctx.envName, ctx.vpcCIDR); err != nil {
 			return fmt.Errorf("create env.hcl: %w", err)
 		}
 		color.Green("  Created env.hcl")
-		if err := createRegionHCL(regionDir, region); err != nil {
+		if err := createRegionHCL(ctx.regionDir, ctx.region); err != nil {
 			return fmt.Errorf("create region.hcl: %w", err)
 		}
-		color.Green("  Created %s/region.hcl", region)
+		color.Green("  Created %s/region.hcl", ctx.region)
 	}
 	return nil
 }
 
-func scaffoldLabConfig(projectRoot, envName, variantSource string, useVariant bool) (string, error) {
-	if useVariant {
-		if err := generateVariantConfig(projectRoot, envName, variantSource); err != nil {
+func scaffoldLabConfig(ctx scaffoldContext, artifacts *scaffoldArtifacts) (string, error) {
+	if ctx.useVariant {
+		created, err := generateVariantConfig(ctx.projectRoot, ctx.envName, ctx.variantSource)
+		if created && !ctx.force {
+			artifacts.track(variantTargetFor(ctx.projectRoot, ctx.envName, ctx.variantSource))
+		}
+		if err != nil {
 			return "", fmt.Errorf("generate variant config: %w", err)
 		}
-		configPath := filepath.Join(variantTargetFor(projectRoot, envName, variantSource), "data")
+		configPath := filepath.Join(variantTargetFor(ctx.projectRoot, ctx.envName, ctx.variantSource), "data")
 		color.Green("  Generated variant config in %s", configPath)
 		return configPath, nil
 	}
-	if err := copyBaseConfig(projectRoot, envName); err != nil {
+	if err := copyBaseConfig(ctx.projectRoot, ctx.envName); err != nil {
 		return "", fmt.Errorf("copy base config: %w", err)
 	}
-	configPath := filepath.Join(projectRoot, "ad", "GOAD", "data", envName+"-overlay.json")
-	color.Green("  Created overlay: %s-overlay.json", envName)
+	configPath := filepath.Join(ctx.projectRoot, "ad", "GOAD", "data", ctx.envName+"-overlay.json")
+	color.Green("  Created overlay: %s-overlay.json", ctx.envName)
 	return configPath, nil
 }
 
-func scaffoldLabConfigForPlan(projectRoot string, plan scaffoldPlan, envName, variantSource string, useVariant bool) (string, error) {
-	if useVariant {
-		return scaffoldLabConfig(projectRoot, envName, variantSource, true)
+func scaffoldLabConfigForPlan(ctx scaffoldContext, artifacts *scaffoldArtifacts) (string, error) {
+	if ctx.useVariant {
+		return scaffoldLabConfig(ctx, artifacts)
 	}
-	if plan.Profile == rangeconfig.ProfileActiveDir && plan.Lab == "GOAD" {
-		return scaffoldLabConfig(projectRoot, envName, variantSource, false)
+	if ctx.plan.Profile == rangeconfig.ProfileActiveDir && ctx.plan.Lab == "GOAD" {
+		return scaffoldLabConfig(ctx, artifacts)
 	}
 	// Non-variant ranges consume their authored base config directly. Creating a
 	// GOAD overlay here would silently point a service range or GOAD-Light at the
 	// wrong data tree.
-	configPath := filepath.Join(plan.LabPath, "data", "config.json")
+	configPath := filepath.Join(ctx.plan.LabPath, "data", "config.json")
 	if _, err := os.Stat(configPath); err != nil {
 		return "", fmt.Errorf("range base config: %w", err)
 	}
@@ -567,11 +670,11 @@ func scaffoldLabConfigForPlan(projectRoot string, plan scaffoldPlan, envName, va
 	return configPath, nil
 }
 
-func scaffoldTemplateInfrastructure(provider, srcRegionDir, envDir, regionDir, reference, envName, region string) error {
-	if err := os.MkdirAll(envDir, 0o755); err != nil {
+func scaffoldTemplateInfrastructure(ctx scaffoldContext) error {
+	if err := os.MkdirAll(ctx.envDir, 0o755); err != nil {
 		return fmt.Errorf("create environment directory: %w", err)
 	}
-	sourceEnv := filepath.Dir(srcRegionDir)
+	sourceEnv := filepath.Dir(ctx.referenceRegionDir)
 	envTemplate, err := os.ReadFile(filepath.Join(sourceEnv, "env.hcl"))
 	if err != nil {
 		return fmt.Errorf("read template env.hcl: %w", err)
@@ -579,23 +682,23 @@ func scaffoldTemplateInfrastructure(provider, srcRegionDir, envDir, regionDir, r
 	// Template profiles are authored as complete, working environments. Render
 	// only explicit placeholders, quoted tokens, and resource-name prefixes so a
 	// short reference name cannot corrupt unrelated HCL substrings.
-	renderedEnv := renderTemplateContent(string(envTemplate), reference, envName, filepath.Base(srcRegionDir), region)
-	if err := os.WriteFile(filepath.Join(envDir, "env.hcl"), []byte(renderedEnv), 0o644); err != nil {
+	renderedEnv := renderTemplateContent(string(envTemplate), ctx.reference, ctx.envName, filepath.Base(ctx.referenceRegionDir), ctx.region)
+	if err := os.WriteFile(filepath.Join(ctx.envDir, "env.hcl"), []byte(renderedEnv), 0o644); err != nil {
 		return fmt.Errorf("write env.hcl: %w", err)
 	}
-	if provider == "azure" {
-		if err := createAzureRegionHCL(regionDir, region); err != nil {
+	if ctx.provider == "azure" {
+		if err := createAzureRegionHCL(ctx.regionDir, ctx.region); err != nil {
 			return fmt.Errorf("create region.hcl: %w", err)
 		}
 	} else {
-		if err := createRegionHCL(regionDir, region); err != nil {
+		if err := createRegionHCL(ctx.regionDir, ctx.region); err != nil {
 			return fmt.Errorf("create region.hcl: %w", err)
 		}
 	}
-	if err := copyInfrastructure(srcRegionDir, regionDir, nil); err != nil {
+	if err := copyInfrastructure(ctx.referenceRegionDir, ctx.regionDir, nil); err != nil {
 		return fmt.Errorf("copy template infrastructure: %w", err)
 	}
-	return renderTemplateTree(regionDir, reference, envName, filepath.Base(srcRegionDir), region)
+	return renderTemplateTree(ctx.regionDir, ctx.reference, ctx.envName, filepath.Base(ctx.referenceRegionDir), ctx.region)
 }
 
 func renderTemplateTree(root, reference, envName, templateRegion, region string) error {
@@ -630,26 +733,25 @@ func renderTemplateContent(content, reference, envName, templateRegion, region s
 	return content
 }
 
-func scaffoldInventoryForPlan(provider, projectRoot string, plan scaffoldPlan, envName, region, reference, variantSource string, useVariant bool, hostFilter map[string]bool) error {
-	if plan.Profile == rangeconfig.ProfileActiveDir {
-		if err := scaffoldInventory(provider, projectRoot, envName, region, reference, variantSource, useVariant); err != nil {
+func scaffoldInventoryForPlan(ctx scaffoldContext) error {
+	if ctx.plan.Profile == rangeconfig.ProfileActiveDir {
+		if err := scaffoldInventory(ctx); err != nil {
 			return err
 		}
-		if !useVariant && plan.Lab != "GOAD" {
-			if err := repointInventoryDomainTo(projectRoot, envName, plan.Lab); err != nil {
+		if !ctx.useVariant && ctx.plan.Lab != "GOAD" {
+			if err := repointInventoryDomainTo(ctx.projectRoot, ctx.envName, ctx.plan.Lab); err != nil {
 				return fmt.Errorf("repoint inventory domain_name: %w", err)
 			}
 		}
-		return filterInventoryHosts(filepath.Join(projectRoot, envName+"-inventory"), hostFilter)
+		return filterInventoryHosts(ctx.inventoryPath, ctx.hostFilter)
 	}
-	template := filepath.Join(plan.LabPath, "providers", provider, "inventory")
+	template := filepath.Join(ctx.plan.LabPath, "providers", ctx.provider, "inventory")
 	raw, err := os.ReadFile(template)
 	if err != nil {
 		return fmt.Errorf("read range inventory template: %w", err)
 	}
-	content := renderTemplateContent(string(raw), reference, envName, plan.Spec.DefaultRegion, region)
-	destination := filepath.Join(projectRoot, envName+"-inventory")
-	if err := os.WriteFile(destination, []byte(content), 0o644); err != nil {
+	content := renderTemplateContent(string(raw), ctx.reference, ctx.envName, ctx.plan.Spec.DefaultRegion, ctx.region)
+	if err := os.WriteFile(ctx.inventoryPath, []byte(content), 0o644); err != nil {
 		return fmt.Errorf("write range inventory: %w", err)
 	}
 	return nil
@@ -677,20 +779,18 @@ func filterInventoryHosts(path string, keep map[string]bool) error {
 	return os.WriteFile(path, []byte(strings.Join(out, "\n")), 0o644)
 }
 
-func scaffoldInventory(
-	provider, projectRoot, envName, region, reference, variantSource string, useVariant bool,
-) error {
+func scaffoldInventory(ctx scaffoldContext) error {
 	var err error
-	if provider == "azure" {
-		err = generateAzureInventory(projectRoot, envName, reference)
+	if ctx.provider == "azure" {
+		err = generateAzureInventory(ctx.projectRoot, ctx.envName, ctx.reference)
 	} else {
-		err = generateInventory(projectRoot, envName, region, reference)
+		err = generateInventory(ctx.projectRoot, ctx.envName, ctx.region, ctx.reference)
 	}
 	if err != nil {
 		return fmt.Errorf("generate inventory: %w", err)
 	}
-	if useVariant {
-		if err := repointInventoryDomain(projectRoot, envName, variantSource); err != nil {
+	if ctx.useVariant {
+		if err := repointInventoryDomain(ctx.projectRoot, ctx.envName, ctx.variantSource); err != nil {
 			return fmt.Errorf("repoint inventory domain_name: %w", err)
 		}
 	}
@@ -1052,7 +1152,7 @@ func resolveReferenceInventory(projectRoot, reference string) (string, error) {
 // ad/GOAD, which made `env create --variant` unable to express any of them.
 // Relative paths resolve against the project root, matching how
 // `variant generate --source` and the config's variant_source are written.
-func generateVariantConfig(projectRoot, envName, variantSource string) error {
+func generateVariantConfig(projectRoot, envName, variantSource string) (bool, error) {
 	source := variantSource
 	if source == "" {
 		source = defaultVariantSource
@@ -1063,7 +1163,8 @@ func generateVariantConfig(projectRoot, envName, variantSource string) error {
 	target := variantTargetFor(projectRoot, envName, source)
 
 	gen := variant.NewGenerator(source, target, envName)
-	return gen.Run()
+	err := gen.Run()
+	return gen.CreatedTarget(), err
 }
 
 // azureSubnets holds the computed subnet CIDRs for an Azure deployment.

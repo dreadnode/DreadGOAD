@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,10 +93,15 @@ func TestScaffoldInventoryRepointsNonGOADBaseLab(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan := scaffoldPlan{Lab: "GOAD-Mini", Profile: rangeconfig.ProfileActiveDir}
-	if err := scaffoldInventoryForPlan(
-		"aws", root, plan, "mini", "us-east-1", reference, "", false,
-		map[string]bool{"dc01": true},
-	); err != nil {
+	ctx := scaffoldContext{
+		scaffoldRequest: scaffoldRequest{envName: "mini", region: "us-east-1", reference: reference},
+		projectRoot:     root,
+		plan:            plan,
+		provider:        "aws",
+		inventoryPath:   filepath.Join(root, "mini-inventory"),
+		hostFilter:      map[string]bool{"dc01": true},
+	}
+	if err := scaffoldInventoryForPlan(ctx); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(filepath.Join(root, "mini-inventory"))
@@ -131,6 +138,159 @@ func TestVariantTargetForFollowsTheSource(t *testing.T) {
 	}
 }
 
+func TestNewScaffoldContextDerivesPathsFromNamedRequest(t *testing.T) {
+	root := t.TempDir()
+	lab := filepath.Join(root, "ad", "SERVICE")
+	referenceRegion := filepath.Join(root, "infra", "azure", "service-deployment", "service-dev", "centralus")
+	if err := os.MkdirAll(referenceRegion, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(referenceRegion, "region.hcl"), []byte("locals {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	request := scaffoldRequest{
+		envName:   "kraken",
+		region:    "eastus",
+		vpcCIDR:   "10.50.0.0/16",
+		reference: "service-dev",
+	}
+	plan := scaffoldPlan{
+		Lab: "SERVICE", LabPath: lab, Profile: rangeconfig.ProfileTemplate,
+		Spec: rangeconfig.ProviderSpec{
+			Deployment: "service-deployment", DefaultRegion: "centralus",
+		},
+	}
+	cfg := &config.Config{
+		ProjectRoot: root,
+		Env:         request.envName,
+		Environments: map[string]config.EnvironmentConfig{
+			request.envName: {Provider: "azure", Deployment: plan.Spec.Deployment},
+		},
+	}
+
+	ctx, err := newScaffoldContext(cfg, plan, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := resolveScaffoldReference(&ctx); err != nil {
+		t.Fatal(err)
+	}
+	wantEnvDir := filepath.Join(root, "infra", "azure", "service-deployment", "kraken")
+	if ctx.provider != "azure" || ctx.envDir != wantEnvDir {
+		t.Fatalf("provider/envDir = %q/%q, want azure/%q", ctx.provider, ctx.envDir, wantEnvDir)
+	}
+	if ctx.regionDir != filepath.Join(wantEnvDir, "eastus") {
+		t.Errorf("regionDir = %q", ctx.regionDir)
+	}
+	if ctx.inventoryPath != filepath.Join(root, "kraken-inventory") {
+		t.Errorf("inventoryPath = %q", ctx.inventoryPath)
+	}
+	if ctx.referenceRegionDir != referenceRegion {
+		t.Errorf("referenceRegionDir = %q, want %q", ctx.referenceRegionDir, referenceRegion)
+	}
+
+	// The context owns a value copy, so later edits to the caller's request
+	// cannot silently change paths midway through scaffolding.
+	request.envName = "changed"
+	if ctx.envName != "kraken" || filepath.Base(ctx.envDir) != "kraken" {
+		t.Fatalf("context changed with caller request: %#v", ctx)
+	}
+}
+
+func TestScaffoldChecksExistingTargetBeforeReference(t *testing.T) {
+	root := t.TempDir()
+	envDir := filepath.Join(root, "infra", "azure", "service-deployment", "kraken")
+	if err := os.MkdirAll(envDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plan := scaffoldPlan{
+		Lab: "SERVICE", Profile: rangeconfig.ProfileTemplate,
+		Spec: rangeconfig.ProviderSpec{Deployment: "service-deployment", DefaultRegion: "centralus"},
+	}
+	cfg := &config.Config{
+		ProjectRoot: root,
+		Env:         "kraken",
+		Environments: map[string]config.EnvironmentConfig{
+			"kraken": {Provider: "azure", Deployment: plan.Spec.Deployment},
+		},
+	}
+	err := scaffoldEnvWithPlan(cfg, plan, scaffoldRequest{
+		envName: "kraken", region: "eastus", vpcCIDR: "10.50.0.0/16", reference: "missing-reference",
+	})
+	if err == nil || !strings.Contains(err.Error(), "already exists") {
+		t.Fatalf("error = %v, want existing-target error before reference discovery", err)
+	}
+}
+
+func TestScaffoldTargetExistsDistinguishesFilesystemErrors(t *testing.T) {
+	root := t.TempDir()
+
+	exists, err := scaffoldTargetExists(filepath.Join(root, "missing"))
+	if err != nil || exists {
+		t.Fatalf("missing path: exists=%v error=%v", exists, err)
+	}
+
+	brokenLink := filepath.Join(root, "broken-link")
+	if err := os.Symlink(filepath.Join(root, "missing-target"), brokenLink); err != nil {
+		t.Skipf("create broken symlink fixture: %v", err)
+	}
+	exists, err = scaffoldTargetExists(brokenLink)
+	if err != nil || !exists {
+		t.Fatalf("broken symlink: exists=%v error=%v", exists, err)
+	}
+
+	exists, err = scaffoldTargetExists("\x00")
+	if err == nil || exists {
+		t.Fatalf("invalid path: exists=%v error=%v, want filesystem error", exists, err)
+	}
+}
+
+func TestScaffoldRollbackRemovesOnlyReservedArtifacts(t *testing.T) {
+	root := t.TempDir()
+	artifacts := scaffoldArtifacts{}
+	ownedDir := filepath.Join(root, "owned-dir")
+	ownedFile := filepath.Join(root, "owned-file")
+	survivor := filepath.Join(root, "survivor")
+
+	if err := artifacts.reserveDirectory(ownedDir); err != nil {
+		t.Fatal(err)
+	}
+	if err := artifacts.reserveFile(ownedFile); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(survivor, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	succeeded := false
+	cleanupFailedScaffold(&succeeded, &artifacts)
+
+	for _, path := range []string{ownedDir, ownedFile} {
+		if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("reserved artifact was not removed: %s: %v", path, err)
+		}
+	}
+	if data, err := os.ReadFile(survivor); err != nil || string(data) != "keep" {
+		t.Fatalf("untracked artifact changed: data=%q error=%v", data, err)
+	}
+}
+
+func TestScaffoldReservationDoesNotClaimExistingPath(t *testing.T) {
+	root := t.TempDir()
+	existing := filepath.Join(root, "existing")
+	if err := os.Mkdir(existing, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	artifacts := scaffoldArtifacts{}
+	if err := artifacts.reserveDirectory(existing); err == nil {
+		t.Fatal("reserveDirectory accepted an existing path")
+	}
+	succeeded := false
+	cleanupFailedScaffold(&succeeded, &artifacts)
+	if info, err := os.Stat(existing); err != nil || !info.IsDir() {
+		t.Fatalf("unowned existing path was removed: info=%v error=%v", info, err)
+	}
+}
+
 func TestScaffoldEnvRejectsServiceRangeBeforeWriting(t *testing.T) {
 	root := t.TempDir()
 	source := filepath.Join(root, "ad", "SERVICE")
@@ -143,16 +303,14 @@ func TestScaffoldEnvRejectsServiceRangeBeforeWriting(t *testing.T) {
 	}
 	cfg := &config.Config{ProjectRoot: root, Provider: "azure"}
 
-	err := scaffoldEnv(
-		cfg,
-		"service-variant",
-		"centralus",
-		"10.100.0.0/16",
-		"service-dev",
-		"ad/SERVICE",
-		true,
-		false,
-	)
+	err := scaffoldEnv(cfg, scaffoldRequest{
+		envName:       "service-variant",
+		region:        "centralus",
+		vpcCIDR:       "10.100.0.0/16",
+		reference:     "service-dev",
+		variantSource: "ad/SERVICE",
+		useVariant:    true,
+	})
 	if err == nil || !strings.Contains(err.Error(), "active-directory ranges") {
 		t.Fatalf("scaffoldEnv() error = %v, want unsupported range-kind error", err)
 	}
@@ -210,7 +368,9 @@ infrastructure:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := scaffoldEnvWithPlan(cfg, plan, "kraken", "centralus", "10.50.0.0/16", "service-dev", "", false, false); err != nil {
+	if err := scaffoldEnvWithPlan(cfg, plan, scaffoldRequest{
+		envName: "kraken", region: "centralus", vpcCIDR: "10.50.0.0/16", reference: "service-dev",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	for path, contains := range map[string]string{
@@ -280,7 +440,9 @@ infrastructure:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := scaffoldEnvWithPlan(cfg, plan, "kraken", "us-west-2", "10.50.0.0/16", "service-aws", "", false, false); err != nil {
+	if err := scaffoldEnvWithPlan(cfg, plan, scaffoldRequest{
+		envName: "kraken", region: "us-west-2", vpcCIDR: "10.50.0.0/16", reference: "service-aws",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	regionHCL, err := os.ReadFile(filepath.Join(root, "infra", "service-deployment", "kraken", "us-west-2", "region.hcl"))
@@ -333,7 +495,9 @@ func TestFailedScaffoldRemovesOnlyNewArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = scaffoldEnvWithPlan(cfg, plan, "broken", "centralus", "10.50.0.0/16", "service-dev", "", false, false)
+	err = scaffoldEnvWithPlan(cfg, plan, scaffoldRequest{
+		envName: "broken", region: "centralus", vpcCIDR: "10.50.0.0/16", reference: "service-dev",
+	})
 	if err == nil || !strings.Contains(err.Error(), "inventory") {
 		t.Fatalf("error = %v, want missing inventory", err)
 	}
@@ -391,7 +555,9 @@ func TestScaffoldUsesManifestDefaultTemplateRegion(t *testing.T) {
 	cfg := &config.Config{ProjectRoot: root, Env: "kraken", Environments: map[string]config.EnvironmentConfig{
 		"kraken": {Lab: "SERVICE", Provider: "azure", Deployment: "service-deployment"},
 	}}
-	if err := scaffoldEnvWithPlan(cfg, plan, "kraken", "eastus", "10.50.0.0/16", "service-dev", "", false, false); err != nil {
+	if err := scaffoldEnvWithPlan(cfg, plan, scaffoldRequest{
+		envName: "kraken", region: "eastus", vpcCIDR: "10.50.0.0/16", reference: "service-dev",
+	}); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := os.ReadFile(filepath.Join(root, "infra", "azure", "service-deployment", "kraken", "eastus", "hosts", "source.txt"))

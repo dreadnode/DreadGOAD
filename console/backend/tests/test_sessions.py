@@ -6,6 +6,7 @@ Standalone:  python console/backend/tests/test_sessions.py
 from __future__ import annotations
 
 import asyncio
+import copy
 import os
 import pathlib
 import stat
@@ -488,6 +489,80 @@ def _range_catalog() -> list[dict[str, object]]:
     ]
 
 
+def test_range_creation_plan_is_pure_and_complete() -> None:
+    catalog = _range_catalog()
+    original = copy.deepcopy(catalog)
+
+    plan = sessions_module._resolve_range_creation_plan(
+        catalog,
+        sessions_module.RangeCreationRequest(
+            range_name="SERVICE", provider="azure", env_name=" unit-service "
+        ),
+    )
+    assert plan.range_name == "SERVICE"
+    assert plan.env_name == "unit-service"
+    assert plan.deployment == "service-deployment"
+    assert plan.region == "centralus"
+    assert plan.vpc_cidr == "10.50.0.0/16"
+    assert plan.variant_target is None
+    assert plan.default_label == "unit-service · SERVICE"
+    assert plan.environment_fields() == {
+        "lab": "SERVICE",
+        "provider": "azure",
+        "deployment": "service-deployment",
+        "region": "centralus",
+        "vpc_cidr": "10.50.0.0/16",
+        "variant": False,
+    }
+
+    variant = sessions_module._resolve_range_creation_plan(
+        catalog,
+        sessions_module.RangeCreationRequest(
+            range_name="GOAD",
+            provider="aws",
+            env_name="variant-one",
+            customization="randomized",
+            vpc_cidr="10.77.0.0/16",
+        ),
+    )
+    assert variant.variant_source == "ad/GOAD"
+    assert variant.variant_target == "ad/GOAD-variant-one"
+    assert variant.environment_fields()["variant_name"] == "variant-one"
+
+    fields = plan.environment_fields()
+    fields["region"] = "mutated"
+    assert plan.region == "centralus", "rendered fields must not mutate the plan"
+    assert catalog == original, "planning must not mutate catalog metadata"
+    print("PASS test_range_creation_plan_is_pure_and_complete")
+
+
+def test_range_creation_plan_rejects_malformed_catalog_metadata() -> None:
+    malformed = {
+        "name": "BROKEN",
+        "display_name": "Broken",
+        "generated": False,
+        "variant_supported": False,
+        "provider_settings": {
+            "azure": {
+                "deployment": "service-deployment",
+                "default_region": "centralus",
+                "network": ["10.50.0.0/16"],
+            }
+        },
+    }
+    try:
+        sessions_module._resolve_range_creation_plan(
+            [malformed],
+            sessions_module.RangeCreationRequest(
+                range_name="BROKEN", provider="azure", env_name="broken-one"
+            ),
+        )
+        raise AssertionError("accepted non-mapping network metadata")
+    except ValueError as exc:
+        assert "invalid network settings" in str(exc), exc
+    print("PASS test_range_creation_plan_rejects_malformed_catalog_metadata")
+
+
 async def test_create_range_session_scaffolds_service_from_explicit_metadata() -> None:
     saved = os.environ.get("DREADGOAD_CONSOLE_STATE_ROOT")
     with tempfile.TemporaryDirectory() as d:
@@ -746,6 +821,8 @@ async def test_create_range_session_rolls_back_scaffold_exception() -> None:
 
 
 async def _main() -> None:
+    test_range_creation_plan_is_pure_and_complete()
+    test_range_creation_plan_rejects_malformed_catalog_metadata()
     await test_create_attach_session()
     await test_service_repairs_existing_session_directory_modes()
     await test_delete_session_removes_dir_and_rows()

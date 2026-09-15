@@ -224,6 +224,9 @@ func TestGeneratorEndToEnd(t *testing.T) {
 	if err := gen.Run(); err != nil {
 		t.Fatalf("generator failed: %v", err)
 	}
+	if !gen.CreatedTarget() {
+		t.Fatal("successful generator did not report ownership of its target")
+	}
 
 	if _, err := os.Stat(filepath.Join(targetDir, "data", "config.json")); err != nil {
 		t.Fatal("config.json not created in target")
@@ -277,9 +280,13 @@ func TestGeneratorFailureLeavesNoCompletionMarker(t *testing.T) {
 		t.Skipf("create broken symlink fixture: %v", err)
 	}
 
-	err := NewGenerator(sourceDir, targetDir, "test-failure").Run()
+	gen := NewGenerator(sourceDir, targetDir, "test-failure")
+	err := gen.Run()
 	if err == nil || !strings.Contains(err.Error(), "process broken.bin") {
 		t.Fatalf("Run() error = %v, want target write failure", err)
+	}
+	if !gen.CreatedTarget() {
+		t.Fatal("generator did not report ownership of its partial target")
 	}
 	complete, checkErr := IsComplete(targetDir)
 	if checkErr != nil {
@@ -346,9 +353,13 @@ func TestGeneratorRejectsExistingTargetWithoutModification(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := NewGenerator(sourceDir, targetDir, "test-existing-target").Run()
+	gen := NewGenerator(sourceDir, targetDir, "test-existing-target")
+	err := gen.Run()
 	if err == nil || !strings.Contains(err.Error(), "variant target already exists") {
 		t.Fatalf("Run() error = %v, want existing-target rejection", err)
+	}
+	if gen.CreatedTarget() {
+		t.Fatal("generator claimed ownership of a pre-existing target")
 	}
 	data, readErr := os.ReadFile(sentinel)
 	if readErr != nil || string(data) != "unchanged" {

@@ -16,6 +16,8 @@ import shutil
 import stat
 import typing as t
 import uuid
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -101,6 +103,170 @@ def default_label(config_path: str, env: str, snapshot: SessionSnapshot) -> str:
     if variant_name and variant_name != env:
         name = f"{name} · {variant_name}"
     return name
+
+
+@dataclass(frozen=True, slots=True)
+class RangeCreationRequest:
+    """Normalized operator inputs required before catalog discovery."""
+
+    range_name: str
+    provider: str
+    env_name: str
+    region: str | None = None
+    customization: str = "standard"
+    vpc_cidr: str | None = None
+
+    def __post_init__(self) -> None:
+        """Validate path-facing values and the console provider allowlist."""
+        object.__setattr__(
+            self,
+            "env_name",
+            _validate_path_component("environment name", self.env_name),
+        )
+        object.__setattr__(
+            self,
+            "range_name",
+            _validate_path_component("range name", self.range_name),
+        )
+        if self.provider not in configstore.PROVIDERS:
+            raise ValueError(
+                f"provider must be one of {', '.join(configstore.PROVIDERS)}"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class RangeCreationPlan:
+    """Validated, side-effect-free inputs for creating one managed range."""
+
+    range_name: str
+    display_name: str
+    provider: str
+    env_name: str
+    deployment: str
+    region: str
+    vpc_cidr: str
+    use_variant: bool
+    variant_source: str | None
+    variant_target: str | None
+
+    @property
+    def default_label(self) -> str:
+        """Return the console label used when the caller supplies none."""
+        return f"{self.env_name} · {self.display_name}"
+
+    def environment_fields(self) -> dict[str, t.Any]:
+        """Render the validated plan as managed-config environment fields."""
+        fields: dict[str, t.Any] = {
+            "lab": self.range_name,
+            "provider": self.provider,
+            "deployment": self.deployment,
+            "region": self.region,
+            "vpc_cidr": self.vpc_cidr,
+            "variant": self.use_variant,
+        }
+        if self.use_variant:
+            fields.update(
+                {
+                    "variant_source": self.variant_source,
+                    "variant_target": self.variant_target,
+                    "variant_name": self.env_name,
+                }
+            )
+        return fields
+
+
+def _select_range_settings(
+    catalog: Iterable[Mapping[str, t.Any]], range_name: str, provider: str
+) -> tuple[Mapping[str, t.Any], Mapping[str, t.Any]]:
+    """Select one base range and its provider settings from the catalog."""
+    selected = next(
+        (entry for entry in catalog if entry.get("name") == range_name), None
+    )
+    if selected is None or selected.get("generated"):
+        raise ValueError(f"unknown base range {range_name!r}")
+
+    provider_settings = selected.get("provider_settings")
+    settings = (
+        provider_settings.get(provider)
+        if isinstance(provider_settings, Mapping)
+        else None
+    )
+    if not isinstance(settings, Mapping):
+        raise ValueError(
+            f"range {range_name} cannot be created with provider {provider}"
+        )
+    return selected, settings
+
+
+def _resolve_range_cidr(
+    range_name: str,
+    env_name: str,
+    settings: Mapping[str, t.Any],
+    requested: str | None,
+) -> str:
+    """Resolve and validate the network policy for one range environment."""
+    raw_network = settings.get("network")
+    if raw_network is None:
+        network: Mapping[str, t.Any] = {}
+    elif isinstance(raw_network, Mapping):
+        network = raw_network
+    else:
+        raise ValueError(
+            f"range {range_name} has invalid network settings for this provider"
+        )
+
+    fixed_cidr = str(network.get("cidr") or "")
+    editable = network.get("editable") is not False
+    requested_cidr = (requested or "").strip()
+    if not editable and requested_cidr and requested_cidr != fixed_cidr:
+        raise ValueError(
+            f"range {range_name} requires VPC/VNet CIDR {fixed_cidr}; "
+            f"got {requested_cidr}"
+        )
+    effective_cidr = fixed_cidr if not editable else requested_cidr
+    return _validate_cidr(effective_cidr or fixed_cidr or _deterministic_cidr(env_name))
+
+
+def _resolve_range_creation_plan(
+    catalog: Iterable[Mapping[str, t.Any]],
+    request: RangeCreationRequest,
+) -> RangeCreationPlan:
+    """Validate a catalog selection and derive an immutable creation plan."""
+    selected, settings = _select_range_settings(
+        catalog, request.range_name, request.provider
+    )
+    deployment = _validate_path_component(
+        "deployment", str(settings.get("deployment") or "")
+    )
+    effective_region = _validate_path_component(
+        "region", str(request.region or settings.get("default_region") or "")
+    )
+    effective_cidr = _resolve_range_cidr(
+        request.range_name, request.env_name, settings, request.vpc_cidr
+    )
+
+    if request.customization not in ("standard", "randomized"):
+        raise ValueError("customization must be 'standard' or 'randomized'")
+    use_variant = request.customization == "randomized"
+    if use_variant and selected.get("variant_supported") is not True:
+        raise ValueError(
+            f"range {request.range_name} does not support randomized variants"
+        )
+
+    return RangeCreationPlan(
+        range_name=request.range_name,
+        display_name=str(selected.get("display_name") or request.range_name),
+        provider=request.provider,
+        env_name=request.env_name,
+        deployment=deployment,
+        region=effective_region,
+        vpc_cidr=effective_cidr,
+        use_variant=use_variant,
+        variant_source=f"ad/{request.range_name}" if use_variant else None,
+        variant_target=(
+            f"ad/{request.range_name}-{request.env_name}" if use_variant else None
+        ),
+    )
 
 
 class SessionService:
@@ -259,88 +425,38 @@ class SessionService:
         label: str | None = None,
     ) -> SessionDocument:
         """Create a range-first managed environment and attach a session."""
-        env_name = _validate_path_component("environment name", env_name)
-        range_name = _validate_path_component("range name", range_name)
-        if provider not in configstore.PROVIDERS:
-            raise ValueError(
-                f"provider must be one of {', '.join(configstore.PROVIDERS)}"
-            )
-
+        request = RangeCreationRequest(
+            range_name=range_name,
+            provider=provider,
+            env_name=env_name,
+            region=region,
+            customization=customization,
+            vpc_cidr=vpc_cidr,
+        )
         catalog = await labs.discover_labs()
-        selected = next(
-            (entry for entry in catalog if entry.get("name") == range_name), None
-        )
-        if selected is None or selected.get("generated"):
-            raise ValueError(f"unknown base range {range_name!r}")
-        settings = (selected.get("provider_settings") or {}).get(provider)
-        if not isinstance(settings, dict):
-            raise ValueError(
-                f"range {range_name} cannot be created with provider {provider}"
-            )
-
-        deployment = _validate_path_component(
-            "deployment", str(settings.get("deployment") or "")
-        )
-        effective_region = _validate_path_component(
-            "region", str(region or settings.get("default_region") or "")
-        )
-        network = settings.get("network") or {}
-        fixed_cidr = str(network.get("cidr") or "")
-        editable = network.get("editable") is not False
-        requested_cidr = (vpc_cidr or "").strip()
-        if not editable and requested_cidr and requested_cidr != fixed_cidr:
-            raise ValueError(
-                f"range {range_name} requires VPC/VNet CIDR {fixed_cidr}; "
-                f"got {requested_cidr}"
-            )
-        effective_cidr = fixed_cidr if not editable else requested_cidr
-        effective_cidr = effective_cidr or fixed_cidr or _deterministic_cidr(env_name)
-        effective_cidr = _validate_cidr(effective_cidr)
-
-        if customization not in ("standard", "randomized"):
-            raise ValueError("customization must be 'standard' or 'randomized'")
-        use_variant = customization == "randomized"
-        if use_variant and selected.get("variant_supported") is not True:
-            raise ValueError(f"range {range_name} does not support randomized variants")
-
-        env_fields: dict[str, t.Any] = {
-            "lab": range_name,
-            "provider": provider,
-            "deployment": deployment,
-            "region": effective_region,
-            "vpc_cidr": effective_cidr,
-            "variant": use_variant,
-        }
-        variant_target: str | None = None
-        if use_variant:
-            variant_target = f"ad/{range_name}-{env_name}"
-            env_fields.update(
-                {
-                    "variant_source": f"ad/{range_name}",
-                    "variant_target": variant_target,
-                    "variant_name": env_name,
-                }
-            )
+        plan = _resolve_range_creation_plan(catalog, request)
+        env_fields = plan.environment_fields()
 
         problems = scaffold.preflight(
             self.repo_root,
-            provider,
-            env_name,
-            variant_target,
-            deployment=deployment,
+            plan.provider,
+            plan.env_name,
+            plan.variant_target,
+            deployment=plan.deployment,
         )
         if problems:
             raise FileExistsError("\n".join(problems))
 
-        path = str(configstore.managed_path_for(range_name, provider, env_name))
-        labconfig.create_managed_config(path, env_name, env_fields)
+        path = str(
+            configstore.managed_path_for(plan.range_name, plan.provider, plan.env_name)
+        )
+        labconfig.create_managed_config(path, plan.env_name, env_fields)
         try:
             session = await self.create_session(
                 path,
-                env_name,
+                plan.env_name,
                 model=model,
-                label=label
-                or f"{env_name} · {selected.get('display_name') or range_name}",
+                label=label or plan.default_label,
             )
         except Exception:
             with contextlib.suppress(OSError):
@@ -351,7 +467,8 @@ class SessionService:
             ok, output = await self._scaffold_for(session, env_fields)
             if not ok:
                 raise ValueError(
-                    f"could not prepare {range_name} environment {env_name}: {output}"
+                    f"could not prepare {plan.range_name} environment "
+                    f"{plan.env_name}: {output}"
                 )
         except Exception:
             # This flow creates the config and session solely as preparation

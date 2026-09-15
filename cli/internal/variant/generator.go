@@ -273,6 +273,7 @@ type Generator struct {
 	preservedUsers  map[string]bool
 	pwdInDescUsers  map[string]bool // new_username -> has password in description
 	nameComponents  map[string]bool // Misc keys that are firstname/surname components
+	targetCreated   bool
 }
 
 // hostnameAliases maps canonical hostnames to known typos/aliases in upstream GOAD.
@@ -306,8 +307,16 @@ func NewGenerator(source, target, name string) *Generator {
 	}
 }
 
+// CreatedTarget reports whether the most recent Run call atomically created
+// the target directory. Callers can use this to clean up a partial result
+// without risking deletion of a target created by another process.
+func (g *Generator) CreatedTarget() bool {
+	return g.targetCreated
+}
+
 // Run executes the full variant generation process.
 func (g *Generator) Run() error {
+	g.targetCreated = false
 	if err := ValidateSource(g.SourcePath); err != nil {
 		return err
 	}
@@ -329,6 +338,7 @@ func (g *Generator) Run() error {
 	if err := createFreshTarget(g.TargetPath); err != nil {
 		return err
 	}
+	g.targetCreated = true
 
 	if err := g.copyAndTransform(); err != nil {
 		return fmt.Errorf("transform: %w", err)
