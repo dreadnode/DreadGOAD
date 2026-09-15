@@ -19,7 +19,7 @@ import (
 
 // ProvisionTunnel chains an Azure Bastion port-forward to an in-VNet SSH host
 // with a SOCKS5 proxy that dials from that host's network position. GOAD uses
-// its controller; SCOPE-RANGE uses Kali so the range remains exactly six VMs.
+// its controller; Linux service ranges use Kali as their attack-box jump host.
 type ProvisionTunnel struct {
 	socks          *ludus.SOCKSTunnel
 	bastionProcess *bastionTunnelProcess
@@ -290,10 +290,10 @@ func StartProvisionTunnel(ctx context.Context, c *Client, env string) (*Provisio
 	return startProvisionTunnelVia(ctx, c, env, controller, "dreadadmin", keyPath)
 }
 
-// StartScopeProvisionTunnel uses the mandatory Kali host as the SOCKS5 jump
+// StartGOATProvisionTunnel uses the mandatory Kali host as the SOCKS5 jump
 // point for Linux range provisioning. This keeps the range at six VMs while
 // allowing local Ansible to reach every private workload address.
-func StartScopeProvisionTunnel(ctx context.Context, c *Client, env, keyPath string) (*ProvisionTunnel, error) {
+func StartGOATProvisionTunnel(ctx context.Context, c *Client, env, keyPath string) (*ProvisionTunnel, error) {
 	kali, err := c.findInstanceByRole(ctx, env, "AttackBox")
 	if err != nil {
 		return nil, fmt.Errorf("find Kali attack box: %w", err)

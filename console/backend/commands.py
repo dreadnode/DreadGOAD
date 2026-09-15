@@ -433,7 +433,7 @@ def _verb_for(cmd: Command, extra: list[str]) -> tuple[list[str], list[str]]:
 # the agent's args would silently override the session. ``infra --deployment``
 # and the score commands' explicit profile/attack-box selectors are included
 # for the same reason.
-_SCOPE_LONG_FLAGS = frozenset(
+_OVERRIDE_LONG_FLAGS = frozenset(
     {
         "--config",
         "--env",
@@ -449,7 +449,7 @@ _SCOPE_LONG_FLAGS = frozenset(
 # as ``-evalue`` (plus ``-e=value``). Checking only whole argv tokens leaves the
 # concatenated form as a range escape. ``-c`` is retained defensively for older
 # CLI builds even though the current root flag has no config shorthand.
-_SCOPE_SHORT_FLAGS = frozenset({"-c", "-e", "-p", "-d"})
+_OVERRIDE_SHORT_FLAGS = frozenset({"-c", "-e", "-p", "-d"})
 
 _EXEC_VALUE_FLAGS = frozenset({"--hosts", "--cmd", "--timeout"})
 _EXEC_MAX_SCRIPT_CHARS = 16_384
@@ -618,13 +618,13 @@ def _validate_exec_args(extra: list[str]) -> None:
             raise ValueError("--timeout may not exceed 30m")
 
 
-def _scope_override_flag(arg: str) -> str | None:
+def _find_override_flag(arg: str) -> str | None:
     """Return the scope selector encoded in one argv token, if any."""
     head = arg.split("=", 1)[0]
-    if head in _SCOPE_LONG_FLAGS or head in _SCOPE_SHORT_FLAGS:
+    if head in _OVERRIDE_LONG_FLAGS or head in _OVERRIDE_SHORT_FLAGS:
         return head
     if not arg.startswith("--"):
-        for flag in _SCOPE_SHORT_FLAGS:
+        for flag in _OVERRIDE_SHORT_FLAGS:
             if arg.startswith(flag) and len(arg) > len(flag):
                 return flag
     return None
@@ -639,7 +639,7 @@ def _rejects_anchor_override(extra: list[str]) -> None:
     stripping keeps the agent from believing it acted on the context it named.
     """
     for arg in extra:
-        flag = _scope_override_flag(arg)
+        flag = _find_override_flag(arg)
         if flag is not None:
             raise ValueError(
                 f"refusing to run: {flag!r} would retarget the range/cloud "

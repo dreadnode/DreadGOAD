@@ -10,8 +10,8 @@ import (
 )
 
 // Terraform state for the original Azure deployments is LOCAL and gitignored
-// (see infra/*/goad-deployment/root.hcl and .gitignore). SCOPE-RANGE uses the
-// stable per-user state root managed by scope_state.go instead.
+// (see infra/*/goad-deployment/root.hcl and .gitignore). GOAT uses the
+// stable per-user state root managed by goat_state.go instead.
 //
 // The failure this produces is quiet and expensive. `infra destroy` reported
 // only "infra working directory not found", which reads as "recreate the
@@ -124,10 +124,10 @@ func checkLocalInfraState(workDir, env, region, action string) error {
 	return infraStateError(workDir, env, region, action, dirExists)
 }
 
-// checkScopeInfraState applies the same destroy guard to SCOPE-RANGE's stable
+// checkPersistentInfraState applies the same destroy guard to a range's stable
 // backend directory. The configuration checkout must still exist, but applied
 // state is deliberately no longer expected inside it.
-func checkScopeInfraState(workDir, stateDir, env, region, action string) error {
+func checkPersistentInfraState(workDir, stateDir, env, region, action string) error {
 	if _, err := os.Stat(workDir); err != nil {
 		return checkInfraWorkDir(workDir, env, region, action)
 	}
@@ -137,7 +137,7 @@ func checkScopeInfraState(workDir, stateDir, env, region, action string) error {
 	return fmt.Errorf(
 		"cannot destroy %s/%s: no Terraform state found\n"+
 			"  expected state directory: %s\n\n"+
-			"SCOPE-RANGE state is stored outside the checkout so replacing the repository does not lose it. "+
+			"Range state is stored outside the checkout so replacing the repository does not lose it. "+
 			"Restore this directory from backup before destroying, or delete the range's Azure resource group directly",
 		env, region, stateDir,
 	)

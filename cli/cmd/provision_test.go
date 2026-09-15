@@ -116,9 +116,9 @@ func TestRetryAllHosts(t *testing.T) {
 		playbook string
 		want     bool
 	}{
-		{playbook: "scope-seed.yml", want: true},
-		{playbook: "ansible/playbooks/scope-seed.yml", want: true},
-		{playbook: "scope-base.yml", want: false},
+		{playbook: "goat-seed.yml", want: true},
+		{playbook: "ansible/playbooks/goat-seed.yml", want: true},
+		{playbook: "goat-base.yml", want: false},
 		{playbook: "ad-data.yml", want: false},
 	}
 
@@ -341,39 +341,36 @@ func TestApplyExtraVarsWithoutUserVarsIsPassthrough(t *testing.T) {
 	}
 }
 
-func TestScopeProvisionVarsOverrideWindowsRemoteTemp(t *testing.T) {
-	got := scopeProvisionVars("/tmp/scope-key", "127.0.0.1:62103")
-	if got["ansible_remote_tmp"] != "/tmp/.ansible-scope" {
+func TestGOATProvisionVarsOverrideWindowsRemoteTemp(t *testing.T) {
+	got := goatProvisionVars("/tmp/goat-key", "127.0.0.1:62103")
+	if got["ansible_remote_tmp"] != "/tmp/.ansible-goat" {
 		t.Fatalf("remote tmp = %q, want Linux /tmp path", got["ansible_remote_tmp"])
 	}
 	if !strings.Contains(got["ansible_ssh_common_args"], "127.0.0.1:62103 %h %p") {
 		t.Fatalf("SSH common args do not contain SOCKS endpoint: %q", got["ansible_ssh_common_args"])
 	}
-	if got["ansible_ssh_private_key_file"] != "/tmp/scope-key" {
-		t.Fatalf("private key = %q, want /tmp/scope-key", got["ansible_ssh_private_key_file"])
+	if got["ansible_ssh_private_key_file"] != "/tmp/goat-key" {
+		t.Fatalf("private key = %q, want /tmp/goat-key", got["ansible_ssh_private_key_file"])
 	}
 }
 
-func TestResolveGOATOperatorKeyPathPrefersCurrentNameAndSupportsLegacy(t *testing.T) {
+func TestResolveGOATOperatorKeyPathUsesCanonicalName(t *testing.T) {
 	home := t.TempDir()
 	keysDir := filepath.Join(home, ".dreadgoad", "keys")
 	if err := os.MkdirAll(keysDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	legacy := filepath.Join(keysDir, "azure-dev-scope-range-admin")
-	if err := os.WriteFile(legacy, []byte("legacy"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got, err := resolveGOATOperatorKeyPath(home, "dev"); err != nil || got != legacy {
-		t.Fatalf("legacy key resolution = %q, %v; want %q", got, err, legacy)
-	}
-
 	current := filepath.Join(keysDir, "azure-dev-goat-admin")
 	if err := os.WriteFile(current, []byte("current"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := resolveGOATOperatorKeyPath(home, "dev"); err != nil || got != current {
-		t.Fatalf("current key resolution = %q, %v; want %q", got, err, current)
+		t.Fatalf("key resolution = %q, %v; want %q", got, err, current)
+	}
+
+	missing, err := resolveGOATOperatorKeyPath(home, "new")
+	if err != nil || missing != filepath.Join(keysDir, "azure-new-goat-admin") {
+		t.Fatalf("missing key resolution = %q, %v", missing, err)
 	}
 }
 
@@ -391,8 +388,8 @@ func TestSortedPairsIsStable(t *testing.T) {
 }
 
 func TestAutomaticSSMBucketNameIsDeterministicAndS3Safe(t *testing.T) {
-	short := automaticSSMBucketName("123456789012", "scope-aws", "us-east-2")
-	if short != "dreadgoad-goat-123456789012-scope-aws-us-east-2-ssm" {
+	short := automaticSSMBucketName("123456789012", "goat-aws", "us-east-2")
+	if short != "dreadgoad-goat-123456789012-goat-aws-us-east-2-ssm" {
 		t.Fatalf("short bucket = %q", short)
 	}
 	long := automaticSSMBucketName(

@@ -273,11 +273,11 @@ async def test_create_new_env_rejects_service_range_before_writing() -> None:
             try:
                 await svc.create_new_env_session(
                     str(cfg),
-                    "scope-variant",
+                    "goat-variant",
                     env_fields={
                         "variant": True,
-                        "variant_source": "ad/SCOPE-RANGE",
-                        "variant_target": "ad/SCOPE-RANGE-scope-variant",
+                        "variant_source": "ad/GOAT",
+                        "variant_target": "ad/GOAT-goat-variant",
                     },
                 )
             except ValueError as exc:
@@ -475,25 +475,25 @@ async def test_create_config_session_rolls_back_on_failure() -> None:
 def _range_catalog() -> list[dict[str, object]]:
     return [
         {
-            "name": "SCOPE-RANGE",
+            "name": "GOAT",
             "display_name": "GOAT",
             "generated": False,
             "variant_supported": False,
             "provider_settings": {
                 "aws": {
-                    "deployment": "scope-range-deployment",
+                    "deployment": "goat-deployment",
                     "scaffold_profile": "template",
-                    "template_environment": "scope-aws",
+                    "template_environment": "goat-aws",
                     "default_region": "us-east-2",
                     "network": {"cidr": "10.50.0.0/16", "editable": False},
                 },
                 "azure": {
-                    "deployment": "scope-range-deployment",
+                    "deployment": "goat-deployment",
                     "scaffold_profile": "template",
-                    "template_environment": "scope-dev",
+                    "template_environment": "goat-dev",
                     "default_region": "centralus",
                     "network": {"cidr": "10.50.0.0/16", "editable": False},
-                }
+                },
             },
         },
         {
@@ -521,7 +521,7 @@ def _range_catalog() -> list[dict[str, object]]:
     ]
 
 
-async def test_create_range_session_scaffolds_scope_from_explicit_metadata() -> None:
+async def test_create_range_session_scaffolds_goat_from_explicit_metadata() -> None:
     saved = os.environ.get("DREADGOAD_CONSOLE_STATE_ROOT")
     with tempfile.TemporaryDirectory() as d:
         tmp = pathlib.Path(d)
@@ -541,15 +541,13 @@ async def test_create_range_session_scaffolds_scope_from_explicit_metadata() -> 
         sessions_module.labs.discover_labs = discovered
         sessions_module.scaffold.scaffold_env = scaffolded
         try:
-            session = await svc.create_range_session(
-                "SCOPE-RANGE", "azure", "unit-scope-range"
-            )
-            assert session["label"] == "unit-scope-range · GOAT", session
+            session = await svc.create_range_session("GOAT", "azure", "unit-goat")
+            assert session["label"] == "unit-goat · GOAT", session
             assert session["snapshot"]["provider"] == "azure", session
-            assert session["snapshot"].get("deployment") == "scope-range-deployment"
+            assert session["snapshot"].get("deployment") == "goat-deployment"
             assert session["snapshot"]["vpc_cidr"] == "10.50.0.0/16"
             assert len(calls) == 1, calls
-            assert calls[0][1]["deployment"] == "scope-range-deployment"
+            assert calls[0][1]["deployment"] == "goat-deployment"
             assert calls[0][1]["vpc_cidr"] == "10.50.0.0/16"
             assert calls[0][1]["variant"] is False
 
@@ -557,28 +555,26 @@ async def test_create_range_session_scaffolds_scope_from_explicit_metadata() -> 
 
             config_path = pathlib.Path(session["anchor"]["config_path"])
             data = yaml.safe_load(config_path.read_text())
-            env = data["environments"]["unit-scope-range"]
+            env = data["environments"]["unit-goat"]
             assert "provider" not in data, "managed config must not imply AWS"
-            assert env["lab"] == "SCOPE-RANGE"
+            assert env["lab"] == "GOAT"
             assert env["provider"] == "azure"
-            assert env["deployment"] == "scope-range-deployment"
+            assert env["deployment"] == "goat-deployment"
             assert env["variant"] is False
 
-            aws_session = await svc.create_range_session(
-                "SCOPE-RANGE", "aws", "unit-goat-aws"
-            )
+            aws_session = await svc.create_range_session("GOAT", "aws", "unit-goat-aws")
             assert aws_session["snapshot"]["provider"] == "aws", aws_session
             assert aws_session["snapshot"]["region"] == "us-east-2", aws_session
             assert aws_session["snapshot"]["vpc_cidr"] == "10.50.0.0/16"
             assert len(calls) == 2, calls
             assert calls[1][1]["provider"] == "aws"
-            assert calls[1][1]["deployment"] == "scope-range-deployment"
+            assert calls[1][1]["deployment"] == "goat-deployment"
             aws_config = pathlib.Path(aws_session["anchor"]["config_path"])
             aws_data = yaml.safe_load(aws_config.read_text())
             aws_env = aws_data["environments"]["unit-goat-aws"]
             assert aws_env["provider"] == "aws"
             assert aws_env["region"] == "us-east-2"
-            assert aws_env["lab"] == "SCOPE-RANGE"
+            assert aws_env["lab"] == "GOAT"
         finally:
             sessions_module.labs.discover_labs = original_discover
             sessions_module.scaffold.scaffold_env = original_scaffold
@@ -586,7 +582,7 @@ async def test_create_range_session_scaffolds_scope_from_explicit_metadata() -> 
             os.environ.pop("DREADGOAD_CONSOLE_STATE_ROOT", None)
             if saved is not None:
                 os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = saved
-    print("PASS test_create_range_session_scaffolds_scope_from_explicit_metadata")
+    print("PASS test_create_range_session_scaffolds_goat_from_explicit_metadata")
 
 
 async def test_create_range_session_builds_supported_variant() -> None:
@@ -646,12 +642,12 @@ async def test_create_range_session_rejects_bad_policy_before_writes() -> None:
         try:
             cases = [
                 (
-                    {"range_name": "SCOPE-RANGE", "provider": "proxmox"},
+                    {"range_name": "GOAT", "provider": "proxmox"},
                     "provider must be one of",
                 ),
                 (
                     {
-                        "range_name": "SCOPE-RANGE",
+                        "range_name": "GOAT",
                         "provider": "azure",
                         "customization": "randomized",
                     },
@@ -659,7 +655,7 @@ async def test_create_range_session_rejects_bad_policy_before_writes() -> None:
                 ),
                 (
                     {
-                        "range_name": "SCOPE-RANGE",
+                        "range_name": "GOAT",
                         "provider": "azure",
                         "vpc_cidr": "10.99.0.0/16",
                     },
@@ -720,9 +716,7 @@ async def test_create_range_session_rolls_back_failed_scaffold() -> None:
         sessions_module.scaffold.scaffold_env = failed
         try:
             try:
-                await svc.create_range_session(
-                    "SCOPE-RANGE", "azure", "unit-failed-scope"
-                )
+                await svc.create_range_session("GOAT", "azure", "unit-failed-goat")
                 raise AssertionError("failed scaffold unexpectedly created a session")
             except ValueError as exc:
                 assert "template is incomplete" in str(exc), exc
@@ -759,9 +753,7 @@ async def test_create_range_session_rolls_back_scaffold_exception() -> None:
         sessions_module.scaffold.scaffold_env = failed
         try:
             try:
-                await svc.create_range_session(
-                    "SCOPE-RANGE", "azure", "unit-crashed-scope"
-                )
+                await svc.create_range_session("GOAT", "azure", "unit-crashed-goat")
                 raise AssertionError(
                     "scaffold exception unexpectedly created a session"
                 )
@@ -794,7 +786,7 @@ async def _main() -> None:
     await test_create_config_session_writes_a_config_and_attaches()
     await test_create_config_session_refuses_a_taken_name()
     await test_create_config_session_rolls_back_on_failure()
-    await test_create_range_session_scaffolds_scope_from_explicit_metadata()
+    await test_create_range_session_scaffolds_goat_from_explicit_metadata()
     await test_create_range_session_builds_supported_variant()
     await test_create_range_session_rejects_bad_policy_before_writes()
     await test_create_range_session_rolls_back_failed_scaffold()

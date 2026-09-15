@@ -68,9 +68,9 @@ func TestParsePollInterval(t *testing.T) {
 	}
 }
 
-func TestScopeRangeValidatorArgs(t *testing.T) {
-	cfg := &config.Config{ProjectRoot: "/repo", Env: "scope-dev", Provider: "aws", Region: "us-west-2"}
-	got, err := scopeRangeValidatorArgs(cfg, validateOpts{
+func TestGOATValidatorArgs(t *testing.T) {
+	cfg := &config.Config{ProjectRoot: "/repo", Env: "goat-dev", Provider: "aws", Region: "us-west-2"}
+	got, err := goatValidatorArgs(cfg, validateOpts{
 		outputPath: "/tmp/report with spaces.json",
 		quick:      true,
 		verbose:    true,
@@ -79,11 +79,11 @@ func TestScopeRangeValidatorArgs(t *testing.T) {
 		json:       true,
 	})
 	if err != nil {
-		t.Fatalf("scopeRangeValidatorArgs() error: %v", err)
+		t.Fatalf("goatValidatorArgs() error: %v", err)
 	}
 	want := []string{
-		filepath.Join("/repo", "scripts", "validate-scope-range-live.py"),
-		"--env", "scope-dev",
+		filepath.Join("/repo", "scripts", "validate-goat-live.py"),
+		"--env", "goat-dev",
 		"--provider", "aws",
 		"--region", "us-west-2",
 		"--output", "/tmp/report with spaces.json",
@@ -93,16 +93,16 @@ func TestScopeRangeValidatorArgs(t *testing.T) {
 		"--json",
 	}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("scopeRangeValidatorArgs() = %#v, want %#v", got, want)
+		t.Fatalf("goatValidatorArgs() = %#v, want %#v", got, want)
 	}
 }
 
-func TestScopeRangeValidatorRejectsPolling(t *testing.T) {
-	_, err := scopeRangeValidatorArgs(
-		&config.Config{ProjectRoot: "/repo", Env: "scope-dev"},
+func TestGOATValidatorRejectsPolling(t *testing.T) {
+	_, err := goatValidatorArgs(
+		&config.Config{ProjectRoot: "/repo", Env: "goat-dev"},
 		validateOpts{pollInterval: time.Minute},
 	)
 	if err == nil || !strings.Contains(err.Error(), "--poll is not supported") {
-		t.Fatalf("scopeRangeValidatorArgs() error = %v, want unsupported polling error", err)
+		t.Fatalf("goatValidatorArgs() error = %v, want unsupported polling error", err)
 	}
 }

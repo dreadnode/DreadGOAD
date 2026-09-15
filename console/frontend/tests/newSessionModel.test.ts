@@ -7,8 +7,8 @@ const options: SessionOptions = {
   credential_hints: { aws: null, azure: 'az login' },
   regions: { aws: ['us-west-1'], azure: ['centralus'] },
   environments: [{
-    name: 'scope-dev', lab: 'SCOPE-RANGE', provider: 'azure',
-    deployment: 'scope-range-deployment', region: 'centralus', variant: false,
+    name: 'goat-dev', lab: 'GOAT', provider: 'azure',
+    deployment: 'goat-deployment', region: 'centralus', variant: false,
     config_path: '/repo/dreadgoad.yaml',
   }],
   ranges: [
@@ -30,13 +30,13 @@ const options: SessionOptions = {
       },
     },
     {
-      name: 'SCOPE-RANGE', display_name: 'GOAT', dir: 'ad/SCOPE-RANGE',
+      name: 'GOAT', display_name: 'GOAT', dir: 'ad/GOAT',
       kind: 'service-range', providers: ['azure'], hosts: ['web01'],
       variant_supported: false, generated: false,
       provider_settings: {
         azure: {
-          deployment: 'scope-range-deployment', scaffold_profile: 'template',
-          template_environment: 'scope-dev', default_region: 'centralus',
+          deployment: 'goat-deployment', scaffold_profile: 'template',
+          template_environment: 'goat-dev', default_region: 'centralus',
           network: { cidr: '10.50.0.0/16', editable: false },
         },
       },
@@ -54,15 +54,15 @@ const empty = deriveNewSessionModel(base)
 assert.equal(empty.valid, false)
 assert.equal(empty.effectiveProvider, '', 'AWS must not be selected before a range')
 
-const scope = deriveNewSessionModel({
-  ...base, rangeName: 'SCOPE-RANGE', environmentName: 'kraken',
+const goat = deriveNewSessionModel({
+  ...base, rangeName: 'GOAT', environmentName: 'kraken',
 })
-assert.equal(scope.valid, true)
-assert.equal(scope.effectiveProvider, 'azure')
-assert.equal(scope.variantAvailable, false)
-assert.equal(scope.cidrEditable, false)
-assert.deepEqual(scope.payload, {
-  mode: 'create_range', range: 'SCOPE-RANGE', provider: 'azure',
+assert.equal(goat.valid, true)
+assert.equal(goat.effectiveProvider, 'azure')
+assert.equal(goat.variantAvailable, false)
+assert.equal(goat.cidrEditable, false)
+assert.deepEqual(goat.payload, {
+  mode: 'create_range', range: 'GOAT', provider: 'azure',
   region: 'centralus', env: 'kraken', customization: 'standard',
   vpc_cidr: '10.50.0.0/16',
 })
@@ -86,7 +86,7 @@ const existing = deriveNewSessionModel({
 })
 assert.equal(existing.valid, true)
 assert.deepEqual(existing.payload, {
-  config_path: '/repo/dreadgoad.yaml', env: 'scope-dev',
+  config_path: '/repo/dreadgoad.yaml', env: 'goat-dev',
 })
 
 const imported = deriveNewSessionModel({

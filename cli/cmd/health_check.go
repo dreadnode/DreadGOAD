@@ -22,7 +22,7 @@ var healthCheckCmd = &cobra.Command{
 	Long: `Runs the health checks defined for the selected lab.
 
 GOAD-family labs check Active Directory, replication, trusts, DNS, and critical
-Windows services. SCOPE-RANGE checks that every expected Linux VM is running
+Windows services. GOAT checks that every expected Linux VM is running
 and that its core application, database, storage, and infrastructure services
 are available. Use validate for the lab's complete expected-state audit.`,
 	Example: `  dreadgoad health-check

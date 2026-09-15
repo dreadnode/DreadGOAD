@@ -127,20 +127,20 @@ func TestDestroyWithStateProceeds(t *testing.T) {
 	}
 }
 
-func TestScopeDestroyUsesStableStateDirectory(t *testing.T) {
+func TestGOATDestroyUsesStableStateDirectory(t *testing.T) {
 	workDir := t.TempDir()
-	stateDir := filepath.Join(t.TempDir(), "scope-dev", "centralus")
+	stateDir := filepath.Join(t.TempDir(), "goat-dev", "centralus")
 	writeTestState(t, filepath.Dir(filepath.Dir(stateDir)), 0o600)
 
-	if err := checkScopeInfraState(workDir, stateDir, "scope-dev", "centralus", "destroy"); err != nil {
+	if err := checkPersistentInfraState(workDir, stateDir, "goat-dev", "centralus", "destroy"); err != nil {
 		t.Fatalf("destroy with stable state must proceed: %v", err)
 	}
 }
 
-func TestScopeDestroyWithoutStableStateIsRefused(t *testing.T) {
+func TestGOATDestroyWithoutStableStateIsRefused(t *testing.T) {
 	workDir := t.TempDir()
-	stateDir := filepath.Join(t.TempDir(), "scope-dev", "centralus")
-	err := checkScopeInfraState(workDir, stateDir, "scope-dev", "centralus", "destroy")
+	stateDir := filepath.Join(t.TempDir(), "goat-dev", "centralus")
+	err := checkPersistentInfraState(workDir, stateDir, "goat-dev", "centralus", "destroy")
 	if err == nil {
 		t.Fatal("destroy without stable state must fail")
 	}

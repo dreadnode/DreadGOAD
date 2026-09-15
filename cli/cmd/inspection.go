@@ -26,7 +26,7 @@ const (
 
 var inspectionProfiles = map[string]labInspector{
 	inspectionProfileActiveDirectory: goadInspector{},
-	inspectionProfileGOAT:            scopeRangeInspector{},
+	inspectionProfileGOAT:            goatInspector{},
 }
 
 func inspectorFor(cfg *config.Config) (labInspector, error) {
@@ -66,13 +66,13 @@ func (goadInspector) validate(
 	return runGOADValidate(ctx, cmd, cfg, opts)
 }
 
-type scopeRangeInspector struct{}
+type goatInspector struct{}
 
-func (scopeRangeInspector) health(
+func (goatInspector) health(
 	ctx context.Context, _ *cobra.Command, cfg *config.Config, jsonOut bool,
 ) error {
 	args := []string{
-		filepath.Join(cfg.ProjectRoot, "scripts", "validate-scope-range-live.py"),
+		filepath.Join(cfg.ProjectRoot, "scripts", "validate-goat-live.py"),
 		"--env", cfg.Env, "--provider", cfg.ResolvedProvider(), "--health",
 	}
 	if cfg.ResolvedProvider() == "aws" {
@@ -85,18 +85,18 @@ func (scopeRangeInspector) health(
 	if jsonOut {
 		args = append(args, "--json")
 	}
-	return runScopeRangeInspector(ctx, args, "health check")
+	return runGOATInspector(ctx, args, "health check")
 }
 
-func (scopeRangeInspector) validate(
+func (goatInspector) validate(
 	ctx context.Context, _ *cobra.Command, cfg *config.Config, opts validateOpts,
 ) error {
-	return runScopeRangeValidate(ctx, cfg, opts)
+	return runGOATValidate(ctx, cfg, opts)
 }
 
-func runScopeRangeInspector(ctx context.Context, args []string, operation string) error {
+func runGOATInspector(ctx context.Context, args []string, operation string) error {
 	if _, err := os.Stat(args[0]); err != nil {
-		return fmt.Errorf("find SCOPE-RANGE validator: %w", err)
+		return fmt.Errorf("find GOAT validator: %w", err)
 	}
 	command := exec.CommandContext(ctx, "python3", args...)
 	command.Stdin = os.Stdin
@@ -106,7 +106,7 @@ func runScopeRangeInspector(ctx context.Context, args []string, operation string
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ctxErr
 		}
-		return fmt.Errorf("SCOPE-RANGE %s failed: %w", operation, err)
+		return fmt.Errorf("GOAT %s failed: %w", operation, err)
 	}
 	return nil
 }

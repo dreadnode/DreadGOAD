@@ -77,9 +77,7 @@ def test_preflight_blocks_the_unrecoverable_states() -> None:
 def test_preflight_uses_range_deployment_and_global_inventory_name() -> None:
     with tempfile.TemporaryDirectory() as d:
         custom = pathlib.Path(
-            scaffold.infra_env_dir(
-                d, "azure", "kraken", deployment="scope-range-deployment"
-            )
+            scaffold.infra_env_dir(d, "azure", "kraken", deployment="goat-deployment")
         )
         custom.mkdir(parents=True)
         (pathlib.Path(d) / "kraken-inventory").write_text("[all]\n")
@@ -88,7 +86,7 @@ def test_preflight_uses_range_deployment_and_global_inventory_name() -> None:
             "azure",
             "kraken",
             None,
-            deployment="scope-range-deployment",
+            deployment="goat-deployment",
         )
         assert len(problems) == 2, problems
         assert str(custom) in problems[0]

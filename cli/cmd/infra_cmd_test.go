@@ -20,20 +20,20 @@ func TestMaterializeLabConfigAllowsMissingOptionalConfig(t *testing.T) {
 
 func TestMaterializeLabConfigUsesActiveLab(t *testing.T) {
 	root := t.TempDir()
-	dataDir := filepath.Join(root, "ad", "SCOPE-RANGE", "data")
+	dataDir := filepath.Join(root, "ad", "GOAT", "data")
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	want := []byte(`{"scope":true}`)
+	want := []byte(`{"goat":true}`)
 	if err := os.WriteFile(filepath.Join(dataDir, "config.json"), want, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	cfg := &config.Config{ProjectRoot: root, Env: "scope-dev", Lab: "SCOPE-RANGE"}
+	cfg := &config.Config{ProjectRoot: root, Env: "goat-dev", Lab: "GOAT"}
 	if err := materializeLabConfig(cfg); err != nil {
 		t.Fatalf("materializeLabConfig() error: %v", err)
 	}
-	destination := filepath.Join(dataDir, "scope-dev-config.json")
+	destination := filepath.Join(dataDir, "goat-dev-config.json")
 	got, err := os.ReadFile(destination)
 	if err != nil {
 		t.Fatal(err)
@@ -192,21 +192,21 @@ func TestMaterializeLabConfigReportsWriteFailure(t *testing.T) {
 	}
 }
 
-func TestRunInfraValidateAzureScopeRange(t *testing.T) {
+func TestRunInfraValidateAzureGOAT(t *testing.T) {
 	root := t.TempDir()
 	cfg := &config.Config{
 		ProjectRoot: root,
-		Env:         "scope-dev",
+		Env:         "goat-dev",
 		Environments: map[string]config.EnvironmentConfig{
-			"scope-dev": {
-				Lab:        "SCOPE-RANGE",
+			"goat-dev": {
+				Lab:        "GOAT",
 				Provider:   "azure",
-				Deployment: "scope-range-deployment",
+				Deployment: "goat-deployment",
 				Region:     "centralus",
 			},
 		},
 	}
-	base := filepath.Join(root, "infra", "azure", "scope-range-deployment", "scope-dev", "centralus")
+	base := filepath.Join(root, "infra", "azure", "goat-deployment", "goat-dev", "centralus")
 	units := []string{
 		"access", "network", "bastion", "kali",
 		"hosts/data01", "hosts/dev01", "hosts/services01", "hosts/storage01", "hosts/web01",
@@ -221,37 +221,38 @@ func TestRunInfraValidateAzureScopeRange(t *testing.T) {
 		}
 	}
 
-	if err := runInfraValidateAzure(cfg); err != nil {
+	operations := rangeOperations{validateServiceInfra: true}
+	if err := runInfraValidateAzure(cfg, operations); err != nil {
 		t.Fatalf("runInfraValidateAzure() error: %v", err)
 	}
 	if err := os.Remove(filepath.Join(base, "kali", "terragrunt.hcl")); err != nil {
 		t.Fatal(err)
 	}
-	if err := runInfraValidateAzure(cfg); err == nil || !strings.Contains(err.Error(), "missing units: kali") {
+	if err := runInfraValidateAzure(cfg, operations); err == nil || !strings.Contains(err.Error(), "missing units: kali") {
 		t.Fatalf("missing Kali error = %v", err)
 	}
 }
 
-func TestRunInfraValidateAWSScopeRange(t *testing.T) {
+func TestRunInfraValidateAWSGOAT(t *testing.T) {
 	root := t.TempDir()
 	cfg := &config.Config{
 		ProjectRoot: root,
-		Env:         "scope-aws",
+		Env:         "goat-aws",
 		Environments: map[string]config.EnvironmentConfig{
-			"scope-aws": {
-				Lab:        "SCOPE-RANGE",
+			"goat-aws": {
+				Lab:        "GOAT",
 				Provider:   "aws",
-				Deployment: "scope-range-deployment",
+				Deployment: "goat-deployment",
 				Region:     "us-east-2",
 			},
 		},
 	}
-	baseDir := filepath.Join(root, "infra", "scope-range-deployment")
-	workDir := filepath.Join(baseDir, "scope-aws", "us-east-2")
+	baseDir := filepath.Join(root, "infra", "goat-deployment")
+	workDir := filepath.Join(baseDir, "goat-aws", "us-east-2")
 	files := []string{
 		filepath.Join(baseDir, "host.hcl"),
 		filepath.Join(baseDir, "host-registry.yaml"),
-		filepath.Join(baseDir, "scope-aws", "env.hcl"),
+		filepath.Join(baseDir, "goat-aws", "env.hcl"),
 		filepath.Join(workDir, "region.hcl"),
 		filepath.Join(workDir, "network", "terragrunt.hcl"),
 		filepath.Join(workDir, "kali", "terragrunt.hcl"),
@@ -267,13 +268,13 @@ func TestRunInfraValidateAWSScopeRange(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := runInfraValidateScopeAWS(cfg); err != nil {
-		t.Fatalf("runInfraValidateScopeAWS() error: %v", err)
+	if err := runInfraValidateServiceAWS(cfg); err != nil {
+		t.Fatalf("runInfraValidateServiceAWS() error: %v", err)
 	}
 	if err := os.Remove(filepath.Join(workDir, "hosts", "web01", "terragrunt.hcl")); err != nil {
 		t.Fatal(err)
 	}
-	if err := runInfraValidateScopeAWS(cfg); err == nil || !strings.Contains(err.Error(), "web01") {
+	if err := runInfraValidateServiceAWS(cfg); err == nil || !strings.Contains(err.Error(), "web01") {
 		t.Fatalf("missing web01 error = %v", err)
 	}
 }
@@ -307,8 +308,8 @@ func TestShouldEnableAWSKali(t *testing.T) {
 }
 
 func TestShouldBootstrapAWSBackendForGOAT(t *testing.T) {
-	goat := &config.Config{Lab: "SCOPE-RANGE"}
-	goad := &config.Config{Lab: "GOAD"}
+	goat := rangeOperations{autoBootstrapAWSBackend: true}
+	goad := rangeOperations{}
 	for _, action := range []string{"init", "plan", "apply"} {
 		if !shouldBootstrapAWSBackend(goat, action, false) {
 			t.Fatalf("GOAT %s should bootstrap its backend", action)

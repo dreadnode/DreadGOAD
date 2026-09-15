@@ -17,7 +17,7 @@ func TestInspectorForSelectedProfile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := service.(scopeRangeInspector); !ok {
+	if _, ok := service.(goatInspector); !ok {
 		t.Fatal("goat profile must use its Linux workload inspector")
 	}
 

@@ -158,7 +158,7 @@ async def test_discover_labs_survives_a_missing_path_field() -> None:
 async def test_service_ranges_are_not_variant_sources() -> None:
     with tempfile.TemporaryDirectory() as d:
         root = pathlib.Path(d)
-        service_range = root / "ad" / "SCOPE-RANGE"
+        service_range = root / "ad" / "GOAT"
         service_range.mkdir(parents=True)
         (service_range / "range.yml").write_text(
             "schema_version: 1\nkind: service-range\n"
@@ -166,7 +166,7 @@ async def test_service_ranges_are_not_variant_sources() -> None:
         payload = json.dumps(
             [
                 {
-                    "name": "SCOPE-RANGE",
+                    "name": "GOAT",
                     "path": str(service_range),
                     "providers": ["azure"],
                     "hosts": ["web01"],
@@ -178,7 +178,7 @@ async def test_service_ranges_are_not_variant_sources() -> None:
         assert found[0]["variant_supported"] is False, found[0]
 
         try:
-            labs.require_variant_source_supported(root, "ad/SCOPE-RANGE")
+            labs.require_variant_source_supported(root, "ad/GOAT")
         except ValueError as exc:
             assert "active-directory ranges" in str(exc), exc
         else:

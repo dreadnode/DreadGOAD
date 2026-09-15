@@ -1,10 +1,10 @@
-SCOPE-RANGE:
-  - scope-base.yml
-  - scope-services.yml
-  - scope-data-storage.yml
-  - scope-dev-web.yml
-  - scope-kali.yml
-  - scope-seed.yml
+GOAT:
+  - goat-base.yml
+  - goat-services.yml
+  - goat-data-storage.yml
+  - goat-dev-web.yml
+  - goat-kali.yml
+  - goat-seed.yml
 
 NHA:
   - build.yml

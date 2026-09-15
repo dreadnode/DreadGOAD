@@ -1,0 +1,14 @@
+---
+- name: Configure GOAT development services
+  hosts: development
+  become: true
+  gather_facts: true
+  roles:
+    - role: dreadnode.goad.goat_development
+
+- name: Configure GOAT web applications
+  hosts: web
+  become: true
+  gather_facts: true
+  roles:
+    - role: dreadnode.goad.goat_web

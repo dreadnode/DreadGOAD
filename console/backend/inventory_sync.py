@@ -20,7 +20,7 @@ _STATE = {
     "terminated": "absent",
 }
 _ALIASES = {
-    # Ordered from most to least specific. SCOPE-RANGE names its mandatory
+    # Ordered from most to least specific. GOAT names its mandatory
     # attack box ``kali01``; preferring that token prevents an unrelated
     # ``kali``-named VM from winning only because discovery returned it last.
     "attackbox": ["attackbox", "kali01", "kali", "attack"],

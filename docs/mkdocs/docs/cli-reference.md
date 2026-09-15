@@ -136,8 +136,8 @@ Manage DreadGOAD infrastructure via Terragrunt. Operates on the `infra/` directo
 | Flag | Description |
 |------|-------------|
 | `-d, --deployment string` | Deployment name |
-| `--with-kali` | Include the optional Kali attack box (AWS or Azure; automatic for SCOPE-RANGE) |
-| `--with-bastion` | Include Azure Bastion (automatic for SCOPE-RANGE) |
+| `--with-kali` | Include the optional Kali attack box (AWS or Azure; automatic for GOAT) |
+| `--with-bastion` | Include Azure Bastion (automatic for GOAT) |
 
 #### `infra init`
 
@@ -475,7 +475,7 @@ dreadgoad verify-trusts
 
 Validate the selected lab.
 
-GOAD labs check their intended vulnerability configurations and use a live dashboard when stdout is a TTY. GOAT (`SCOPE-RANGE`) checks its Azure or AWS topology plus expected Linux hosts, services, applications, databases, storage, and seeded data, and always streams plain output.
+GOAD labs check their intended vulnerability configurations and use a live dashboard when stdout is a TTY. GOAT checks its Azure or AWS topology plus expected Linux hosts, services, applications, databases, storage, and seeded data, and always streams plain output.
 
 | Flag | Description |
 |------|-------------|
@@ -496,11 +496,11 @@ dreadgoad validate --output report.json  # custom report path
 
 Dashboard keys: `q`, `ctrl+c`, or `esc` to quit. `--poll` is ignored without the dashboard (non-TTY or `--plain`).
 
-For GOAT (`SCOPE-RANGE`), select `scope-dev` and run `dreadgoad validate`; `--quick`,
+For GOAT, select `goat-dev` and run `dreadgoad validate`; `--quick`,
 `--output`, `--verbose`, and `--no-fail` are forwarded to its live validator.
 `--plain` is a no-op and `--poll` is not supported.
 
-See [GOAT — Game of Agent Trust](labs/SCOPE-RANGE.md) for its topology, deployment,
+See [GOAT — Game of Agent Trust](labs/GOAT.md) for its topology, deployment,
 web-console workflow, validation contract, synthetic data, and teardown.
 
 See [validation.md](https://github.com/dreadnode/DreadGOAD/blob/main/docs/validation.md) for the full guide.

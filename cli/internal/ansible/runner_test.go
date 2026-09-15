@@ -11,8 +11,8 @@ import (
 func TestBuildArgsEncodesExtraVarsAsSingleJSONObject(t *testing.T) {
 	proxyArgs := "-o ProxyCommand='nc -X 5 -x 127.0.0.1:62103 %h %p' -o StrictHostKeyChecking=no"
 	opts := RunOptions{
-		Playbook: "scope-base.yml",
-		Env:      "scope-dev",
+		Playbook: "goat-base.yml",
+		Env:      "goat-dev",
 		ExtraVars: map[string]string{
 			"ansible_connection":      "ssh",
 			"ansible_ssh_common_args": proxyArgs,

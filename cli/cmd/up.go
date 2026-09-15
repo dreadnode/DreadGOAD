@@ -126,19 +126,12 @@ func runUp(cmd *cobra.Command, args []string) error {
 
 	fmt.Println()
 	color.Green("✓ Lab is up. Total time: %s", time.Since(start).Round(time.Second))
-	cfg, err := config.Get()
-	if err != nil {
-		return err
-	}
-	fmt.Println(upNextStep(cfg.ResolvedLab()))
+	fmt.Println(upNextStep())
 	return nil
 }
 
-func upNextStep(labName string) string {
-	if labName == "SCOPE-RANGE" {
-		return "Next: dreadgoad validate    # deployed-state and service checks"
-	}
-	return "Next: dreadgoad validate    # vulnerability checks"
+func upNextStep() string {
+	return "Next: dreadgoad validate    # range-specific checks"
 }
 
 func validateUpProvisionResume(steps []upStep, plays, fromPlaybook string) error {

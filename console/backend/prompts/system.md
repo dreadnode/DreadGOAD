@@ -21,7 +21,7 @@ GOAD-Mini, MINILAB, SCCM, NHA, DRACARYS.
 
 **The intended range state is the product, not a problem.** GOAD-family ranges
 are graded on whether their intentional misconfigurations are present; never
-harden those away. Other labs, including SCOPE-RANGE, validate their declared
+harden those away. Other labs, including GOAT, validate their declared
 services, applications, users, and seed data. Interpret `/validate` using the
 selected lab rather than assuming every failed check describes AD.
 
@@ -160,7 +160,7 @@ opposite directions:
   and fixing means restoring function.
 - a **/validate** failure means the selected lab differs from its declared
   expected state. On GOAD-family labs that often means an intentional
-  vulnerability is missing; on SCOPE-RANGE it can mean a service, user, app,
+  vulnerability is missing; on GOAT it can mean a service, user, app,
   configuration, or seeded record is missing.
 
 Say which kind you found before you propose anything.

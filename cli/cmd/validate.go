@@ -25,7 +25,7 @@ var validateCmd = &cobra.Command{
 	Long: `Validates the deployed state of the selected lab.
 
 For GOAD labs, checks run against live instances to confirm that the intended
-vulnerability configurations are present. For SCOPE-RANGE, validation checks
+vulnerability configurations are present. For GOAT, validation checks
 the selected cloud topology and the expected users, services, applications, databases,
 storage, seeded data, and cross-host workflows on all six Linux hosts.
 
@@ -250,12 +250,12 @@ func validationWarningWriter(jsonOut bool) *os.File {
 	return os.Stdout
 }
 
-func scopeRangeValidatorArgs(cfg *config.Config, opts validateOpts) ([]string, error) {
+func goatValidatorArgs(cfg *config.Config, opts validateOpts) ([]string, error) {
 	if opts.pollInterval > 0 {
-		return nil, fmt.Errorf("--poll is not supported for SCOPE-RANGE validation")
+		return nil, fmt.Errorf("--poll is not supported for GOAT validation")
 	}
 
-	script := filepath.Join(cfg.ProjectRoot, "scripts", "validate-scope-range-live.py")
+	script := filepath.Join(cfg.ProjectRoot, "scripts", "validate-goat-live.py")
 	args := []string{script, "--env", cfg.Env, "--provider", cfg.ResolvedProvider()}
 	if cfg.ResolvedProvider() == provider.NameAWS {
 		region, err := cfg.ResolveRegion()
@@ -282,12 +282,12 @@ func scopeRangeValidatorArgs(cfg *config.Config, opts validateOpts) ([]string, e
 	return args, nil
 }
 
-func runScopeRangeValidate(ctx context.Context, cfg *config.Config, opts validateOpts) error {
-	args, err := scopeRangeValidatorArgs(cfg, opts)
+func runGOATValidate(ctx context.Context, cfg *config.Config, opts validateOpts) error {
+	args, err := goatValidatorArgs(cfg, opts)
 	if err != nil {
 		return err
 	}
-	return runScopeRangeInspector(ctx, args, "validation")
+	return runGOATInspector(ctx, args, "validation")
 }
 
 func terminalWidth() int {

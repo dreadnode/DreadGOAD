@@ -1,0 +1,60 @@
+---
+- name: Seed GOAT object storage
+  hosts: storage
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run the storage seed entrypoint
+      ansible.builtin.include_role:
+        name: dreadnode.goad.goat_storage
+        tasks_from: seed
+
+- name: Seed GOAT source control and build systems
+  hosts: development
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run the development seed entrypoint
+      ansible.builtin.include_role:
+        name: dreadnode.goad.goat_development
+        tasks_from: seed
+
+- name: Seed GOAT database backups
+  hosts: data
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run the database seed entrypoint
+      ansible.builtin.include_role:
+        name: dreadnode.goad.goat_data
+        tasks_from: seed
+
+- name: Seed GOAT automation and mail activity
+  hosts: infrastructure_services
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run the services seed entrypoint
+      ansible.builtin.include_role:
+        name: dreadnode.goad.goat_services
+        tasks_from: seed
+
+- name: Attach seeded S3 storage to Nextcloud
+  hosts: web
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run the web seed entrypoint
+      ansible.builtin.include_role:
+        name: dreadnode.goad.goat_web
+        tasks_from: seed
+
+- name: Seed GOAT agent workstation fixtures
+  hosts: attack_box
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Run the Kali seed entrypoint
+      ansible.builtin.include_role:
+        name: dreadnode.goad.goat_kali
+        tasks_from: seed

@@ -44,10 +44,10 @@ idle_timeout: 1200
 
 # Per-environment settings
 environments:
-  scope-dev:
-    lab: SCOPE-RANGE
+  goat-dev:
+    lab: GOAT
     provider: azure
-    deployment: scope-range-deployment
+    deployment: goat-deployment
     region: centralus
     vpc_cidr: "10.50.0.0/16"
   dev:

@@ -22,6 +22,7 @@ const (
 	KindActiveDirectory = "active-directory"
 	KindServiceRange    = "service-range"
 	ProfileActiveDir    = "active-directory"
+	ProfileGOAT         = "goat"
 	ProfileTemplate     = "template"
 )
 
@@ -40,7 +41,7 @@ type VariantSpec struct {
 
 // NetworkSpec describes the environment CIDR exposed by a scaffold profile.
 // Editable defaults to true for legacy AD ranges and false when explicitly
-// declared by a range such as SCOPE-RANGE.
+// declared by a range such as GOAT.
 type NetworkSpec struct {
 	CIDR     string `yaml:"cidr,omitempty" json:"cidr,omitempty"`
 	Editable *bool  `yaml:"editable,omitempty" json:"editable,omitempty"`
@@ -67,6 +68,13 @@ type DiscoverySpec struct {
 	RangeTag string `yaml:"range_tag,omitempty" json:"range_tag,omitempty"`
 }
 
+// OperationsSpec selects an allowlisted implementation for infrastructure and
+// provisioning behavior that cannot be represented by provider paths alone.
+// The manifest names the profile; the CLI owns its implementation.
+type OperationsSpec struct {
+	Profile string `yaml:"profile,omitempty" json:"profile,omitempty"`
+}
+
 // Manifest is the shared, strict range.yml schema used by discovery,
 // scaffolding, and session lifecycle handling.
 type Manifest struct {
@@ -77,6 +85,7 @@ type Manifest struct {
 	Infrastructure map[string]ProviderSpec `yaml:"infrastructure,omitempty" json:"infrastructure"`
 	Inspection     InspectionSpec          `yaml:"inspection,omitempty" json:"inspection,omitempty"`
 	Discovery      DiscoverySpec           `yaml:"discovery,omitempty" json:"discovery,omitempty"`
+	Operations     OperationsSpec          `yaml:"operations,omitempty" json:"operations,omitempty"`
 	Lifecycle      struct {
 		SessionInit []ActionSpec `yaml:"session_init" json:"session_init"`
 	} `yaml:"lifecycle" json:"lifecycle"`
@@ -114,6 +123,9 @@ func Decode(raw []byte) (*Manifest, error) {
 	}
 	if manifest.Inspection.Profile != "" && !pathComponent.MatchString(manifest.Inspection.Profile) {
 		return nil, fmt.Errorf("inspection.profile %q is not a safe identifier", manifest.Inspection.Profile)
+	}
+	if manifest.Operations.Profile != "" && !pathComponent.MatchString(manifest.Operations.Profile) {
+		return nil, fmt.Errorf("operations.profile %q is not a safe identifier", manifest.Operations.Profile)
 	}
 	manifest.Discovery.RangeTag = strings.TrimSpace(manifest.Discovery.RangeTag)
 	if manifest.Discovery.RangeTag != "" && !pathComponent.MatchString(manifest.Discovery.RangeTag) {

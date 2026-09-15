@@ -7,11 +7,11 @@ import (
 )
 
 func TestLabListLabelUsesDisplayNameWithoutChangingIdentifier(t *testing.T) {
-	candidate := lab.Lab{Name: "SCOPE-RANGE", DisplayName: "GOAT"}
+	candidate := lab.Lab{Name: "GOAT", DisplayName: "GOAT"}
 	if got := labListLabel(candidate); got != "GOAT" {
 		t.Fatalf("labListLabel() = %q, want GOAT", got)
 	}
-	if candidate.Name != "SCOPE-RANGE" {
+	if candidate.Name != "GOAT" {
 		t.Fatalf("internal identifier changed to %q", candidate.Name)
 	}
 }

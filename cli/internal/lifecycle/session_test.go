@@ -66,12 +66,12 @@ func TestRunSessionInitGeneratesPrivateAnswerKey(t *testing.T) {
 
 func TestRunSessionInitIsNoopWithoutDeclaredActions(t *testing.T) {
 	root := t.TempDir()
-	writeFixture(t, filepath.Join(root, "ad", "SCOPE-RANGE", manifestName), `schema_version: 1
+	writeFixture(t, filepath.Join(root, "ad", "GOAT", manifestName), `schema_version: 1
 kind: service-range
 lifecycle:
   session_init: []
 `)
-	cfg := &config.Config{ProjectRoot: root, Env: "dev", Lab: "SCOPE-RANGE"}
+	cfg := &config.Config{ProjectRoot: root, Env: "dev", Lab: "GOAT"}
 	outputDir := filepath.Join(root, "must-not-exist")
 
 	results, err := RunSessionInit(cfg, outputDir)

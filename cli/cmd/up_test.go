@@ -244,11 +244,8 @@ func TestUpDoctorFailureDoesNotRecommendBypass(t *testing.T) {
 }
 
 func TestUpNextStepMatchesLabValidation(t *testing.T) {
-	if got := upNextStep("SCOPE-RANGE"); !strings.Contains(got, "dreadgoad validate") {
-		t.Fatalf("SCOPE-RANGE next step = %q, want deployed-state validation", got)
-	}
-	if got := upNextStep("GOAD"); !strings.Contains(got, "dreadgoad validate") {
-		t.Fatalf("GOAD next step = %q, want vulnerability validation", got)
+	if got := upNextStep(); !strings.Contains(got, "dreadgoad validate") || !strings.Contains(got, "range-specific") {
+		t.Fatalf("next step = %q, want range-specific validation guidance", got)
 	}
 }
 

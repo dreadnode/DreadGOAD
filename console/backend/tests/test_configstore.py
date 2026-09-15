@@ -82,10 +82,10 @@ def test_path_for_stays_inside_the_configs_root() -> None:
 def test_managed_path_is_stable_bounded_and_contained() -> None:
     with isolated_state():
         root = paths.configs_root().resolve()
-        first = configstore.managed_path_for("SCOPE-RANGE", "azure", "kraken")
-        assert first == configstore.managed_path_for("SCOPE-RANGE", "azure", "kraken")
+        first = configstore.managed_path_for("GOAT", "azure", "kraken")
+        assert first == configstore.managed_path_for("GOAT", "azure", "kraken")
         assert first.parent == root
-        assert first.name.startswith("scope-range-azure-kraken-")
+        assert first.name.startswith("goat-azure-kraken-")
 
         long_path = configstore.managed_path_for("x" * 100, "azure", "y" * 100)
         assert long_path.parent == root

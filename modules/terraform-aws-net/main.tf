@@ -120,8 +120,9 @@ resource "aws_nat_gateway" "main" {
   subnet_id     = aws_subnet.public["0"].id
 
   lifecycle {
-    create_before_destroy = true
-    ignore_changes        = [tags, tags_all]
+    # Do not propagate create-before-destroy to the public subnet. A subnet
+    # replacement must release its CIDR before AWS can create its successor.
+    ignore_changes = [tags, tags_all]
   }
 
   tags = merge(
@@ -204,8 +205,9 @@ resource "aws_subnet" "public" {
   map_public_ip_on_launch = var.map_public_ip
 
   lifecycle {
-    create_before_destroy = true
-    ignore_changes        = [tags, tags_all]
+    # AWS forbids overlapping subnet CIDRs in one VPC. Destroy the old subnet
+    # before replacing it so a forced replacement can reuse the same CIDR.
+    ignore_changes = [tags, tags_all]
   }
 
   tags = merge(
@@ -226,8 +228,9 @@ resource "aws_subnet" "private" {
   vpc_id                  = aws_vpc.main.id
 
   lifecycle {
-    create_before_destroy = true
-    ignore_changes        = [tags, tags_all]
+    # AWS forbids overlapping subnet CIDRs in one VPC. Destroy the old subnet
+    # before replacing it so a forced replacement can reuse the same CIDR.
+    ignore_changes = [tags, tags_all]
   }
 
   tags = merge(
@@ -293,8 +296,9 @@ resource "aws_subnet" "pod" {
   depends_on = [aws_vpc_ipv4_cidr_block_association.secondary]
 
   lifecycle {
-    create_before_destroy = true
-    ignore_changes        = [tags, tags_all]
+    # AWS forbids overlapping subnet CIDRs in one VPC. Destroy the old subnet
+    # before replacing it so a forced replacement can reuse the same CIDR.
+    ignore_changes = [tags, tags_all]
   }
 
   # NOTE: Pod subnets intentionally do NOT have karpenter.sh/discovery tags

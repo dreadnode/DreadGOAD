@@ -984,7 +984,7 @@ func provisionPlaybooks(ctx context.Context, cfg *config.Config, playbooks []str
 // execute after an earlier single-host play fails. Retrying only the failed
 // host could otherwise return success while silently skipping those plays.
 func retryAllHosts(playbook string) bool {
-	return filepath.Base(playbook) == "scope-seed.yml"
+	return filepath.Base(playbook) == "goat-seed.yml"
 }
 
 // maybeStartSOCKSTunnel selects a provider-appropriate SOCKS5 tunnel for
@@ -1008,6 +1008,10 @@ func maybeStartSOCKSTunnel(ctx context.Context, cfg *config.Config) (closableTun
 // proxy through the in-VNet Ansible controller, then returns the psrp vars
 // Ansible needs to dial GOAD VM:5985 through that chain.
 func startAzureSOCKSTunnel(ctx context.Context, cfg *config.Config) (closableTunnel, map[string]string, error) {
+	operations, err := operationsFor(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
 	prov, err := cfg.NewProvider(ctx)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create azure provider: %w", err)
@@ -1017,7 +1021,7 @@ func startAzureSOCKSTunnel(ctx context.Context, cfg *config.Config) (closableTun
 		return nil, nil, fmt.Errorf("provider is not azure (got %T)", prov)
 	}
 
-	if cfg.ResolvedLab() == "SCOPE-RANGE" {
+	if operations.azureProvisionViaAttack {
 		home, err := os.UserHomeDir()
 		if err != nil {
 			return nil, nil, fmt.Errorf("resolve home directory for GOAT SSH key: %w", err)
@@ -1027,12 +1031,12 @@ func startAzureSOCKSTunnel(ctx context.Context, cfg *config.Config) (closableTun
 			return nil, nil, err
 		}
 		fmt.Println("Opening Azure Bastion → Kali → SOCKS5 chain for Linux range provisioning...")
-		tunnel, err := azure.StartScopeProvisionTunnel(ctx, azProv.Client(), cfg.Env, keyPath)
+		tunnel, err := azure.StartGOATProvisionTunnel(ctx, azProv.Client(), cfg.Env, keyPath)
 		if err != nil {
 			return nil, nil, err
 		}
 		fmt.Printf("  SOCKS5 proxy: %s\n", tunnel.ProxyURL())
-		return tunnel, scopeProvisionVars(keyPath, tunnel.SOCKSAddr()), nil
+		return tunnel, goatProvisionVars(keyPath, tunnel.SOCKSAddr()), nil
 	}
 
 	fmt.Println("Opening Azure Bastion → controller → SOCKS5 chain for WinRM access...")
@@ -1056,23 +1060,20 @@ func startAzureSOCKSTunnel(ctx context.Context, cfg *config.Config) (closableTun
 func resolveGOATOperatorKeyPath(home, env string) (string, error) {
 	keysDir := filepath.Join(home, ".dreadgoad", "keys")
 	goatPath := filepath.Join(keysDir, fmt.Sprintf("azure-%s-goat-admin", env))
-	legacyPath := filepath.Join(keysDir, fmt.Sprintf("azure-%s-scope-range-admin", env))
-	for _, candidate := range []string{goatPath, legacyPath} {
-		if _, err := os.Stat(candidate); err == nil {
-			return candidate, nil
-		} else if !os.IsNotExist(err) {
-			return "", fmt.Errorf("inspect GOAT operator key %s: %w", candidate, err)
-		}
+	if _, err := os.Stat(goatPath); err == nil {
+		return goatPath, nil
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("inspect GOAT operator key %s: %w", goatPath, err)
 	}
 	// Return the current convention so the downstream error tells operators
 	// where a newly scaffolded environment should have created its key.
 	return goatPath, nil
 }
 
-func scopeProvisionVars(keyPath, socksAddr string) map[string]string {
+func goatProvisionVars(keyPath, socksAddr string) map[string]string {
 	return map[string]string{
 		"ansible_connection":           "ssh",
-		"ansible_remote_tmp":           "/tmp/.ansible-scope",
+		"ansible_remote_tmp":           "/tmp/.ansible-goat",
 		"ansible_ssh_private_key_file": keyPath,
 		"ansible_ssh_common_args":      fmt.Sprintf("-o ProxyCommand='nc -X 5 -x %s %%h %%p' -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null", socksAddr),
 	}

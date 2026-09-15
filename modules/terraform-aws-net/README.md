@@ -102,7 +102,9 @@ This Terraform module deploys the following AWS resources:
 - Automatic AZ distribution for subnet placement
 - Flexible tagging system for all resources
 - Terragrunt-compatible structure
-- Lifecycle management with create_before_destroy support
+- Create-before-destroy lifecycle management for compatible resources; subnets
+  and their NAT/endpoint dependents use destroy-before-create so fixed CIDRs can
+  be reused during replacement
 
 ### Customization Options
 

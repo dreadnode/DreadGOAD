@@ -56,10 +56,10 @@ provider: aws
 environments:
   dev:
     region: us-east-1
-  scope-dev:
+  goat-dev:
     provider: azure
     region: centralus
-    lab: SCOPE-RANGE
+    lab: GOAT
 """
 
 
@@ -101,14 +101,14 @@ def test_environment_provider_override_matches_cli_resolution() -> None:
         assert listing["provider"] == "aws", listing
         assert listing["env_providers"] == {
             "dev": "aws",
-            "scope-dev": "azure",
+            "goat-dev": "azure",
         }, listing
-        assert listing["env_regions"]["scope-dev"] == "centralus", listing
+        assert listing["env_regions"]["goat-dev"] == "centralus", listing
 
-        snap = derive_snapshot(tmp.name, "scope-dev")
+        snap = derive_snapshot(tmp.name, "goat-dev")
         assert snap["provider"] == "azure", snap
         assert snap["region"] == "centralus", snap
-        assert snap["lab"] == "ad/SCOPE-RANGE", snap
+        assert snap["lab"] == "ad/GOAT", snap
         assert "azure" in snap, snap
         assert "aws" not in snap, snap
     finally:
@@ -123,9 +123,9 @@ def test_managed_config_is_explicit_and_private() -> None:
             str(path),
             "kraken",
             {
-                "lab": "SCOPE-RANGE",
+                "lab": "GOAT",
                 "provider": "azure",
-                "deployment": "scope-range-deployment",
+                "deployment": "goat-deployment",
                 "region": "centralus",
                 "vpc_cidr": "10.50.0.0/16",
                 "variant": False,
@@ -136,9 +136,9 @@ def test_managed_config_is_explicit_and_private() -> None:
         assert listing["provider"] is None, "managed configs have no cloud default"
         assert detail == {
             "name": "kraken",
-            "lab": "SCOPE-RANGE",
+            "lab": "GOAT",
             "provider": "azure",
-            "deployment": "scope-range-deployment",
+            "deployment": "goat-deployment",
             "region": "centralus",
             "variant": False,
             "variant_name": None,
@@ -169,13 +169,11 @@ def test_provider_defaults_to_aws_like_cli() -> None:
 def test_lab_resolution_precedence() -> None:
     cases = {
         "lab: GOAD-Light\nenvironments:\n  dev: {}\n": "ad/GOAD-Light",
-        "lab: GOAD\nenvironments:\n  dev:\n    lab: SCOPE-RANGE\n": "ad/SCOPE-RANGE",
+        "lab: GOAD\nenvironments:\n  dev:\n    lab: GOAT\n": "ad/GOAT",
         "environments:\n  dev: {}\n": "ad/GOAD",
+        ("lab: GOAT\nenvironments:\n  dev:\n    variant_source: ad/GOAD\n"): "ad/GOAD",
         (
-            "lab: SCOPE-RANGE\nenvironments:\n  dev:\n    variant_source: ad/GOAD\n"
-        ): "ad/GOAD",
-        (
-            "lab: SCOPE-RANGE\nenvironments:\n  dev:\n"
+            "lab: GOAT\nenvironments:\n  dev:\n"
             "    variant_source: ad/GOAD\n"
             "    variant_target: ad/GOAD-redteam\n"
         ): "ad/GOAD-redteam",
@@ -191,7 +189,7 @@ def test_lab_resolution_precedence() -> None:
 
 
 def test_explicit_lab_rejects_unsafe_names() -> None:
-    for lab in ("../GOAD", "GOAD/Light", ".", "scope range"):
+    for lab in ("../GOAD", "GOAD/Light", ".", "bad range"):
         with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as tmp:
             tmp.write(f"environments:\n  dev:\n    lab: {lab!r}\n")
         try:
@@ -205,18 +203,18 @@ def test_explicit_lab_rejects_unsafe_names() -> None:
     print("PASS test_explicit_lab_rejects_unsafe_names")
 
 
-def test_real_scope_lab_uses_generic_attackbox() -> None:
+def test_real_goat_lab_uses_generic_attackbox() -> None:
     config_path = _REPO / "dreadgoad.yaml"
-    snap = derive_snapshot(str(config_path), "scope-dev")
+    snap = derive_snapshot(str(config_path), "goat-dev")
     session = t.cast(
         SessionDocument,
         {
-            "anchor": {"config_path": str(config_path), "env": "scope-dev"},
+            "anchor": {"config_path": str(config_path), "env": "goat-dev"},
             "snapshot": snap,
         },
     )
     resolved = session_lab_config_path(session, str(_REPO))
-    expected_path = _REPO / "ad" / "SCOPE-RANGE" / "data" / "scope-dev-config.json"
+    expected_path = _REPO / "ad" / "GOAT" / "data" / "goat-dev-config.json"
     assert resolved == str(expected_path), resolved
 
     topology = seed_topology(resolved, snap["provider"])
@@ -230,11 +228,11 @@ def test_real_scope_lab_uses_generic_attackbox() -> None:
     }
     assert ids == expected_config_hosts | {"attackbox", "bastion"}, ids
     assert "kali01" not in ids, "the real Kali VM must use the generic attackbox node"
-    scope_hosts = [
+    goat_hosts = [
         host for host in topology["hosts"] if host["id"] in expected_config_hosts
     ]
-    assert {host.get("os") for host in scope_hosts} == {"linux"}, scope_hosts
-    print("PASS test_real_scope_lab_uses_generic_attackbox")
+    assert {host.get("os") for host in goat_hosts} == {"linux"}, goat_hosts
+    print("PASS test_real_goat_lab_uses_generic_attackbox")
 
 
 def test_session_lab_config_path_falls_back_and_refuses_env_escape() -> None:
@@ -246,10 +244,10 @@ def test_session_lab_config_path_falls_back_and_refuses_env_escape() -> None:
                 "config_path": str(config_path),
                 "env": "missing-env-config",
             },
-            "snapshot": {"lab": "ad/SCOPE-RANGE"},
+            "snapshot": {"lab": "ad/GOAT"},
         },
     )
-    expected_base = _REPO / "ad" / "SCOPE-RANGE" / "data" / "config.json"
+    expected_base = _REPO / "ad" / "GOAT" / "data" / "config.json"
     assert session_lab_config_path(session, str(_REPO)) == str(expected_base)
 
     session["anchor"]["env"] = "../../outside"
@@ -792,7 +790,7 @@ if __name__ == "__main__":
     test_provider_defaults_to_aws_like_cli()
     test_lab_resolution_precedence()
     test_explicit_lab_rejects_unsafe_names()
-    test_real_scope_lab_uses_generic_attackbox()
+    test_real_goat_lab_uses_generic_attackbox()
     test_session_lab_config_path_falls_back_and_refuses_env_escape()
     test_derive_snapshot_unknown_env_raises()
     test_seed_topology_from_goad_config()

@@ -112,13 +112,13 @@ func TestResolvedLabPrecedence(t *testing.T) {
 		{
 			name: "environment override",
 			cfg: &Config{
-				Env: "scope-dev",
+				Env: "goat-dev",
 				Lab: "GOAD",
 				Environments: map[string]EnvironmentConfig{
-					"scope-dev": {Lab: "SCOPE-RANGE"},
+					"goat-dev": {Lab: "GOAT"},
 				},
 			},
-			want: "SCOPE-RANGE",
+			want: "GOAT",
 		},
 	}
 
@@ -132,12 +132,12 @@ func TestResolvedLabPrecedence(t *testing.T) {
 }
 
 func TestValidateLabName(t *testing.T) {
-	for _, valid := range []string{"GOAD", "GOAD-Light", "SCOPE_RANGE", "lab123"} {
+	for _, valid := range []string{"GOAD", "GOAD-Light", "GOAT_RANGE", "lab123"} {
 		if err := ValidateLabName(valid); err != nil {
 			t.Errorf("ValidateLabName(%q) unexpected error: %v", valid, err)
 		}
 	}
-	for _, invalid := range []string{"", "../GOAD", "GOAD/Light", ".", "scope range", "GOAD.Light"} {
+	for _, invalid := range []string{"", "../GOAD", "GOAD/Light", ".", "bad range", "GOAD.Light"} {
 		if err := ValidateLabName(invalid); err == nil {
 			t.Errorf("ValidateLabName(%q) = nil, want error", invalid)
 		}
@@ -146,13 +146,13 @@ func TestValidateLabName(t *testing.T) {
 
 func TestEnvironmentOverridesProviderAndDeployment(t *testing.T) {
 	cfg := &Config{
-		Env:      "scope-dev",
+		Env:      "goat-dev",
 		Provider: "aws",
 		Infra:    InfraConfig{Deployment: "goad-deployment"},
 		Environments: map[string]EnvironmentConfig{
-			"scope-dev": {
+			"goat-dev": {
 				Provider:   "azure",
-				Deployment: "scope-range-deployment",
+				Deployment: "goat-deployment",
 			},
 		},
 	}
@@ -160,18 +160,18 @@ func TestEnvironmentOverridesProviderAndDeployment(t *testing.T) {
 	if got := cfg.ResolvedProvider(); got != "azure" {
 		t.Errorf("ResolvedProvider() = %q, want azure", got)
 	}
-	if got := cfg.ResolvedDeployment(); got != "scope-range-deployment" {
-		t.Errorf("ResolvedDeployment() = %q, want scope-range-deployment", got)
+	if got := cfg.ResolvedDeployment(); got != "goat-deployment" {
+		t.Errorf("ResolvedDeployment() = %q, want goat-deployment", got)
 	}
-	want := filepath.Join(cfg.ProjectRoot, "infra", "azure", "scope-range-deployment")
+	want := filepath.Join(cfg.ProjectRoot, "infra", "azure", "goat-deployment")
 	if got := cfg.InfraBasePathForProvider("azure"); got != want {
 		t.Errorf("InfraBasePathForProvider(azure) = %q, want %q", got, want)
 	}
 }
 
 func TestLabConfigDataDirUsesActiveLab(t *testing.T) {
-	cfg := &Config{ProjectRoot: "/repo", Lab: "SCOPE-RANGE"}
-	want := filepath.Join("/repo", "ad", "SCOPE-RANGE", "data")
+	cfg := &Config{ProjectRoot: "/repo", Lab: "GOAT"}
+	want := filepath.Join("/repo", "ad", "GOAT", "data")
 	if got := cfg.labConfigDataDir(); got != want {
 		t.Errorf("labConfigDataDir() = %q, want %q", got, want)
 	}

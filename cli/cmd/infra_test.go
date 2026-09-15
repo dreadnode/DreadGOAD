@@ -10,7 +10,7 @@ import (
 
 func TestLoadLabUsesActiveLabDirectory(t *testing.T) {
 	root := t.TempDir()
-	dataDir := filepath.Join(root, "ad", "SCOPE-RANGE", "data")
+	dataDir := filepath.Join(root, "ad", "GOAT", "data")
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -19,7 +19,7 @@ func TestLoadLabUsesActiveLabDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cfg := &config.Config{ProjectRoot: root, Env: "scope-dev", Lab: "SCOPE-RANGE"}
+	cfg := &config.Config{ProjectRoot: root, Env: "goat-dev", Lab: "GOAT"}
 	lab, err := loadLab(cfg)
 	if err != nil {
 		t.Fatalf("loadLab() error: %v", err)

@@ -57,12 +57,12 @@ assert.ok(hostMarkup.includes('>details</button>'))
 assert.ok(hostMarkup.includes('>connect</button>'))
 assert.ok(hostMarkup.includes('range-kali'))
 
-const scopeHost = { ...host('services01', 'member'), source: 'config', os: 'linux' }
-const scopeMarkup = renderToStaticMarkup(
-  createElement(HostNode, { data: scopeHost } as unknown as Parameters<typeof HostNode>[0]),
+const goatHost = { ...host('services01', 'member'), source: 'config', os: 'linux' }
+const goatMarkup = renderToStaticMarkup(
+  createElement(HostNode, { data: goatHost } as unknown as Parameters<typeof HostNode>[0]),
 )
-assert.ok(scopeMarkup.includes('>Linux</span>'))
-assert.ok(!scopeMarkup.includes('Windows Server'))
+assert.ok(goatMarkup.includes('>Linux</span>'))
+assert.ok(!goatMarkup.includes('Windows Server'))
 
 const legacyMemberMarkup = renderToStaticMarkup(
   createElement(HostNode, {

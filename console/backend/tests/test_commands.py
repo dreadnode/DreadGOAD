@@ -539,7 +539,7 @@ def test_anchor_cannot_be_overridden_by_extra_args() -> None:
 
     # The scope detector itself must not confuse a longer flag with --config.
     # /exec's separate allowlist still rejects --configure as unsupported.
-    assert commands._scope_override_flag("--configure") is None
+    assert commands._find_override_flag("--configure") is None
     assert _argv("/scrub", ["--purge-ad"])[5:] == [
         "score",
         "reset",

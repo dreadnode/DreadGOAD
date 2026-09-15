@@ -191,9 +191,9 @@ async def test_session_options_flattens_environments_and_ranges() -> None:
                 "environment_details": [
                     {
                         "name": "kraken",
-                        "lab": "SCOPE-RANGE",
+                        "lab": "GOAT",
                         "provider": "azure",
-                        "deployment": "scope-range-deployment",
+                        "deployment": "goat-deployment",
                         "region": "centralus",
                         "variant": False,
                     }
@@ -202,19 +202,19 @@ async def test_session_options_flattens_environments_and_ranges() -> None:
         ]
 
     async def discovered():  # noqa: ANN202
-        return [{"name": "SCOPE-RANGE", "provider_settings": {"azure": {}}}]
+        return [{"name": "GOAT", "provider_settings": {"azure": {}}}]
 
     config_routes.configstore.known_configs = known
     config_routes.labs.discover_labs = discovered
     try:
         result = await config_routes.get_session_options(request)  # type: ignore[arg-type]
-        assert result["ranges"][0]["name"] == "SCOPE-RANGE"
+        assert result["ranges"][0]["name"] == "GOAT"
         assert result["environments"] == [
             {
                 "name": "kraken",
-                "lab": "SCOPE-RANGE",
+                "lab": "GOAT",
                 "provider": "azure",
-                "deployment": "scope-range-deployment",
+                "deployment": "goat-deployment",
                 "region": "centralus",
                 "variant": False,
                 "config_path": "/external/dreadgoad.yaml",

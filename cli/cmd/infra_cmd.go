@@ -106,9 +106,9 @@ func init() {
 	// the Terragrunt exclude{} blocks check; these flags set them for the child
 	// process so users don't have to.
 	for _, cmd := range []*cobra.Command{infraApplyCmd, infraDestroyCmd, infraPlanCmd} {
-		cmd.Flags().Bool("with-bastion", false, "(Azure) Include the optional Azure Bastion module (automatic for SCOPE-RANGE)")
+		cmd.Flags().Bool("with-bastion", false, "(Azure) Include the optional Azure Bastion module")
 		cmd.Flags().Bool("with-controller", false, "(Azure) Include the optional in-VNet Ansible controller module")
-		cmd.Flags().Bool("with-kali", false, "Include the optional Kali Linux attack box (automatic for SCOPE-RANGE)")
+		cmd.Flags().Bool("with-kali", false, "Include the optional Kali Linux attack box")
 	}
 
 	infraCmd.PersistentFlags().StringP("deployment", "d", "", "Deployment name (default: from config)")
@@ -254,6 +254,10 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 	if err := materializeLabConfig(cfg); err != nil {
 		return fmt.Errorf("materialize lab config: %w", err)
 	}
+	operations, err := operationsFor(cfg)
+	if err != nil {
+		return err
+	}
 
 	module, _ := cmd.Flags().GetString("module")
 	exclude, _ := cmd.Flags().GetString("exclude")
@@ -291,20 +295,20 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 		}
 	}
 
-	var scopeStateDir string
-	if cfg.ResolvedLab() == "SCOPE-RANGE" {
+	var persistentStateDir string
+	if operations.persistentAzureState {
 		homeDir, homeErr := os.UserHomeDir()
 		if homeErr != nil {
-			return fmt.Errorf("resolve user home for SCOPE-RANGE state: %w", homeErr)
+			return fmt.Errorf("resolve user home for GOAT state: %w", homeErr)
 		}
-		stateRoot, stateErr := prepareScopeState(cfg.ProjectRoot, homeDir)
+		stateRoot, stateErr := prepareGOATState(cfg.ProjectRoot, homeDir)
 		if stateErr != nil {
 			return stateErr
 		}
-		scopeStateDir = filepath.Join(stateRoot, cfg.Env, region)
+		persistentStateDir = filepath.Join(stateRoot, cfg.Env, region)
 		opts.Reconfigure = true
 		defer func() {
-			resultErr = errors.Join(resultErr, secureScopeState(stateRoot))
+			resultErr = errors.Join(resultErr, secureGOATState(stateRoot))
 		}()
 	}
 
@@ -327,8 +331,8 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 	// state-aware so a destroy with nothing to destroy says why (see
 	// infra_state.go) rather than pointing at a directory.
 	var stateErr error
-	if scopeStateDir != "" {
-		stateErr = checkScopeInfraState(workDir, scopeStateDir, cfg.Env, region, action)
+	if persistentStateDir != "" {
+		stateErr = checkPersistentInfraState(workDir, persistentStateDir, cfg.Env, region, action)
 	} else {
 		stateErr = checkLocalInfraState(workDir, cfg.Env, region, action)
 	}
@@ -398,6 +402,10 @@ func runInfraActionAWS(cmd *cobra.Command, cfg *config.Config, action string) er
 	if err := materializeLabConfig(cfg); err != nil {
 		return fmt.Errorf("materialize lab config: %w", err)
 	}
+	operations, err := operationsFor(cfg)
+	if err != nil {
+		return err
+	}
 
 	module, _ := cmd.Flags().GetString("module")
 	exclude, _ := cmd.Flags().GetString("exclude")
@@ -412,7 +420,7 @@ func runInfraActionAWS(cmd *cobra.Command, cfg *config.Config, action string) er
 	// GOAT is presented as a turnkey console range. Its account-qualified
 	// backend is safe to create automatically and must exist before the first
 	// plan/apply can run.
-	backendBootstrap = shouldBootstrapAWSBackend(cfg, action, backendBootstrap)
+	backendBootstrap = shouldBootstrapAWSBackend(operations, action, backendBootstrap)
 
 	opts := terragrunt.Options{
 		Action:           action,
@@ -477,11 +485,11 @@ func runInfraActionAWS(cmd *cobra.Command, cfg *config.Config, action string) er
 	return nil
 }
 
-func shouldBootstrapAWSBackend(cfg *config.Config, action string, requested bool) bool {
+func shouldBootstrapAWSBackend(operations rangeOperations, action string, requested bool) bool {
 	if requested {
 		return true
 	}
-	if cfg.ResolvedLab() != "SCOPE-RANGE" {
+	if !operations.autoBootstrapAWSBackend {
 		return false
 	}
 	return action == "init" || action == "plan" || action == "apply"
@@ -600,17 +608,21 @@ func renderProxmoxTemplates(cfg *config.Config, workDir string) error {
 }
 
 func runAzureInfraOutput(cfg *config.Config, deployment, region, module string) (resultErr error) {
-	if cfg.ResolvedLab() == "SCOPE-RANGE" {
+	operations, err := operationsFor(cfg)
+	if err != nil {
+		return err
+	}
+	if operations.persistentAzureState {
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
-			return fmt.Errorf("resolve user home for SCOPE-RANGE state: %w", err)
+			return fmt.Errorf("resolve user home for GOAT state: %w", err)
 		}
-		stateRoot, err := prepareScopeState(cfg.ProjectRoot, homeDir)
+		stateRoot, err := prepareGOATState(cfg.ProjectRoot, homeDir)
 		if err != nil {
 			return err
 		}
 		defer func() {
-			resultErr = errors.Join(resultErr, secureScopeState(stateRoot))
+			resultErr = errors.Join(resultErr, secureGOATState(stateRoot))
 		}()
 	}
 	workDir := filepath.Join(cfg.ProjectRoot, "infra", "azure", deployment, cfg.Env, region)
@@ -728,18 +740,22 @@ func runInfraValidate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	operations, err := operationsFor(cfg)
+	if err != nil {
+		return err
+	}
 
 	switch cfg.ResolvedProvider() {
 	case "aws":
-		if cfg.ResolvedLab() == "SCOPE-RANGE" {
-			return runInfraValidateScopeAWS(cfg)
+		if operations.validateServiceInfra {
+			return runInfraValidateServiceAWS(cfg)
 		}
 	case "ludus":
 		return runInfraValidateLudus(cfg)
 	case "proxmox":
 		return runInfraValidateProxmox(cfg)
 	case "azure":
-		return runInfraValidateAzure(cfg)
+		return runInfraValidateAzure(cfg, operations)
 	}
 
 	deployment := resolveDeployment(cmd, cfg)
@@ -759,7 +775,7 @@ func runInfraValidate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runInfraValidateScopeAWS(cfg *config.Config) error {
+func runInfraValidateServiceAWS(cfg *config.Config) error {
 	region, err := cfg.ResolveRegion()
 	if err != nil {
 		return fmt.Errorf("resolve AWS region: %w", err)
@@ -785,19 +801,19 @@ func runInfraValidateScopeAWS(cfg *config.Config) error {
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf(
-			"SCOPE-RANGE AWS deployment is incomplete in %s; missing files: %s",
+			"GOAT AWS deployment is incomplete in %s; missing files: %s",
 			workDir,
 			strings.Join(missing, ", "),
 		)
 	}
-	color.Green("SCOPE-RANGE AWS deployment structure is complete (%s/%s).", cfg.Env, region)
-	fmt.Println("Run './scripts/validate-scope-range.sh' for Terraform, Terragrunt, Ansible, and Go validation.")
+	color.Green("GOAT AWS deployment structure is complete (%s/%s).", cfg.Env, region)
+	fmt.Println("Run './scripts/validate-goat.sh' for Terraform, Terragrunt, Ansible, and Go validation.")
 	return nil
 }
 
-func runInfraValidateAzure(cfg *config.Config) error {
-	if cfg.ResolvedLab() != "SCOPE-RANGE" {
-		fmt.Println("Azure validation: structural validation is only defined for SCOPE-RANGE; skipping.")
+func runInfraValidateAzure(cfg *config.Config, operations rangeOperations) error {
+	if !operations.validateServiceInfra {
+		fmt.Println("Azure validation: no structural validation profile is configured; skipping.")
 		fmt.Println("Run 'az account show' to confirm CLI auth and 'terragrunt hcl validate' for the deployment tree.")
 		return nil
 	}
@@ -833,11 +849,11 @@ func runInfraValidateAzure(cfg *config.Config) error {
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("SCOPE-RANGE Azure deployment is incomplete in %s; missing units: %s", workDir, strings.Join(missing, ", "))
+		return fmt.Errorf("GOAT Azure deployment is incomplete in %s; missing units: %s", workDir, strings.Join(missing, ", "))
 	}
 
-	color.Green("SCOPE-RANGE Azure deployment structure is complete (%s/%s).", cfg.Env, region)
-	fmt.Println("Run './scripts/validate-scope-range.sh' for Terraform, Terragrunt, Ansible, and Go validation.")
+	color.Green("GOAT Azure deployment structure is complete (%s/%s).", cfg.Env, region)
+	fmt.Println("Run './scripts/validate-goat.sh' for Terraform, Terragrunt, Ansible, and Go validation.")
 	return nil
 }
 
