@@ -1,0 +1,7 @@
+---
+- name: Prepare all GOAT Linux hosts
+  hosts: goat
+  become: true
+  gather_facts: true
+  roles:
+    - role: dreadnode.goad.goat_base

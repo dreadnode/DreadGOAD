@@ -1,6 +1,12 @@
 locals {
-  name_prefix = "${var.env}-${var.deployment_name}"
-  az_names    = data.aws_availability_zones.available.names
+  name_prefix      = "${var.env}-${var.deployment_name}"
+  explicit_subnets = length(var.public_subnet_cidrs) > 0 || length(var.private_subnet_cidrs) > 0
+  subnet_count = local.explicit_subnets ? min(
+    length(var.public_subnet_cidrs),
+    length(var.private_subnet_cidrs),
+    length(data.aws_availability_zones.available.names),
+  ) : length(data.aws_availability_zones.available.names)
+  az_names = slice(data.aws_availability_zones.available.names, 0, local.subnet_count)
 
   eip_name = "${local.name_prefix}-nat-eip"
   igw_name = local.name_prefix
@@ -30,14 +36,14 @@ locals {
   ## Create subnet to AZ mapping with calculated CIDRs
   public_subnet_configs = {
     for idx in range(length(local.az_names)) : idx => {
-      cidr = cidrsubnet(var.vpc_cidr_block, local.subnet_newbits, idx)
+      cidr = local.explicit_subnets ? var.public_subnet_cidrs[idx] : cidrsubnet(var.vpc_cidr_block, local.subnet_newbits, idx)
       az   = local.az_names[idx]
     }
   }
 
   private_subnet_configs = {
     for idx in range(length(local.az_names)) : idx => {
-      cidr = cidrsubnet(var.vpc_cidr_block, local.subnet_newbits, idx + length(local.az_names))
+      cidr = local.explicit_subnets ? var.private_subnet_cidrs[idx] : cidrsubnet(var.vpc_cidr_block, local.subnet_newbits, idx + length(local.az_names))
       az   = local.az_names[idx]
     }
   }
@@ -114,8 +120,9 @@ resource "aws_nat_gateway" "main" {
   subnet_id     = aws_subnet.public["0"].id
 
   lifecycle {
-    create_before_destroy = true
-    ignore_changes        = [tags, tags_all]
+    # Do not propagate create-before-destroy to the public subnet. A subnet
+    # replacement must release its CIDR before AWS can create its successor.
+    ignore_changes = [tags, tags_all]
   }
 
   tags = merge(
@@ -198,8 +205,9 @@ resource "aws_subnet" "public" {
   map_public_ip_on_launch = var.map_public_ip
 
   lifecycle {
-    create_before_destroy = true
-    ignore_changes        = [tags, tags_all]
+    # AWS forbids overlapping subnet CIDRs in one VPC. Destroy the old subnet
+    # before replacing it so a forced replacement can reuse the same CIDR.
+    ignore_changes = [tags, tags_all]
   }
 
   tags = merge(
@@ -220,8 +228,9 @@ resource "aws_subnet" "private" {
   vpc_id                  = aws_vpc.main.id
 
   lifecycle {
-    create_before_destroy = true
-    ignore_changes        = [tags, tags_all]
+    # AWS forbids overlapping subnet CIDRs in one VPC. Destroy the old subnet
+    # before replacing it so a forced replacement can reuse the same CIDR.
+    ignore_changes = [tags, tags_all]
   }
 
   tags = merge(
@@ -244,6 +253,18 @@ resource "aws_vpc" "main" {
   lifecycle {
     create_before_destroy = true
     ignore_changes        = [tags, tags_all]
+
+    precondition {
+      condition = (
+        !local.explicit_subnets ||
+        (
+          length(var.public_subnet_cidrs) > 0 &&
+          length(var.public_subnet_cidrs) == length(var.private_subnet_cidrs) &&
+          length(var.public_subnet_cidrs) <= length(data.aws_availability_zones.available.names)
+        )
+      )
+      error_message = "Explicit public/private subnet CIDR lists must be non-empty, equal length, and fit the region's available AZs."
+    }
   }
 
   tags = merge(
@@ -275,8 +296,9 @@ resource "aws_subnet" "pod" {
   depends_on = [aws_vpc_ipv4_cidr_block_association.secondary]
 
   lifecycle {
-    create_before_destroy = true
-    ignore_changes        = [tags, tags_all]
+    # AWS forbids overlapping subnet CIDRs in one VPC. Destroy the old subnet
+    # before replacing it so a forced replacement can reuse the same CIDR.
+    ignore_changes = [tags, tags_all]
   }
 
   # NOTE: Pod subnets intentionally do NOT have karpenter.sh/discovery tags

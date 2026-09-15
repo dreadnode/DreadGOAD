@@ -97,7 +97,7 @@ func loadLab(cfg *config.Config) (*labmap.LabMap, error) {
 	} else {
 		src := ec.VariantSource
 		if src == "" {
-			src = "ad/GOAD"
+			src = cfg.LabPath()
 		}
 		if !filepath.IsAbs(src) {
 			src = filepath.Join(cfg.ProjectRoot, src)

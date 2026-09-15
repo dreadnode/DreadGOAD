@@ -2,12 +2,16 @@ package cmd
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/dreadnode/dreadgoad/internal/provider"
 	"github.com/dreadnode/dreadgoad/internal/validate"
 	"github.com/spf13/cobra"
@@ -17,11 +21,15 @@ import (
 
 var validateCmd = &cobra.Command{
 	Use:   "validate",
-	Short: "Validate GOAD vulnerability configurations",
-	Long: `Validates that all GOAD vulnerabilities are properly configured by
-running checks via SSM PowerShell commands against live instances.
+	Short: "Validate the selected lab",
+	Long: `Validates the deployed state of the selected lab.
 
-Checks credentials, Kerberos, SMB, delegation, MSSQL (linked servers, impersonation,
+For GOAD labs, checks run against live instances to confirm that the intended
+vulnerability configurations are present. For GOAT, validation checks
+the selected cloud topology and the expected users, services, applications, databases,
+storage, seeded data, and cross-host workflows on all six Linux hosts.
+
+GOAD validation checks credentials, Kerberos, SMB, delegation, MSSQL (linked servers, impersonation,
 xp_cmdshell, sysadmins), ADCS (templates), ACLs, trusts, SID filtering, scheduled tasks,
 LLMNR/NBT-NS, GPO abuse, gMSA, LAPS, and services.`,
 	Example: `  dreadgoad validate
@@ -41,8 +49,9 @@ func init() {
 	validateCmd.Flags().String("output", "", "JSON report output path")
 	validateCmd.Flags().Bool("verbose", false, "Enable verbose output")
 	validateCmd.Flags().Bool("no-fail", false, "Don't exit with error on failed checks")
-	validateCmd.Flags().Bool("quick", false, "Quick validation of critical vulnerabilities only")
+	validateCmd.Flags().Bool("quick", false, "Run critical validation checks only")
 	validateCmd.Flags().Bool("plain", false, "Disable the live dashboard; stream results to stdout")
+	validateCmd.Flags().Bool("json", false, "Output machine-readable JSON (per-check results + report)")
 	validateCmd.Flags().String("poll", "never", "Re-run cadence for the live dashboard (e.g. 1m, 5m, or 'never'; minimum 1m)")
 
 	if err := viper.BindPFlag("validate.poll", validateCmd.Flags().Lookup("poll")); err != nil {
@@ -81,6 +90,7 @@ type validateOpts struct {
 	quick        bool
 	plain        bool
 	pollInterval time.Duration
+	json         bool
 }
 
 func validateOptsFromFlags(cmd *cobra.Command) (validateOpts, error) {
@@ -90,12 +100,16 @@ func validateOptsFromFlags(cmd *cobra.Command) (validateOpts, error) {
 	opts.noFail, _ = cmd.Flags().GetBool("no-fail")
 	opts.quick, _ = cmd.Flags().GetBool("quick")
 	opts.plain, _ = cmd.Flags().GetBool("plain")
+	opts.json, _ = cmd.Flags().GetBool("json")
 
 	d, err := parsePollInterval(viper.GetString("validate.poll"))
 	if err != nil {
 		return opts, err
 	}
 	opts.pollInterval = d
+	if opts.json && opts.pollInterval > 0 {
+		return opts, fmt.Errorf("--json cannot be combined with --poll")
+	}
 	return opts, nil
 }
 
@@ -126,10 +140,25 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
+	inspector, err := inspectorFor(cfg)
+	if err != nil {
+		return err
+	}
+	return inspector.validate(ctx, cmd, cfg, opts)
+}
 
-	fmt.Println("==========================================")
-	fmt.Println("GOAD Vulnerability Validation")
-	fmt.Println("==========================================")
+func runGOADValidate(
+	ctx context.Context, _ *cobra.Command, _ *config.Config, opts validateOpts,
+) error {
+	if !opts.json {
+		fmt.Println("==========================================")
+		fmt.Println("GOAD Vulnerability Validation")
+		fmt.Println("==========================================")
+	}
 
 	infra, err := requireInfra(ctx)
 	if err != nil {
@@ -143,54 +172,154 @@ func runValidate(cmd *cobra.Command, args []string) error {
 		defer d.Drain()
 	}
 
-	useTUI := !opts.plain && term.IsTerminal(int(os.Stdout.Fd()))
-	if opts.pollInterval > 0 && !useTUI {
-		fmt.Fprintf(os.Stderr, "Warning: --poll is ignored without the live dashboard (TTY/--plain)\n")
-		opts.pollInterval = 0
+	useTUI := prepareGOADValidationOutput(&opts)
+	if !opts.json {
+		fmt.Printf("Environment: %s\n", infra.Env)
+		fmt.Printf("Region: %s\n", infra.Region)
 	}
 
-	fmt.Printf("Environment: %s\n", infra.Env)
-	fmt.Printf("Region: %s\n", infra.Region)
-
 	v := validate.NewValidator(infra.Provider, infra.Env, opts.verbose, slog.Default(), infra.Lab)
-
+	configureGOADValidatorOutput(v, opts.json)
 	if err := v.DiscoverHosts(ctx); err != nil {
 		return fmt.Errorf("discover hosts: %w", err)
 	}
 
 	runChecks := makeRunChecks(v, infra.Provider, opts.quick)
 	runStart := time.Now()
-	if useTUI {
-		if err := validate.RunTUI(ctx, validate.TUIConfig{
-			Validator:    v,
-			Env:          infra.Env,
-			Region:       infra.Region,
-			Run:          runChecks,
-			PollInterval: opts.pollInterval,
-		}); err != nil {
-			return err
-		}
-	} else {
-		runChecks(ctx)
+	if err := runGOADValidationChecks(ctx, v, infra, opts.pollInterval, useTUI, runChecks); err != nil {
+		return err
 	}
 
 	report := v.GetReport()
-	outputPath := opts.outputPath
-	if outputPath == "" {
-		outputPath = fmt.Sprintf("/tmp/goad-validation-%s.json", time.Now().Format("20060102-150405"))
+	if err := emitGOADValidationReport(v, report, infra, opts, runStart); err != nil {
+		return err
 	}
-	if err := v.SaveReport(outputPath); err != nil {
-		fmt.Printf("Warning: could not save report: %v\n", err)
-	}
-
-	fmt.Println()
-	fmt.Println(validate.RenderSummaryPanel(report, infra.Env, infra.Region, time.Since(runStart), terminalWidth()))
-	fmt.Printf("\nResults saved to: %s\n", outputPath)
 
 	if !opts.noFail && report.Failed > 0 {
 		return fmt.Errorf("validation failed with %d errors", report.Failed)
 	}
 	return nil
+}
+
+func prepareGOADValidationOutput(opts *validateOpts) bool {
+	useTUI := !opts.json && !opts.plain && term.IsTerminal(int(os.Stdout.Fd()))
+	if opts.pollInterval > 0 && !useTUI {
+		_, _ = fmt.Fprintln(os.Stderr, "Warning: --poll is ignored without the live dashboard (TTY/--plain)")
+		opts.pollInterval = 0
+	}
+	return useTUI
+}
+
+func configureGOADValidatorOutput(v *validate.Validator, jsonOut bool) {
+	if !jsonOut {
+		return
+	}
+	v.SetSilent(true)
+	encoder := json.NewEncoder(os.Stdout)
+	var encoderMu sync.Mutex
+	v.SetOnResult(func(check validate.Result) {
+		encoderMu.Lock()
+		defer encoderMu.Unlock()
+		_ = encoder.Encode(check)
+	})
+}
+
+func runGOADValidationChecks(
+	ctx context.Context,
+	v *validate.Validator,
+	infra *infraContext,
+	pollInterval time.Duration,
+	useTUI bool,
+	runChecks func(context.Context),
+) error {
+	if !useTUI {
+		runChecks(ctx)
+		return nil
+	}
+	return validate.RunTUI(ctx, validate.TUIConfig{
+		Validator:    v,
+		Env:          infra.Env,
+		Region:       infra.Region,
+		Run:          runChecks,
+		PollInterval: pollInterval,
+	})
+}
+
+func emitGOADValidationReport(
+	v *validate.Validator,
+	report *validate.Report,
+	infra *infraContext,
+	opts validateOpts,
+	runStart time.Time,
+) error {
+	outputPath := opts.outputPath
+	if outputPath == "" && !opts.json {
+		outputPath = fmt.Sprintf("/tmp/goad-validation-%s.json", time.Now().Format("20060102-150405"))
+	}
+	if outputPath != "" {
+		if err := v.SaveReport(outputPath); err != nil {
+			if _, warningErr := fmt.Fprintf(validationWarningWriter(opts.json), "Warning: could not save report: %v\n", err); warningErr != nil {
+				return fmt.Errorf("write validation report warning: %w", warningErr)
+			}
+		}
+	}
+	if opts.json {
+		if err := json.NewEncoder(os.Stdout).Encode(report); err != nil {
+			return fmt.Errorf("encode validation report: %w", err)
+		}
+		return nil
+	}
+	fmt.Println()
+	fmt.Println(validate.RenderSummaryPanel(report, infra.Env, infra.Region, time.Since(runStart), terminalWidth()))
+	fmt.Printf("\nResults saved to: %s\n", outputPath)
+	return nil
+}
+
+func validationWarningWriter(jsonOut bool) *os.File {
+	if jsonOut {
+		return os.Stderr
+	}
+	return os.Stdout
+}
+
+func goatValidatorArgs(cfg *config.Config, opts validateOpts) ([]string, error) {
+	if opts.pollInterval > 0 {
+		return nil, fmt.Errorf("--poll is not supported for GOAT validation")
+	}
+
+	script := filepath.Join(cfg.ProjectRoot, "scripts", "validate-goat-live.py")
+	args := []string{script, "--env", cfg.Env, "--provider", cfg.ResolvedProvider()}
+	if cfg.ResolvedProvider() == provider.NameAWS {
+		region, err := cfg.ResolveRegion()
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, "--region", region)
+	}
+	if opts.outputPath != "" {
+		args = append(args, "--output", opts.outputPath)
+	}
+	if opts.quick {
+		args = append(args, "--quick")
+	}
+	if opts.verbose {
+		args = append(args, "--verbose")
+	}
+	if opts.noFail {
+		args = append(args, "--no-fail")
+	}
+	if opts.json {
+		args = append(args, "--json")
+	}
+	return args, nil
+}
+
+func runGOATValidate(ctx context.Context, cfg *config.Config, opts validateOpts) error {
+	args, err := goatValidatorArgs(cfg, opts)
+	if err != nil {
+		return err
+	}
+	return runGOATInspector(ctx, args, "validation")
 }
 
 func terminalWidth() int {

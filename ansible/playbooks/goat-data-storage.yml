@@ -1,0 +1,14 @@
+---
+- name: Configure GOAT databases
+  hosts: data
+  become: true
+  gather_facts: true
+  roles:
+    - role: dreadnode.goad.goat_data
+
+- name: Configure GOAT storage services
+  hosts: storage
+  become: true
+  gather_facts: true
+  roles:
+    - role: dreadnode.goad.goat_storage

@@ -31,6 +31,17 @@ async def create_session(request: Request, body: dict[str, t.Any]) -> SessionDoc
     label = body.get("label")
 
     try:
+        if mode == "create_range":
+            return await service.create_range_session(
+                str(body.get("range") or ""),
+                str(body.get("provider") or ""),
+                env,
+                region=(body.get("region") or "").strip() or None,
+                customization=str(body.get("customization") or "standard"),
+                vpc_cidr=(body.get("vpc_cidr") or "").strip() or None,
+                model=model,
+                label=label,
+            )
         if mode == "new_config":
             provider = (body.get("provider") or "").strip()
             if provider not in configstore.PROVIDERS:

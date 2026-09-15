@@ -1,5 +1,5 @@
 locals {
-  name_prefix = "${var.env}-${var.deployment_name}-kali"
+  name_prefix = "${var.env}-${var.deployment_name}-${var.instance_name}"
 
   base_tags = {
     Module       = "terraform-azure-kali"
@@ -12,6 +12,8 @@ locals {
   tags = merge(local.base_tags, var.additional_tags)
 
   generate_ssh_key = var.admin_ssh_public_key == null
+
+  create_dedicated_subnet = var.subnet_id == null
 
   effective_public_key = trimspace(
     local.generate_ssh_key
@@ -42,6 +44,7 @@ resource "local_sensitive_file" "kali_key" {
 }
 
 resource "azurerm_subnet" "this" {
+  count                = local.create_dedicated_subnet ? 1 : 0
   name                 = "${local.name_prefix}-subnet"
   resource_group_name  = var.resource_group_name
   virtual_network_name = var.virtual_network_name
@@ -49,6 +52,7 @@ resource "azurerm_subnet" "this" {
 }
 
 resource "azurerm_network_security_group" "this" {
+  count               = local.create_dedicated_subnet ? 1 : 0
   name                = "${local.name_prefix}-nsg"
   location            = var.location
   resource_group_name = var.resource_group_name
@@ -93,8 +97,9 @@ resource "azurerm_network_security_group" "this" {
 }
 
 resource "azurerm_subnet_network_security_group_association" "this" {
-  subnet_id                 = azurerm_subnet.this.id
-  network_security_group_id = azurerm_network_security_group.this.id
+  count                     = local.create_dedicated_subnet ? 1 : 0
+  subnet_id                 = azurerm_subnet.this[0].id
+  network_security_group_id = azurerm_network_security_group.this[0].id
 }
 
 resource "azurerm_network_interface" "this" {
@@ -104,8 +109,9 @@ resource "azurerm_network_interface" "this" {
 
   ip_configuration {
     name                          = "internal"
-    subnet_id                     = azurerm_subnet.this.id
-    private_ip_address_allocation = "Dynamic"
+    subnet_id                     = local.create_dedicated_subnet ? azurerm_subnet.this[0].id : var.subnet_id
+    private_ip_address_allocation = var.private_ip_address == null ? "Dynamic" : "Static"
+    private_ip_address            = var.private_ip_address
   }
 
   tags = merge(local.tags, { Name = "${local.name_prefix}-nic" })
@@ -113,7 +119,7 @@ resource "azurerm_network_interface" "this" {
 
 resource "azurerm_linux_virtual_machine" "this" {
   name                = "${local.name_prefix}-vm"
-  computer_name       = substr(local.name_prefix, 0, 63)
+  computer_name       = var.computer_name != "" ? var.computer_name : substr(local.name_prefix, 0, 63)
   resource_group_name = var.resource_group_name
   location            = var.location
   size                = var.instance_size

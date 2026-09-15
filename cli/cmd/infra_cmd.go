@@ -29,6 +29,7 @@ var infraCmd = &cobra.Command{
 	Long: `Manage the DreadGOAD lab infrastructure lifecycle.
 
 For AWS (provider: aws): uses Terragrunt to manage VPC, EC2 instances, etc.
+For Azure (provider: azure): uses Terragrunt to manage VNets, VMs, Bastion, etc.
 For Proxmox (provider: proxmox): uses Terraform with the bpg/proxmox provider
 to clone VMs from templates.
 For Ludus (provider: ludus): uses the Ludus CLI to manage ranges and VMs.
@@ -127,7 +128,7 @@ func materializeLabConfig(cfg *config.Config) error {
 		return fmt.Errorf("resolve lab config: %w", err)
 	}
 
-	dataDir := filepath.Join(cfg.ProjectRoot, "ad", "GOAD", "data")
+	dataDir := filepath.Join(cfg.LabPath(), "data")
 	expected := filepath.Join(dataDir, cfg.Env+"-config.json")
 
 	if resolved == expected {
@@ -249,18 +250,22 @@ func azureModuleEnv(cmd *cobra.Command, action, moduleRoot string) []string {
 // Layout: infra/azure/{deployment}/{env}/{region}/. Default deployment is
 // "goad-deployment" (the lab); standalone modules can live alongside this
 // tree but are not the primary lifecycle path.
-func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) error {
+func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) (resultErr error) {
 	if err := materializeLabConfig(cfg); err != nil {
 		return fmt.Errorf("materialize lab config: %w", err)
+	}
+	operations, err := operationsFor(cfg)
+	if err != nil {
+		return err
 	}
 
 	module, _ := cmd.Flags().GetString("module")
 	exclude, _ := cmd.Flags().GetString("exclude")
 	deployment := resolveDeployment(cmd, cfg)
 
-	region := cfg.Region
-	if region == "" {
-		return fmt.Errorf("azure region not configured: pass --region (e.g. --region centralus) or set 'region' in dreadgoad.yaml")
+	region, err := cfg.ResolveRegion()
+	if err != nil {
+		return fmt.Errorf("resolve Azure region: %w", err)
 	}
 
 	backendBootstrapAz, _ := cmd.Flags().GetBool("backend-bootstrap")
@@ -269,6 +274,10 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 		Action:           action,
 		TerragruntBinary: cfg.Infra.TerragruntBinary,
 		TerraformBinary:  cfg.Infra.TerraformBinary,
+		// Bastion, controller, and Kali each own a subnet in the shared VNet.
+		// Azure serializes VNet mutations and rejects concurrent sibling applies
+		// with AnotherOperationInProgress, so keep Azure units deterministic.
+		Parallelism:      1,
 		NonInteractive:   true,
 		ExcludeDirs:      exclude,
 		BackendBootstrap: backendBootstrapAz,
@@ -286,26 +295,42 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 		}
 	}
 
+	var persistentStateDir string
+	if operations.persistentAzureState {
+		homeDir, homeErr := os.UserHomeDir()
+		if homeErr != nil {
+			return fmt.Errorf("resolve user home for GOAT state: %w", homeErr)
+		}
+		stateRoot, stateErr := prepareGOATState(cfg.ProjectRoot, homeDir)
+		if stateErr != nil {
+			return stateErr
+		}
+		persistentStateDir = filepath.Join(stateRoot, cfg.Env, region)
+		opts.Reconfigure = true
+		defer func() {
+			resultErr = errors.Join(resultErr, secureGOATState(stateRoot))
+		}()
+	}
+
 	// Resolved after the legacy fallback: the destroy-time module sweep looks
 	// for module directories, so pointing it at the deployment-shaped path on
 	// a legacy layout would find none and silently orphan them.
 	opts.ExtraEnv = append(opts.ExtraEnv, azureModuleEnv(cmd, action, workDir)...)
 
-	switch action {
-	case "destroy":
-		if err := confirmDestroy(cmd, cfg.Env, region); err != nil {
-			return err
-		}
-		opts.AutoApprove = true
-	case "apply":
-		autoApprove, _ := cmd.Flags().GetBool("auto-approve")
-		opts.AutoApprove = autoApprove
+	if err := configureAzureAction(cmd, cfg.Env, region, action, &opts); err != nil {
+		return err
 	}
 	// Checked after the fallback so the legacy layout is still accepted, and
 	// state-aware so a destroy with nothing to destroy says why (see
 	// infra_state.go) rather than pointing at a directory.
-	if err := checkLocalInfraState(workDir, cfg.Env, region, action); err != nil {
-		return err
+	var stateErr error
+	if persistentStateDir != "" {
+		stateErr = checkPersistentInfraState(workDir, persistentStateDir, cfg.Env, region, action)
+	} else {
+		stateErr = checkLocalInfraState(workDir, cfg.Env, region, action)
+	}
+	if stateErr != nil {
+		return stateErr
 	}
 
 	opts.LogFile = infraLogPath(cfg, action, deployment, module)
@@ -325,6 +350,23 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 
 	opts.WorkDir = workDir
 	return terragrunt.RunAll(ctx, opts)
+}
+
+func configureAzureAction(
+	cmd *cobra.Command,
+	env, region, action string,
+	opts *terragrunt.Options,
+) error {
+	switch action {
+	case "destroy":
+		if err := confirmDestroy(cmd, env, region); err != nil {
+			return err
+		}
+		opts.AutoApprove = true
+	case "apply":
+		opts.AutoApprove, _ = cmd.Flags().GetBool("auto-approve")
+	}
+	return nil
 }
 
 // runTerragruntModule runs a single Terragrunt module, optionally applying its
@@ -370,6 +412,10 @@ func runInfraActionAWS(cmd *cobra.Command, cfg *config.Config, action string) er
 	if err := materializeLabConfig(cfg); err != nil {
 		return fmt.Errorf("materialize lab config: %w", err)
 	}
+	operations, err := operationsFor(cfg)
+	if err != nil {
+		return err
+	}
 
 	module, _ := cmd.Flags().GetString("module")
 	exclude, _ := cmd.Flags().GetString("exclude")
@@ -381,6 +427,10 @@ func runInfraActionAWS(cmd *cobra.Command, cfg *config.Config, action string) er
 	}
 
 	backendBootstrap, _ := cmd.Flags().GetBool("backend-bootstrap")
+	// GOAT is presented as a turnkey console range. Its account-qualified
+	// backend is safe to create automatically and must exist before the first
+	// plan/apply can run.
+	backendBootstrap = shouldBootstrapAWSBackend(operations, action, backendBootstrap)
 
 	opts := terragrunt.Options{
 		Action:           action,
@@ -445,6 +495,16 @@ func runInfraActionAWS(cmd *cobra.Command, cfg *config.Config, action string) er
 	return nil
 }
 
+func shouldBootstrapAWSBackend(operations rangeOperations, action string, requested bool) bool {
+	if requested {
+		return true
+	}
+	if !operations.autoBootstrapAWSBackend {
+		return false
+	}
+	return action == "init" || action == "plan" || action == "apply"
+}
+
 // deleteSSMBucket removes the S3 bucket the Ansible SSM connection plugin
 // used for file transfer. Called after a successful infra destroy.
 func deleteSSMBucket(ctx context.Context, cfg *config.Config) error {
@@ -456,7 +516,7 @@ func deleteSSMBucket(ctx context.Context, cfg *config.Config) error {
 		return nil
 	}
 	bucket := parsed.SSMBucketName()
-	if bucket == "" {
+	if bucket == "" || strings.EqualFold(strings.TrimSpace(bucket), "AUTO") {
 		return nil
 	}
 	region := parsed.Region()
@@ -557,7 +617,24 @@ func renderProxmoxTemplates(cfg *config.Config, workDir string) error {
 	return tfrender.Render(renderOpts)
 }
 
-func runAzureInfraOutput(cfg *config.Config, deployment, region, module string) error {
+func runAzureInfraOutput(cfg *config.Config, deployment, region, module string) (resultErr error) {
+	operations, err := operationsFor(cfg)
+	if err != nil {
+		return err
+	}
+	if operations.persistentAzureState {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("resolve user home for GOAT state: %w", err)
+		}
+		stateRoot, err := prepareGOATState(cfg.ProjectRoot, homeDir)
+		if err != nil {
+			return err
+		}
+		defer func() {
+			resultErr = errors.Join(resultErr, secureGOATState(stateRoot))
+		}()
+	}
 	workDir := filepath.Join(cfg.ProjectRoot, "infra", "azure", deployment, cfg.Env, region)
 	if _, err := os.Stat(workDir); os.IsNotExist(err) {
 		workDir = filepath.Join(cfg.ProjectRoot, "infra", "azure", region)
@@ -673,16 +750,22 @@ func runInfraValidate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	operations, err := operationsFor(cfg)
+	if err != nil {
+		return err
+	}
 
 	switch cfg.ResolvedProvider() {
+	case "aws":
+		if operations.validateServiceInfra {
+			return runInfraValidateServiceAWS(cfg)
+		}
 	case "ludus":
 		return runInfraValidateLudus(cfg)
 	case "proxmox":
 		return runInfraValidateProxmox(cfg)
 	case "azure":
-		fmt.Println("Azure validation: structural validation is AWS-specific; skipping.")
-		fmt.Println("Run 'az account show' to confirm CLI auth and 'terragrunt init' to validate the module.")
-		return nil
+		return runInfraValidateAzure(cfg, operations)
 	}
 
 	deployment := resolveDeployment(cmd, cfg)
@@ -699,6 +782,88 @@ func runInfraValidate(cmd *cobra.Command, args []string) error {
 	if !result.OK() {
 		return fmt.Errorf("validation failed")
 	}
+	return nil
+}
+
+func runInfraValidateServiceAWS(cfg *config.Config) error {
+	region, err := cfg.ResolveRegion()
+	if err != nil {
+		return fmt.Errorf("resolve AWS region: %w", err)
+	}
+	baseDir := filepath.Join(cfg.ProjectRoot, "infra", cfg.ResolvedDeployment())
+	workDir := filepath.Join(baseDir, cfg.Env, region)
+	requiredFiles := []string{
+		filepath.Join(baseDir, "host.hcl"),
+		filepath.Join(baseDir, "host-registry.yaml"),
+		filepath.Join(baseDir, cfg.Env, "env.hcl"),
+		filepath.Join(workDir, "region.hcl"),
+		filepath.Join(workDir, "network", "terragrunt.hcl"),
+		filepath.Join(workDir, "kali", "terragrunt.hcl"),
+	}
+	for _, host := range []string{"data01", "dev01", "services01", "storage01", "web01"} {
+		requiredFiles = append(requiredFiles, filepath.Join(workDir, "hosts", host, "terragrunt.hcl"))
+	}
+	var missing []string
+	for _, path := range requiredFiles {
+		if info, statErr := os.Stat(path); statErr != nil || info.IsDir() {
+			missing = append(missing, path)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf(
+			"GOAT AWS deployment is incomplete in %s; missing files: %s",
+			workDir,
+			strings.Join(missing, ", "),
+		)
+	}
+	color.Green("GOAT AWS deployment structure is complete (%s/%s).", cfg.Env, region)
+	fmt.Println("Run './scripts/validate-goat.sh' for Terraform, Terragrunt, Ansible, and Go validation.")
+	return nil
+}
+
+func runInfraValidateAzure(cfg *config.Config, operations rangeOperations) error {
+	if !operations.validateServiceInfra {
+		fmt.Println("Azure validation: no structural validation profile is configured; skipping.")
+		fmt.Println("Run 'az account show' to confirm CLI auth and 'terragrunt hcl validate' for the deployment tree.")
+		return nil
+	}
+
+	region, err := cfg.ResolveRegion()
+	if err != nil {
+		return fmt.Errorf("resolve Azure region: %w", err)
+	}
+	workDir := filepath.Join(
+		cfg.ProjectRoot,
+		"infra",
+		"azure",
+		cfg.ResolvedDeployment(),
+		cfg.Env,
+		region,
+	)
+	requiredUnits := []string{
+		"access",
+		"network",
+		"bastion",
+		"kali",
+		"hosts/data01",
+		"hosts/dev01",
+		"hosts/services01",
+		"hosts/storage01",
+		"hosts/web01",
+	}
+	var missing []string
+	for _, unit := range requiredUnits {
+		path := filepath.Join(workDir, unit, "terragrunt.hcl")
+		if info, statErr := os.Stat(path); statErr != nil || info.IsDir() {
+			missing = append(missing, unit)
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("GOAT Azure deployment is incomplete in %s; missing units: %s", workDir, strings.Join(missing, ", "))
+	}
+
+	color.Green("GOAT Azure deployment structure is complete (%s/%s).", cfg.Env, region)
+	fmt.Println("Run './scripts/validate-goat.sh' for Terraform, Terragrunt, Ansible, and Go validation.")
 	return nil
 }
 
@@ -1004,7 +1169,7 @@ func resolveDeployment(cmd *cobra.Command, cfg *config.Config) string {
 	if d, _ := cmd.Flags().GetString("deployment"); d != "" {
 		return d
 	}
-	return cfg.Infra.Deployment
+	return cfg.ResolvedDeployment()
 }
 
 func printIndividualResults(results []terragrunt.Result) error {

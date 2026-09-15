@@ -204,9 +204,12 @@ func checkAnsibleVersion(provider string) CheckResult {
 			Message: "ansible-core not found. Install: pip install 'ansible-core>=2.20.0,<2.21.0'",
 		}
 	}
+	return classifyAnsibleVersion(string(out), provider)
+}
 
+func classifyAnsibleVersion(output, provider string) CheckResult {
 	re := regexp.MustCompile(`(\d+)\.(\d+)\.(\d+)`)
-	m := re.FindStringSubmatch(string(out))
+	m := re.FindStringSubmatch(output)
 	if m == nil {
 		return CheckResult{Name: "ansible-core", Status: "fail", Message: "could not parse version"}
 	}

@@ -97,8 +97,7 @@ func (c *Client) TerminateSession(ctx context.Context, sessionID string) error {
 	return err
 }
 
-// RunPowerShellCommand executes a PowerShell command on an instance via SSM and returns the result.
-func (c *Client) RunPowerShellCommand(ctx context.Context, instanceID, command string, timeout time.Duration) (*CommandResult, error) {
+func (c *Client) runCommand(ctx context.Context, instanceID, document, command string, timeout time.Duration) (*CommandResult, error) {
 	timeoutSecs := int32(timeout.Seconds())
 	if timeoutSecs == 0 {
 		timeoutSecs = 60
@@ -106,7 +105,7 @@ func (c *Client) RunPowerShellCommand(ctx context.Context, instanceID, command s
 
 	out, err := c.SSM.SendCommand(ctx, &ssm.SendCommandInput{
 		InstanceIds:    []string{instanceID},
-		DocumentName:   Ptr("AWS-RunPowerShellScript"),
+		DocumentName:   Ptr(document),
 		Parameters:     map[string][]string{"commands": {command}},
 		TimeoutSeconds: aws.Int32(timeoutSecs),
 	})
@@ -118,8 +117,18 @@ func (c *Client) RunPowerShellCommand(ctx context.Context, instanceID, command s
 	return c.waitForCommand(ctx, commandID, instanceID, timeout)
 }
 
+// RunPowerShellCommand executes a PowerShell command on a Windows instance.
+func (c *Client) RunPowerShellCommand(ctx context.Context, instanceID, command string, timeout time.Duration) (*CommandResult, error) {
+	return c.runCommand(ctx, instanceID, "AWS-RunPowerShellScript", command, timeout)
+}
+
+// RunShellCommand executes a POSIX shell command on a Linux instance.
+func (c *Client) RunShellCommand(ctx context.Context, instanceID, command string, timeout time.Duration) (*CommandResult, error) {
+	return c.runCommand(ctx, instanceID, "AWS-RunShellScript", command, timeout)
+}
+
 // RunPowerShellOnMultiple executes a PowerShell command on multiple instances.
-func (c *Client) RunPowerShellOnMultiple(ctx context.Context, instanceIDs []string, command string, timeout time.Duration) (map[string]*CommandResult, error) {
+func (c *Client) runCommandOnMultiple(ctx context.Context, instanceIDs []string, document, command string, timeout time.Duration) (map[string]*CommandResult, error) {
 	timeoutSecs := int32(timeout.Seconds())
 	if timeoutSecs == 0 {
 		timeoutSecs = 60
@@ -127,7 +136,7 @@ func (c *Client) RunPowerShellOnMultiple(ctx context.Context, instanceIDs []stri
 
 	out, err := c.SSM.SendCommand(ctx, &ssm.SendCommandInput{
 		InstanceIds:    instanceIDs,
-		DocumentName:   Ptr("AWS-RunPowerShellScript"),
+		DocumentName:   Ptr(document),
 		Parameters:     map[string][]string{"commands": {command}},
 		TimeoutSeconds: aws.Int32(timeoutSecs),
 	})
@@ -147,6 +156,16 @@ func (c *Client) RunPowerShellOnMultiple(ctx context.Context, instanceIDs []stri
 		}
 	}
 	return results, nil
+}
+
+// RunPowerShellOnMultiple executes a PowerShell command on multiple Windows instances.
+func (c *Client) RunPowerShellOnMultiple(ctx context.Context, instanceIDs []string, command string, timeout time.Duration) (map[string]*CommandResult, error) {
+	return c.runCommandOnMultiple(ctx, instanceIDs, "AWS-RunPowerShellScript", command, timeout)
+}
+
+// RunShellOnMultiple executes a POSIX shell command on multiple Linux instances.
+func (c *Client) RunShellOnMultiple(ctx context.Context, instanceIDs []string, command string, timeout time.Duration) (map[string]*CommandResult, error) {
+	return c.runCommandOnMultiple(ctx, instanceIDs, "AWS-RunShellScript", command, timeout)
 }
 
 // EnableSSMUserLocal re-enables the local ssm-user account.

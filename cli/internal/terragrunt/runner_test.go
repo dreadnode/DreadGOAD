@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -27,6 +28,18 @@ func TestBuildArgs_Init(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected -upgrade in args for init, got %v", args)
+	}
+}
+
+func TestBuildArgsInitReconfigure(t *testing.T) {
+	opts := Options{Action: "init", Reconfigure: true}
+	for name, args := range map[string][]string{
+		"single":  buildArgs(opts),
+		"run-all": buildRunAllArgs(opts),
+	} {
+		if !slices.Contains(args, "-reconfigure") {
+			t.Errorf("%s init args omit -reconfigure: %v", name, args)
+		}
 	}
 }
 
@@ -90,6 +103,26 @@ func TestBuildArgs_NonInteractive(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("expected --non-interactive in args, got %v", args)
+	}
+}
+
+func TestBuildRunAllArgsParallelism(t *testing.T) {
+	args := buildRunAllArgs(Options{
+		Action:      "apply",
+		Parallelism: 1,
+	})
+	want := []string{"run", "--all", "--no-auto-approve", "--parallelism", "1", "--", "apply"}
+	if !slices.Equal(args, want) {
+		t.Fatalf("run-all args = %v, want %v", args, want)
+	}
+}
+
+func TestBuildRunAllArgsLeavesParallelismUnsetByDefault(t *testing.T) {
+	args := buildRunAllArgs(Options{Action: "apply"})
+	for _, arg := range args {
+		if arg == "--parallelism" {
+			t.Fatalf("default run-all args unexpectedly constrain parallelism: %v", args)
+		}
 	}
 }
 

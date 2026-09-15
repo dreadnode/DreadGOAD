@@ -74,6 +74,26 @@ def test_preflight_blocks_the_unrecoverable_states() -> None:
     print("PASS test_preflight_blocks_the_unrecoverable_states")
 
 
+def test_preflight_uses_range_deployment_and_global_inventory_name() -> None:
+    with tempfile.TemporaryDirectory() as d:
+        custom = pathlib.Path(
+            scaffold.infra_env_dir(d, "azure", "kraken", deployment="goat-deployment")
+        )
+        custom.mkdir(parents=True)
+        (pathlib.Path(d) / "kraken-inventory").write_text("[all]\n")
+        problems = scaffold.preflight(
+            d,
+            "azure",
+            "kraken",
+            None,
+            deployment="goat-deployment",
+        )
+        assert len(problems) == 2, problems
+        assert str(custom) in problems[0]
+        assert "kraken-inventory" in problems[1]
+    print("PASS test_preflight_uses_range_deployment_and_global_inventory_name")
+
+
 def test_preflight_ignores_the_variant_target_when_not_a_variant() -> None:
     with tempfile.TemporaryDirectory() as d:
         (pathlib.Path(d) / "ad" / "GOAD-rt").mkdir(parents=True)
@@ -210,6 +230,7 @@ async def _main() -> None:
     test_infra_env_dir_matches_the_cli_layout()
     test_preflight_passes_on_a_clean_tree()
     test_preflight_blocks_the_unrecoverable_states()
+    test_preflight_uses_range_deployment_and_global_inventory_name()
     test_preflight_ignores_the_variant_target_when_not_a_variant()
     test_build_argv_shape()
     await test_scaffold_runs_in_the_config_tree()

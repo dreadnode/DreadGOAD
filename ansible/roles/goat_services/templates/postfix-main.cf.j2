@@ -1,0 +1,10 @@
+compatibility_level = 3.6
+myhostname = mail.range.test
+mydomain = range.test
+myorigin = $mydomain
+inet_interfaces = all
+inet_protocols = ipv4
+mydestination = $myhostname, localhost.$mydomain, localhost, $mydomain
+home_mailbox = Maildir/
+mynetworks = 127.0.0.0/8, 10.50.0.0/16
+smtpd_recipient_restrictions = permit_mynetworks, reject_unauth_destination

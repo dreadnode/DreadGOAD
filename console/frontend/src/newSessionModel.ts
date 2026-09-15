@@ -1,194 +1,110 @@
-import type { AppConfig, ConfigListing, LabSummary } from './api'
+import type { EnvironmentSummary, LabSummary, SessionOptions } from './api'
 
-// These values occupy <select> entries that cannot collide with absolute config
-// paths. Keeping them here gives the modal and its loading hook one vocabulary.
-export const NEW_CONFIG = ' new-config'
-export const NEW_ENV = ' new-env'
-export const OTHER_PATH = ' other-path'
+export type SessionMode = 'existing' | 'new' | 'import'
+export type RangeCustomization = 'standard' | 'randomized'
 
 export interface NewSessionModelInput {
-  cfg: AppConfig
-  listing: ConfigListing | null
-  choice: string
-  customPath: string
-  newConfigName: string
+  options: SessionOptions | null
+  mode: SessionMode
+  existingIndex: string
+  importPath: string
+  importEnvironment: string
+  importReady: boolean
+  rangeName: string
   provider: string
   region: string
-  envs: string[]
-  configOk: boolean
-  envChoice: string
-  loadedProvider: string
-  loadedRegions: Record<string, string | null>
-  newEnv: string
-  source: string
-  labList: LabSummary[]
-  variantName: string
+  environmentName: string
+  customization: RangeCustomization
   cidr: string
   submitting: boolean
 }
 
-interface NewEnvironmentFields {
-  variant: true
-  variant_source: string
-  variant_target: string
-  variant_name: string
-  vpc_cidr: string
-}
-
-export type NewSessionPayload =
-  | { config_path: string; env: string }
-  | { mode: 'new'; config_path: string; env: string; env_fields: NewEnvironmentFields }
-  | {
-    mode: 'new_config'
-    config_name: string
-    provider: string
-    region: string | undefined
-    env: string
-    env_fields: NewEnvironmentFields
-  }
-
 export interface NewSessionModel {
-  creatingConfig: boolean
-  creatingEnv: boolean
-  configPath: string
-  selectedConfigError: string
+  range?: LabSummary
+  existing?: EnvironmentSummary
+  availableProviders: string[]
   effectiveProvider: string
-  providers: string[]
+  providerSettings?: LabSummary['provider_settings'][string]
+  effectiveRegion: string
+  effectiveCIDR: string
+  cidrEditable: boolean
+  variantAvailable: boolean
   credentialHint: string
-  environmentName: string
-  environmentCollides: boolean
-  configFilename: string
-  configTaken: boolean
-  sourceLab?: LabSummary
-  sourceUnsupported: boolean
-  variantTarget: string
-  missingRegion: boolean
   valid: boolean
-  payload: NewSessionPayload
+  payload: Record<string, unknown>
   effects: string[]
 }
 
-/** Mirrors configstore.slug_for; the backend remains authoritative on create. */
-export function slugForConfig(name: string): string {
-  return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48)
-}
-
-export function labSupportsProvider(lab: LabSummary, provider: string): boolean {
-  return !provider || lab.providers.length === 0 || lab.providers.includes(provider)
-}
-
-/**
- * Derive validation, submission data, and the operator-facing side-effect
- * preview from the modal's raw inputs. This function deliberately performs no
- * I/O, so all three remain synchronized and can be checked without rendering.
- */
+/** Derive one range-first request and its operator-facing consequences. */
 export function deriveNewSessionModel(input: NewSessionModelInput): NewSessionModel {
-  const creatingConfig = input.choice === NEW_CONFIG
-  const creatingEnv = creatingConfig || input.envChoice === NEW_ENV
-  const configPath = input.choice === OTHER_PATH ? input.customPath : input.choice
-  const selected = input.listing?.configs.find(config => config.path === configPath)
-  const effectiveProvider = creatingConfig
+  const existingPosition = Number.parseInt(input.existingIndex, 10)
+  const existing = Number.isInteger(existingPosition)
+    ? input.options?.environments[existingPosition]
+    : undefined
+  const range = input.options?.ranges.find(item => item.name === input.rangeName)
+  const consoleProviders = new Set(input.options?.providers ?? [])
+  const availableProviders = Object.keys(range?.provider_settings ?? {})
+    .filter(provider => consoleProviders.has(provider))
+    .sort()
+  const effectiveProvider = availableProviders.includes(input.provider)
     ? input.provider
-    : (input.loadedProvider || selected?.provider || '')
-  const providers = input.listing?.providers ?? input.cfg.providers ?? ['aws', 'azure']
-  const credentialHint = input.listing?.credential_hints?.[effectiveProvider] || ''
+    : (availableProviders.length === 1 ? availableProviders[0] : '')
+  const providerSettings = range?.provider_settings[effectiveProvider]
+  const effectiveRegion = input.region.trim() || providerSettings?.default_region || ''
+  const cidrEditable = providerSettings?.network?.editable !== false
+  const effectiveCIDR = cidrEditable
+    ? input.cidr.trim()
+    : (providerSettings?.network?.cidr || '')
+  const variantAvailable = range?.variant_supported === true
+  const environmentName = input.environmentName.trim()
+  const customization = variantAvailable ? input.customization : 'standard'
+  const credentialHint = input.options?.credential_hints[effectiveProvider] || ''
 
-  const environmentName = input.newEnv.trim()
-  const environmentCollides = input.envs.includes(environmentName)
-  const configSlug = slugForConfig(input.newConfigName)
-  const configFilename = configSlug ? `${configSlug}.yaml` : ''
-  // The UI identifies sessions by config basename, so duplicates are ambiguous
-  // even when their absolute paths differ.
-  const configTaken = !!configSlug && !!input.listing?.configs.some(
-    config => config.name === configFilename,
-  )
-
-  // An empty provider list means discovery could not determine compatibility;
-  // only a known mismatch is grounds to reject the lab.
-  const sourceLab = input.labList.find(lab => lab.dir === input.source.trim())
-  const sourceUnsupported = !!sourceLab && !labSupportsProvider(sourceLab, effectiveProvider)
-  const variantBase = input.source.trim() || 'ad/GOAD'
-  const effectiveVariant = input.variantName.trim() || environmentName
-  const variantTarget = effectiveVariant ? `${variantBase}-${effectiveVariant}` : ''
-
-  const environmentValid = creatingEnv
-    ? (!!environmentName && !environmentCollides && !sourceUnsupported)
-    : !!input.envChoice
-  // Region is required here because the console does not supply a CLI override
-  // and subsequent provider commands resolve it from the config.
-  const configValid = creatingConfig
-    ? (!!configSlug && !configTaken && providers.includes(input.provider) && !!input.region.trim())
-    : input.configOk
-  const missingRegion = !creatingConfig && input.configOk && !!input.envChoice
-    && input.envChoice !== NEW_ENV && !input.loadedRegions[input.envChoice]
-  const valid = configValid && environmentValid && !input.submitting
-
-  const environmentFields: NewEnvironmentFields = {
-    variant: true,
-    variant_source: variantBase,
-    variant_target: variantTarget,
-    variant_name: effectiveVariant,
-    vpc_cidr: input.cidr.trim() || '10.100.0.0/16',
-  }
-
-  const payload: NewSessionPayload = creatingConfig
-    ? {
-      mode: 'new_config',
-      config_name: input.newConfigName.trim(),
-      provider: input.provider,
-      region: input.region.trim() || undefined,
+  const payload = input.mode === 'existing' && existing?.config_path
+    ? { config_path: existing.config_path, env: existing.name }
+    : input.mode === 'import'
+      ? { config_path: input.importPath.trim(), env: input.importEnvironment }
+      : {
+      mode: 'create_range',
+      range: range?.name || '',
+      provider: effectiveProvider,
+      region: effectiveRegion,
       env: environmentName,
-      env_fields: environmentFields,
+      customization,
+      ...(effectiveCIDR ? { vpc_cidr: effectiveCIDR } : {}),
     }
-    : creatingEnv
-      ? {
-        mode: 'new',
-        config_path: configPath,
-        env: environmentName,
-        env_fields: environmentFields,
-      }
-      : { config_path: configPath, env: input.envChoice }
+
+  const valid = !input.submitting && (input.mode === 'existing'
+    ? !!existing?.config_path
+    : input.mode === 'import'
+      ? input.importReady && !!input.importPath.trim() && !!input.importEnvironment
+      : !!range && !!effectiveProvider && !!providerSettings
+        && !!effectiveRegion && !!environmentName)
 
   const effects: string[] = []
-  if (creatingConfig && configFilename) {
-    effects.push(`create ${input.listing?.configs_root ?? '…'}/${configFilename}`
-      + ` (provider ${input.provider}${input.region.trim() ? `, region ${input.region.trim()}` : ''})`)
+  if (input.mode === 'existing' && existing) {
+    effects.push(`attach to “${existing.name}” (${existing.lab} · ${existing.provider}${existing.region ? ` · ${existing.region}` : ''})`)
+    effects.push('write no configuration or infrastructure files')
+  } else if (input.mode === 'import' && input.importReady && input.importEnvironment) {
+    effects.push(`attach to “${input.importEnvironment}” from the imported config`)
+    effects.push('write no configuration or infrastructure files')
+  } else if (range && environmentName) {
+    effects.push(`create a managed ${range.display_name || range.name} environment named “${environmentName}”`)
+    effects.push(`${effectiveProvider || '<provider>'}${effectiveRegion ? ` in ${effectiveRegion}` : ''}${customization === 'randomized' ? ' with a randomized variant' : ''}`)
+    effects.push('prepare configuration, infrastructure, and inventory; deploy nothing until /up')
   }
-  if (creatingEnv && environmentName) {
-    effects.push(creatingConfig
-      ? `define environment “${environmentName}” inside it`
-      : `write environment “${environmentName}” into ${configPath} (a .bak is saved; comments and formatting are kept)`)
-  } else if (!creatingEnv && input.envChoice) {
-    effects.push(`attach to the existing environment “${input.envChoice}” — no files are written`)
-  }
-  if (creatingEnv && environmentName) {
-    const regionLabel = creatingConfig
-      ? input.region.trim()
-      : (input.loadedRegions[input.envChoice] || '')
-    effects.push(
-      `scaffold infra/…/${environmentName}/${regionLabel || '<region>'}/ (terragrunt),`
-      + ` generate the variant into ${variantTarget || 'ad/…'}/,`
-      + ` and write ${environmentName}-inventory`,
-    )
-  }
-  effects.push('deploy nothing — run /up in chat when you are ready')
 
   return {
-    creatingConfig,
-    creatingEnv,
-    configPath,
-    selectedConfigError: selected?.error || '',
+    range,
+    existing,
+    availableProviders,
     effectiveProvider,
-    providers,
+    providerSettings,
+    effectiveRegion,
+    effectiveCIDR,
+    cidrEditable,
+    variantAvailable,
     credentialHint,
-    environmentName,
-    environmentCollides,
-    configFilename,
-    configTaken,
-    sourceLab,
-    sourceUnsupported,
-    variantTarget,
-    missingRegion,
     valid,
     payload,
     effects,

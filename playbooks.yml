@@ -1,3 +1,11 @@
+GOAT:
+  - goat-base.yml
+  - goat-services.yml
+  - goat-data-storage.yml
+  - goat-dev-web.yml
+  - goat-kali.yml
+  - goat-seed.yml
+
 NHA:
   - build.yml
   - ad-servers.yml

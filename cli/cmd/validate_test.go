@@ -1,10 +1,24 @@
 package cmd
 
 import (
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dreadnode/dreadgoad/internal/config"
 )
+
+func TestValidationWarningWriterKeepsJSONStdoutClean(t *testing.T) {
+	if got := validationWarningWriter(true); got != os.Stderr {
+		t.Fatalf("validationWarningWriter(true) = %v, want stderr", got)
+	}
+	if got := validationWarningWriter(false); got != os.Stdout {
+		t.Fatalf("validationWarningWriter(false) = %v, want stdout", got)
+	}
+}
 
 func TestParsePollInterval(t *testing.T) {
 	tests := []struct {
@@ -51,5 +65,44 @@ func TestParsePollInterval(t *testing.T) {
 				t.Fatalf("parsePollInterval(%q) = %v, want %v", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestGOATValidatorArgs(t *testing.T) {
+	cfg := &config.Config{ProjectRoot: "/repo", Env: "goat-dev", Provider: "aws", Region: "us-west-2"}
+	got, err := goatValidatorArgs(cfg, validateOpts{
+		outputPath: "/tmp/report with spaces.json",
+		quick:      true,
+		verbose:    true,
+		noFail:     true,
+		plain:      true,
+		json:       true,
+	})
+	if err != nil {
+		t.Fatalf("goatValidatorArgs() error: %v", err)
+	}
+	want := []string{
+		filepath.Join("/repo", "scripts", "validate-goat-live.py"),
+		"--env", "goat-dev",
+		"--provider", "aws",
+		"--region", "us-west-2",
+		"--output", "/tmp/report with spaces.json",
+		"--quick",
+		"--verbose",
+		"--no-fail",
+		"--json",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("goatValidatorArgs() = %#v, want %#v", got, want)
+	}
+}
+
+func TestGOATValidatorRejectsPolling(t *testing.T) {
+	_, err := goatValidatorArgs(
+		&config.Config{ProjectRoot: "/repo", Env: "goat-dev"},
+		validateOpts{pollInterval: time.Minute},
+	)
+	if err == nil || !strings.Contains(err.Error(), "--poll is not supported") {
+		t.Fatalf("goatValidatorArgs() error = %v, want unsupported polling error", err)
 	}
 }

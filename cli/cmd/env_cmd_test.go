@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dreadnode/dreadgoad/internal/config"
+	"github.com/dreadnode/dreadgoad/internal/rangeconfig"
 )
 
 // TestRepointInventoryDomainPointsAtTheVariant covers the failure where a
@@ -80,6 +83,32 @@ func TestScaffoldInventoryLeavesDomainAloneWithoutVariant(t *testing.T) {
 	}
 }
 
+func TestScaffoldInventoryRepointsNonGOADBaseLab(t *testing.T) {
+	root := t.TempDir()
+	reference := "staging"
+	body := "[all:vars]\ndomain_name=GOAD\nenv=staging\nansible_aws_ssm_region=us-west-1\n[default]\ndc01 ansible_host=i-1234\n"
+	if err := os.WriteFile(filepath.Join(root, reference+"-inventory.example"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan := scaffoldPlan{Lab: "GOAD-Mini", Profile: rangeconfig.ProfileActiveDir}
+	if err := scaffoldInventoryForPlan(
+		"aws", root, plan, "mini", "us-east-1", reference, "", false,
+		map[string]bool{"dc01": true},
+	); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "mini-inventory"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(raw)
+	for _, want := range []string{"domain_name=GOAD-Mini", "env=mini", "ansible_aws_ssm_region=us-east-1", "ansible_host=PENDING"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("inventory does not contain %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestVariantTargetForFollowsTheSource(t *testing.T) {
 	tests := []struct {
 		source string
@@ -99,6 +128,278 @@ func TestVariantTargetForFollowsTheSource(t *testing.T) {
 		if got != want {
 			t.Errorf("variantTargetFor(%q) = %q, want %q", tt.source, got, want)
 		}
+	}
+}
+
+func TestScaffoldEnvRejectsServiceRangeBeforeWriting(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "ad", "GOAT")
+	if err := os.MkdirAll(source, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "schema_version: 1\nkind: service-range\n"
+	if err := os.WriteFile(filepath.Join(source, "range.yml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{ProjectRoot: root, Provider: "azure"}
+
+	err := scaffoldEnv(
+		cfg,
+		"goat-variant",
+		"centralus",
+		"10.100.0.0/16",
+		"goat-dev",
+		"ad/GOAT",
+		true,
+		false,
+	)
+	if err == nil || !strings.Contains(err.Error(), "active-directory ranges") {
+		t.Fatalf("scaffoldEnv() error = %v, want unsupported range-kind error", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, "infra")); !os.IsNotExist(statErr) {
+		t.Fatalf("unsupported scaffold wrote infrastructure: %v", statErr)
+	}
+}
+
+func TestTemplateProfileScaffoldsGOATWithoutGOADArtifacts(t *testing.T) {
+	root := t.TempDir()
+	lab := filepath.Join(root, "ad", "GOAT")
+	for _, dir := range []string{
+		filepath.Join(lab, "data"),
+		filepath.Join(lab, "providers", "azure"),
+		filepath.Join(root, "infra", "azure", "goat-deployment", "goat-dev", "centralus", "hosts", "web01"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fixtures := map[string]string{
+		filepath.Join(lab, "range.yml"): `schema_version: 1
+kind: service-range
+variants:
+  supported: false
+infrastructure:
+  azure:
+    deployment: goat-deployment
+    scaffold_profile: template
+    template_environment: goat-dev
+    default_region: centralus
+    network:
+      cidr: 10.50.0.0/16
+      editable: false
+`,
+		filepath.Join(lab, "data", "config.json"):                                                                             `{"lab":{"hosts":{"web01":{}}}}`,
+		filepath.Join(lab, "providers", "azure", "inventory"):                                                                 "[all:vars]\nansible_ssh_private_key_file=~/.keys/azure-goat-dev-goat-admin\n[all]\nweb01 ansible_host=10.50.10.20\n",
+		filepath.Join(root, "infra", "azure", "goat-deployment", "goat-dev", "env.hcl"):                                       "locals { env = \"goat-dev\" deployment_name = \"goat\" key = \"azure-goat-dev-goat-admin\" }\n",
+		filepath.Join(root, "infra", "azure", "goat-deployment", "goat-dev", "centralus", "region.hcl"):                       "locals { location = \"centralus\" }\n",
+		filepath.Join(root, "infra", "azure", "goat-deployment", "goat-dev", "centralus", "hosts", "web01", "terragrunt.hcl"): "mock = \"goat-dev-goat-rg\"\nterraform {}\n",
+	}
+	for path, body := range fixtures {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := &config.Config{
+		ProjectRoot: root,
+		Env:         "kraken",
+		Environments: map[string]config.EnvironmentConfig{
+			"kraken": {Lab: "GOAT", Provider: "azure", Deployment: "goat-deployment"},
+		},
+	}
+	plan, err := resolveScaffoldPlan(cfg, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := scaffoldEnvWithPlan(cfg, plan, "kraken", "centralus", "10.50.0.0/16", "goat-dev", "", false, false); err != nil {
+		t.Fatal(err)
+	}
+	for path, contains := range map[string]string{
+		filepath.Join(root, "infra", "azure", "goat-deployment", "kraken", "env.hcl"):                                       "azure-kraken-goat-admin",
+		filepath.Join(root, "infra", "azure", "goat-deployment", "kraken", "centralus", "hosts", "web01", "terragrunt.hcl"): "terraform",
+		filepath.Join(root, "kraken-inventory"):                                                                             "azure-kraken-goat-admin",
+	} {
+		raw, err := os.ReadFile(path)
+		if err != nil || !strings.Contains(string(raw), contains) {
+			t.Fatalf("%s = %q, %v; want %q", path, raw, err, contains)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "ad", "GOAD", "data", "kraken-overlay.json")); !os.IsNotExist(err) {
+		t.Fatalf("GOAT scaffold created a GOAD overlay: %v", err)
+	}
+	rendered, err := os.ReadFile(filepath.Join(root, "infra", "azure", "goat-deployment", "kraken", "centralus", "hosts", "web01", "terragrunt.hcl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(rendered), "goat-dev") || !strings.Contains(string(rendered), "kraken-goat-rg") {
+		t.Fatalf("copied template literals were not rendered: %s", rendered)
+	}
+}
+
+func TestTemplateProfileScaffoldsAWSRegionAndInventory(t *testing.T) {
+	root := t.TempDir()
+	lab := filepath.Join(root, "ad", "GOAT")
+	template := filepath.Join(root, "infra", "goat-deployment", "goat-aws", "us-east-2")
+	for _, dir := range []string{
+		filepath.Join(lab, "data"),
+		filepath.Join(lab, "providers", "aws"),
+		filepath.Join(template, "hosts", "web01"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path, body := range map[string]string{
+		filepath.Join(lab, "range.yml"): `schema_version: 1
+kind: service-range
+variants:
+  supported: false
+infrastructure:
+  aws:
+    deployment: goat-deployment
+    scaffold_profile: template
+    template_environment: goat-aws
+    default_region: us-east-2
+    network:
+      cidr: 10.50.0.0/16
+      editable: false
+`,
+		filepath.Join(lab, "data", "config.json"):                   `{"lab":{"hosts":{"web01":{}}}}`,
+		filepath.Join(lab, "providers", "aws", "inventory"):         "[all:vars]\nansible_aws_ssm_region={{region}}\nansible_aws_ssm_bucket_name=AUTO\nenv={{env}}\n[all]\nweb01 ansible_host=PENDING\n",
+		filepath.Join(filepath.Dir(template), "env.hcl"):            `locals { env = "goat-aws" deployment_name = "goat" }`,
+		filepath.Join(template, "region.hcl"):                       `locals { aws_region = "us-east-2" }`,
+		filepath.Join(template, "hosts", "web01", "terragrunt.hcl"): `name = "goat-aws-goat-web01"`,
+	} {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := &config.Config{ProjectRoot: root, Env: "kraken", Environments: map[string]config.EnvironmentConfig{
+		"kraken": {Lab: "GOAT", Provider: "aws", Deployment: "goat-deployment"},
+	}}
+	plan, err := resolveScaffoldPlan(cfg, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := scaffoldEnvWithPlan(cfg, plan, "kraken", "us-west-2", "10.50.0.0/16", "goat-aws", "", false, false); err != nil {
+		t.Fatal(err)
+	}
+	regionHCL, err := os.ReadFile(filepath.Join(root, "infra", "goat-deployment", "kraken", "us-west-2", "region.hcl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(regionHCL), `aws_region = "us-west-2"`) || strings.Contains(string(regionHCL), "location") {
+		t.Fatalf("AWS region.hcl = %q", regionHCL)
+	}
+	inventory, err := os.ReadFile(filepath.Join(root, "kraken-inventory"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"ansible_aws_ssm_region=us-west-2", "ansible_aws_ssm_bucket_name=AUTO", "env=kraken"} {
+		if !strings.Contains(string(inventory), want) {
+			t.Fatalf("AWS inventory %q does not contain %q", inventory, want)
+		}
+	}
+}
+
+func TestFailedScaffoldRemovesOnlyNewArtifacts(t *testing.T) {
+	root := t.TempDir()
+	lab := filepath.Join(root, "ad", "GOAT")
+	template := filepath.Join(root, "infra", "azure", "goat-deployment", "goat-dev")
+	for _, dir := range []string{
+		filepath.Join(template, "centralus", "hosts"),
+		filepath.Join(lab, "providers", "azure"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path, body := range map[string]string{
+		filepath.Join(lab, "range.yml"):                    "schema_version: 1\nkind: service-range\ninfrastructure:\n  azure:\n    deployment: goat-deployment\n    scaffold_profile: template\n    template_environment: goat-dev\n    network:\n      cidr: 10.50.0.0/16\n      editable: false\n",
+		filepath.Join(lab, "data", "config.json"):          "{}\n",
+		filepath.Join(template, "env.hcl"):                 "locals { env = \"goat-dev\" }\n",
+		filepath.Join(template, "centralus", "region.hcl"): "locals {}\n",
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg := &config.Config{ProjectRoot: root, Env: "broken", Environments: map[string]config.EnvironmentConfig{
+		"broken": {Lab: "GOAT", Provider: "azure", Deployment: "goat-deployment"},
+	}}
+	plan, err := resolveScaffoldPlan(cfg, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = scaffoldEnvWithPlan(cfg, plan, "broken", "centralus", "10.50.0.0/16", "goat-dev", "", false, false)
+	if err == nil || !strings.Contains(err.Error(), "inventory") {
+		t.Fatalf("error = %v, want missing inventory", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "infra", "azure", "goat-deployment", "broken")); !os.IsNotExist(err) {
+		t.Fatalf("failed scaffold left infra behind: %v", err)
+	}
+}
+
+func TestRenderTemplateContentDoesNotReplaceReferenceSubstrings(t *testing.T) {
+	got := renderTemplateContent(
+		`env = "test" key = "azure-test-key" note = "latest" region = "centralus" explicit = "{{env}}/{{region}}"`,
+		"test", "kraken", "centralus", "eastus",
+	)
+	for _, want := range []string{`env = "kraken"`, `azure-kraken-key`, `note = "latest"`, `region = "eastus"`, `explicit = "kraken/eastus"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("rendered content %q does not contain %q", got, want)
+		}
+	}
+}
+
+func TestScaffoldUsesManifestDefaultTemplateRegion(t *testing.T) {
+	root := t.TempDir()
+	lab := filepath.Join(root, "ad", "GOAT")
+	template := filepath.Join(root, "infra", "azure", "goat-deployment", "goat-dev")
+	for _, dir := range []string{
+		filepath.Join(lab, "data"),
+		filepath.Join(lab, "providers", "azure"),
+		filepath.Join(template, "aaa-wrong", "hosts"),
+		filepath.Join(template, "centralus", "hosts"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for path, body := range map[string]string{
+		filepath.Join(lab, "data", "config.json"):                   `{"lab":{"hosts":{}}}`,
+		filepath.Join(lab, "providers", "azure", "inventory"):       "[all:vars]\nenv={{env}}\n",
+		filepath.Join(template, "env.hcl"):                          `locals { env = "goat-dev" }`,
+		filepath.Join(template, "aaa-wrong", "region.hcl"):          `locals { source = "wrong" }`,
+		filepath.Join(template, "aaa-wrong", "hosts", "source.txt"): "wrong",
+		filepath.Join(template, "centralus", "region.hcl"):          `locals { source = "centralus" }`,
+		filepath.Join(template, "centralus", "hosts", "source.txt"): "correct",
+	} {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	plan := scaffoldPlan{
+		Lab: "GOAT", LabPath: lab, Profile: rangeconfig.ProfileTemplate,
+		Spec: rangeconfig.ProviderSpec{
+			Deployment: "goat-deployment", ScaffoldProfile: rangeconfig.ProfileTemplate,
+			TemplateEnvironment: "goat-dev", DefaultRegion: "centralus",
+		},
+	}
+	cfg := &config.Config{ProjectRoot: root, Env: "kraken", Environments: map[string]config.EnvironmentConfig{
+		"kraken": {Lab: "GOAT", Provider: "azure", Deployment: "goat-deployment"},
+	}}
+	if err := scaffoldEnvWithPlan(cfg, plan, "kraken", "eastus", "10.50.0.0/16", "goat-dev", "", false, false); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(root, "infra", "azure", "goat-deployment", "kraken", "eastus", "hosts", "source.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != "correct" {
+		t.Fatalf("scaffold copied %q; want declared centralus template", raw)
 	}
 }
 

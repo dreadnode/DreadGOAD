@@ -1,0 +1,13 @@
+---
+- name: Restart Samba
+  ansible.builtin.service:
+    name: smbd
+    state: restarted
+
+- name: Reload NFS exports
+  ansible.builtin.command: exportfs -ra
+
+- name: Restart rsync
+  ansible.builtin.service:
+    name: rsync
+    state: restarted

@@ -14,9 +14,11 @@ import pathlib
 import stat
 import sys
 import tempfile
+from types import SimpleNamespace
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
+from console.backend import config_routes  # noqa: E402
 from console.backend.config_routes import _config_path_problem  # noqa: E402
 
 _YAML = "provider: aws\nregion: us-west-2\nenvironments:\n  dev: {}\n"
@@ -168,6 +170,65 @@ def test_validation_agrees_with_what_creation_will_open() -> None:
         print("PASS test_validation_agrees_with_what_creation_will_open")
 
 
+async def test_session_options_flattens_environments_and_ranges() -> None:
+    class FakeSessions:
+        async def list_sessions(self):  # noqa: ANN202
+            return [{"anchor": {"config_path": "/external/dreadgoad.yaml"}}]
+
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(sessions=FakeSessions()))
+    )
+    original_known = config_routes.configstore.known_configs
+    original_discover = config_routes.labs.discover_labs
+
+    def known(anchor_paths):  # noqa: ANN001, ANN202
+        assert list(anchor_paths) == ["/external/dreadgoad.yaml"]
+        return [
+            {
+                "path": "/external/dreadgoad.yaml",
+                "name": "dreadgoad.yaml",
+                "source": "session",
+                "environment_details": [
+                    {
+                        "name": "kraken",
+                        "lab": "GOAT",
+                        "provider": "azure",
+                        "deployment": "goat-deployment",
+                        "region": "centralus",
+                        "variant": False,
+                    }
+                ],
+            }
+        ]
+
+    async def discovered():  # noqa: ANN202
+        return [{"name": "GOAT", "provider_settings": {"azure": {}}}]
+
+    config_routes.configstore.known_configs = known
+    config_routes.labs.discover_labs = discovered
+    try:
+        result = await config_routes.get_session_options(request)  # type: ignore[arg-type]
+        assert result["ranges"][0]["name"] == "GOAT"
+        assert result["environments"] == [
+            {
+                "name": "kraken",
+                "lab": "GOAT",
+                "provider": "azure",
+                "deployment": "goat-deployment",
+                "region": "centralus",
+                "variant": False,
+                "config_path": "/external/dreadgoad.yaml",
+                "config_name": "dreadgoad.yaml",
+                "config_source": "session",
+            }
+        ]
+        assert result["providers"] == ["aws", "azure"]
+    finally:
+        config_routes.configstore.known_configs = original_known
+        config_routes.labs.discover_labs = original_discover
+    print("PASS test_session_options_flattens_environments_and_ranges")
+
+
 def main() -> None:
     test_typo_in_filename_names_the_directory()
     test_wrong_directory_says_so()
@@ -179,6 +240,9 @@ def main() -> None:
     test_good_path_has_no_problem()
     test_tilde_is_refused_with_the_expansion_offered()
     test_validation_agrees_with_what_creation_will_open()
+    import asyncio
+
+    asyncio.run(test_session_options_flattens_environments_and_ranges())
     print("ALL PASS")
 
 

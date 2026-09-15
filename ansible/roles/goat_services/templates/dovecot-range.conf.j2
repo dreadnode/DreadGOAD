@@ -1,0 +1,12 @@
+protocols = imap pop3
+listen = *
+mail_location = maildir:~/Maildir
+disable_plaintext_auth = no
+auth_mechanisms = plain login
+ssl = no
+passdb {
+  driver = pam
+}
+userdb {
+  driver = passwd
+}

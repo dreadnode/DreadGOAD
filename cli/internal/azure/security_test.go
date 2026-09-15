@@ -63,3 +63,17 @@ func TestSecurityRulesOfSkipsRuleWithoutAccess(t *testing.T) {
 		t.Fatalf("rules = %v, want none", rules)
 	}
 }
+
+func TestFilterInstancesByRangeUsesExactTag(t *testing.T) {
+	instances := []Instance{
+		{ID: "goad", Tags: map[string]string{"Range": "GOAD"}},
+		{ID: "goat", Tags: map[string]string{"Range": "GOAT"}},
+		{ID: "lowercase", Tags: map[string]string{"Range": "goat"}},
+		{ID: "untagged"},
+	}
+
+	got := filterInstancesByRange(instances, "GOAT")
+	if len(got) != 1 || got[0].ID != "goat" {
+		t.Fatalf("filtered instances = %#v, want exact GOAT instance", got)
+	}
+}

@@ -1,0 +1,112 @@
+package cmd
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+
+	"github.com/dreadnode/dreadgoad/internal/config"
+	"github.com/dreadnode/dreadgoad/internal/rangeconfig"
+	"github.com/spf13/cobra"
+)
+
+// labInspector keeps the user-facing inspection commands stable while each
+// lab family implements the checks that are meaningful for its workloads.
+type labInspector interface {
+	health(context.Context, *cobra.Command, *config.Config, bool) error
+	validate(context.Context, *cobra.Command, *config.Config, validateOpts) error
+}
+
+const (
+	inspectionProfileActiveDirectory = "active-directory"
+	inspectionProfileGOAT            = "goat"
+)
+
+var inspectionProfiles = map[string]labInspector{
+	inspectionProfileActiveDirectory: goadInspector{},
+	inspectionProfileGOAT:            goatInspector{},
+}
+
+func inspectorFor(cfg *config.Config) (labInspector, error) {
+	manifest, found, err := rangeconfig.Load(cfg.LabPath())
+	if err != nil {
+		return nil, err
+	}
+	profile := inspectionProfileActiveDirectory
+	if found {
+		profile = manifest.Inspection.Profile
+		if profile == "" {
+			if manifest.Kind == rangeconfig.KindActiveDirectory {
+				profile = inspectionProfileActiveDirectory
+			} else {
+				return nil, fmt.Errorf("range %s must declare inspection.profile", cfg.ResolvedLab())
+			}
+		}
+	}
+	inspector, ok := inspectionProfiles[profile]
+	if !ok {
+		return nil, fmt.Errorf("range %s uses unsupported inspection profile %q", cfg.ResolvedLab(), profile)
+	}
+	return inspector, nil
+}
+
+type goadInspector struct{}
+
+func (goadInspector) health(
+	ctx context.Context, cmd *cobra.Command, cfg *config.Config, jsonOut bool,
+) error {
+	return runGOADHealthCheck(ctx, cmd, cfg, jsonOut)
+}
+
+func (goadInspector) validate(
+	ctx context.Context, cmd *cobra.Command, cfg *config.Config, opts validateOpts,
+) error {
+	return runGOADValidate(ctx, cmd, cfg, opts)
+}
+
+type goatInspector struct{}
+
+func (goatInspector) health(
+	ctx context.Context, _ *cobra.Command, cfg *config.Config, jsonOut bool,
+) error {
+	args := []string{
+		filepath.Join(cfg.ProjectRoot, "scripts", "validate-goat-live.py"),
+		"--env", cfg.Env, "--provider", cfg.ResolvedProvider(), "--health",
+	}
+	if cfg.ResolvedProvider() == "aws" {
+		region, err := cfg.ResolveRegion()
+		if err != nil {
+			return err
+		}
+		args = append(args, "--region", region)
+	}
+	if jsonOut {
+		args = append(args, "--json")
+	}
+	return runGOATInspector(ctx, args, "health check")
+}
+
+func (goatInspector) validate(
+	ctx context.Context, _ *cobra.Command, cfg *config.Config, opts validateOpts,
+) error {
+	return runGOATValidate(ctx, cfg, opts)
+}
+
+func runGOATInspector(ctx context.Context, args []string, operation string) error {
+	if _, err := os.Stat(args[0]); err != nil {
+		return fmt.Errorf("find GOAT validator: %w", err)
+	}
+	command := exec.CommandContext(ctx, "python3", args...)
+	command.Stdin = os.Stdin
+	command.Stdout = os.Stdout
+	command.Stderr = os.Stderr
+	if err := command.Run(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return fmt.Errorf("GOAT %s failed: %w", operation, err)
+	}
+	return nil
+}

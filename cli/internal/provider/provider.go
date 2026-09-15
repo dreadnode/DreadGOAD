@@ -6,6 +6,29 @@ import (
 	"time"
 )
 
+// FilterInstancesByRange narrows discovery to an exact provider-side Range
+// tag. Config-backed AWS and Azure providers reject empty identities before
+// construction; the empty case remains for direct test/provider construction.
+func FilterInstancesByRange(instances []Instance, rangeTag string) []Instance {
+	if rangeTag == "" {
+		return instances
+	}
+	out := make([]Instance, 0, len(instances))
+	for _, instance := range instances {
+		if MatchesRangeTag(instance.Tags, rangeTag) {
+			out = append(out, instance)
+		}
+	}
+	return out
+}
+
+// MatchesRangeTag reports whether provider tags carry the exact range
+// identity. Tag values are intentionally case-sensitive to prevent two
+// distinct manifest identities from overlapping.
+func MatchesRangeTag(tags map[string]string, rangeTag string) bool {
+	return rangeTag != "" && tags["Range"] == rangeTag
+}
+
 // Instance represents a discovered VM/instance from any provider.
 type Instance struct {
 	ID        string // provider-specific identifier (EC2 instance ID, Proxmox VMID, etc.)
@@ -134,6 +157,14 @@ type OutOfBandRunner interface {
 
 	// OutOfBandChannel names the mechanism (e.g. "Azure Run Command", "AWS SSM").
 	OutOfBandChannel() string
+}
+
+// InstanceOutOfBandRunner is an optional refinement for providers whose
+// control-plane interpreter depends on instance metadata. AWS uses the OS tag
+// to select AWS-RunShellScript for Linux and AWS-RunPowerShellScript for
+// Windows. Callers fall back to OutOfBandRunner when this is not implemented.
+type InstanceOutOfBandRunner interface {
+	RunCommandOutOfBandOnInstance(ctx context.Context, instance Instance, command string, timeout time.Duration) (*CommandResult, error)
 }
 
 // Session represents an active remote session.

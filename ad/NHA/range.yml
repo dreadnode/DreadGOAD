@@ -1,0 +1,7 @@
+schema_version: 1
+kind: active-directory
+discovery:
+  range_tag: GOAD
+lifecycle:
+  session_init:
+    - action: generate_answer_key

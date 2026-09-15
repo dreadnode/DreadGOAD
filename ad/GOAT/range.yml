@@ -1,0 +1,30 @@
+schema_version: 1
+display_name: GOAT
+kind: service-range
+variants:
+  supported: false
+inspection:
+  profile: goat
+operations:
+  profile: goat
+discovery:
+  range_tag: GOAT
+infrastructure:
+  aws:
+    deployment: goat-deployment
+    scaffold_profile: template
+    template_environment: goat-aws
+    default_region: us-east-2
+    network:
+      cidr: 10.50.0.0/16
+      editable: false
+  azure:
+    deployment: goat-deployment
+    scaffold_profile: template
+    template_environment: goat-dev
+    default_region: centralus
+    network:
+      cidr: 10.50.0.0/16
+      editable: false
+lifecycle:
+  session_init: []

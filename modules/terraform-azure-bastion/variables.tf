@@ -53,7 +53,7 @@ variable "bastion_subnet_cidr" {
   default     = "10.8.2.0/26"
 
   validation {
-    condition     = can(cidrhost(var.bastion_subnet_cidr, 0))
+    condition     = can(cidrnetmask(var.bastion_subnet_cidr))
     error_message = "bastion_subnet_cidr must be a valid IPv4 CIDR block."
   }
 }

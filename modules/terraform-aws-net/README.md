@@ -102,7 +102,9 @@ This Terraform module deploys the following AWS resources:
 - Automatic AZ distribution for subnet placement
 - Flexible tagging system for all resources
 - Terragrunt-compatible structure
-- Lifecycle management with create_before_destroy support
+- Create-before-destroy lifecycle management for compatible resources; subnets
+  and their NAT/endpoint dependents use destroy-before-create so fixed CIDRs can
+  be reused during replacement
 
 ### Customization Options
 
@@ -324,6 +326,8 @@ No modules.
 | <a name="input_kubernetes_tags"></a> [kubernetes\_tags](#input\_kubernetes\_tags) | Configuration for Kubernetes integration tags | <pre>object({<br/>    enabled                    = bool<br/>    cluster_name               = optional(string, "") # Will default to {env}-{deployment_name} if empty<br/>    enable_karpenter_discovery = optional(bool, false)<br/>  })</pre> | <pre>{<br/>  "enable_karpenter_discovery": false,<br/>  "enabled": false<br/>}</pre> | no |
 | <a name="input_map_public_ip"></a> [map\_public\_ip](#input\_map\_public\_ip) | Map public IP addresses to new instances. | `bool` | `true` | no |
 | <a name="input_pod_subnet_newbits"></a> [pod\_subnet\_newbits](#input\_pod\_subnet\_newbits) | Number of bits to add to the secondary CIDR for pod subnets (e.g., 4 for /20 subnets from /16) | `number` | `4` | no |
+| <a name="input_private_subnet_cidrs"></a> [private\_subnet\_cidrs](#input\_private\_subnet\_cidrs) | Optional explicit private subnet CIDRs. When set, public\_subnet\_cidrs must contain the same number of entries. | `list(string)` | `[]` | no |
+| <a name="input_public_subnet_cidrs"></a> [public\_subnet\_cidrs](#input\_public\_subnet\_cidrs) | Optional explicit public subnet CIDRs. When set, private\_subnet\_cidrs must contain the same number of entries. | `list(string)` | `[]` | no |
 | <a name="input_secondary_cidr_block"></a> [secondary\_cidr\_block](#input\_secondary\_cidr\_block) | Secondary CIDR block for pod networking (e.g., 100.64.0.0/16). Uses CG-NAT space to avoid conflicts. | `string` | `""` | no |
 | <a name="input_vpc_cidr_block"></a> [vpc\_cidr\_block](#input\_vpc\_cidr\_block) | Top-level CIDR block for the VPC | `string` | `"10.0.0.0/16"` | no |
 | <a name="input_vpc_endpoints"></a> [vpc\_endpoints](#input\_vpc\_endpoints) | Map of VPC endpoint configurations | <pre>map(object({<br/>    service     = string<br/>    type        = string<br/>    private_dns = optional(bool, false) # Make private_dns optional with default false<br/>  }))</pre> | <pre>{<br/>  "cloudwatch": {<br/>    "private_dns": true,<br/>    "service": "logs",<br/>    "type": "Interface"<br/>  },<br/>  "ecr_api": {<br/>    "private_dns": true,<br/>    "service": "ecr.api",<br/>    "type": "Interface"<br/>  },<br/>  "ecr_dkr": {<br/>    "private_dns": true,<br/>    "service": "ecr.dkr",<br/>    "type": "Interface"<br/>  },<br/>  "s3": {<br/>    "service": "s3",<br/>    "type": "Gateway"<br/>  },<br/>  "secretsmanager": {<br/>    "private_dns": true,<br/>    "service": "secretsmanager",<br/>    "type": "Interface"<br/>  },<br/>  "sns": {<br/>    "private_dns": false,<br/>    "service": "sns",<br/>    "type": "Interface"<br/>  }<br/>}</pre> | no |

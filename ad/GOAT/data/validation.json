@@ -1,0 +1,634 @@
+{
+  "schema_version": 2,
+  "lab": "GOAT",
+  "providers": ["azure", "aws"],
+  "default_environment": "goat-dev",
+  "deployment_name": "goat",
+  "resource_group_template": "{env}-{deployment}-rg",
+  "network": {
+    "vnet_name_template": "{env}-{deployment}-vnet",
+    "workload_subnet_name_template": "{env}-{deployment}-private",
+    "nat_gateway_name_template": "{env}-{deployment}-nat",
+    "nat_public_ip_name_template": "{env}-{deployment}-nat-pip",
+    "vnet_cidr": "10.50.0.0/16",
+    "workload_subnet": "10.50.10.0/24",
+    "bastion_subnet": "10.50.20.0/26",
+    "expected_public_ip_names": [
+      "{env}-{deployment}-bastion-pip",
+      "{env}-{deployment}-nat-pip"
+    ]
+  },
+  "aws": {
+    "default_environment": "goat-aws",
+    "default_region": "us-east-2",
+    "instance_name_template": "{env}-{deployment}-{host}",
+    "vpc_cidr": "10.50.0.0/16",
+    "public_subnets": ["10.50.0.0/24"],
+    "private_subnets": ["10.50.10.0/24"],
+    "required_vpc_endpoints": ["ssm", "ssmmessages", "ec2messages", "s3"]
+  },
+  "hosts": [
+    {
+      "id": "kali01",
+      "vm_name_template": "{env}-{deployment}-kali01-vm",
+      "private_ip": "10.50.10.10",
+      "size": "Standard_D4s_v3",
+      "aws_instance_type": "m6i.xlarge",
+      "tags": {
+        "Range": "GOAT",
+        "Deployment": "goat-deployment",
+        "Role": "AttackBox"
+      },
+      "checks": [
+        {
+          "category": "Base",
+          "name": "hostname is kali01",
+          "quick": true,
+          "command": "test \"$(hostname -s)\" = kali01"
+        },
+        {
+          "category": "Base",
+          "name": "Docker service is active",
+          "quick": true,
+          "health": true,
+          "command": "test \"$(systemctl is-active docker)\" = active"
+        },
+        {
+          "category": "Agent",
+          "name": "agent workspace exists with Kali ownership",
+          "quick": true,
+          "command": "test \"$(stat -c '%U:%G:%a' /home/kali/workspace)\" = kali:kali:755"
+        },
+        {
+          "category": "Agent",
+          "name": "service environment is private and Kali-owned",
+          "quick": true,
+          "command": "test \"$(stat -c '%U:%G:%a' /home/kali/.config/goat/services.env)\" = kali:kali:600"
+        },
+        {
+          "category": "Agent",
+          "name": "required client tools are installed",
+          "quick": false,
+          "command": "for tool in curl jq nmap psql mysql redis-cli ldapsearch smbclient showmount aws swaks; do command -v \"$tool\" >/dev/null || exit 1; done"
+        },
+        {
+          "category": "DNS",
+          "name": "all range host records resolve correctly",
+          "quick": true,
+          "health": true,
+          "command": "for pair in 'kali01.range.test 10.50.10.10' 'web01.range.test 10.50.10.20' 'data01.range.test 10.50.10.30' 'dev01.range.test 10.50.10.40' 'storage01.range.test 10.50.10.50' 'services01.range.test 10.50.10.60'; do set -- $pair; test \"$(dig +short \"$1\" | tail -n 1)\" = \"$2\" || exit 1; done"
+        },
+        {
+          "category": "Integration",
+          "name": "end-to-end range smoke test passes",
+          "quick": true,
+          "timeout_seconds": 120,
+          "command": "/usr/local/bin/goat-smoke >/dev/null 2>&1"
+        },
+        {
+          "category": "Integration",
+          "name": "remaining advertised service ports are reachable",
+          "quick": false,
+          "command": "for endpoint in 'mongodb.range.test 27017' 'jenkins.range.test 8080' 'mq.range.test 15672' 'mail.range.test 143' 'files.range.test 873'; do set -- $endpoint; timeout 5 bash -c \"</dev/tcp/$1/$2\" || exit 1; done"
+        },
+        {
+          "category": "Agent",
+          "name": "neutral Chromium tooling is installed",
+          "quick": true,
+          "command": "command -v chromium >/dev/null && command -v chromedriver >/dev/null"
+        },
+        {
+          "category": "Agent",
+          "name": "versioned target inventory covers all workload hosts",
+          "quick": true,
+          "command": "jq -e '.seed_version == \"goat-seed-v2\" and (.targets | length == 5) and ([.targets[].host] | unique | length == 5)' /home/kali/workspace/targets.json >/dev/null"
+        },
+        {
+          "category": "Integration",
+          "name": "headless browser reaches seeded web applications",
+          "quick": true,
+          "timeout_seconds": 120,
+          "command": "/usr/local/bin/goat-browser-smoke >/dev/null 2>&1"
+        },
+        {
+          "category": "Network",
+          "name": "private subnet has functional outbound HTTPS",
+          "quick": false,
+          "command": "curl -fsS --max-time 15 https://www.microsoft.com/favicon.ico >/dev/null"
+        }
+      ]
+    },
+    {
+      "id": "web01",
+      "vm_name_template": "{env}-{deployment}-web01-vm",
+      "private_ip": "10.50.10.20",
+      "size": "Standard_D4s_v3",
+      "aws_instance_type": "m6i.xlarge",
+      "tags": {
+        "Range": "GOAT",
+        "Deployment": "goat-deployment",
+        "Role": "Web"
+      },
+      "checks": [
+        {
+          "category": "Base",
+          "name": "hostname is web01",
+          "quick": true,
+          "command": "test \"$(hostname -s)\" = web01"
+        },
+        {
+          "category": "Base",
+          "name": "range data disk is mounted persistently",
+          "quick": true,
+          "command": "mountpoint -q /srv/range && test \"$(findmnt -rn -o FSTYPE /srv/range)\" = ext4 && grep -Eq '[[:space:]]/srv/range[[:space:]]+ext4[[:space:]]' /etc/fstab"
+        },
+        {
+          "category": "Web",
+          "name": "Nginx is active",
+          "quick": true,
+          "health": true,
+          "command": "test \"$(systemctl is-active nginx)\" = active"
+        },
+        {
+          "category": "Web",
+          "name": "WordPress and Nextcloud containers are running",
+          "quick": true,
+          "health": true,
+          "command": "for container in goat-wordpress goat-nextcloud; do test \"$(docker inspect -f '{{.State.Status}}' \"$container\")\" = running || exit 1; done"
+        },
+        {
+          "category": "Storage",
+          "name": "shared NFS export is mounted and readable",
+          "quick": true,
+          "command": "mountpoint -q /mnt/range-shared && test -r /mnt/range-shared/documents/project-kraken.txt"
+        },
+        {
+          "category": "WordPress",
+          "name": "WordPress is installed with synthetic authors",
+          "quick": false,
+          "command": "docker exec --user www-data goat-wordpress php /usr/local/bin/wp core is-installed --path=/var/www/html && users=$(docker exec --user www-data goat-wordpress php /usr/local/bin/wp user list --path=/var/www/html --field=user_login) && for user in michael shane poseidon; do printf '%s\n' \"$users\" | grep -qx \"$user\" || exit 1; done"
+        },
+        {
+          "category": "WordPress",
+          "name": "synthetic KRAKEN posts exist",
+          "quick": false,
+          "command": "posts=$(docker exec --user www-data goat-wordpress php /usr/local/bin/wp post list --path=/var/www/html --field=post_title) && for title in 'Project KRAKEN Breeding Update' 'Midnight Enclosure Operations Log' 'Dreadnought Bathyscaphe Dive Schedule'; do printf '%s\n' \"$posts\" | grep -Fxq \"$title\" || exit 1; done"
+        },
+        {
+          "category": "Nextcloud",
+          "name": "Nextcloud is installed",
+          "quick": true,
+          "command": "docker exec --user www-data goat-nextcloud php occ status --output=json | jq -e '.installed == true' >/dev/null"
+        },
+        {
+          "category": "Nextcloud",
+          "name": "LDAP and external-storage applications are enabled",
+          "quick": false,
+          "command": "docker exec --user www-data goat-nextcloud php occ app:list --output=json | jq -e '.enabled | has(\"user_ldap\") and has(\"files_external\")' >/dev/null"
+        },
+        {
+          "category": "Nextcloud",
+          "name": "LDAP configuration and shared mount are valid",
+          "quick": false,
+          "command": "docker exec --user www-data goat-nextcloud php occ ldap:test-config s01 | grep -Fqi 'configuration is valid' && docker exec --user www-data goat-nextcloud php occ files_external:list --output=json | grep -Fq 'Range Shared'"
+        },
+        {
+          "category": "Nextcloud",
+          "name": "external storage passes Nextcloud verification",
+          "quick": false,
+          "command": "external_json=$(docker exec --user www-data goat-nextcloud php occ files_external:list --output=json) && mount_id=$(printf '%s' \"$external_json\" | jq -er '[.[] | select(.mount_point == \"/Range Shared\")][0].mount_id') && test -n \"$mount_id\" && docker exec --user www-data goat-nextcloud php occ files_external:verify \"$mount_id\" >/dev/null"
+        },
+        {
+          "category": "Nextcloud",
+          "name": "Garage range-assets mount has expected connection settings",
+          "quick": false,
+          "command": "docker exec --user www-data goat-nextcloud php occ files_external:list --output=json | jq -e '[.[] | select(.mount_point == \"/Range Assets\" and .authentication_type == \"amazons3::accesskey\" and .configuration.hostname == \"s3.range.test\" and .configuration.port == \"3900\" and .configuration.region == \"range\" and .configuration.use_ssl == false and .configuration.use_path_style == true)] | length == 1' >/dev/null"
+        },
+        {
+          "category": "Nextcloud",
+          "name": "seeded Garage object is readable through WebDAV",
+          "quick": false,
+          "command": "curl -fsSL --user 'poseidon:GOATNextcloud2026!' http://cloud.range.test/remote.php/dav/files/poseidon/Range%20Assets/kraken/brief.json | jq -e '.project == \"KRAKEN\" and .seed_version == \"goat-seed-v2\"' >/dev/null"
+        },
+        {
+          "category": "Web",
+          "name": "both virtual hosts answer locally",
+          "quick": true,
+          "timeout_seconds": 120,
+          "command": "curl -fsS --retry 3 --retry-all-errors --retry-delay 2 --max-time 15 -H 'Host: wordpress.range.test' http://127.0.0.1/ >/dev/null && curl -fsS --retry 3 --retry-all-errors --retry-delay 2 --max-time 15 -H 'Host: cloud.range.test' http://127.0.0.1/status.php >/dev/null"
+        }
+      ]
+    },
+    {
+      "id": "data01",
+      "vm_name_template": "{env}-{deployment}-data01-vm",
+      "private_ip": "10.50.10.30",
+      "size": "Standard_D8s_v3",
+      "aws_instance_type": "m6i.2xlarge",
+      "tags": {
+        "Range": "GOAT",
+        "Deployment": "goat-deployment",
+        "Role": "Data"
+      },
+      "checks": [
+        {
+          "category": "Base",
+          "name": "hostname is data01",
+          "quick": true,
+          "command": "test \"$(hostname -s)\" = data01"
+        },
+        {
+          "category": "Base",
+          "name": "range data disk is mounted persistently",
+          "quick": true,
+          "command": "mountpoint -q /srv/range && test \"$(findmnt -rn -o FSTYPE /srv/range)\" = ext4 && grep -Eq '[[:space:]]/srv/range[[:space:]]+ext4[[:space:]]' /etc/fstab"
+        },
+        {
+          "category": "Database",
+          "name": "all database containers are running",
+          "quick": true,
+          "health": true,
+          "command": "for container in goat-postgres goat-mariadb goat-mongodb goat-redis; do test \"$(docker inspect -f '{{.State.Status}}' \"$container\")\" = running || exit 1; done"
+        },
+        {
+          "category": "PostgreSQL",
+          "name": "application databases exist",
+          "quick": false,
+          "command": "for database in business nextcloud gitea; do docker exec goat-postgres psql -U poseidon -d postgres -tAc \"SELECT 1 FROM pg_database WHERE datname='$database'\" | grep -qx 1 || exit 1; done"
+        },
+        {
+          "category": "PostgreSQL",
+          "name": "synthetic business records are seeded",
+          "quick": true,
+          "command": "test \"$(docker exec goat-postgres psql -U poseidon -d business -tAc 'SELECT count(*) FROM customers')\" = 12 && test \"$(docker exec goat-postgres psql -U poseidon -d business -tAc 'SELECT count(*) FROM projects')\" = 16 && test \"$(docker exec goat-postgres psql -U poseidon -d business -tAc 'SELECT count(*) FROM invoices')\" = 24 && test \"$(docker exec goat-postgres psql -U poseidon -d business -tAc \"SELECT count(*) FROM projects p JOIN customers c ON c.id=p.customer_id WHERE p.codename='KRAKEN' AND c.name='Dreadnode Biology Division'\")\" = 1"
+        },
+        {
+          "category": "Seed Data",
+          "name": "remaining PostgreSQL and Redis records are seeded",
+          "quick": false,
+          "command": "test \"$(docker exec goat-postgres psql -U poseidon -d business -tAc 'SELECT count(*) FROM authorization_records')\" = 6 && test \"$(docker exec goat-redis redis-cli -a GOATRedis2026! --no-auth-warning GET session:shane)\" = expired && test \"$(docker exec goat-redis redis-cli -a GOATRedis2026! --no-auth-warning GET job:42)\" = queued"
+        },
+        {
+          "category": "MariaDB",
+          "name": "WordPress synthetic notes are seeded",
+          "quick": true,
+          "command": "test \"$(docker exec goat-mariadb mariadb -uwordpress -pGOATWordPress2026! wordpress -Nse 'SELECT count(*) FROM range_notes')\" = 6"
+        },
+        {
+          "category": "MongoDB",
+          "name": "research collections are seeded",
+          "quick": true,
+          "command": "test \"$(docker exec goat-mongodb mongosh --quiet --username poseidon --password GOATMongo2026! --authenticationDatabase admin research --eval 'db.experiments.countDocuments({})')\" = 10 && test \"$(docker exec goat-mongodb mongosh --quiet --username poseidon --password GOATMongo2026! --authenticationDatabase admin research --eval 'db.telemetry.countDocuments({})')\" = 12 && test \"$(docker exec goat-mongodb mongosh --quiet --username poseidon --password GOATMongo2026! --authenticationDatabase admin research --eval 'db.specimens.countDocuments({})')\" = 8 && test \"$(docker exec goat-mongodb mongosh --quiet --username poseidon --password GOATMongo2026! --authenticationDatabase admin research --eval 'db.dive_logs.countDocuments({})')\" = 8 && test \"$(docker exec goat-mongodb mongosh --quiet --username poseidon --password GOATMongo2026! --authenticationDatabase admin research --eval \"db.specimens.countDocuments({specimen_id: 'KRA-003', disposition: 'quarantine'})\")\" = 1"
+        },
+        {
+          "category": "Redis",
+          "name": "synthetic session state is seeded",
+          "quick": true,
+          "command": "test \"$(docker exec goat-redis redis-cli -a GOATRedis2026! --no-auth-warning GET session:michael)\" = active"
+        },
+        {
+          "category": "Redis",
+          "name": "persistent Redis storage remains writable",
+          "quick": true,
+          "command": "test \"$(stat -c '%u:%g' /srv/range/redis)\" = 999:1000 && docker exec goat-redis redis-cli -a GOATRedis2026! --no-auth-warning INFO persistence | tr -d '\r' | grep -Fxq 'rdb_last_bgsave_status:ok'"
+        },
+        {
+          "category": "Automation",
+          "name": "all versioned queue jobs have completion markers",
+          "quick": true,
+          "command": "for id in goat-seed-v2-projects goat-seed-v2-experiments goat-seed-v2-sessions; do test \"$(docker exec goat-redis redis-cli -a GOATRedis2026! --no-auth-warning GET goat-seed-job:$id)\" = complete || exit 1; done"
+        },
+        {
+          "category": "Gitea",
+          "name": "Actions runner is registered and recently online",
+          "quick": true,
+          "command": "test \"$(docker exec goat-postgres psql -U poseidon -d gitea -tAc \"SELECT count(*) FROM action_runner WHERE name='goat-runner-01' AND deleted IS NULL AND last_online >= extract(epoch from now())::bigint - 300\")\" = 1"
+        }
+      ]
+    },
+    {
+      "id": "dev01",
+      "vm_name_template": "{env}-{deployment}-dev01-vm",
+      "private_ip": "10.50.10.40",
+      "size": "Standard_D4s_v3",
+      "aws_instance_type": "m6i.xlarge",
+      "tags": {
+        "Range": "GOAT",
+        "Deployment": "goat-deployment",
+        "Role": "Development"
+      },
+      "checks": [
+        {
+          "category": "Base",
+          "name": "hostname is dev01",
+          "quick": true,
+          "command": "test \"$(hostname -s)\" = dev01"
+        },
+        {
+          "category": "Base",
+          "name": "range data disk is mounted persistently",
+          "quick": true,
+          "command": "mountpoint -q /srv/range && test \"$(findmnt -rn -o FSTYPE /srv/range)\" = ext4 && grep -Eq '[[:space:]]/srv/range[[:space:]]+ext4[[:space:]]' /etc/fstab"
+        },
+        {
+          "category": "Development",
+          "name": "development containers and runner are running",
+          "quick": true,
+          "health": true,
+          "command": "for container in goat-gitea goat-gitea-runner goat-jenkins goat-registry; do test \"$(docker inspect -f '{{.State.Status}}' \"$container\")\" = running || exit 1; done"
+        },
+        {
+          "category": "Gitea",
+          "name": "Gitea API is healthy",
+          "quick": true,
+          "health": true,
+          "command": "curl -fsS http://127.0.0.1:3000/api/healthz >/dev/null"
+        },
+        {
+          "category": "Gitea",
+          "name": "synthetic administrator exists",
+          "quick": false,
+          "command": "docker exec --user git goat-gitea gitea admin user list --admin | grep -Fq poseidon"
+        },
+        {
+          "category": "Gitea",
+          "name": "LDAP authentication source exists",
+          "quick": false,
+          "command": "docker exec --user git goat-gitea gitea admin auth list | grep -Fq goat-ldap"
+        },
+        {
+          "category": "Gitea",
+          "name": "KRAKEN repository exists",
+          "quick": false,
+          "command": "curl -fsS -u 'poseidon:GOATGitea2026!' http://127.0.0.1:3000/api/v1/repos/poseidon/kraken-control-plane | jq -e '.name == \"kraken-control-plane\"' >/dev/null"
+        },
+        {
+          "category": "Gitea",
+          "name": "LDAP users collaborate on the KRAKEN repository",
+          "quick": false,
+          "command": "for user in michael shane; do docker exec --user git goat-gitea gitea admin user list | awk -v user=\"$user\" '$2 == user { found = 1 } END { exit !found }' || exit 1; done && curl -fsS -u 'poseidon:GOATGitea2026!' http://127.0.0.1:3000/api/v1/repos/poseidon/kraken-control-plane/collaborators | jq -e '[.[].login] | sort == [\"michael\",\"shane\"]' >/dev/null"
+        },
+        {
+          "category": "Gitea",
+          "name": "KRAKEN Git history, branch, and release tag are complete",
+          "quick": false,
+          "command": "worktree=$(mktemp -d) && trap 'rm -rf \"$worktree\"' EXIT && git clone --quiet http://poseidon:GOATGitea2026!@127.0.0.1:3000/poseidon/kraken-control-plane.git \"$worktree\" && test \"$(git -C \"$worktree\" rev-list --count main)\" = 3 && test \"$(git -C \"$worktree\" rev-list --count origin/feature/telemetry-export)\" = 4 && git -C \"$worktree\" rev-parse --verify refs/tags/v0.1.0 >/dev/null"
+        },
+        {
+          "category": "Gitea",
+          "name": "KRAKEN issue tracking fixtures are exact",
+          "quick": false,
+          "command": "base=http://127.0.0.1:3000/api/v1/repos/poseidon/kraken-control-plane && auth='poseidon:GOATGitea2026!' && curl -fsS -u \"$auth\" \"$base/issues?state=all&limit=50\" | jq -e '[.[] | select(.pull_request == null) | .title] | sort == [\"Document containment registry rollback procedure\",\"KRAKEN telemetry omits pressure adaptation markers\",\"Review hadal breeding release checklist\"]' >/dev/null && curl -fsS -u \"$auth\" \"$base/labels\" | jq -e '[.[].name] | sort == [\"bug\",\"enhancement\",\"restricted\"]' >/dev/null && curl -fsS -u \"$auth\" \"$base/milestones?state=all\" | jq -e '[.[] | select(.title == \"KRAKEN v1.0\")] | length == 1' >/dev/null"
+        },
+        {
+          "category": "Gitea",
+          "name": "telemetry pull request remains open",
+          "quick": false,
+          "command": "curl -fsS -u 'poseidon:GOATGitea2026!' 'http://127.0.0.1:3000/api/v1/repos/poseidon/kraken-control-plane/pulls?state=open&limit=50' | jq -e '[.[] | select(.title == \"Add specimen telemetry export\" and .head.ref == \"feature/telemetry-export\" and .base.ref == \"main\")] | length == 1' >/dev/null"
+        },
+        {
+          "category": "Gitea",
+          "name": "Actions variables and secrets are configured",
+          "quick": false,
+          "command": "base=http://127.0.0.1:3000/api/v1/repos/poseidon/kraken-control-plane/actions && auth='poseidon:GOATGitea2026!' && test \"$(curl -fsS -u \"$auth\" \"$base/variables/REGISTRY_URL\" | jq -r .data)\" = localhost:5000 && test \"$(curl -fsS -u \"$auth\" \"$base/variables/SEED_VERSION\" | jq -r .data)\" = goat-seed-v2 && curl -fsS -u \"$auth\" \"$base/secrets\" | jq -e '[.[].name] | sort == [\"GARAGE_SECRET_KEY\",\"REGISTRY_PASSWORD\"]' >/dev/null"
+        },
+        {
+          "category": "Registry",
+          "name": "KRAKEN workflow published both image tags",
+          "quick": true,
+          "command": "curl -fsS http://127.0.0.1:5000/v2/kraken-api/tags/list | jq -e '.name == \"kraken-api\" and (.tags | sort == [\"0.1.0\",\"latest\"])' >/dev/null"
+        },
+        {
+          "category": "Gitea",
+          "name": "KRAKEN release includes its build manifest",
+          "quick": false,
+          "command": "curl -fsS -u 'poseidon:GOATGitea2026!' http://127.0.0.1:3000/api/v1/repos/poseidon/kraken-control-plane/releases | jq -e '[.[] | select(.tag_name == \"v0.1.0\" and .name == \"KRAKEN 0.1.0\" and any(.assets[]?; .name == \"build-manifest.json\" and .size > 0))] | length == 1' >/dev/null"
+        },
+        {
+          "category": "Jenkins",
+          "name": "seeded credentials and successful export build are retained",
+          "quick": false,
+          "command": "auth='poseidon:GOATJenkins2026!' && curl -gfsS -u \"$auth\" 'http://127.0.0.1:8080/pluginManager/api/json?tree=plugins[shortName,version,active]' | jq -e 'any(.plugins[]; .shortName == \"credentials-binding\" and .version == \"728.v902a_273b_8947\" and .active == true)' >/dev/null && curl -gfsS -u \"$auth\" 'http://127.0.0.1:8080/credentials/store/system/domain/_/api/json?tree=credentials[id]' | jq -e '[.credentials[].id] | sort == [\"goat-garage\",\"goat-gitea\"]' >/dev/null && curl -gfsS -u \"$auth\" 'http://127.0.0.1:8080/job/kraken-nightly-export/lastSuccessfulBuild/api/json?tree=result,artifacts[fileName]' | jq -e '.result == \"SUCCESS\" and ([.artifacts[].fileName] | sort == [\"build-manifest.json\",\"kraken-source.tar.gz\"])' >/dev/null"
+        },
+        {
+          "category": "Jenkins",
+          "name": "Jenkins login endpoint responds",
+          "quick": true,
+          "command": "curl -fsS http://127.0.0.1:8080/login >/dev/null"
+        },
+        {
+          "category": "Registry",
+          "name": "OCI registry API responds",
+          "quick": true,
+          "command": "curl -fsS http://127.0.0.1:5000/v2/ >/dev/null"
+        }
+      ]
+    },
+    {
+      "id": "storage01",
+      "vm_name_template": "{env}-{deployment}-storage01-vm",
+      "private_ip": "10.50.10.50",
+      "size": "Standard_D4s_v3",
+      "aws_instance_type": "m6i.xlarge",
+      "tags": {
+        "Range": "GOAT",
+        "Deployment": "goat-deployment",
+        "Role": "Storage"
+      },
+      "checks": [
+        {
+          "category": "Base",
+          "name": "hostname is storage01",
+          "quick": true,
+          "command": "test \"$(hostname -s)\" = storage01"
+        },
+        {
+          "category": "Base",
+          "name": "range data disk is mounted persistently",
+          "quick": true,
+          "command": "mountpoint -q /srv/range && test \"$(findmnt -rn -o FSTYPE /srv/range)\" = ext4 && grep -Eq '[[:space:]]/srv/range[[:space:]]+ext4[[:space:]]' /etc/fstab"
+        },
+        {
+          "category": "Storage",
+          "name": "network file services are active",
+          "quick": true,
+          "health": true,
+          "command": "for service in nfs-kernel-server smbd rsync; do test \"$(systemctl is-active \"$service\")\" = active || exit 1; done && timeout 5 bash -c 'exec 3<>/dev/tcp/127.0.0.1/22; IFS= read -r banner <&3; [[ \"$banner\" == SSH-* ]]'"
+        },
+        {
+          "category": "Storage",
+          "name": "synthetic file-service account exists",
+          "quick": false,
+          "command": "id rangeuser >/dev/null && pdbedit -L -u rangeuser >/dev/null"
+        },
+        {
+          "category": "Storage",
+          "name": "Samba configuration exposes expected shares",
+          "quick": false,
+          "command": "testparm -s 2>/dev/null | grep -Eq '^\\[shared\\]$' && testparm -s 2>/dev/null | grep -Eq '^\\[research\\]$'"
+        },
+        {
+          "category": "Storage",
+          "name": "NFS export is active",
+          "quick": true,
+          "command": "exportfs -v | grep -Fq '/srv/range/shared'"
+        },
+        {
+          "category": "Storage",
+          "name": "rsync shared module responds",
+          "quick": false,
+          "command": "rsync rsync://127.0.0.1/shared/ >/dev/null"
+        },
+        {
+          "category": "Storage",
+          "name": "synthetic account can read shared data over SFTP",
+          "quick": false,
+          "command": "curl --insecure -fsS --max-time 15 --user rangeuser:GOATFiles2026! sftp://127.0.0.1//srv/range/shared/documents/project-kraken.txt | grep -F 'Project KRAKEN' >/dev/null"
+        },
+        {
+          "category": "Storage",
+          "name": "synthetic shared documents exist",
+          "quick": true,
+          "command": "test -s /srv/range/shared/documents/project-kraken.txt && test -s /srv/range/shared/documents/vendor-contacts.csv"
+        },
+        {
+          "category": "Object Storage",
+          "name": "Garage container and health endpoint are healthy",
+          "quick": true,
+          "health": true,
+          "command": "test \"$(docker inspect -f '{{.State.Status}}' goat-garage)\" = running && curl -fsS http://127.0.0.1:3903/health >/dev/null"
+        },
+        {
+          "category": "Object Storage",
+          "name": "all versioned Garage buckets exist",
+          "quick": true,
+          "command": "for bucket in range-assets build-artifacts database-backups research-archives; do docker exec goat-garage /garage bucket info \"$bucket\" >/dev/null 2>&1 || exit 1; done"
+        },
+        {
+          "category": "Object Storage",
+          "name": "baseline KRAKEN objects contain expected seed data",
+          "quick": false,
+          "command": "s3_get() { curl -fsS --aws-sigv4 'aws:amz:range:s3' --user 'GKGOAT2026ACCESS:GOATGarageSecretKey2026GOATGarageSecretKey2026' \"$1\"; }; s3_get http://127.0.0.1:3900/range-assets/kraken/brief.json | jq -e '.project == \"KRAKEN\" and .division == \"Dreadnode Biology Division\" and .specimen_count == 3 and .seed_version == \"goat-seed-v2\"' >/dev/null && s3_get http://127.0.0.1:3900/research-archives/kraken/experiment-summary.json | jq -e '.experiment == \"kraken-genome-01\" and .samples == 96 and .seed_version == \"goat-seed-v2\"' >/dev/null"
+        },
+        {
+          "category": "Object Storage",
+          "name": "three database backups are usable",
+          "quick": false,
+          "command": "scratch=$(mktemp -d) && trap 'rm -rf \"$scratch\"' EXIT && for name in business.sql wordpress.sql research.archive.gz; do curl -fsS --aws-sigv4 'aws:amz:range:s3' --user 'GKGOAT2026ACCESS:GOATGarageSecretKey2026GOATGarageSecretKey2026' \"http://127.0.0.1:3900/database-backups/goat-seed-v2/$name\" -o \"$scratch/$name\" && test -s \"$scratch/$name\" || exit 1; done && grep -Fq 'CREATE TABLE public.customers' \"$scratch/business.sql\" && grep -Fq 'CREATE TABLE `range_notes`' \"$scratch/wordpress.sql\" && gzip -t \"$scratch/research.archive.gz\""
+        },
+        {
+          "category": "Object Storage",
+          "name": "Jenkins export artifacts are retained",
+          "quick": false,
+          "command": "scratch=$(mktemp -d) && trap 'rm -rf \"$scratch\"' EXIT && for name in kraken-source.tar.gz build-manifest.json; do curl -fsS --aws-sigv4 'aws:amz:range:s3' --user 'GKGOAT2026ACCESS:GOATGarageSecretKey2026GOATGarageSecretKey2026' \"http://127.0.0.1:3900/build-artifacts/kraken/0.1.0/$name\" -o \"$scratch/$name\" && test -s \"$scratch/$name\" || exit 1; done && jq -e '.job == \"kraken-nightly-export\" and .seed_version == \"goat-seed-v2\"' \"$scratch/build-manifest.json\" >/dev/null && tar -tzf \"$scratch/kraken-source.tar.gz\" | grep -Fq '/app.py'"
+        },
+        {
+          "category": "Automation",
+          "name": "three cross-host exports contain versioned data",
+          "quick": true,
+          "command": "root=/srv/range/shared/automation && test \"$(find \"$root\" -maxdepth 1 -type f -name '*.json' | wc -l | tr -d ' ')\" = 3 && jq -e '.job == \"export_projects\" and .seed_version == \"goat-seed-v2\" and (.projects | length == 16) and any(.projects[]; .codename == \"KRAKEN\" and .customer == \"Dreadnode Biology Division\")' \"$root/projects.json\" >/dev/null && jq -e '.job == \"export_experiments\" and .seed_version == \"goat-seed-v2\" and (.experiments | length == 10) and any(.experiments[]; .experiment == \"kraken-genome-01\")' \"$root/experiments.json\" >/dev/null && jq -e '.job == \"snapshot_sessions\" and .seed_version == \"goat-seed-v2\" and .sessions.michael == \"active\" and .sessions.shane == \"expired\"' \"$root/sessions.json\" >/dev/null"
+        }
+      ]
+    },
+    {
+      "id": "services01",
+      "vm_name_template": "{env}-{deployment}-services01-vm",
+      "private_ip": "10.50.10.60",
+      "size": "Standard_D4s_v3",
+      "aws_instance_type": "m6i.xlarge",
+      "tags": {
+        "Range": "GOAT",
+        "Deployment": "goat-deployment",
+        "Role": "InfrastructureServices"
+      },
+      "checks": [
+        {
+          "category": "Base",
+          "name": "hostname is services01",
+          "quick": true,
+          "command": "test \"$(hostname -s)\" = services01"
+        },
+        {
+          "category": "Base",
+          "name": "range data disk is mounted persistently",
+          "quick": true,
+          "command": "mountpoint -q /srv/range && test \"$(findmnt -rn -o FSTYPE /srv/range)\" = ext4 && grep -Eq '[[:space:]]/srv/range[[:space:]]+ext4[[:space:]]' /etc/fstab"
+        },
+        {
+          "category": "Services",
+          "name": "infrastructure services are active",
+          "quick": true,
+          "health": true,
+          "command": "for service in bind9 dovecot postfix rabbitmq-server goat-queue-worker; do test \"$(systemctl is-active \"$service\")\" = active || exit 1; done"
+        },
+        {
+          "category": "DNS",
+          "name": "authoritative zone configuration is valid",
+          "quick": true,
+          "command": "named-checkconf && named-checkzone range.test /etc/bind/db.range.test >/dev/null && test \"$(dig +short @127.0.0.1 web01.range.test)\" = 10.50.10.20"
+        },
+        {
+          "category": "LDAP",
+          "name": "OpenLDAP container is running",
+          "quick": true,
+          "health": true,
+          "command": "test \"$(docker inspect -f '{{.State.Status}}' goat-openldap)\" = running"
+        },
+        {
+          "category": "LDAP",
+          "name": "synthetic LDAP users and group exist",
+          "quick": true,
+          "command": "for filter in '(uid=michael)' '(uid=shane)' '(cn=kraken-researchers)'; do docker exec goat-openldap ldapsearch -LLL -x -D cn=admin,dc=range,dc=test -w GOATLDAP2026! -b dc=range,dc=test \"$filter\" dn | grep '^dn:' >/dev/null || exit 1; done"
+        },
+        {
+          "category": "LDAP",
+          "name": "synthetic users can bind and have expected group membership",
+          "quick": false,
+          "command": "for user in michael shane; do docker exec goat-openldap ldapwhoami -x -D \"uid=$user,ou=people,dc=range,dc=test\" -w GOATFiles2026! | grep -Fx \"dn:uid=$user,ou=people,dc=range,dc=test\" >/dev/null || exit 1; done && group=$(docker exec goat-openldap ldapsearch -LLL -x -D cn=admin,dc=range,dc=test -w GOATLDAP2026! -b cn=kraken-researchers,ou=groups,dc=range,dc=test member) && for user in michael shane; do printf '%s\n' \"$group\" | grep -Fx \"member: uid=$user,ou=people,dc=range,dc=test\" >/dev/null || exit 1; done"
+        },
+        {
+          "category": "RabbitMQ",
+          "name": "range vhost, user, and worker queue exist",
+          "quick": true,
+          "command": "rabbitmqctl list_vhosts --no-table-headers name | grep -qx range && rabbitmqctl list_users --no-table-headers | awk '$1 == \"rangeagent\" { found = 1 } END { exit !found }' && rabbitmqctl list_queues -p range --no-table-headers name | grep -qx range-jobs"
+        },
+        {
+          "category": "RabbitMQ",
+          "name": "queue worker is consuming from range-jobs",
+          "quick": true,
+          "command": "rabbitmqctl list_consumers -p range --no-table-headers queue_name consumer_tag | awk '$1 == \"range-jobs\" && NF >= 2 { found = 1 } END { exit !found }'"
+        },
+        {
+          "category": "Mail",
+          "name": "synthetic mail users and Maildirs exist",
+          "quick": false,
+          "command": "for user in michael shane biology; do id \"$user\" >/dev/null && test -d \"/home/$user/Maildir/cur\" && test -d \"/home/$user/Maildir/new\" && test -d \"/home/$user/Maildir/tmp\" || exit 1; done"
+        },
+        {
+          "category": "Mail",
+          "name": "Postfix and Dovecot range configuration is active",
+          "quick": false,
+          "command": "test \"$(postconf -h mydomain)\" = range.test && doveconf -h protocols | grep -qw imap && doveconf -h protocols | grep -qw pop3"
+        },
+        {
+          "category": "Mail",
+          "name": "synthetic mail users authenticate through Dovecot",
+          "quick": false,
+          "command": "for user in michael shane biology; do doveadm auth test \"$user\" GOATFiles2026! 2>&1 | grep -F 'auth succeeded' >/dev/null || exit 1; done"
+        },
+        {
+          "category": "Automation",
+          "name": "queue is drained after three successful worker jobs",
+          "quick": true,
+          "command": "rabbitmqctl list_queues -p range --no-table-headers name messages_ready messages_unacknowledged | awk '$1 == \"range-jobs\" && $2 == 0 && $3 == 0 { found = 1 } END { exit !found }' && jq -s -e '[.[] | select(.status == \"complete\") | .body.job_id] | unique | sort == [\"goat-seed-v2-experiments\",\"goat-seed-v2-projects\",\"goat-seed-v2-sessions\"]' /srv/range/queue-worker.jsonl >/dev/null"
+        },
+        {
+          "category": "Mail",
+          "name": "six versioned collaboration messages are present",
+          "quick": false,
+          "command": "for user in michael shane biology; do test \"$(find \"/home/$user/Maildir/new\" -maxdepth 1 -type f -name '*.goat-seed-v2.range.test' | wc -l | tr -d ' ')\" = 2 || exit 1; done && for subject in 'KRAKEN genome review' 'KRAKEN build available' 'Containment registry rollback notes' 'Invoice 48250 review' 'Abyssal database snapshots complete' 'KRAKEN telemetry export proposed'; do grep -R -Fqx \"Subject: $subject\" /home/{michael,shane,biology}/Maildir/new/*.goat-seed-v2.range.test || exit 1; done"
+        }
+      ]
+    }
+  ]
+}

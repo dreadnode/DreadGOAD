@@ -111,6 +111,26 @@ func TestRetryOverridesRejectNegativeValues(t *testing.T) {
 	}
 }
 
+func TestRetryAllHosts(t *testing.T) {
+	tests := []struct {
+		playbook string
+		want     bool
+	}{
+		{playbook: "goat-seed.yml", want: true},
+		{playbook: "ansible/playbooks/goat-seed.yml", want: true},
+		{playbook: "goat-base.yml", want: false},
+		{playbook: "ad-data.yml", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.playbook, func(t *testing.T) {
+			if got := retryAllHosts(tt.playbook); got != tt.want {
+				t.Errorf("retryAllHosts(%q) = %t, want %t", tt.playbook, got, tt.want)
+			}
+		})
+	}
+}
+
 func variantTestConfig(root, source, target string) *config.Config {
 	return &config.Config{
 		ProjectRoot: root,
@@ -321,6 +341,39 @@ func TestApplyExtraVarsWithoutUserVarsIsPassthrough(t *testing.T) {
 	}
 }
 
+func TestGOATProvisionVarsOverrideWindowsRemoteTemp(t *testing.T) {
+	got := goatProvisionVars("/tmp/goat-key", "127.0.0.1:62103")
+	if got["ansible_remote_tmp"] != "/tmp/.ansible-goat" {
+		t.Fatalf("remote tmp = %q, want Linux /tmp path", got["ansible_remote_tmp"])
+	}
+	if !strings.Contains(got["ansible_ssh_common_args"], "127.0.0.1:62103 %h %p") {
+		t.Fatalf("SSH common args do not contain SOCKS endpoint: %q", got["ansible_ssh_common_args"])
+	}
+	if got["ansible_ssh_private_key_file"] != "/tmp/goat-key" {
+		t.Fatalf("private key = %q, want /tmp/goat-key", got["ansible_ssh_private_key_file"])
+	}
+}
+
+func TestResolveGOATOperatorKeyPathUsesCanonicalName(t *testing.T) {
+	home := t.TempDir()
+	keysDir := filepath.Join(home, ".dreadgoad", "keys")
+	if err := os.MkdirAll(keysDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	current := filepath.Join(keysDir, "azure-dev-goat-admin")
+	if err := os.WriteFile(current, []byte("current"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := resolveGOATOperatorKeyPath(home, "dev"); err != nil || got != current {
+		t.Fatalf("key resolution = %q, %v; want %q", got, err, current)
+	}
+
+	missing, err := resolveGOATOperatorKeyPath(home, "new")
+	if err != nil || missing != filepath.Join(keysDir, "azure-new-goat-admin") {
+		t.Fatalf("missing key resolution = %q, %v", missing, err)
+	}
+}
+
 func TestSortedPairsIsStable(t *testing.T) {
 	got := sortedPairs(map[string]string{"b": "2", "a": "1", "c": "3"})
 	want := []string{"a=1", "b=2", "c=3"}
@@ -331,5 +384,51 @@ func TestSortedPairsIsStable(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("got %v, want %v", got, want)
 		}
+	}
+}
+
+func TestAutomaticSSMBucketNameIsDeterministicAndS3Safe(t *testing.T) {
+	short := automaticSSMBucketName("123456789012", "goat-aws", "us-east-2")
+	if short != "dreadgoad-goat-123456789012-goat-aws-us-east-2-ssm" {
+		t.Fatalf("short bucket = %q", short)
+	}
+	long := automaticSSMBucketName(
+		"123456789012",
+		"GOAT_environment_with_a_name_that_is_far_too_long_for_an_s3_bucket",
+		"us-east-2",
+	)
+	if len(long) > 63 || strings.ContainsAny(long, "_ABCDEFGHIJKLMNOPQRSTUVWXYZ") {
+		t.Fatalf("unsafe bucket name %q (length %d)", long, len(long))
+	}
+	if long != automaticSSMBucketName(
+		"123456789012",
+		"GOAT_environment_with_a_name_that_is_far_too_long_for_an_s3_bucket",
+		"us-east-2",
+	) {
+		t.Fatal("automatic bucket name is not deterministic")
+	}
+}
+
+func TestMaterializeSSMBucketNameIsAtomicAndOneShot(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "goat-inventory")
+	if err := os.WriteFile(path, []byte("[all:vars]\nansible_aws_ssm_bucket_name=AUTO\nenv=goat\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := materializeSSMBucketName(path, "dreadgoad-goat-123-us-east-2-ssm"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "ansible_aws_ssm_bucket_name=dreadgoad-goat-123-us-east-2-ssm") {
+		t.Fatalf("materialized inventory = %q", raw)
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("inventory mode = %v, %v; want 0600", info.Mode().Perm(), err)
+	}
+	if err := materializeSSMBucketName(path, "another-bucket"); err == nil {
+		t.Fatal("second materialization unexpectedly replaced an explicit bucket")
 	}
 }

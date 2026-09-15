@@ -1,11 +1,14 @@
 package cmd
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
+	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -108,5 +111,55 @@ func TestAzureModuleEnvApplyHonoursFlags(t *testing.T) {
 func TestAzureModuleEnvTreatsMissingFlagsAsOff(t *testing.T) {
 	if got := azureModuleEnv(&cobra.Command{}, "apply", moduleRootWith(t)); len(got) != 0 {
 		t.Errorf("expected no env from a command with no flags, got %v", got)
+	}
+}
+
+// Azure's Bastion, controller, and Kali units each create a subnet in one
+// shared VNet. Exercise the real Azure caller so a future refactor cannot drop
+// the unit-level serialization while leaving only runner-level tests green.
+func TestAzureRunAllSerializesSharedVNetMutations(t *testing.T) {
+	root := t.TempDir()
+	workDir := filepath.Join(root, "infra", "azure", "goad-deployment", "dev", "centralus")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	argsLog := filepath.Join(root, "terragrunt-args.log")
+	fakeTerragrunt := filepath.Join(root, "terragrunt")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$DREADGOAD_TEST_TG_ARGS\"\n"
+	if err := os.WriteFile(fakeTerragrunt, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("DREADGOAD_TEST_TG_ARGS", argsLog)
+
+	cmd := &cobra.Command{}
+	cmd.SetContext(context.Background())
+	cfg := &config.Config{
+		Env:         "dev",
+		Provider:    "azure",
+		Region:      "centralus",
+		ProjectRoot: root,
+		LogDir:      filepath.Join(root, "logs"),
+		Infra: config.InfraConfig{
+			Deployment:       "goad-deployment",
+			TerragruntBinary: fakeTerragrunt,
+		},
+	}
+
+	if err := runInfraActionAzure(cmd, cfg, "apply"); err != nil {
+		t.Fatalf("runInfraActionAzure: %v", err)
+	}
+	data, err := os.ReadFile(argsLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected pre-init and apply invocations, got %q", lines)
+	}
+	for _, line := range lines {
+		if !strings.Contains(line, "--parallelism 1 --") {
+			t.Fatalf("Azure invocation was not serialized: %q", line)
+		}
 	}
 }

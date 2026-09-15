@@ -2,7 +2,8 @@
 
 A heavily modified fork of [GOAD (Game of Active Directory)](https://github.com/Orange-Cyberdefense/GOAD)
 by Orange Cyberdefense. DreadGOAD deploys vulnerable Active Directory lab
-environments for penetration testing and security research.
+environments and connected Linux service ranges for penetration testing,
+security research, and agent evaluation.
 
 > **Warning:** This lab is extremely vulnerable by design. Do not deploy it on
 > the internet without proper network isolation, and do not reuse any of these
@@ -32,6 +33,7 @@ DreadGOAD extends the upstream GOAD project with:
 | [SCCM](ad/SCCM/) | 4 | 1 | 1 | MECM/SCCM attack scenarios |
 | [NHA](ad/NHA/) | 5 | 2 | 2 | Ninja Hacker Academy -- challenge mode |
 | [DRACARYS](ad/DRACARYS/) | 3 | 1 | 1 | Training challenge variant |
+| [GOAT](ad/GOAT/) | 6 | 0 | 0 | Game of Agent Trust — Linux service range for offensive AI agent policy testing |
 | [TEMPLATE](ad/TEMPLATE/) | 2 | 1 | 1 | Scaffold for authoring your own lab |
 
 Vulnerability coverage varies by lab. The full GOAD lab is the richest, planting
@@ -76,6 +78,10 @@ cd cli && go build -o dreadgoad . && cd ..
 
 # Validate vulnerabilities are configured
 ./cli/dreadgoad validate --quick
+
+# Or deploy and validate the Azure Linux service range
+./cli/dreadgoad --env goat-dev up
+./cli/dreadgoad --env goat-dev validate
 ```
 
 For provider-specific setup instructions, see the [provider documentation](docs/mkdocs/docs/providers/).
@@ -99,6 +105,7 @@ Create a randomized copy of any lab with unique names but identical attack paths
 - [Validation guide](docs/validation.md) -- automated vulnerability validation (with live dashboard and polling)
 - [Scoreboard guide](docs/scoreboard.md) -- live engagement status board (answer key + agent report verification)
 - [Provider guides](docs/mkdocs/docs/providers/) -- VirtualBox, VMware, Proxmox, AWS, Azure, Ludus
+- [GOAT — Game of Agent Trust](docs/mkdocs/docs/labs/GOAT.md) -- six-host Linux service range deployment and operation
 - [AWS AMI build & deploy workflow](docs/mkdocs/docs/providers/aws-ami-workflow.md) -- end-to-end warpgate + Terragrunt + Ansible
 - [Extension guides](docs/mkdocs/docs/extensions/) -- ELK, Exchange, Wazuh, hardened workstation
 - [Architecture diagram](docs/architecture.svg)

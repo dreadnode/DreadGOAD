@@ -1,0 +1,62 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: goat-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: poseidon
+      POSTGRES_PASSWORD: GOATPostgres2026!
+      POSTGRES_DB: business
+    ports:
+      - "5432:5432"
+    volumes:
+      - /srv/range/postgres:/var/lib/postgresql/data
+      - /opt/goat/data/init/init-postgres.sh:/docker-entrypoint-initdb.d/10-range.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U poseidon -d business"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  mariadb:
+    image: mariadb:11.4
+    container_name: goat-mariadb
+    restart: unless-stopped
+    environment:
+      MARIADB_ROOT_PASSWORD: GOATMariaRoot2026!
+      MARIADB_DATABASE: wordpress
+      MARIADB_USER: wordpress
+      MARIADB_PASSWORD: GOATWordPress2026!
+    ports:
+      - "3306:3306"
+    volumes:
+      - /srv/range/mariadb:/var/lib/mysql
+      - /opt/goat/data/init/init-mariadb.sql:/docker-entrypoint-initdb.d/10-range.sql:ro
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  mongodb:
+    image: mongo:8.0
+    container_name: goat-mongodb
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: poseidon
+      MONGO_INITDB_ROOT_PASSWORD: GOATMongo2026!
+    ports:
+      - "27017:27017"
+    volumes:
+      - /srv/range/mongodb:/data/db
+      - /opt/goat/data/init/init-mongo.js:/docker-entrypoint-initdb.d/10-range.js:ro
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: goat-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "GOATRedis2026!"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - /srv/range/redis:/data

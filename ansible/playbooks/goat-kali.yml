@@ -1,0 +1,7 @@
+---
+- name: Configure the GOAT agent workstation
+  hosts: attack_box
+  become: true
+  gather_facts: true
+  roles:
+    - role: dreadnode.goad.goat_kali

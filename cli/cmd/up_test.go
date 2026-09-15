@@ -243,6 +243,12 @@ func TestUpDoctorFailureDoesNotRecommendBypass(t *testing.T) {
 	}
 }
 
+func TestUpNextStepMatchesLabValidation(t *testing.T) {
+	if got := upNextStep(); !strings.Contains(got, "dreadgoad validate") || !strings.Contains(got, "range-specific") {
+		t.Fatalf("next step = %q, want range-specific validation guidance", got)
+	}
+}
+
 func assertStringFlag(t *testing.T, cmd *cobra.Command, name, want string) {
 	t.Helper()
 	got, err := cmd.Flags().GetString(name)

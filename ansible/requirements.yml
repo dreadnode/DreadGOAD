@@ -12,6 +12,7 @@ collections:
   - name: ansible.mysql
   - name: scicore.guacamole
   - name: ansible.posix
+    version: ">=2.2.0,<3.0.0"
   - name: microsoft.ad
     version: 1.12.1
   - name: amazon.aws

@@ -79,6 +79,25 @@ def test_path_for_stays_inside_the_configs_root() -> None:
     print("PASS test_path_for_stays_inside_the_configs_root")
 
 
+def test_managed_path_is_stable_bounded_and_contained() -> None:
+    with isolated_state():
+        root = paths.configs_root().resolve()
+        first = configstore.managed_path_for("GOAT", "azure", "kraken")
+        assert first == configstore.managed_path_for("GOAT", "azure", "kraken")
+        assert first.parent == root
+        assert first.name.startswith("goat-azure-kraken-")
+
+        long_path = configstore.managed_path_for("x" * 100, "azure", "y" * 100)
+        assert long_path.parent == root
+        assert len(long_path.stem) <= 80
+        assert long_path != configstore.managed_path_for("x" * 100, "azure", "z" * 100)
+
+        punctuation_a = configstore.managed_path_for("GOAD", "aws", "a_b")
+        punctuation_b = configstore.managed_path_for("GOAD", "aws", "a-b")
+        assert punctuation_a != punctuation_b
+    print("PASS test_managed_path_is_stable_bounded_and_contained")
+
+
 def _write(path: pathlib.Path, body: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body)
@@ -228,6 +247,7 @@ if __name__ == "__main__":
     test_slug_for_defuses_traversal_and_hidden_files()
     test_slug_for_rejects_names_with_nothing_usable()
     test_path_for_stays_inside_the_configs_root()
+    test_managed_path_is_stable_bounded_and_contained()
     test_known_configs_unions_sources_and_dedupes()
     test_known_configs_reports_broken_configs_instead_of_dropping_them()
     test_known_configs_ignores_non_yaml_in_the_configs_dir()

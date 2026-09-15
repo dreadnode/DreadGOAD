@@ -3,6 +3,7 @@ import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
 import {
   ConnectRequest,
+  DEFAULT_VIEW_MODE,
   DetailRequest,
   HostNode,
   buildNodes,
@@ -19,6 +20,8 @@ const host = (id: string, role: string, status = 'running'): RangeHost => ({
   status,
   health: 'unknown',
 })
+
+assert.equal(DEFAULT_VIEW_MODE, 'table')
 
 const range: RangeDoc = {
   session_id: 'session-1',
@@ -53,6 +56,20 @@ const hostMarkup = renderToStaticMarkup(
 assert.ok(hostMarkup.includes('>details</button>'))
 assert.ok(hostMarkup.includes('>connect</button>'))
 assert.ok(hostMarkup.includes('range-kali'))
+
+const goatHost = { ...host('services01', 'member'), source: 'config', os: 'linux' }
+const goatMarkup = renderToStaticMarkup(
+  createElement(HostNode, { data: goatHost } as unknown as Parameters<typeof HostNode>[0]),
+)
+assert.ok(goatMarkup.includes('>Linux</span>'))
+assert.ok(!goatMarkup.includes('Windows Server'))
+
+const legacyMemberMarkup = renderToStaticMarkup(
+  createElement(HostNode, {
+    data: host('legacy-member', 'member'),
+  } as unknown as Parameters<typeof HostNode>[0]),
+)
+assert.ok(legacyMemberMarkup.includes('>Windows Server</span>'))
 
 const tableMarkup = renderToStaticMarkup(createElement(RangeTable, {
   range,
