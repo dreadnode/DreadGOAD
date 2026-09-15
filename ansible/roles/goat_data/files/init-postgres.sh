@@ -2,11 +2,11 @@
 set -eu
 
 for database in nextcloud gitea; do
-  psql --username "$POSTGRES_USER" --dbname postgres \
-    -c "CREATE DATABASE ${database} OWNER ${POSTGRES_USER};"
+    psql --username "$POSTGRES_USER" --dbname postgres \
+        -c "CREATE DATABASE ${database} OWNER ${POSTGRES_USER};"
 done
 
-psql --username "$POSTGRES_USER" --dbname business <<'SQL'
+psql --username "$POSTGRES_USER" --dbname business << 'SQL'
 CREATE TABLE customers (
   id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   name text NOT NULL,

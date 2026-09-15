@@ -25,7 +25,7 @@ module creates no public ingress rule.
 
 | Name | Version |
 | ---- | ------- |
-| <a name="provider_aws"></a> [aws](#provider\_aws) | ~> 6.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.63.0 |
 
 ## Modules
 
@@ -49,7 +49,10 @@ module creates no public ingress rule.
 | <a name="input_ami_owners"></a> [ami\_owners](#input\_ami\_owners) | Allowed AMI owners. The default is further constrained by ami\_name\_pattern to the official Kali Marketplace product ID. | `list(string)` | <pre>[<br/>  "aws-marketplace"<br/>]</pre> | no |
 | <a name="input_deployment_name"></a> [deployment\_name](#input\_deployment\_name) | Name of the deployment (for example, goad). | `string` | n/a | yes |
 | <a name="input_env"></a> [env](#input\_env) | Environment name (for example, test or staging). | `string` | n/a | yes |
+| <a name="input_instance_name"></a> [instance\_name](#input\_instance\_name) | Optional logical instance name. The existing dreadgoad-kali name remains the default. | `string` | `""` | no |
 | <a name="input_instance_type"></a> [instance\_type](#input\_instance\_type) | EC2 instance type for the Kali attack box. | `string` | `"t3.medium"` | no |
+| <a name="input_lab_name"></a> [lab\_name](#input\_lab\_name) | Lab tag value. Defaults to the historical <deployment>-goad value. | `string` | `""` | no |
+| <a name="input_private_ip"></a> [private\_ip](#input\_private\_ip) | Optional fixed private IPv4 address for the attack box. | `string` | `null` | no |
 | <a name="input_root_volume_size"></a> [root\_volume\_size](#input\_root\_volume\_size) | Kali root volume size in GiB. | `number` | `80` | no |
 | <a name="input_subnet_id"></a> [subnet\_id](#input\_subnet\_id) | Private subnet in which to deploy the attack box. | `string` | n/a | yes |
 | <a name="input_vpc_cidr"></a> [vpc\_cidr](#input\_vpc\_cidr) | Lab VPC CIDR. Traffic from this range may reach the attack box. | `string` | n/a | yes |

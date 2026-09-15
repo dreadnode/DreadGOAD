@@ -188,8 +188,8 @@ infrastructure:
       cidr: 10.50.0.0/16
       editable: false
 `,
-		filepath.Join(lab, "data", "config.json"):                                                                                     `{"lab":{"hosts":{"web01":{}}}}`,
-		filepath.Join(lab, "providers", "azure", "inventory"):                                                                         "[all:vars]\nansible_ssh_private_key_file=~/.keys/azure-goat-dev-goat-admin\n[all]\nweb01 ansible_host=10.50.10.20\n",
+		filepath.Join(lab, "data", "config.json"):                                                                             `{"lab":{"hosts":{"web01":{}}}}`,
+		filepath.Join(lab, "providers", "azure", "inventory"):                                                                 "[all:vars]\nansible_ssh_private_key_file=~/.keys/azure-goat-dev-goat-admin\n[all]\nweb01 ansible_host=10.50.10.20\n",
 		filepath.Join(root, "infra", "azure", "goat-deployment", "goat-dev", "env.hcl"):                                       "locals { env = \"goat-dev\" deployment_name = \"goat\" key = \"azure-goat-dev-goat-admin\" }\n",
 		filepath.Join(root, "infra", "azure", "goat-deployment", "goat-dev", "centralus", "region.hcl"):                       "locals { location = \"centralus\" }\n",
 		filepath.Join(root, "infra", "azure", "goat-deployment", "goat-dev", "centralus", "hosts", "web01", "terragrunt.hcl"): "mock = \"goat-dev-goat-rg\"\nterraform {}\n",
@@ -216,7 +216,7 @@ infrastructure:
 	for path, contains := range map[string]string{
 		filepath.Join(root, "infra", "azure", "goat-deployment", "kraken", "env.hcl"):                                       "azure-kraken-goat-admin",
 		filepath.Join(root, "infra", "azure", "goat-deployment", "kraken", "centralus", "hosts", "web01", "terragrunt.hcl"): "terraform",
-		filepath.Join(root, "kraken-inventory"): "azure-kraken-goat-admin",
+		filepath.Join(root, "kraken-inventory"):                                                                             "azure-kraken-goat-admin",
 	} {
 		raw, err := os.ReadFile(path)
 		if err != nil || !strings.Contains(string(raw), contains) {
