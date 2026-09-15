@@ -79,6 +79,8 @@ const variant = deriveNewSessionModel({
 })
 assert.equal(variant.valid, true)
 assert.equal(variant.effectiveRegion, 'us-west-1')
+assert.equal(variant.payload.mode, 'create_range')
+if (variant.payload.mode !== 'create_range') assert.fail('expected create-range payload')
 assert.equal(variant.payload.customization, 'randomized')
 
 const existing = deriveNewSessionModel({

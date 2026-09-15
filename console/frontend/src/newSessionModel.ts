@@ -1,7 +1,14 @@
-import type { EnvironmentSummary, LabSummary, SessionOptions } from './api'
+import type {
+  AttachSessionPayload,
+  CreateRangeSessionPayload,
+  EnvironmentSummary,
+  LabSummary,
+  SessionOptions,
+} from './api'
 
 export type SessionMode = 'existing' | 'new' | 'import'
 export type RangeCustomization = 'standard' | 'randomized'
+export type NewSessionPayload = AttachSessionPayload | CreateRangeSessionPayload
 
 export interface NewSessionModelInput {
   options: SessionOptions | null
@@ -31,7 +38,7 @@ export interface NewSessionModel {
   variantAvailable: boolean
   credentialHint: string
   valid: boolean
-  payload: Record<string, unknown>
+  payload: NewSessionPayload
   effects: string[]
 }
 
@@ -60,19 +67,19 @@ export function deriveNewSessionModel(input: NewSessionModelInput): NewSessionMo
   const customization = variantAvailable ? input.customization : 'standard'
   const credentialHint = input.options?.credential_hints[effectiveProvider] || ''
 
-  const payload = input.mode === 'existing' && existing?.config_path
+  const payload: NewSessionPayload = input.mode === 'existing' && existing?.config_path
     ? { config_path: existing.config_path, env: existing.name }
     : input.mode === 'import'
       ? { config_path: input.importPath.trim(), env: input.importEnvironment }
       : {
-      mode: 'create_range',
-      range: range?.name || '',
-      provider: effectiveProvider,
-      region: effectiveRegion,
-      env: environmentName,
-      customization,
-      ...(effectiveCIDR ? { vpc_cidr: effectiveCIDR } : {}),
-    }
+        mode: 'create_range',
+        range: range?.name || '',
+        provider: effectiveProvider,
+        region: effectiveRegion,
+        env: environmentName,
+        customization,
+        ...(effectiveCIDR ? { vpc_cidr: effectiveCIDR } : {}),
+      }
 
   const valid = !input.submitting && (input.mode === 'existing'
     ? !!existing?.config_path

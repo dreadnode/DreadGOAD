@@ -3,6 +3,7 @@ import { api } from '../api'
 import { useNewSessionOptions } from '../hooks/useNewSessionOptions'
 import {
   deriveNewSessionModel,
+  type NewSessionPayload,
   type RangeCustomization,
   type SessionMode,
 } from '../newSessionModel'
@@ -11,7 +12,7 @@ import { Field, Select, btnStyle } from './FormFields'
 
 export default function NewSessionModal({ onClose, onCreate }: {
   onClose: () => void
-  onCreate: (body: Record<string, unknown>) => Promise<void>
+  onCreate: (body: NewSessionPayload) => Promise<void>
 }) {
   const { options, loading, error } = useNewSessionOptions()
   const [mode, setMode] = useState<SessionMode>('new')

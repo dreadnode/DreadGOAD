@@ -116,6 +116,51 @@ export interface SessionOptions {
   regions: Record<string, string[]>
 }
 
+interface SessionCreateFields {
+  env: string
+  model?: string
+  label?: string
+}
+
+/** Attach to an environment already described by a config file. */
+export interface AttachSessionPayload extends SessionCreateFields {
+  mode?: 'attach'
+  config_path: string
+}
+
+/** Create and attach to a range selected from the range catalog. */
+export interface CreateRangeSessionPayload extends SessionCreateFields {
+  mode: 'create_range'
+  range: string
+  provider: string
+  region: string
+  customization: 'standard' | 'randomized'
+  vpc_cidr?: string
+}
+
+/** Legacy create-in-existing-config request retained for API compatibility. */
+export interface NewEnvironmentSessionPayload extends SessionCreateFields {
+  mode: 'new'
+  config_path: string
+  env_fields: Record<string, unknown>
+  top_level?: Record<string, unknown>
+}
+
+/** Legacy create-config request retained for API compatibility. */
+export interface NewConfigSessionPayload extends SessionCreateFields {
+  mode: 'new_config'
+  config_name: string
+  provider: string
+  region?: string
+  env_fields: Record<string, unknown>
+}
+
+export type SessionCreatePayload =
+  | AttachSessionPayload
+  | CreateRangeSessionPayload
+  | NewEnvironmentSessionPayload
+  | NewConfigSessionPayload
+
 export interface ConfigListing {
   configs: ConfigSummary[]
   configs_root: string
@@ -220,7 +265,7 @@ export const api = {
   listSessions: (): Promise<{ sessions: Session[] }> =>
     authenticatedFetch('/api/sessions').then(r => json(r)),
 
-  createSession: (body: Record<string, unknown>): Promise<Session> =>
+  createSession: (body: SessionCreatePayload): Promise<Session> =>
     authenticatedFetch('/api/sessions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

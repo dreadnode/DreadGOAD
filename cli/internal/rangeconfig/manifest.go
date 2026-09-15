@@ -18,11 +18,16 @@ import (
 var pathComponent = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
 const (
-	ManifestName        = "range.yml"
+	// ManifestName is the declarative metadata filename within a range directory.
+	ManifestName = "range.yml"
+	// KindActiveDirectory identifies a Windows Active Directory range.
 	KindActiveDirectory = "active-directory"
-	KindServiceRange    = "service-range"
-	ProfileActiveDir    = "active-directory"
-	ProfileTemplate     = "template"
+	// KindServiceRange identifies a service-oriented range.
+	KindServiceRange = "service-range"
+	// ProfileActiveDir selects the Active Directory scaffolding implementation.
+	ProfileActiveDir = "active-directory"
+	// ProfileTemplate selects the template-copy scaffolding implementation.
+	ProfileTemplate = "template"
 )
 
 // ActionSpec names one allowlisted lifecycle action. The consumer, not the

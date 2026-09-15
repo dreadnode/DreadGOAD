@@ -23,9 +23,7 @@ var healthCheckCmd = &cobra.Command{
 
 GOAD-family labs check Active Directory, replication, trusts, DNS, and critical
 Windows services. Other range profiles may define checks appropriate for
-their workloads.
-and that its core application, database, storage, and infrastructure services
-are available. Use validate for the lab's complete expected-state audit.`,
+their workloads. Use validate for the lab's complete expected-state audit.`,
 	Example: `  dreadgoad health-check
 	dreadgoad health-check --env staging
 	dreadgoad health-check --json`,

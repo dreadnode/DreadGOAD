@@ -6,7 +6,7 @@ import NewSessionModal from './components/NewSessionModal'
 import SettingsModal from './components/SettingsModal'
 import { mergeSessionSnapshots } from './consoleEventState'
 import { useConsoleSessionEvents } from './hooks/useConsoleSessionEvents'
-import { api, type AppConfig } from './api'
+import { api, type AppConfig, type SessionCreatePayload } from './api'
 import type { Session } from './types'
 
 const MIN_W = 320
@@ -85,7 +85,7 @@ export default function App() {
     send(JSON.stringify({ type: 'cancel', session_id: activeId }))
   }, [activeId, send, procCmd, pendingConfirm])
 
-  const createSession = useCallback(async (body: Record<string, unknown>) => {
+  const createSession = useCallback(async (body: SessionCreatePayload) => {
     const s = await api.createSession(body)
     setSessions(prev => [...prev, s])
     setShowNew(false)

@@ -8,12 +8,12 @@ means it cannot drift from what ``variant generate`` will actually accept.
 
 The one thing added on top is whether a lab is itself a *generated* variant.
 ``lab.DiscoverLabs`` filters those by a substring match on the directory name
-(``strings.Contains(name, "-variant-")``, discovery.go:44), which only catches
+(``strings.Contains(name, "-variant-")``), which only catches
 the old ``ad/GOAD-variant-1`` default. Every variant the console creates is
 named ``<source>-<variant name>``, so none of them match, and they accumulate in
-the list looking like base labs. The generator writes ``mapping.json`` into every
-target it produces (generator.go:1197), so that file is the reliable marker, and
-it is what this module reports.
+the list looking like base labs. The generator writes ``mapping.json`` into
+every target it produces, so that file is the reliable marker, and it is what
+this module reports.
 """
 
 from __future__ import annotations
@@ -137,8 +137,8 @@ async def discover_labs(
                 "display_name": str(entry.get("display_name") or name),
                 # What goes into `variant_source`, which is repo-relative while
                 # the CLI reports an absolute path. Labs always live at
-                # <project root>/ad/<name> (discovery.go:32,48), so this is a
-                # reconstruction rather than a guess.
+                # <project root>/ad/<name>, so this is a reconstruction rather
+                # than a guess.
                 "dir": f"ad/{name}",
                 "providers": entry.get("providers") or [],
                 "provider_settings": entry.get("provider_settings") or {},

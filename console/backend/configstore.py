@@ -6,9 +6,9 @@ files exist, where a new one should be written, and whether the provider it
 names has credentials available to it.
 
 The console has always been able to *drive* more than one config — every CLI
-spawn carries ``--config`` (commands.py:413-415) and derives its working
-directory from that config's own tree (projectroot.run_cwd). What was missing
-was any way to see or create them, which is what this provides.
+spawn built by :func:`commands.build_argv` carries ``--config`` and derives its
+working directory from that config's own tree (projectroot.run_cwd). What was
+missing was any way to see or create them, which is what this provides.
 """
 
 from __future__ import annotations
