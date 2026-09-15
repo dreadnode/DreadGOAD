@@ -492,20 +492,12 @@ func copyInfrastructure(srcRegionDir, dstRegionDir string, hostFilter map[string
 			}
 			return nil
 		}
-
-		// Skip Terragrunt host units that the target lab doesn't define. Other
-		// direct children of goad/ contain shared assets needed by those units.
-		if hostFilter != nil && d.IsDir() {
-			parts := strings.Split(relPath, string(filepath.Separator))
-			if len(parts) == 2 && parts[0] == "goad" && !hostFilter[parts[1]] {
-				_, statErr := os.Stat(filepath.Join(path, "terragrunt.hcl"))
-				switch {
-				case statErr == nil:
-					return filepath.SkipDir
-				case !os.IsNotExist(statErr):
-					return statErr
-				}
-			}
+		skipHost, err := shouldSkipHostUnit(path, relPath, d, hostFilter)
+		if err != nil {
+			return err
+		}
+		if skipHost {
+			return filepath.SkipDir
 		}
 
 		dstPath := filepath.Join(dstRegionDir, relPath)
@@ -520,6 +512,26 @@ func copyInfrastructure(srcRegionDir, dstRegionDir string, hostFilter map[string
 		}
 		return os.WriteFile(dstPath, data, 0o644)
 	})
+}
+
+// shouldSkipHostUnit identifies Terragrunt host units excluded by the lab's
+// host filter. Other direct children of goad/ are shared assets and must remain.
+func shouldSkipHostUnit(path, relPath string, d fs.DirEntry, hostFilter map[string]bool) (bool, error) {
+	if hostFilter == nil || !d.IsDir() {
+		return false, nil
+	}
+	parts := strings.Split(relPath, string(filepath.Separator))
+	if len(parts) != 2 || parts[0] != "goad" || hostFilter[parts[1]] {
+		return false, nil
+	}
+	_, err := os.Stat(filepath.Join(path, "terragrunt.hcl"))
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, err
 }
 
 func copyBaseConfig(projectRoot, envName string) error {

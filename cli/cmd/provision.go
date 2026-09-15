@@ -155,18 +155,26 @@ func isSSMInventory(cfg *config.Config) bool {
 	return parsed.IsSSM()
 }
 
+func checkAnsibleRuntime(providerName string) error {
+	if err := doctor.CheckAnsibleCoreVersion(providerName); err != nil {
+		return fmt.Errorf("ansible-core version check failed: %w", err)
+	}
+	if providerName != provider.NameAzure {
+		return nil
+	}
+	if err := doctor.CheckPSRPDependencies(); err != nil {
+		return fmt.Errorf("ansible PSRP dependency check failed: %w", err)
+	}
+	return nil
+}
+
 // preflightChecks validates tooling, builds the Ansible collection, and
 // prepares artifacts needed before provisioning playbooks run. limit is the
 // Ansible host pattern the run is restricted to, or "" for the whole inventory;
 // it only affects how strictly the inventory is validated.
 func preflightChecks(ctx context.Context, cfg *config.Config, limit string) error {
-	if err := doctor.CheckAnsibleCoreVersion(cfg.ResolvedProvider()); err != nil {
-		return fmt.Errorf("ansible-core version check failed: %w", err)
-	}
-	if cfg.ResolvedProvider() == provider.NameAzure {
-		if err := doctor.CheckPSRPDependencies(); err != nil {
-			return fmt.Errorf("ansible PSRP dependency check failed: %w", err)
-		}
+	if err := checkAnsibleRuntime(cfg.ResolvedProvider()); err != nil {
+		return err
 	}
 	if err := ansible.InstallRequirements(cfg.ProjectRoot); err != nil {
 		return fmt.Errorf("ansible dependency install failed: %w", err)
