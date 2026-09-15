@@ -185,6 +185,16 @@ func CheckAnsibleCoreVersion(provider string) error {
 	return nil
 }
 
+// CheckPSRPDependencies verifies that the Python runtime used by
+// ansible-playbook has the packages required for PSRP-over-SOCKS connections.
+func CheckPSRPDependencies() error {
+	result := checkPyPSRP()
+	if result.Status == "fail" {
+		return fmt.Errorf("%s", result.Message)
+	}
+	return nil
+}
+
 func checkAnsibleVersion(provider string) CheckResult {
 	out, err := exec.Command("ansible", "--version").CombinedOutput()
 	if err != nil {
@@ -475,17 +485,55 @@ func checkLudusAPIKey(configured string) CheckResult {
 func checkPyPSRP() CheckResult {
 	// pypsrp provides the ansible psrp connection plugin. requests[socks]
 	// adds SOCKS proxy support so WinRM traffic can be routed through the
-	// SSH tunnel. Check both by trying to import them.
-	cmd := exec.Command("python3", "-c", "import pypsrp; import socks")
+	// SSH tunnel. Check both in the interpreter that actually runs Ansible.
+	pythonPath, err := ansiblePythonExecutable()
+	if err != nil {
+		return CheckResult{
+			Name:   "pypsrp + PySocks",
+			Status: "fail",
+			Message: fmt.Sprintf(
+				"could not determine the ansible-playbook Python runtime: %v", err,
+			),
+		}
+	}
+	cmd := exec.Command(pythonPath, "-c", "import pypsrp; import socks")
 	if err := cmd.Run(); err != nil {
 		return CheckResult{
 			Name:   "pypsrp + PySocks",
 			Status: "fail",
-			Message: "missing Python packages required for WinRM/PSRP provisioning. " +
-				"Install with: pip install pypsrp requests[socks]",
+			Message: fmt.Sprintf(
+				"missing from Ansible Python %q. Install with: %q -m pip install pypsrp 'requests[socks]'",
+				pythonPath, pythonPath,
+			),
 		}
 	}
-	return CheckResult{Name: "pypsrp + PySocks", Status: "pass", Message: "installed"}
+	return CheckResult{
+		Name: "pypsrp + PySocks", Status: "pass", Message: fmt.Sprintf("installed for %s", pythonPath),
+	}
+}
+
+var ansiblePythonPattern = regexp.MustCompile(`(?m)^\s*python version = .*\]\s+\(([^\r\n]+)\)\s*$`)
+
+const commandErrorOutputLimit = 4096
+
+func ansiblePythonExecutable() (string, error) {
+	out, err := exec.Command("ansible-playbook", "--version").CombinedOutput()
+	if err != nil {
+		detail := strings.TrimSpace(string(out))
+		detailRunes := []rune(detail)
+		if len(detailRunes) > commandErrorOutputLimit {
+			detail = string(detailRunes[:commandErrorOutputLimit]) + "..."
+		}
+		if detail != "" {
+			return "", fmt.Errorf("run ansible-playbook --version: %w: %s", err, detail)
+		}
+		return "", fmt.Errorf("run ansible-playbook --version: %w", err)
+	}
+	match := ansiblePythonPattern.FindStringSubmatch(string(out))
+	if len(match) != 2 {
+		return "", fmt.Errorf("python executable not found in ansible-playbook --version output")
+	}
+	return strings.TrimSpace(match[1]), nil
 }
 
 func checkKaliMarketplaceTerms() CheckResult {

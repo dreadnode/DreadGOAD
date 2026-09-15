@@ -10,6 +10,7 @@ ansible_runner
 ansible-core>=2.20.0,<2.21.0
 pywinrm
 pypsrp
+requests[socks]
 # AZURE
 azure-identity
 azure-mgmt-compute
@@ -18,4 +19,3 @@ azure-mgmt-network
 boto3
 # Proxmox
 proxmoxer
-requests
