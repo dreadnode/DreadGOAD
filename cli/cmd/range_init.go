@@ -41,7 +41,8 @@ func runRangeInitSession(cmd *cobra.Command, _ []string) error {
 	results, runErr := lifecycle.RunSessionInit(cfg, outputDir)
 
 	jsonOut, _ := cmd.Flags().GetBool("json")
-	if jsonOut {
+	switch {
+	case jsonOut:
 		payload := struct {
 			Actions []lifecycle.Result `json:"actions"`
 		}{Actions: results}
@@ -52,12 +53,12 @@ func runRangeInitSession(cmd *cobra.Command, _ []string) error {
 		if err := encoder.Encode(payload); err != nil {
 			return err
 		}
-	} else if len(results) == 0 {
+	case len(results) == 0:
 		_, err = fmt.Fprintln(cmd.OutOrStdout(), "No session initialization actions are declared for this range.")
 		if err != nil {
 			return err
 		}
-	} else {
+	default:
 		for _, result := range results {
 			line := fmt.Sprintf("%-9s %s", strings.ToUpper(result.Status), result.Action)
 			if result.Message != "" {

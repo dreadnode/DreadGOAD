@@ -355,13 +355,6 @@ func startProvisionTunnelVia(ctx context.Context, c *Client, env string, target 
 	return &ProvisionTunnel{socks: socks, bastionProcess: process, localPort: localPort}, nil
 }
 
-// findControllerInstance locates the Ansible controller VM (Role=AnsibleController
-// tag) for the given env. Required to know which target-resource-id to feed
-// `az network bastion tunnel`.
-func (c *Client) findControllerInstance(ctx context.Context, env string) (*Instance, error) {
-	return c.findInstanceByRole(ctx, env, "AnsibleController")
-}
-
 func (c *Client) findInstanceByRole(ctx context.Context, env, role string) (*Instance, error) {
 	instances, err := c.DiscoverInstances(ctx, env, true)
 	if err != nil {

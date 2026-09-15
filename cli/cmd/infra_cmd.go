@@ -317,15 +317,8 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 	// a legacy layout would find none and silently orphan them.
 	opts.ExtraEnv = append(opts.ExtraEnv, azureModuleEnv(cmd, action, workDir)...)
 
-	switch action {
-	case "destroy":
-		if err := confirmDestroy(cmd, cfg.Env, region); err != nil {
-			return err
-		}
-		opts.AutoApprove = true
-	case "apply":
-		autoApprove, _ := cmd.Flags().GetBool("auto-approve")
-		opts.AutoApprove = autoApprove
+	if err := configureAzureAction(cmd, cfg.Env, region, action, &opts); err != nil {
+		return err
 	}
 	// Checked after the fallback so the legacy layout is still accepted, and
 	// state-aware so a destroy with nothing to destroy says why (see
@@ -357,6 +350,23 @@ func runInfraActionAzure(cmd *cobra.Command, cfg *config.Config, action string) 
 
 	opts.WorkDir = workDir
 	return terragrunt.RunAll(ctx, opts)
+}
+
+func configureAzureAction(
+	cmd *cobra.Command,
+	env, region, action string,
+	opts *terragrunt.Options,
+) error {
+	switch action {
+	case "destroy":
+		if err := confirmDestroy(cmd, env, region); err != nil {
+			return err
+		}
+		opts.AutoApprove = true
+	case "apply":
+		opts.AutoApprove, _ = cmd.Flags().GetBool("auto-approve")
+	}
+	return nil
 }
 
 // runTerragruntModule runs a single Terragrunt module, optionally applying its

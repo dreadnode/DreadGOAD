@@ -63,13 +63,15 @@
       fi
 
       candidates=()
+      candidate_count=0
       for link in /dev/disk/by-id/nvme-Amazon_Elastic_Block_Store_vol*; do
         [ -e "$link" ] || continue
         [ "$(lsblk -dn -o TYPE "$(readlink -f "$link")")" = disk ] || continue
         [ "$(readlink -f "$link")" = "$root_disk" ] && continue
         candidates+=("$link")
+        ((candidate_count += 1))
       done
-      case "${#candidates[@]}" in
+      case "$candidate_count" in
         0) exit 0 ;;
         1) printf '%s\n' "${candidates[0]}" ;;
         *) printf 'ambiguous provider-managed data disks: %s\n' "${candidates[*]}" >&2; exit 2 ;;

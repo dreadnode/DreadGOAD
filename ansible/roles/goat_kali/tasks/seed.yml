@@ -25,5 +25,6 @@
 
 - name: Verify browser access to seeded web applications
   ansible.builtin.command: /usr/local/bin/goat-browser-smoke
+  become: true
   become_user: kali
   changed_when: false

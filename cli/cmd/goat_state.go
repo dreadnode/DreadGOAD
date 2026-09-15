@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -53,34 +54,9 @@ func prepareGOATState(projectRoot, homeDir string) (string, error) {
 	}
 
 	if checkoutExists {
-		switch {
-		case !stableExists:
-			if err := os.Rename(checkoutRoot, stableRoot); err != nil {
-				return "", fmt.Errorf("migrate GOAT state from %s to %s: %w", checkoutRoot, stableRoot, err)
-			}
-			stableExists = true
-		case hasTerraformState(checkoutRoot) && hasTerraformState(stableRoot):
-			return "", fmt.Errorf(
-				"GOAT state exists in both %s and %s; refusing to select one automatically",
-				checkoutRoot, stableRoot,
-			)
-		case hasTerraformState(checkoutRoot):
-			empty, emptyErr := directoryEmpty(stableRoot)
-			if emptyErr != nil {
-				return "", emptyErr
-			}
-			if !empty {
-				return "", fmt.Errorf(
-					"checkout-local GOAT state exists at %s but destination %s is not empty; refusing to overwrite it",
-					checkoutRoot, stableRoot,
-				)
-			}
-			if err := os.Remove(stableRoot); err != nil {
-				return "", fmt.Errorf("remove empty GOAT state destination %s: %w", stableRoot, err)
-			}
-			if err := os.Rename(checkoutRoot, stableRoot); err != nil {
-				return "", fmt.Errorf("migrate GOAT state from %s to %s: %w", checkoutRoot, stableRoot, err)
-			}
+		stableExists, err = migrateCheckoutGOATState(checkoutRoot, stableRoot, stableExists)
+		if err != nil {
+			return "", err
 		}
 	}
 
@@ -93,6 +69,44 @@ func prepareGOATState(projectRoot, homeDir string) (string, error) {
 		return "", err
 	}
 	return stableRoot, nil
+}
+
+func migrateCheckoutGOATState(checkoutRoot, stableRoot string, stableExists bool) (bool, error) {
+	if !stableExists {
+		if err := os.Rename(checkoutRoot, stableRoot); err != nil {
+			return false, fmt.Errorf("migrate GOAT state from %s to %s: %w", checkoutRoot, stableRoot, err)
+		}
+		return true, nil
+	}
+
+	checkoutHasState := hasTerraformState(checkoutRoot)
+	if checkoutHasState && hasTerraformState(stableRoot) {
+		return true, fmt.Errorf(
+			"GOAT state exists in both %s and %s; refusing to select one automatically",
+			checkoutRoot, stableRoot,
+		)
+	}
+	if !checkoutHasState {
+		return true, nil
+	}
+
+	empty, err := directoryEmpty(stableRoot)
+	if err != nil {
+		return true, err
+	}
+	if !empty {
+		return true, fmt.Errorf(
+			"checkout-local GOAT state exists at %s but destination %s is not empty; refusing to overwrite it",
+			checkoutRoot, stableRoot,
+		)
+	}
+	if err := os.Remove(stableRoot); err != nil {
+		return true, fmt.Errorf("remove empty GOAT state destination %s: %w", stableRoot, err)
+	}
+	if err := os.Rename(checkoutRoot, stableRoot); err != nil {
+		return false, fmt.Errorf("migrate GOAT state from %s to %s: %w", checkoutRoot, stableRoot, err)
+	}
+	return true, nil
 }
 
 func ensurePrivateDirectory(path string) error {
@@ -150,12 +164,14 @@ func validateCheckoutStateRoot(projectRoot, checkoutRoot string) (bool, error) {
 	return checkoutRoot == path, nil
 }
 
-func directoryEmpty(path string) (bool, error) {
+func directoryEmpty(path string) (_ bool, resultErr error) {
 	dir, err := os.Open(path)
 	if err != nil {
 		return false, fmt.Errorf("open state directory %s: %w", path, err)
 	}
-	defer dir.Close()
+	defer func() {
+		resultErr = errors.Join(resultErr, dir.Close())
+	}()
 	_, err = dir.Readdirnames(1)
 	if err == io.EOF {
 		return true, nil

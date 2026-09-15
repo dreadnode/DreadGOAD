@@ -154,7 +154,6 @@ func runValidate(cmd *cobra.Command, args []string) error {
 func runGOADValidate(
 	ctx context.Context, _ *cobra.Command, _ *config.Config, opts validateOpts,
 ) error {
-
 	if !opts.json {
 		fmt.Println("==========================================")
 		fmt.Println("GOAD Vulnerability Validation")
@@ -173,73 +172,106 @@ func runGOADValidate(
 		defer d.Drain()
 	}
 
-	useTUI := !opts.json && !opts.plain && term.IsTerminal(int(os.Stdout.Fd()))
-	if opts.pollInterval > 0 && !useTUI {
-		fmt.Fprintf(os.Stderr, "Warning: --poll is ignored without the live dashboard (TTY/--plain)\n")
-		opts.pollInterval = 0
-	}
-
+	useTUI := prepareGOADValidationOutput(&opts)
 	if !opts.json {
 		fmt.Printf("Environment: %s\n", infra.Env)
 		fmt.Printf("Region: %s\n", infra.Region)
 	}
 
 	v := validate.NewValidator(infra.Provider, infra.Env, opts.verbose, slog.Default(), infra.Lab)
-	if opts.json {
-		v.SetSilent(true)
-		encoder := json.NewEncoder(os.Stdout)
-		var encoderMu sync.Mutex
-		v.SetOnResult(func(check validate.Result) {
-			encoderMu.Lock()
-			defer encoderMu.Unlock()
-			_ = encoder.Encode(check)
-		})
-	}
-
+	configureGOADValidatorOutput(v, opts.json)
 	if err := v.DiscoverHosts(ctx); err != nil {
 		return fmt.Errorf("discover hosts: %w", err)
 	}
 
 	runChecks := makeRunChecks(v, infra.Provider, opts.quick)
 	runStart := time.Now()
-	if useTUI {
-		if err := validate.RunTUI(ctx, validate.TUIConfig{
-			Validator:    v,
-			Env:          infra.Env,
-			Region:       infra.Region,
-			Run:          runChecks,
-			PollInterval: opts.pollInterval,
-		}); err != nil {
-			return err
-		}
-	} else {
-		runChecks(ctx)
+	if err := runGOADValidationChecks(ctx, v, infra, opts.pollInterval, useTUI, runChecks); err != nil {
+		return err
 	}
 
 	report := v.GetReport()
+	if err := emitGOADValidationReport(v, report, infra, opts, runStart); err != nil {
+		return err
+	}
+
+	if !opts.noFail && report.Failed > 0 {
+		return fmt.Errorf("validation failed with %d errors", report.Failed)
+	}
+	return nil
+}
+
+func prepareGOADValidationOutput(opts *validateOpts) bool {
+	useTUI := !opts.json && !opts.plain && term.IsTerminal(int(os.Stdout.Fd()))
+	if opts.pollInterval > 0 && !useTUI {
+		_, _ = fmt.Fprintln(os.Stderr, "Warning: --poll is ignored without the live dashboard (TTY/--plain)")
+		opts.pollInterval = 0
+	}
+	return useTUI
+}
+
+func configureGOADValidatorOutput(v *validate.Validator, jsonOut bool) {
+	if !jsonOut {
+		return
+	}
+	v.SetSilent(true)
+	encoder := json.NewEncoder(os.Stdout)
+	var encoderMu sync.Mutex
+	v.SetOnResult(func(check validate.Result) {
+		encoderMu.Lock()
+		defer encoderMu.Unlock()
+		_ = encoder.Encode(check)
+	})
+}
+
+func runGOADValidationChecks(
+	ctx context.Context,
+	v *validate.Validator,
+	infra *infraContext,
+	pollInterval time.Duration,
+	useTUI bool,
+	runChecks func(context.Context),
+) error {
+	if !useTUI {
+		runChecks(ctx)
+		return nil
+	}
+	return validate.RunTUI(ctx, validate.TUIConfig{
+		Validator:    v,
+		Env:          infra.Env,
+		Region:       infra.Region,
+		Run:          runChecks,
+		PollInterval: pollInterval,
+	})
+}
+
+func emitGOADValidationReport(
+	v *validate.Validator,
+	report *validate.Report,
+	infra *infraContext,
+	opts validateOpts,
+	runStart time.Time,
+) error {
 	outputPath := opts.outputPath
 	if outputPath == "" && !opts.json {
 		outputPath = fmt.Sprintf("/tmp/goad-validation-%s.json", time.Now().Format("20060102-150405"))
 	}
 	if outputPath != "" {
 		if err := v.SaveReport(outputPath); err != nil {
-			fmt.Fprintf(validationWarningWriter(opts.json), "Warning: could not save report: %v\n", err)
+			if _, warningErr := fmt.Fprintf(validationWarningWriter(opts.json), "Warning: could not save report: %v\n", err); warningErr != nil {
+				return fmt.Errorf("write validation report warning: %w", warningErr)
+			}
 		}
 	}
-
 	if opts.json {
 		if err := json.NewEncoder(os.Stdout).Encode(report); err != nil {
 			return fmt.Errorf("encode validation report: %w", err)
 		}
-	} else {
-		fmt.Println()
-		fmt.Println(validate.RenderSummaryPanel(report, infra.Env, infra.Region, time.Since(runStart), terminalWidth()))
-		fmt.Printf("\nResults saved to: %s\n", outputPath)
+		return nil
 	}
-
-	if !opts.noFail && report.Failed > 0 {
-		return fmt.Errorf("validation failed with %d errors", report.Failed)
-	}
+	fmt.Println()
+	fmt.Println(validate.RenderSummaryPanel(report, infra.Env, infra.Region, time.Since(runStart), terminalWidth()))
+	fmt.Printf("\nResults saved to: %s\n", outputPath)
 	return nil
 }
 

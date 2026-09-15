@@ -222,11 +222,8 @@ func withDefaults(spec ProviderSpec) ProviderSpec {
 }
 
 func validateProviderSpec(provider string, spec ProviderSpec) error {
-	if !pathComponent.MatchString(provider) {
-		return fmt.Errorf("infrastructure provider name %q is not a safe path component", provider)
-	}
-	if !pathComponent.MatchString(spec.Deployment) {
-		return fmt.Errorf("infrastructure.%s.deployment %q is not a safe path component", provider, spec.Deployment)
+	if err := validateProviderPaths(provider, spec); err != nil {
+		return err
 	}
 	profile := spec.ScaffoldProfile
 	if profile == "" {
@@ -235,30 +232,51 @@ func validateProviderSpec(provider string, spec ProviderSpec) error {
 	if profile != ProfileActiveDir && profile != ProfileTemplate {
 		return fmt.Errorf("infrastructure.%s.scaffold_profile %q is unsupported", provider, profile)
 	}
+	if err := validateProviderNetwork(provider, spec.Network); err != nil {
+		return err
+	}
+	return validateProfileNetwork(provider, profile, spec.Network)
+}
+
+func validateProviderPaths(provider string, spec ProviderSpec) error {
+	if !pathComponent.MatchString(provider) {
+		return fmt.Errorf("infrastructure provider name %q is not a safe path component", provider)
+	}
+	if !pathComponent.MatchString(spec.Deployment) {
+		return fmt.Errorf("infrastructure.%s.deployment %q is not a safe path component", provider, spec.Deployment)
+	}
 	if !pathComponent.MatchString(spec.TemplateEnvironment) {
 		return fmt.Errorf("infrastructure.%s.template_environment %q is not a safe path component", provider, spec.TemplateEnvironment)
 	}
 	if spec.DefaultRegion != "" && !pathComponent.MatchString(spec.DefaultRegion) {
 		return fmt.Errorf("infrastructure.%s.default_region %q is not a safe path component", provider, spec.DefaultRegion)
 	}
-	if spec.Network.CIDR != "" {
-		ip, network, err := net.ParseCIDR(spec.Network.CIDR)
+	return nil
+}
+
+func validateProviderNetwork(provider string, networkSpec NetworkSpec) error {
+	if networkSpec.CIDR != "" {
+		ip, network, err := net.ParseCIDR(networkSpec.CIDR)
 		if err != nil || ip.To4() == nil {
-			return fmt.Errorf("infrastructure.%s.network.cidr %q is not an IPv4 CIDR", provider, spec.Network.CIDR)
+			return fmt.Errorf("infrastructure.%s.network.cidr %q is not an IPv4 CIDR", provider, networkSpec.CIDR)
 		}
 		ones, _ := network.Mask.Size()
 		if ones != 16 || !ip.Equal(network.IP) {
-			return fmt.Errorf("infrastructure.%s.network.cidr %q must be a canonical /16 network", provider, spec.Network.CIDR)
+			return fmt.Errorf("infrastructure.%s.network.cidr %q must be a canonical /16 network", provider, networkSpec.CIDR)
 		}
 		if !ip.IsPrivate() {
-			return fmt.Errorf("infrastructure.%s.network.cidr %q must use private address space", provider, spec.Network.CIDR)
+			return fmt.Errorf("infrastructure.%s.network.cidr %q must use private address space", provider, networkSpec.CIDR)
 		}
 	}
+	return nil
+}
+
+func validateProfileNetwork(provider, profile string, network NetworkSpec) error {
 	if profile == ProfileTemplate {
-		if spec.Network.CIDR == "" {
+		if network.CIDR == "" {
 			return fmt.Errorf("infrastructure.%s.network.cidr is required for template profiles", provider)
 		}
-		if spec.Network.Editable != nil && *spec.Network.Editable {
+		if network.Editable != nil && *network.Editable {
 			return fmt.Errorf("infrastructure.%s.network.editable cannot be true for template profiles", provider)
 		}
 	}
