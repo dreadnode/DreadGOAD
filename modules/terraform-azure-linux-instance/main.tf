@@ -1,6 +1,6 @@
 locals {
   name_prefix   = "${var.env}-${var.deployment_name}-${var.instance_name}"
-  computer_name = var.computer_name != "" ? var.computer_name : var.instance_name
+  computer_name = var.computer_name != "" ? var.computer_name : substr(var.instance_name, 0, 63)
 
   common_tags = merge(
     var.tags,

@@ -275,11 +275,12 @@ func startBastionTunnelProcess(ctx context.Context, command []string) (*bastionT
 	return process, nil
 }
 
-// StartProvisionTunnel discovers the in-VNet controller, opens a Bastion port
-// tunnel to it, then layers a Go SOCKS5 listener on top whose dials are routed
-// via SSH through the controller. Caller MUST Close() to release resources.
-func StartProvisionTunnel(ctx context.Context, c *Client, env string) (*ProvisionTunnel, error) {
-	controller, err := c.findInstanceByRole(ctx, env, "AnsibleController")
+// StartProvisionTunnel discovers the range's in-VNet controller, opens a
+// Bastion port tunnel to it, then layers a Go SOCKS5 listener on top whose
+// dials are routed via SSH through the controller. Caller MUST Close() to
+// release resources.
+func StartProvisionTunnel(ctx context.Context, c *Client, env, rangeTag string) (*ProvisionTunnel, error) {
+	controller, err := c.findInstanceByRole(ctx, env, rangeTag, "AnsibleController")
 	if err != nil {
 		return nil, fmt.Errorf("find Ansible controller: %w", err)
 	}
@@ -287,11 +288,35 @@ func StartProvisionTunnel(ctx context.Context, c *Client, env string) (*Provisio
 	if keyPath == "" {
 		return nil, fmt.Errorf("controller ephemeral key not found at expected path; was 'infra apply' run?")
 	}
-	return startProvisionTunnelVia(ctx, c, env, controller, "dreadadmin", keyPath)
+	return startProvisionTunnelVia(ctx, c, env, rangeTag, controller, "dreadadmin", keyPath)
 }
 
-func startProvisionTunnelVia(ctx context.Context, c *Client, env string, target *Instance, user, keyPath string) (*ProvisionTunnel, error) {
-	bastion, err := c.DiscoverBastion(ctx, env)
+// StartProvisionTunnelForRole opens the same tunnel through an explicitly
+// configured role. Service-range operation profiles use this entry point to
+// select their attack box and credentials without duplicating discovery.
+func StartProvisionTunnelForRole(
+	ctx context.Context,
+	c *Client,
+	env, rangeTag, role, user, keyPath string,
+) (*ProvisionTunnel, error) {
+	target, err := c.findInstanceByRole(ctx, env, rangeTag, role)
+	if err != nil {
+		return nil, fmt.Errorf("find tunnel target: %w", err)
+	}
+	if user == "" {
+		return nil, fmt.Errorf("tunnel SSH user is required")
+	}
+	if keyPath == "" {
+		return nil, fmt.Errorf("tunnel SSH key path is required")
+	}
+	if _, err := os.Stat(keyPath); err != nil {
+		return nil, fmt.Errorf("tunnel SSH key %s: %w", keyPath, err)
+	}
+	return startProvisionTunnelVia(ctx, c, env, rangeTag, target, user, keyPath)
+}
+
+func startProvisionTunnelVia(ctx context.Context, c *Client, env, rangeTag string, target *Instance, user, keyPath string) (*ProvisionTunnel, error) {
+	bastion, err := c.DiscoverBastionForRange(ctx, env, rangeTag)
 	if err != nil {
 		return nil, fmt.Errorf("discover bastion: %w", err)
 	}
@@ -338,17 +363,24 @@ func startProvisionTunnelVia(ctx context.Context, c *Client, env string, target 
 	return &ProvisionTunnel{socks: socks, bastionProcess: process, localPort: localPort}, nil
 }
 
-func (c *Client) findInstanceByRole(ctx context.Context, env, role string) (*Instance, error) {
+func (c *Client) findInstanceByRole(ctx context.Context, env, rangeTag, role string) (*Instance, error) {
+	if rangeTag == "" {
+		return nil, fmt.Errorf("range tag is required for tunnel target discovery")
+	}
 	instances, err := c.DiscoverInstances(ctx, env, true)
 	if err != nil {
 		return nil, fmt.Errorf("discover instances: %w", err)
 	}
+	return selectInstanceByRole(instances, env, rangeTag, role)
+}
+
+func selectInstanceByRole(instances []Instance, env, rangeTag, role string) (*Instance, error) {
 	for _, inst := range instances {
-		if strings.EqualFold(inst.Tags["Role"], role) {
+		if inst.Tags["Range"] == rangeTag && strings.EqualFold(inst.Tags["Role"], role) {
 			return &inst, nil
 		}
 	}
-	return nil, fmt.Errorf("no VM with Role=%s found for env=%s", role, env)
+	return nil, fmt.Errorf("no VM with Range=%s and Role=%s found for env=%s", rangeTag, role, env)
 }
 
 // defaultControllerKeyPath mirrors cmd/bastion.go's controllerKeyPath. Kept

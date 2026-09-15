@@ -14,7 +14,7 @@ variable "instance_name" {
 }
 
 variable "computer_name" {
-  description = "Linux hostname. Defaults to instance_name."
+  description = "Linux hostname. Defaults to instance_name truncated to 63 characters."
   type        = string
   default     = ""
 }

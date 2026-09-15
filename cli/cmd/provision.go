@@ -1013,7 +1013,11 @@ func startAzureSOCKSTunnel(ctx context.Context, cfg *config.Config) (closableTun
 	}
 
 	fmt.Println("Opening Azure Bastion → controller → SOCKS5 chain for WinRM access...")
-	tunnel, err := azure.StartProvisionTunnel(ctx, azProv.Client(), cfg.Env)
+	rangeTag, err := cfg.ProviderRangeTag()
+	if err != nil {
+		return nil, nil, err
+	}
+	tunnel, err := azure.StartProvisionTunnel(ctx, azProv.Client(), cfg.Env, rangeTag)
 	if err != nil {
 		return nil, nil, err
 	}

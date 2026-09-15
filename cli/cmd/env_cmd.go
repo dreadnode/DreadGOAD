@@ -327,13 +327,11 @@ func scaffoldEnvWithPlan(cfg *config.Config, plan scaffoldPlan, request scaffold
 	// list. --force retains its historical in-place semantics and therefore
 	// deliberately skips reservations and automatic cleanup.
 	artifacts := scaffoldArtifacts{}
-	if !ctx.force {
-		if err := artifacts.reserveDirectory(ctx.envDir); err != nil {
-			return fmt.Errorf("reserve environment directory %s: %w", ctx.envDir, err)
-		}
-	}
 	succeeded := false
 	defer cleanupFailedScaffold(&succeeded, &artifacts)
+	if err := reserveScaffoldArtifacts(ctx, &artifacts); err != nil {
+		return err
+	}
 
 	printEnvSummary(ctx.provider, ctx.envName, ctx.region, ctx.vpcCIDR, ctx.reference, ctx.useVariant)
 
@@ -346,22 +344,11 @@ func scaffoldEnvWithPlan(cfg *config.Config, plan scaffoldPlan, request scaffold
 		color.Green("  Copied infrastructure from %s", ctx.reference)
 	}
 
-	if !ctx.force && !ctx.useVariant && ctx.plan.Profile == rangeconfig.ProfileActiveDir && ctx.plan.Lab == "GOAD" {
-		overlay := filepath.Join(ctx.projectRoot, "ad", "GOAD", "data", ctx.envName+"-overlay.json")
-		if err := artifacts.reserveFile(overlay); err != nil {
-			return fmt.Errorf("reserve lab overlay %s: %w", overlay, err)
-		}
-	}
 	configPath, err := scaffoldLabConfigForPlan(ctx, &artifacts)
 	if err != nil {
 		return err
 	}
 
-	if !ctx.force {
-		if err := artifacts.reserveFile(ctx.inventoryPath); err != nil {
-			return fmt.Errorf("reserve inventory %s: %w", ctx.inventoryPath, err)
-		}
-	}
 	if err := scaffoldInventoryForPlan(ctx); err != nil {
 		return err
 	}
@@ -369,6 +356,25 @@ func scaffoldEnvWithPlan(cfg *config.Config, plan scaffoldPlan, request scaffold
 
 	printNextSteps(ctx.provider, ctx.envName, ctx.region, ctx.envDir, configPath, ctx.inventoryPath)
 	succeeded = true
+	return nil
+}
+
+func reserveScaffoldArtifacts(ctx scaffoldContext, artifacts *scaffoldArtifacts) error {
+	if ctx.force {
+		return nil
+	}
+	if err := artifacts.reserveDirectory(ctx.envDir); err != nil {
+		return fmt.Errorf("reserve environment directory %s: %w", ctx.envDir, err)
+	}
+	if !ctx.useVariant && ctx.plan.Profile == rangeconfig.ProfileActiveDir && ctx.plan.Lab == "GOAD" {
+		overlay := filepath.Join(ctx.projectRoot, "ad", "GOAD", "data", ctx.envName+"-overlay.json")
+		if err := artifacts.reserveFile(overlay); err != nil {
+			return fmt.Errorf("reserve lab overlay %s: %w", overlay, err)
+		}
+	}
+	if err := artifacts.reserveFile(ctx.inventoryPath); err != nil {
+		return fmt.Errorf("reserve inventory %s: %w", ctx.inventoryPath, err)
+	}
 	return nil
 }
 

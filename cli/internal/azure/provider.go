@@ -118,7 +118,7 @@ func (p *AzureProvider) DestroyInstances(ctx context.Context, ids []string) erro
 // runner's own lazy init on first runPS call.
 func (p *AzureProvider) runner() *winrmRunner {
 	p.winrmOnce.Do(func() {
-		p.winrm = newWinRMRunner(p.client, p.env, p.inventoryPath)
+		p.winrm = newWinRMRunner(p.client, p.env, p.rangeTag, p.inventoryPath)
 	})
 	return p.winrm
 }

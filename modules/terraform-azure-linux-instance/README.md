@@ -41,7 +41,7 @@ No modules.
 | ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_admin_ssh_public_key"></a> [admin\_ssh\_public\_key](#input\_admin\_ssh\_public\_key) | OpenSSH public key authorized for the administrative user. | `string` | n/a | yes |
 | <a name="input_admin_username"></a> [admin\_username](#input\_admin\_username) | Linux administrative user. | `string` | `"rangeadmin"` | no |
-| <a name="input_computer_name"></a> [computer\_name](#input\_computer\_name) | Linux hostname. Defaults to instance\_name. | `string` | `""` | no |
+| <a name="input_computer_name"></a> [computer\_name](#input\_computer\_name) | Linux hostname. Defaults to instance\_name truncated to 63 characters. | `string` | `""` | no |
 | <a name="input_custom_data"></a> [custom\_data](#input\_custom\_data) | Cloud-init content. Azure receives it base64 encoded. | `string` | `""` | no |
 | <a name="input_data_disks"></a> [data\_disks](#input\_data\_disks) | Additional managed data disks keyed by a stable logical name. | <pre>map(object({<br/>    lun                  = number<br/>    size_gb              = number<br/>    storage_account_type = optional(string, "StandardSSD_LRS")<br/>    caching              = optional(string, "ReadWrite")<br/>  }))</pre> | `{}` | no |
 | <a name="input_deployment_name"></a> [deployment\_name](#input\_deployment\_name) | Deployment name used in Azure resource names. | `string` | n/a | yes |

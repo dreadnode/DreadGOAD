@@ -37,18 +37,31 @@ type bastionListItem struct {
 // (nil, nil) when no matching host exists; the caller decides whether that's
 // an error (e.g. `bastion ssh` should fail; `bastion status` should report it).
 func (c *Client) DiscoverBastion(ctx context.Context, env string) (*BastionHost, error) {
+	return c.discoverBastion(ctx, env, "")
+}
+
+// DiscoverBastionForRange finds the single Bastion belonging to one range.
+// Tunnel setup uses this stricter form so ranges that share an environment
+// label cannot cross their network boundary through another range's Bastion.
+func (c *Client) DiscoverBastionForRange(ctx context.Context, env, rangeTag string) (*BastionHost, error) {
+	if rangeTag == "" {
+		return nil, fmt.Errorf("range tag is required for Bastion discovery")
+	}
+	return c.discoverBastion(ctx, env, rangeTag)
+}
+
+func (c *Client) discoverBastion(ctx context.Context, env, rangeTag string) (*BastionHost, error) {
 	var raw []bastionListItem
 	if err := c.runJSON(ctx, &raw,
 		"network", "bastion", "list", "-o", "json",
-		"--query", fmt.Sprintf(
-			"[?tags.Project=='DreadGOAD' && tags.Environment=='%s']", env)); err != nil {
+		"--query", bastionDiscoveryQuery(env, rangeTag)); err != nil {
 		return nil, err
 	}
 	if len(raw) == 0 {
 		return nil, nil
 	}
 	if len(raw) > 1 {
-		return nil, fmt.Errorf("multiple Bastion hosts tagged for env=%s; expected exactly one", env)
+		return nil, fmt.Errorf("multiple Bastion hosts tagged for env=%s range=%s; expected exactly one", env, rangeTag)
 	}
 	b := raw[0]
 	return &BastionHost{
@@ -60,6 +73,16 @@ func (c *Client) DiscoverBastion(ctx context.Context, env string) (*BastionHost,
 		TunnelingEnabled: b.EnableTunneling,
 		IPConnectEnabled: b.EnableIPConnect,
 	}, nil
+}
+
+func bastionDiscoveryQuery(env, rangeTag string) string {
+	if rangeTag == "" {
+		return fmt.Sprintf("[?tags.Project=='DreadGOAD' && tags.Environment=='%s']", env)
+	}
+	return fmt.Sprintf(
+		"[?tags.Project=='DreadGOAD' && tags.Environment=='%s' && tags.Range=='%s']",
+		env, rangeTag,
+	)
 }
 
 // OpenBastionSSH spawns `az network bastion ssh` with the parent process's
