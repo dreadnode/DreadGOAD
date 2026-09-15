@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,11 +35,12 @@ type closableTunnel interface{ Close() }
 
 var provisionCmd = &cobra.Command{
 	Use:   "provision",
-	Short: "Run GOAD provisioning playbooks with retry logic",
-	Long: `Runs Ansible playbooks to provision Active Directory infrastructure.
+	Short: "Run the selected lab's provisioning playbooks",
+	Long: `Runs the selected lab's Ansible playbooks to configure its hosts.
 
 Executes the full playbook sequence (or a subset) with error-specific
-retry strategies, SSM session management, and idle timeout monitoring.`,
+retry strategies, provider-specific private network access, and idle timeout
+monitoring.`,
 	Example: `  dreadgoad provision
   dreadgoad provision --plays build.yml,ad-servers.yml
   dreadgoad provision --from ad-data.yml
@@ -92,7 +94,7 @@ func resolvePlaybooks(cfg *config.Config, playsFlag, fromFlag string) ([]string,
 	if playsFlag != "" {
 		playbooks = strings.Split(playsFlag, ",")
 	} else {
-		playbooks = lab.PlaybooksForLab(cfg.ProjectRoot, "", cfg.Playbooks)
+		playbooks = lab.PlaybooksForLab(cfg.ProjectRoot, cfg.ResolvedLab(), cfg.Playbooks)
 	}
 
 	if fromFlag == "" {
@@ -199,7 +201,7 @@ func preflightChecks(ctx context.Context, cfg *config.Config, limit string) erro
 	// providers (Ludus, Proxmox, etc.) where none of this applies.
 	if isSSMInventory(cfg) {
 		if err := ensureSSMBucket(ctx, cfg); err != nil {
-			slog.Warn("SSM bucket check failed", "error", err)
+			return fmt.Errorf("SSM transfer bucket: %w", err)
 		}
 		if err := ensureInventorySynced(ctx, cfg); err != nil {
 			slog.Warn("inventory sync check failed", "error", err)
@@ -524,8 +526,8 @@ func bootstrapFromProviderTemplate(invPath string, cfg *config.Config) error {
 		}
 	}
 	if templatePath == "" {
-		labName := "GOAD"
-		if providerName == "proxmox" {
+		labName := cfg.ResolvedLab()
+		if providerName == "proxmox" && labName == "GOAD" {
 			labName = cfg.ProxmoxLab()
 		}
 		templatePath = filepath.Join(cfg.ProjectRoot, "ad", labName, "providers", providerName, "inventory")
@@ -595,7 +597,7 @@ func ensureSSMBucket(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		return fmt.Errorf("parse inventory: %w", err)
 	}
-	bucket := parsed.SSMBucketName()
+	bucket := strings.TrimSpace(parsed.SSMBucketName())
 	if bucket == "" {
 		return nil
 	}
@@ -610,7 +612,85 @@ func ensureSSMBucket(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
+	if strings.EqualFold(bucket, "AUTO") {
+		identity, err := client.VerifyCredentials(ctx)
+		if err != nil {
+			return err
+		}
+		bucket = automaticSSMBucketName(identity.Account, cfg.Env, region)
+		if err := materializeSSMBucketName(cfg.InventoryPath(), bucket); err != nil {
+			return err
+		}
+	}
 	return client.EnsureSSMBucket(ctx, bucket)
+}
+
+// automaticSSMBucketName returns a globally unique, deterministic S3 bucket
+// name for generated inventories. The hash suffix preserves uniqueness when a
+// long environment name has to be truncated to S3's 63-character limit.
+func automaticSSMBucketName(account, env, region string) string {
+	raw := strings.ToLower(strings.Join([]string{"dreadgoad", account, env, region, "ssm"}, "-"))
+	var normalized strings.Builder
+	lastDash := false
+	for _, r := range raw {
+		valid := r >= 'a' && r <= 'z' || r >= '0' && r <= '9'
+		if valid {
+			normalized.WriteRune(r)
+			lastDash = false
+		} else if !lastDash {
+			normalized.WriteByte('-')
+			lastDash = true
+		}
+	}
+	name := strings.Trim(normalized.String(), "-")
+	if len(name) <= 63 {
+		return name
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(name)))[:8]
+	return strings.TrimRight(name[:54], "-") + "-" + digest
+}
+
+func materializeSSMBucketName(path, bucket string) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read inventory: %w", err)
+	}
+	re := regexp.MustCompile(`(?m)^(\s*ansible_aws_ssm_bucket_name\s*=\s*)AUTO\s*$`)
+	updated := re.ReplaceAll(raw, []byte("${1}"+bucket))
+	if string(updated) == string(raw) {
+		return fmt.Errorf("inventory no longer contains the expected automatic SSM bucket placeholder")
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("stat inventory: %w", err)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".inventory-*")
+	if err != nil {
+		return fmt.Errorf("create temporary inventory: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer func() {
+		_ = os.Remove(tmpPath)
+	}()
+	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("set temporary inventory permissions: %w", err)
+	}
+	if _, err := tmp.Write(updated); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write temporary inventory: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("sync temporary inventory: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temporary inventory: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("replace inventory: %w", err)
+	}
+	return nil
 }
 
 // ensureInventorySynced compares inventory instance IDs against live EC2
@@ -865,12 +945,13 @@ func provisionPlaybooks(ctx context.Context, cfg *config.Config, playbooks []str
 
 	for i, playbook := range playbooks {
 		opts := ansible.RetryOptions{
-			Playbook:  playbook,
-			Env:       cfg.Env,
-			Limit:     limit,
-			Debug:     cfg.Debug,
-			LogFile:   logFile,
-			ExtraVars: runVars,
+			Playbook:      playbook,
+			Env:           cfg.Env,
+			Limit:         limit,
+			RetryAllHosts: false,
+			Debug:         cfg.Debug,
+			LogFile:       logFile,
+			ExtraVars:     runVars,
 		}
 		retry.apply(&opts)
 

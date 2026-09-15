@@ -113,6 +113,20 @@ type fakeOOB struct {
 	fail  map[string]bool
 }
 
+type fakeInstanceOOB struct {
+	fakeOOB
+	instances []provider.Instance
+}
+
+func (f *fakeInstanceOOB) RunCommandOutOfBandOnInstance(
+	_ context.Context, instance provider.Instance, _ string, _ time.Duration,
+) (*provider.CommandResult, error) {
+	f.mu.Lock()
+	f.instances = append(f.instances, instance)
+	f.mu.Unlock()
+	return &provider.CommandResult{Status: "Success"}, nil
+}
+
 func (f *fakeOOB) RunCommandOutOfBand(
 	_ context.Context, id, _ string, _ time.Duration,
 ) (*provider.CommandResult, error) {
@@ -132,7 +146,8 @@ func (f *fakeOOB) OutOfBandChannel() string { return "test channel" }
 func TestRunOutOfBandOnAllUsesTheControlPlaneForEveryHost(t *testing.T) {
 	f := &fakeOOB{}
 	ids := []string{"/subs/x/DC01", "/subs/x/DC02", "/subs/x/DC03"}
-	got := runOutOfBandOnAll(context.Background(), f, ids, "Get-Service", time.Minute)
+	targets := []provider.Instance{{ID: ids[0]}, {ID: ids[1]}, {ID: ids[2]}}
+	got := runOutOfBandOnAll(context.Background(), f, targets, "Get-Service", time.Minute)
 
 	if len(got) != len(ids) {
 		t.Fatalf("expected %d results, got %d", len(ids), len(got))
@@ -152,7 +167,8 @@ func TestRunOutOfBandOnAllUsesTheControlPlaneForEveryHost(t *testing.T) {
 func TestRunOutOfBandOnAllIsolatesPerHostFailure(t *testing.T) {
 	f := &fakeOOB{fail: map[string]bool{"/subs/x/DC02": true}}
 	ids := []string{"/subs/x/DC01", "/subs/x/DC02"}
-	got := runOutOfBandOnAll(context.Background(), f, ids, "x", time.Minute)
+	targets := []provider.Instance{{ID: ids[0]}, {ID: ids[1]}}
+	got := runOutOfBandOnAll(context.Background(), f, targets, "x", time.Minute)
 
 	if got["/subs/x/DC01"].Status != "Succeeded" {
 		t.Fatalf("healthy host lost: %+v", got["/subs/x/DC01"])
@@ -160,6 +176,21 @@ func TestRunOutOfBandOnAllIsolatesPerHostFailure(t *testing.T) {
 	bad := got["/subs/x/DC02"]
 	if bad.Status != "Error" || !strings.Contains(bad.Stderr, "guest agent") {
 		t.Fatalf("failure not reported on its own host: %+v", bad)
+	}
+}
+
+func TestRunOutOfBandOnAllPassesInstanceMetadataWhenSupported(t *testing.T) {
+	f := &fakeInstanceOOB{}
+	target := provider.Instance{ID: "i-linux", Tags: map[string]string{"OS": "Linux"}}
+	got := runOutOfBandOnAll(context.Background(), f, []provider.Instance{target}, "id", time.Minute)
+	if got[target.ID].Status != "Success" {
+		t.Fatalf("result = %+v", got[target.ID])
+	}
+	if len(f.instances) != 1 || f.instances[0].Tags["OS"] != "Linux" {
+		t.Fatalf("instance metadata was not passed through: %+v", f.instances)
+	}
+	if len(f.calls) != 0 {
+		t.Fatalf("legacy runner was called despite instance-aware support: %v", f.calls)
 	}
 }
 

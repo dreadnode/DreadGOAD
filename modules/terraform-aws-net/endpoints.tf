@@ -14,8 +14,9 @@ resource "aws_vpc_endpoint" "endpoints" {
   private_dns_enabled = each.value.private_dns
 
   lifecycle {
-    create_before_destroy = true
-    ignore_changes        = [tags, tags_all]
+    # Interface endpoints depend on private subnets. Avoid propagating
+    # create-before-destroy to subnets that may need to reuse their CIDRs.
+    ignore_changes = [tags, tags_all]
   }
 
   tags = local.tags

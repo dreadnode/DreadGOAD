@@ -2,6 +2,7 @@ package variant
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -697,5 +698,48 @@ func TestFirstnameCollisionNoOverwrite(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestServiceRangeRejectedBeforeWritingTarget(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourceDir := filepath.Join(tmpDir, "service-range")
+	targetDir := filepath.Join(tmpDir, "generated")
+	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := "schema_version: 1\nkind: service-range\n"
+	if err := os.WriteFile(filepath.Join(sourceDir, "range.yml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := NewGenerator(sourceDir, targetDir, "unsupported").Run()
+	if err == nil || !strings.Contains(err.Error(), "variants are only supported for active-directory ranges") {
+		t.Fatalf("Run() error = %v, want unsupported range-kind error", err)
+	}
+	if _, statErr := os.Stat(targetDir); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("unsupported generator created target %s: %v", targetDir, statErr)
+	}
+}
+
+func TestValidateSourceAllowsActiveDirectoryAndLegacyLabs(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		manifest string
+	}{
+		{name: "explicit active-directory", manifest: "schema_version: 1\nkind: active-directory\n"},
+		{name: "legacy manifest absent"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			sourceDir := t.TempDir()
+			if tt.manifest != "" {
+				if err := os.WriteFile(filepath.Join(sourceDir, "range.yml"), []byte(tt.manifest), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := ValidateSource(sourceDir); err != nil {
+				t.Fatalf("ValidateSource() rejected supported lab: %v", err)
+			}
+		})
 	}
 }

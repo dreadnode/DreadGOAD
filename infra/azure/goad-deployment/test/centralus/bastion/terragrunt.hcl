@@ -55,5 +55,6 @@ inputs = {
     Project = "DreadGOAD"
     Role    = "Bastion"
     Lab     = "${local.deployment_name}"
+    Range   = "GOAD"
   }
 }

@@ -19,13 +19,13 @@ output "private_ip" {
 }
 
 output "subnet_id" {
-  description = "Subnet ID created for the Kali attack box."
-  value       = azurerm_subnet.this.id
+  description = "Subnet ID used by the Kali attack box."
+  value       = local.create_dedicated_subnet ? azurerm_subnet.this[0].id : var.subnet_id
 }
 
 output "nsg_id" {
-  description = "NSG ID gating the Kali subnet."
-  value       = azurerm_network_security_group.this.id
+  description = "Dedicated Kali NSG ID, or null when an existing subnet is used."
+  value       = local.create_dedicated_subnet ? azurerm_network_security_group.this[0].id : null
 }
 
 output "admin_username" {

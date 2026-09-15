@@ -17,10 +17,9 @@ import (
 	"github.com/dreadnode/dreadgoad/internal/ludus"
 )
 
-// ProvisionTunnel chains an Azure Bastion port-forward (laptop → controller:22)
-// with a SOCKS5 proxy that dials from the controller's network position. The
-// controller sits in the same VNet as the GOAD VMs, so SOCKS-routed WinRM
-// traffic reaches private 5985 listeners that the laptop can't touch directly.
+// ProvisionTunnel chains an Azure Bastion port-forward to an in-VNet SSH host
+// with a SOCKS5 proxy that dials from that host's network position. GOAD uses
+// its controller; Linux service ranges use Kali as their attack-box jump host.
 type ProvisionTunnel struct {
 	socks          *ludus.SOCKSTunnel
 	bastionProcess *bastionTunnelProcess
@@ -50,8 +49,8 @@ func (t *ProvisionTunnel) SOCKSAddr() string {
 	return fmt.Sprintf("127.0.0.1:%d", t.socks.Port)
 }
 
-// Close terminates the SOCKS5 listener, the underlying SSH connection to the
-// controller, and the spawned `az network bastion tunnel` subprocess tree.
+// Close terminates the SOCKS5 listener, its underlying SSH connection, and the
+// spawned `az network bastion tunnel` subprocess tree.
 //
 // Teardown runs exactly once even if Close is called concurrently. Callers
 // reach Close through several paths (winrmRunner.close, the deferred Drain in
@@ -280,6 +279,18 @@ func startBastionTunnelProcess(ctx context.Context, command []string) (*bastionT
 // tunnel to it, then layers a Go SOCKS5 listener on top whose dials are routed
 // via SSH through the controller. Caller MUST Close() to release resources.
 func StartProvisionTunnel(ctx context.Context, c *Client, env string) (*ProvisionTunnel, error) {
+	controller, err := c.findInstanceByRole(ctx, env, "AnsibleController")
+	if err != nil {
+		return nil, fmt.Errorf("find Ansible controller: %w", err)
+	}
+	keyPath := defaultControllerKeyPath(env, controller.Name)
+	if keyPath == "" {
+		return nil, fmt.Errorf("controller ephemeral key not found at expected path; was 'infra apply' run?")
+	}
+	return startProvisionTunnelVia(ctx, c, env, controller, "dreadadmin", keyPath)
+}
+
+func startProvisionTunnelVia(ctx context.Context, c *Client, env string, target *Instance, user, keyPath string) (*ProvisionTunnel, error) {
 	bastion, err := c.DiscoverBastion(ctx, env)
 	if err != nil {
 		return nil, fmt.Errorf("discover bastion: %w", err)
@@ -288,26 +299,16 @@ func StartProvisionTunnel(ctx context.Context, c *Client, env string) (*Provisio
 		return nil, fmt.Errorf("no Bastion deployed for env=%s; provisioning needs --with-bastion infra", env)
 	}
 
-	controller, err := c.findControllerInstance(ctx, env)
-	if err != nil {
-		return nil, err
-	}
-
 	localPort, err := pickFreePort()
 	if err != nil {
 		return nil, fmt.Errorf("pick free port: %w", err)
-	}
-
-	keyPath := defaultControllerKeyPath(env, controller.Name)
-	if keyPath == "" {
-		return nil, fmt.Errorf("controller ephemeral key not found at expected path; was 'infra apply' run?")
 	}
 
 	process, err := startBastionTunnelProcess(ctx, []string{
 		"az", "network", "bastion", "tunnel",
 		"--name", bastion.Name,
 		"--resource-group", bastion.ResourceGroup,
-		"--target-resource-id", controller.ID,
+		"--target-resource-id", target.ID,
 		"--resource-port", "22",
 		"--port", strconv.Itoa(localPort),
 	})
@@ -323,7 +324,7 @@ func StartProvisionTunnel(ctx context.Context, c *Client, env string) (*Provisio
 	sshCfg := ludus.SSHConfig{
 		Host:                  "127.0.0.1",
 		Port:                  localPort,
-		User:                  "dreadadmin",
+		User:                  user,
 		KeyPath:               keyPath,
 		InsecureIgnoreHostKey: true, // Bastion tunnel rebinds a fresh port per session.
 		IdentitiesOnly:        true, // Skip ssh-agent so its keys don't blow MaxAuthTries.
@@ -331,26 +332,23 @@ func StartProvisionTunnel(ctx context.Context, c *Client, env string) (*Provisio
 	socks, err := ludus.StartSOCKSTunnel(sshCfg)
 	if err != nil {
 		killBastionTunnel(process)
-		return nil, fmt.Errorf("start SOCKS5 over controller: %w", err)
+		return nil, fmt.Errorf("start SOCKS5 over %s: %w", target.Name, err)
 	}
 
 	return &ProvisionTunnel{socks: socks, bastionProcess: process, localPort: localPort}, nil
 }
 
-// findControllerInstance locates the Ansible controller VM (Role=AnsibleController
-// tag) for the given env. Required to know which target-resource-id to feed
-// `az network bastion tunnel`.
-func (c *Client) findControllerInstance(ctx context.Context, env string) (*Instance, error) {
+func (c *Client) findInstanceByRole(ctx context.Context, env, role string) (*Instance, error) {
 	instances, err := c.DiscoverInstances(ctx, env, true)
 	if err != nil {
 		return nil, fmt.Errorf("discover instances: %w", err)
 	}
 	for _, inst := range instances {
-		if inst.Tags["Role"] == "AnsibleController" {
+		if strings.EqualFold(inst.Tags["Role"], role) {
 			return &inst, nil
 		}
 	}
-	return nil, fmt.Errorf("no Ansible controller VM found for env=%s", env)
+	return nil, fmt.Errorf("no VM with Role=%s found for env=%s", role, env)
 }
 
 // defaultControllerKeyPath mirrors cmd/bastion.go's controllerKeyPath. Kept

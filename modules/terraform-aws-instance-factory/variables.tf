@@ -303,6 +303,17 @@ variable "instance_type" {
   type        = string
 }
 
+variable "private_ip" {
+  description = "Optional fixed private IPv4 address for a standalone instance."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.private_ip == null || can(cidrnetmask("${var.private_ip}/32"))
+    error_message = "private_ip must be a valid IPv4 address or null."
+  }
+}
+
 variable "kms_key_arn" {
   description = "KMS key ARN for volume encryption. If empty and encrypt_volumes is true, AWS default encryption will be used"
   type        = string

@@ -125,6 +125,36 @@ def test_variant_hosts_correlate_by_role_key() -> None:
     print("PASS test_variant_hosts_correlate_by_role_key")
 
 
+def test_service_attackbox_correlates_to_kali01() -> None:
+    instances = [
+        {
+            "name": "service-dev-service-kali-tools-vm",
+            "id": "az-service-kali-tools",
+            "state": "running",
+            "private_ip": "10.50.10.99",
+        },
+        {
+            "name": "service-dev-service-kali01-vm",
+            "id": "az-service-kali01",
+            "state": "running",
+            "private_ip": "10.50.10.10",
+        },
+        {
+            "name": "service-dev-service-kali-mirror-vm",
+            "id": "az-service-kali-mirror",
+            "state": "running",
+            "private_ip": "10.50.10.98",
+        },
+    ]
+    out = map_range_status(_range(), instances, now="T")
+    attackbox = next(host for host in out["hosts"] if host["id"] == "attackbox")
+    assert attackbox["status"] == "running", attackbox
+    assert attackbox["cloud_id"] == "az-service-kali01", attackbox
+    assert attackbox["cloud_name"] == "service-dev-service-kali01-vm", attackbox
+    assert attackbox["ip_private"] == "10.50.10.10", attackbox
+    print("PASS test_service_attackbox_correlates_to_kali01")
+
+
 def test_hostname_substring_collision_does_not_mismatch() -> None:
     """'quantum' ⊂ 'quantum-web': keying on the role avoids the wrong VM."""
     out = map_range_status(_variant_range(), _VARIANT_INSTANCES, now="T")
@@ -737,6 +767,7 @@ async def test_reseed_adds_enabled_extension_nodes() -> None:
 
 def main() -> None:
     test_variant_hosts_correlate_by_role_key()
+    test_service_attackbox_correlates_to_kali01()
     test_hostname_substring_collision_does_not_mismatch()
     test_parse_cloud_account_from_arm_ids()
     test_parse_cloud_account_prefers_cli_fields()
@@ -757,6 +788,7 @@ def main() -> None:
     asyncio.run(test_apply_health_per_host_from_json())
     asyncio.run(test_reseed_adds_enabled_extension_nodes())
     asyncio.run(test_repair_seeds_hosts_missing_from_the_original_topology())
+    asyncio.run(test_repair_backfills_os_without_reseeding_existing_hosts())
     asyncio.run(test_repair_leaves_a_genuine_greenfield_range_alone())
     asyncio.run(test_repair_never_removes_nodes_it_did_not_seed())
     print("ALL PASS")
@@ -891,6 +923,92 @@ async def test_repair_leaves_a_genuine_greenfield_range_alone() -> None:
         out = await topology_sync.repair_missing_config_hosts(_App(db), "s", rng)
         assert out is rng, "must not touch a range whose lab config does not exist"
         print("PASS test_repair_leaves_a_genuine_greenfield_range_alone")
+    finally:
+        await db.close()
+        os.unlink(tmp.name)
+
+
+async def test_repair_backfills_os_without_reseeding_existing_hosts() -> None:
+    """Older saved SERVICE hosts gain OS metadata without losing live topology."""
+    import json as _json
+    import os as _os
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    tmp.close()
+    root = tempfile.mkdtemp()
+    _os.makedirs(_os.path.join(root, "ansible"), exist_ok=True)
+    data = _os.path.join(root, "ad", "SERVICE", "data")
+    _os.makedirs(data, exist_ok=True)
+    with open(_os.path.join(data, "config.json"), "w") as f:
+        _json.dump(
+            {
+                "lab": {
+                    "hosts": {
+                        "srv01": {
+                            "hostname": "services01",
+                            "type": "server",
+                            "os": "linux",
+                        }
+                    }
+                }
+            },
+            f,
+        )
+    cfg = _os.path.join(root, "dreadgoad.yaml")
+    with open(cfg, "w") as f:
+        f.write("provider: azure\n")
+
+    db = await Database(tmp.name).connect()
+    await db.upsert_session(
+        {
+            "id": "s",
+            "anchor": {"config_path": cfg, "env": "dev"},
+            "snapshot": {"provider": "azure", "lab": "ad/SERVICE"},
+        }
+    )
+    rng = {
+        "session_id": "s",
+        "hosts": [
+            {
+                "id": "services01",
+                "key": "srv01",
+                "hostname": "services01",
+                "role": "member",
+                "source": "config",
+                "status": "running",
+                "ip_private": "10.0.0.8",
+            },
+            {
+                "id": "elk",
+                "hostname": "elk",
+                "role": "linux",
+                "source": "extension",
+                "status": "running",
+            },
+        ],
+        "edges": [],
+        "layout": {"elk": {"x": 10, "y": 20}},
+    }
+    await db.upsert_range("s", rng)
+    try:
+        repaired = await topology_sync.repair_missing_config_hosts(_App(db), "s", rng)
+        hosts = {h["id"]: h for h in repaired["hosts"]}
+        assert hosts["services01"].get("os") == "linux", hosts["services01"]
+        assert hosts["services01"]["status"] == "running", hosts["services01"]
+        assert hosts["services01"]["ip_private"] == "10.0.0.8", hosts["services01"]
+        assert "elk" in hosts, "metadata repair must not remove extension hosts"
+        assert repaired["layout"]["elk"] == {"x": 10, "y": 20}
+
+        stored = await db.get_range("s")
+        assert stored is not None
+        assert (
+            next(h for h in stored["hosts"] if h["id"] == "services01").get("os")
+            == "linux"
+        )
+
+        again = await topology_sync.repair_missing_config_hosts(_App(db), "s", repaired)
+        assert again is repaired, "persisted metadata should make repair self-limiting"
+        print("PASS test_repair_backfills_os_without_reseeding_existing_hosts")
     finally:
         await db.close()
         os.unlink(tmp.name)

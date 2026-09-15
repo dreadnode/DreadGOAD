@@ -62,8 +62,8 @@ export default function App() {
 
   const sendMessage = useCallback((content: string) => {
     if (!activeId) return
-    beginTurn(activeId)
-    send(JSON.stringify({ session_id: activeId, content }))
+    const sent = send(JSON.stringify({ session_id: activeId, content }))
+    if (sent) beginTurn(activeId)
   }, [activeId, beginTurn, send])
 
   const onCancel = useCallback(() => {
@@ -150,7 +150,7 @@ export default function App() {
         />
       )}
       {!approval && showNew && cfg && (
-        <NewSessionModal cfg={cfg} onClose={() => setShowNew(false)} onCreate={createSession} />
+        <NewSessionModal onClose={() => setShowNew(false)} onCreate={createSession} />
       )}
       {!approval && showSettings && cfg && (
         <SettingsModal

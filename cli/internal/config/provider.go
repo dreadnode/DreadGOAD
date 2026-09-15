@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/dreadnode/dreadgoad/internal/provider"
+	"github.com/dreadnode/dreadgoad/internal/rangeconfig"
 
 	// Register provider constructors.
 	_ "github.com/dreadnode/dreadgoad/internal/aws"
@@ -19,6 +20,14 @@ func (c *Config) NewProvider(ctx context.Context) (provider.Provider, error) {
 	name := c.ResolvedProvider()
 
 	opts := provider.ConstructorOpts{}
+	opts.Lab = c.ResolvedLab()
+	if name == provider.NameAWS || name == provider.NameAzure {
+		rangeTag, err := c.ProviderRangeTag()
+		if err != nil {
+			return nil, err
+		}
+		opts.RangeTag = rangeTag
+	}
 
 	switch name {
 	case provider.NameAWS:
@@ -77,4 +86,21 @@ func (c *Config) NewProvider(ctx context.Context) (provider.Provider, error) {
 	}
 
 	return provider.New(ctx, name, opts)
+}
+
+// ProviderRangeTag returns the provider-side Range identity declared by the
+// selected range. Cloud-backed ranges fail closed when the manifest or tag is
+// absent so direct provider callers cannot accidentally disable isolation.
+func (c *Config) ProviderRangeTag() (string, error) {
+	manifest, found, err := rangeconfig.Load(c.LabPath())
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", fmt.Errorf("range %s must declare range.yml with discovery.range_tag", c.ResolvedLab())
+	}
+	if manifest.Discovery.RangeTag == "" {
+		return "", fmt.Errorf("range %s must declare discovery.range_tag", c.ResolvedLab())
+	}
+	return manifest.Discovery.RangeTag, nil
 }

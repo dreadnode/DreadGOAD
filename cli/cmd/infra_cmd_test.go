@@ -18,6 +18,31 @@ func TestMaterializeLabConfigAllowsMissingOptionalConfig(t *testing.T) {
 	}
 }
 
+func TestMaterializeLabConfigUsesActiveLab(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "ad", "SERVICE", "data")
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := []byte(`{"service":true}`)
+	if err := os.WriteFile(filepath.Join(dataDir, "config.json"), want, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := &config.Config{ProjectRoot: root, Env: "service-dev", Lab: "SERVICE"}
+	if err := materializeLabConfig(cfg); err != nil {
+		t.Fatalf("materializeLabConfig() error: %v", err)
+	}
+	destination := filepath.Join(dataDir, "service-dev-config.json")
+	got, err := os.ReadFile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(want) {
+		t.Errorf("materialized config = %s, want %s", got, want)
+	}
+}
+
 func TestMaterializeLabConfigSurfacesResolutionFailure(t *testing.T) {
 	root := t.TempDir()
 	dataDir := filepath.Join(root, "ad", "GOAD", "data")
@@ -192,5 +217,24 @@ func TestShouldEnableAWSKali(t *testing.T) {
 				t.Fatalf("shouldEnableAWSKali(%v, %q, %q) = %v, want %v", tt.requested, tt.action, tt.path, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestShouldBootstrapAWSBackendForOptedInProfile(t *testing.T) {
+	automatic := rangeOperations{autoBootstrapAWSBackend: true}
+	manual := rangeOperations{}
+	for _, action := range []string{"init", "plan", "apply"} {
+		if !shouldBootstrapAWSBackend(automatic, action, false) {
+			t.Fatalf("opted-in profile should bootstrap its backend for %s", action)
+		}
+	}
+	if shouldBootstrapAWSBackend(automatic, "destroy", false) {
+		t.Fatal("destroy should not bootstrap a missing backend")
+	}
+	if shouldBootstrapAWSBackend(manual, "apply", false) {
+		t.Fatal("manual profile changed its opt-in bootstrap behavior")
+	}
+	if !shouldBootstrapAWSBackend(manual, "apply", true) {
+		t.Fatal("explicit backend bootstrap was ignored")
 	}
 }

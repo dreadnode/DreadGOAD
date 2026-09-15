@@ -309,6 +309,20 @@ def parse_validate_report(output: str) -> dict[str, t.Any] | None:
     absent, the name doesn't look like a validation report, or the file can't be
     read (it lives on the machine that ran the CLI — always local for us).
     """
+    # Current CLI versions emit per-check NDJSON followed by one complete
+    # report. Prefer that stable stdout contract; retain the path parser for
+    # compatibility with older binaries.
+    for line in reversed(output.splitlines()):
+        line = line.strip()
+        if not line.startswith("{") or '"checks"' not in line:
+            continue
+        try:
+            report = json.loads(line)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(report, dict) and isinstance(report.get("checks"), list):
+            return report
+
     match = _VALIDATE_PATH_RE.search(output)
     if match is None:
         return None
@@ -498,10 +512,13 @@ def summarize_health(report: dict[str, t.Any]) -> str:
     """
     passed = report.get("passed", 0)
     failed = report.get("failed", 0)
+    warned = report.get("warnings", report.get("warned", 0))
     skipped = report.get("skipped", 0)
     checks = report.get("checks") or []
 
-    lines = [f"health: {passed} passed, {failed} failed, {skipped} skipped"]
+    lines = [
+        f"health: {passed} passed, {failed} failed, {warned} warned, {skipped} skipped"
+    ]
     problems = [c for c in checks if str(c.get("status", "")).upper() != "OK"]
     if not problems:
         lines.append("all checks passed.")
