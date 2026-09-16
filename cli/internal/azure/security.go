@@ -29,6 +29,7 @@ func (p *AzureProvider) SecurityCheck(ctx context.Context, env, vpcCIDR string) 
 	if err != nil {
 		return nil, fmt.Errorf("discover instances: %w", err)
 	}
+	instances = filterInstancesByRange(instances, p.rangeTag)
 	if len(instances) == 0 {
 		return nil, fmt.Errorf("no instances found for env=%s", env)
 	}
@@ -46,6 +47,16 @@ func (p *AzureProvider) SecurityCheck(ctx context.Context, env, vpcCIDR string) 
 	results = append(results, bastionCheck(rg, bastionExists(ctx, c, rg)))
 	results = append(results, sshKeyAuthChecks(vmInfos)...)
 	return results, nil
+}
+
+func filterInstancesByRange(instances []Instance, rangeTag string) []Instance {
+	filtered := make([]Instance, 0, len(instances))
+	for _, instance := range instances {
+		if provider.MatchesRangeTag(instance.Tags, rangeTag) {
+			filtered = append(filtered, instance)
+		}
+	}
+	return filtered
 }
 
 func collectVMNICInfo(ctx context.Context, c *Client, instances []Instance) []vmNICInfo {

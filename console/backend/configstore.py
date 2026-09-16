@@ -6,13 +6,14 @@ files exist, where a new one should be written, and whether the provider it
 names has credentials available to it.
 
 The console has always been able to *drive* more than one config — every CLI
-spawn carries ``--config`` (commands.py:413-415) and derives its working
-directory from that config's own tree (projectroot.run_cwd). What was missing
-was any way to see or create them, which is what this provides.
+spawn built by :func:`commands.build_argv` carries ``--config`` and derives its
+working directory from that config's own tree (projectroot.run_cwd). What was
+missing was any way to see or create them, which is what this provides.
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 import typing as t
@@ -101,6 +102,25 @@ def path_for(name: str) -> Path:
     return candidate
 
 
+def managed_path_for(range_name: str, provider: str, env: str) -> Path:
+    """Stable private config path for one range-first environment."""
+    raw = f"{range_name}-{provider}-{env}".lower()
+    slug = _SLUG_STRIP.sub("-", raw).strip("-")
+    if not slug:
+        raise ValueError("range, provider, and environment produced no usable name")
+    # The visible slug is not injective: ``a_b`` and ``a-b`` both become
+    # ``a-b``, and case-insensitive filesystems add another collision class.
+    # A digest of the validated selectors keeps paths stable and distinct while
+    # the readable prefix remains useful during manual inspection.
+    digest = hashlib.sha256(raw.encode()).hexdigest()[:10]
+    slug = f"{slug[:69].rstrip('-')}-{digest}"
+    root = paths.configs_root().resolve()
+    candidate = (root / f"{slug}.yaml").resolve()
+    if candidate.parent != root:
+        raise ValueError(f"refusing to write a config outside {root}")
+    return candidate
+
+
 def default_config_path() -> str:
     """The repo-root ``dreadgoad.yaml`` the console starts out pointed at."""
     return str(paths.repo_root() / "dreadgoad.yaml")
@@ -120,6 +140,7 @@ def _summarise(path: str, source: str) -> dict[str, t.Any]:
         "provider": None,
         "region": None,
         "environments": [],
+        "environment_details": [],
         "error": None,
     }
     try:
@@ -134,6 +155,7 @@ def _summarise(path: str, source: str) -> dict[str, t.Any]:
         entry["provider"] = info.get("provider")
         entry["region"] = info.get("region")
         entry["environments"] = info.get("environments") or []
+        entry["environment_details"] = info.get("environment_details") or []
     return entry
 
 

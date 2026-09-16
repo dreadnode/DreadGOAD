@@ -3,6 +3,7 @@ package azure
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +22,8 @@ func init() {
 		return &AzureProvider{
 			client:        client,
 			env:           opts.Env,
+			lab:           opts.Lab,
+			rangeTag:      opts.RangeTag,
 			inventoryPath: opts.InventoryPath,
 		}, nil
 	})
@@ -39,6 +42,8 @@ func init() {
 type AzureProvider struct {
 	client        *Client
 	env           string
+	lab           string
+	rangeTag      string
 	inventoryPath string
 
 	winrmOnce sync.Once
@@ -67,7 +72,7 @@ func (p *AzureProvider) DiscoverInstances(ctx context.Context, env string) ([]pr
 	if err != nil {
 		return nil, err
 	}
-	return toProviderInstances(instances), nil
+	return provider.FilterInstancesByRange(toProviderInstances(instances), p.rangeTag), nil
 }
 
 func (p *AzureProvider) DiscoverAllInstances(ctx context.Context, env string) ([]provider.Instance, error) {
@@ -75,16 +80,21 @@ func (p *AzureProvider) DiscoverAllInstances(ctx context.Context, env string) ([
 	if err != nil {
 		return nil, err
 	}
-	return toProviderInstances(instances), nil
+	return provider.FilterInstancesByRange(toProviderInstances(instances), p.rangeTag), nil
 }
 
 func (p *AzureProvider) FindInstanceByHostname(ctx context.Context, env, hostname string) (*provider.Instance, error) {
-	inst, err := p.client.FindInstanceByHostname(ctx, env, hostname)
+	instances, err := p.DiscoverAllInstances(ctx, env)
 	if err != nil {
 		return nil, err
 	}
-	pi := toProviderInstance(*inst)
-	return &pi, nil
+	wanted := strings.ToUpper(hostname)
+	for i := range instances {
+		if strings.Contains(strings.ToUpper(instances[i].Name), wanted) {
+			return &instances[i], nil
+		}
+	}
+	return nil, fmt.Errorf("instance not found for hostname %s in lab %s", hostname, p.lab)
 }
 
 func (p *AzureProvider) StartInstances(ctx context.Context, ids []string) error {
@@ -108,7 +118,7 @@ func (p *AzureProvider) DestroyInstances(ctx context.Context, ids []string) erro
 // runner's own lazy init on first runPS call.
 func (p *AzureProvider) runner() *winrmRunner {
 	p.winrmOnce.Do(func() {
-		p.winrm = newWinRMRunner(p.client, p.env, p.inventoryPath)
+		p.winrm = newWinRMRunner(p.client, p.env, p.rangeTag, p.inventoryPath)
 	})
 	return p.winrm
 }

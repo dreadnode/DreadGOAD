@@ -1,10 +1,14 @@
 locals {
+  instance_name = var.instance_name != "" ? "${var.deployment_name}-${var.instance_name}" : "${var.deployment_name}-dreadgoad-kali"
+  lab_name      = var.lab_name != "" ? var.lab_name : "${var.deployment_name}-goad"
+
   base_tags = {
     Module      = "terraform-aws-kali"
     Project     = "DreadGOAD"
     Environment = var.env
     Role        = "AttackBox"
-    Lab         = "${var.deployment_name}-goad"
+    Lab         = local.lab_name
+    OS          = "Linux"
   }
 
   # Discovery-critical tags cannot be replaced by caller-supplied metadata.
@@ -27,13 +31,14 @@ module "kali" {
   source = "../terraform-aws-instance-factory"
 
   env           = var.env
-  instance_name = "${var.deployment_name}-dreadgoad-kali"
+  instance_name = local.instance_name
   instance_type = var.instance_type
   os_type       = "linux"
   enable_asg    = false
 
-  vpc_id    = var.vpc_id
-  subnet_id = var.subnet_id
+  vpc_id     = var.vpc_id
+  subnet_id  = var.subnet_id
+  private_ip = var.private_ip
 
   # The instance factory creates the IAM role/profile with
   # AmazonSSMManagedInstanceCore. The Kali image needs the agent installed by

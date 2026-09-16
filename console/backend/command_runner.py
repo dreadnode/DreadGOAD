@@ -21,6 +21,7 @@ from . import (
     commands,
     fetch,
     hook,
+    lifecycle,
     paths,
     projectroot,
     summary,
@@ -199,6 +200,26 @@ def _security_progress(line: str) -> str | None:
     return f"{status:<5} {label}{sev}" + (f" — {detail}" if detail else "")
 
 
+def _validate_progress(line: str) -> str | None:
+    """Render one validate NDJSON record without leaking raw JSON into chat."""
+    line = line.strip()
+    if not line.startswith("{") or '"status"' not in line or '"checks"' in line:
+        return None
+    try:
+        check = json.loads(line)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(check, dict):
+        return None
+    status = check.get("status", "?")
+    category = check.get("category", "")
+    name = check.get("name", "")
+    host = check.get("host", "")
+    prefix = f"{host}: " if host else ""
+    label = f"{category}: {name}" if category else str(name)
+    return f"{status:<5} {prefix}{label}"
+
+
 def _parse_security_report(output: str) -> dict[str, t.Any] | None:
     """Extract a security report from NDJSON output (same pattern as health)."""
     for line in output.splitlines():
@@ -326,7 +347,17 @@ async def _prepare_extra(
         raise _Aborted(1, str(exc)) from exc
     if rc_fetch != 0:
         raise _Aborted(rc_fetch, f"report fetch failed: {message[-300:]}", message)
-    return [local, *extra[1:]]
+    trailing = extra[1:]
+    if not _has_option(trailing, "--answer-key"):
+        generated_key = lifecycle.answer_key_path(session)
+        if generated_key.is_file():
+            trailing = ["--answer-key", str(generated_key), *trailing]
+    return [local, *trailing]
+
+
+def _has_option(args: list[str], option: str) -> bool:
+    """Return whether args contain ``--flag value`` or ``--flag=value``."""
+    return any(arg == option or arg.startswith(f"{option}=") for arg in args)
 
 
 # ---------------------------------------------------------------------------
@@ -483,6 +514,11 @@ async def _stream_output(
             if progress is None:
                 continue
             line = progress
+        if name == "/validate":
+            progress = _validate_progress(line)
+            if progress is None:
+                continue
+            line = progress
         await chat_events.emit_event(
             app, session_id, "command_progress", {"line": line}, persist=False
         )
@@ -502,6 +538,7 @@ async def _emit_overlays(
                 {
                     "passed": report.get("passed", 0),
                     "failed": report.get("failed", 0),
+                    "warned": report.get("warnings", report.get("warned", 0)),
                     "skipped": report.get("skipped", 0),
                     "checks": report.get("checks", []),
                 },
@@ -687,7 +724,11 @@ async def _finalize_command(
                 pass
         raise asyncio.CancelledError
 
-    payload = await hook.run_check(app, session_id, _capture_command(session_id))
+    instances = parse_instances(result.output) if plan.name == "/instances" else None
+    if instances is not None:
+        payload = await hook.apply_instances(app, session_id, instances)
+    else:
+        payload = await hook.run_check(app, session_id, _capture_command(session_id))
     await chat_events.emit_event(app, session_id, "check_run", payload)
     await _emit_overlays(app, session_id, plan.name, result.output, result.exit_code)
     return result.exit_code, result.output

@@ -40,12 +40,11 @@ class Command:
 
     name: str
     verb: tuple[str, ...]  # base CLI verb after `dreadgoad`
-    dispatch: str = "direct"  # "direct" (deterministic) | "agent"
+    dispatch: str = "direct"  # "direct" | "composite" | "agent"
     long_running: bool = False  # streamed + guarded cancel (§5.4)
     takes_args: bool = False
-    # Agent-dispatched composite commands do not map to one CLI verb. List the
-    # concrete run_dreadgoad commands the prompt may use so its constraints do
-    # not contradict the command-specific guidance.
+    # Composite commands list their deterministic child commands. Agent
+    # commands use the same field to constrain run_dreadgoad calls.
     agent_commands: tuple[str, ...] = ()
     # Whether a direct command's bounded output summary may be added to model
     # context. Authentication output is deliberately excluded.
@@ -161,13 +160,13 @@ REGISTRY: dict[str, Command] = {
         "/health",
         ("health-check", "--json"),
         long_running=True,
-        description="Check each host is reachable and Active Directory is serving",
-        detail="read-only; reports per host, so a failure is scoped to one machine",
+        description="Check each host and its lab-specific core services",
+        detail="read-only; uses the selected lab's health-check implementation",
     ),
     "/status": Command(
         "/status",
         (),
-        dispatch="agent",
+        dispatch="composite",
         long_running=True,
         agent_commands=("/instances", "/health"),
         description="Cloud power state + host-level health in one pass",
@@ -182,10 +181,10 @@ REGISTRY: dict[str, Command] = {
     ),
     "/validate": Command(
         "/validate",
-        ("validate",),
+        ("validate", "--json"),
         long_running=True,
-        description="Check the vulnerability configuration matches this variant",
-        detail="read-only; needs the variant's mapping.json and an inventory",
+        description="Check the selected lab against its complete expected state",
+        detail="read-only; uses the selected lab's validation implementation",
     ),
     "/exec": Command(
         "/exec",
@@ -434,7 +433,7 @@ def _verb_for(cmd: Command, extra: list[str]) -> tuple[list[str], list[str]]:
 # the agent's args would silently override the session. ``infra --deployment``
 # and the score commands' explicit profile/attack-box selectors are included
 # for the same reason.
-_SCOPE_LONG_FLAGS = frozenset(
+_OVERRIDE_LONG_FLAGS = frozenset(
     {
         "--config",
         "--env",
@@ -450,7 +449,7 @@ _SCOPE_LONG_FLAGS = frozenset(
 # as ``-evalue`` (plus ``-e=value``). Checking only whole argv tokens leaves the
 # concatenated form as a range escape. ``-c`` is retained defensively for older
 # CLI builds even though the current root flag has no config shorthand.
-_SCOPE_SHORT_FLAGS = frozenset({"-c", "-e", "-p", "-d"})
+_OVERRIDE_SHORT_FLAGS = frozenset({"-c", "-e", "-p", "-d"})
 
 _EXEC_VALUE_FLAGS = frozenset({"--hosts", "--cmd", "--timeout"})
 _EXEC_MAX_SCRIPT_CHARS = 16_384
@@ -619,13 +618,13 @@ def _validate_exec_args(extra: list[str]) -> None:
             raise ValueError("--timeout may not exceed 30m")
 
 
-def _scope_override_flag(arg: str) -> str | None:
+def _find_override_flag(arg: str) -> str | None:
     """Return the scope selector encoded in one argv token, if any."""
     head = arg.split("=", 1)[0]
-    if head in _SCOPE_LONG_FLAGS or head in _SCOPE_SHORT_FLAGS:
+    if head in _OVERRIDE_LONG_FLAGS or head in _OVERRIDE_SHORT_FLAGS:
         return head
     if not arg.startswith("--"):
-        for flag in _SCOPE_SHORT_FLAGS:
+        for flag in _OVERRIDE_SHORT_FLAGS:
             if arg.startswith(flag) and len(arg) > len(flag):
                 return flag
     return None
@@ -640,7 +639,7 @@ def _rejects_anchor_override(extra: list[str]) -> None:
     stripping keeps the agent from believing it acted on the context it named.
     """
     for arg in extra:
-        flag = _scope_override_flag(arg)
+        flag = _find_override_flag(arg)
         if flag is not None:
             raise ValueError(
                 f"refusing to run: {flag!r} would retarget the range/cloud "

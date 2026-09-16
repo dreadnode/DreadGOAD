@@ -48,10 +48,17 @@ func runLabList(cmd *cobra.Command, args []string) error {
 	fmt.Println(strings.Repeat("-", 80))
 	for _, l := range labs {
 		fmt.Printf("%-20s %-40s %s\n",
-			l.Name,
+			labListLabel(l),
 			strings.Join(l.Providers, ", "),
 			strings.Join(l.Hosts, ", "),
 		)
 	}
 	return nil
+}
+
+func labListLabel(candidate lab.Lab) string {
+	if displayName := strings.TrimSpace(candidate.DisplayName); displayName != "" {
+		return displayName
+	}
+	return candidate.Name
 }

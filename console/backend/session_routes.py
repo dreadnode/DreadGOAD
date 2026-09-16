@@ -6,6 +6,7 @@ import typing as t
 
 import yaml
 from fastapi import APIRouter, HTTPException, Request
+from pydantic import BaseModel, Field
 
 from . import chat, configstore, paths
 from .schemas import SessionDocument
@@ -14,25 +15,96 @@ from .sessions import SessionService
 router = APIRouter()
 
 
+class SessionRequestBase(BaseModel):
+    """Fields shared by every session-creation request."""
+
+    env: str = ""
+    model: str | None = None
+    label: str | None = None
+
+
+class AttachSessionRequest(SessionRequestBase):
+    """Attach a console session to an environment in an existing config."""
+
+    mode: t.Literal["attach"] = "attach"
+    config_path: str | None = None
+
+
+class NewEnvironmentSessionRequest(SessionRequestBase):
+    """Create an environment in an existing config and attach to it."""
+
+    mode: t.Literal["new"]
+    config_path: str | None = None
+    env_fields: dict[str, t.Any] = Field(default_factory=dict)
+    top_level: dict[str, t.Any] | None = None
+
+
+class NewConfigSessionRequest(SessionRequestBase):
+    """Create a managed config with its first environment and session."""
+
+    mode: t.Literal["new_config"]
+    config_name: str | None = None
+    provider: str
+    region: str | None = None
+    env_fields: dict[str, t.Any] = Field(default_factory=dict)
+
+
+class CreateRangeSessionRequest(SessionRequestBase):
+    """Create a range-first managed environment and session."""
+
+    mode: t.Literal["create_range"]
+    range: str
+    provider: str
+    region: str | None = None
+    customization: t.Literal["standard", "randomized"] = "standard"
+    vpc_cidr: str | None = None
+
+
+SessionCreateRequest = (
+    AttachSessionRequest
+    | NewEnvironmentSessionRequest
+    | NewConfigSessionRequest
+    | CreateRangeSessionRequest
+)
+
+
 def _service(request: Request) -> SessionService:
     return request.app.state.sessions
 
 
+def _trim_optional(value: str | None) -> str | None:
+    """Trim an optional request string and normalize blank values to ``None``."""
+    if value is None:
+        return None
+    return value.strip() or None
+
+
 @router.post("/api/sessions")
-async def create_session(request: Request, body: dict[str, t.Any]) -> SessionDocument:
+async def create_session(
+    request: Request, body: SessionCreateRequest
+) -> SessionDocument:
     """Create a session by attaching to, or creating, an environment."""
     service = _service(request)
-    mode = body.get("mode", "attach")
-    config_path = body.get("config_path") or str(paths.repo_root() / "dreadgoad.yaml")
-    env = (body.get("env") or "").strip()
+    env = body.env.strip()
     if not env:
         raise HTTPException(status_code=400, detail="env is required")
-    model = body.get("model") or paths.default_model()
-    label = body.get("label")
+    model = body.model or paths.default_model()
+    label = body.label
 
     try:
-        if mode == "new_config":
-            provider = (body.get("provider") or "").strip()
+        if isinstance(body, CreateRangeSessionRequest):
+            return await service.create_range_session(
+                body.range,
+                body.provider,
+                env,
+                region=_trim_optional(body.region),
+                customization=body.customization,
+                vpc_cidr=_trim_optional(body.vpc_cidr),
+                model=model,
+                label=label,
+            )
+        if isinstance(body, NewConfigSessionRequest):
+            provider = body.provider.strip()
             if provider not in configstore.PROVIDERS:
                 raise HTTPException(
                     status_code=400,
@@ -44,23 +116,25 @@ async def create_session(request: Request, body: dict[str, t.Any]) -> SessionDoc
                     ),
                 )
             return await service.create_config_session(
-                body.get("config_name") or env,
+                body.config_name or env,
                 provider,
                 env,
-                body.get("env_fields") or {},
-                region=(body.get("region") or "").strip() or None,
+                body.env_fields,
+                region=_trim_optional(body.region),
                 model=model,
                 label=label,
             )
-        if mode == "new":
+        if isinstance(body, NewEnvironmentSessionRequest):
+            config_path = body.config_path or str(paths.repo_root() / "dreadgoad.yaml")
             return await service.create_new_env_session(
                 config_path,
                 env,
-                body.get("env_fields") or {},
-                top_level=body.get("top_level"),
+                body.env_fields,
+                top_level=body.top_level,
                 model=model,
                 label=label,
             )
+        config_path = body.config_path or str(paths.repo_root() / "dreadgoad.yaml")
         return await service.create_session(config_path, env, model=model, label=label)
     except FileExistsError as exc:
         # 409, not 400: the request was well-formed and the name is simply

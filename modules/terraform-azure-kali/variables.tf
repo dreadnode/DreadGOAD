@@ -3,6 +3,18 @@ variable "deployment_name" {
   type        = string
 }
 
+variable "instance_name" {
+  description = "Logical Kali host name used in Azure resource names."
+  type        = string
+  default     = "kali"
+}
+
+variable "computer_name" {
+  description = "Optional guest hostname. Defaults to the generated Azure name."
+  type        = string
+  default     = ""
+}
+
 variable "env" {
   description = "Environment name (e.g. test, staging)."
   type        = string
@@ -23,13 +35,30 @@ variable "virtual_network_name" {
   type        = string
 }
 
+variable "subnet_id" {
+  description = "Optional existing subnet for Kali. When null, the module creates a dedicated subnet and NSG."
+  type        = string
+  default     = null
+}
+
+variable "private_ip_address" {
+  description = "Optional static private IPv4 address. Dynamic allocation is used when null."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.private_ip_address == null || can(cidrnetmask("${var.private_ip_address}/32"))
+    error_message = "private_ip_address must be a valid IPv4 address or null."
+  }
+}
+
 variable "kali_subnet_cidr" {
   description = "CIDR for the Kali attack box's dedicated subnet. /28 is plenty for one VM."
   type        = string
   default     = "10.8.4.0/28"
 
   validation {
-    condition     = can(cidrhost(var.kali_subnet_cidr, 0))
+    condition     = can(cidrnetmask(var.kali_subnet_cidr))
     error_message = "kali_subnet_cidr must be a valid IPv4 CIDR block."
   }
 }

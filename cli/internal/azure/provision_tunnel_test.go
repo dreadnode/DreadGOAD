@@ -30,6 +30,38 @@ func TestStartBastionTunnelProcessRequiresCommand(t *testing.T) {
 	}
 }
 
+func TestSelectInstanceByRoleRequiresExactRange(t *testing.T) {
+	instances := []Instance{
+		{ID: "wrong-range", Tags: map[string]string{"Range": "OTHER", "Role": "AnsibleController"}},
+		{ID: "wrong-role", Tags: map[string]string{"Range": "GOAD", "Role": "AttackBox"}},
+		{ID: "wanted", Tags: map[string]string{"Range": "GOAD", "Role": "ansiblecontroller"}},
+	}
+
+	got, err := selectInstanceByRole(instances, "shared", "GOAD", "AnsibleController")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != "wanted" {
+		t.Fatalf("selected instance %q, want exact-range controller", got.ID)
+	}
+	if _, err := selectInstanceByRole(instances, "shared", "MISSING", "AnsibleController"); err == nil {
+		t.Fatal("selected a controller from another range")
+	}
+}
+
+func TestBastionDiscoveryQueryIncludesExactRange(t *testing.T) {
+	query := bastionDiscoveryQuery("shared", "GOAD")
+	for _, want := range []string{"tags.Environment=='shared'", "tags.Range=='GOAD'"} {
+		if !strings.Contains(query, want) {
+			t.Fatalf("range-scoped query %q does not contain %q", query, want)
+		}
+	}
+	legacy := bastionDiscoveryQuery("shared", "")
+	if strings.Contains(legacy, "tags.Range") {
+		t.Fatalf("legacy query unexpectedly filters range: %q", legacy)
+	}
+}
+
 // processAlive reports whether pid still exists (signal 0 probes without
 // delivering). A reaped process yields ESRCH.
 func processAlive(pid int) bool {

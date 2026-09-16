@@ -43,7 +43,7 @@ Scripts run with administrative privileges. There is no dry run: whatever is
 passed to --cmd executes as written.
 
 Provider notes:
-  - AWS uses AWS-RunPowerShellScript, so targets must be Windows.
+  - AWS selects a shell or PowerShell SSM document from each target's OS tag.
   - Azure infers the interpreter from the VM's OS, so Linux hosts work too.
   - Azure caps output at 4096 bytes per stream and takes ~5-15s per invocation;
     scope queries narrowly rather than dumping large output.`,
@@ -132,7 +132,7 @@ func runExec(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	results := runOutOfBandOnAll(ctx, oob, execTargetIDs(targets), script, timeout)
+	results := runOutOfBandOnAll(ctx, oob, targets, script, timeout)
 	out, failed := collectExecResults(targets, results)
 	if err := writeExecResults(out, asJSON); err != nil {
 		return err
@@ -144,14 +144,6 @@ func runExec(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("%d of %d host(s) did not succeed", failed, len(out))
 	}
 	return nil
-}
-
-func execTargetIDs(targets []provider.Instance) []string {
-	ids := make([]string, 0, len(targets))
-	for _, target := range targets {
-		ids = append(ids, target.ID)
-	}
-	return ids
 }
 
 func printExecPlan(targets []provider.Instance, oob provider.OutOfBandRunner, script string, asJSON bool) {
@@ -236,25 +228,32 @@ func isCommandSuccess(status string) bool {
 func runOutOfBandOnAll(
 	ctx context.Context,
 	oob provider.OutOfBandRunner,
-	ids []string,
+	targets []provider.Instance,
 	script string,
 	timeout time.Duration,
 ) map[string]*provider.CommandResult {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
-	out := make(map[string]*provider.CommandResult, len(ids))
-	for _, id := range ids {
+	out := make(map[string]*provider.CommandResult, len(targets))
+	instanceRunner, hasInstanceRunner := oob.(provider.InstanceOutOfBandRunner)
+	for _, target := range targets {
 		wg.Add(1)
-		go func(id string) {
+		go func(target provider.Instance) {
 			defer wg.Done()
-			res, err := oob.RunCommandOutOfBand(ctx, id, script, timeout)
+			var res *provider.CommandResult
+			var err error
+			if hasInstanceRunner {
+				res, err = instanceRunner.RunCommandOutOfBandOnInstance(ctx, target, script, timeout)
+			} else {
+				res, err = oob.RunCommandOutOfBand(ctx, target.ID, script, timeout)
+			}
 			if err != nil {
 				res = &provider.CommandResult{Status: "Error", Stderr: err.Error()}
 			}
 			mu.Lock()
-			out[id] = res
+			out[target.ID] = res
 			mu.Unlock()
-		}(id)
+		}(target)
 	}
 	wg.Wait()
 	return out

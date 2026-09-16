@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/dreadnode/dreadgoad/internal/rangeconfig"
 )
 
 // buildFakeProject creates a minimal project structure for testing.
@@ -29,6 +31,11 @@ func buildFakeProject(t *testing.T) string {
 		[]byte(configJSON), 0o644,
 	); err != nil {
 		t.Fatalf("WriteFile config.json: %v", err)
+	}
+	for _, provider := range []string{"aws", "azure"} {
+		if err := os.WriteFile(filepath.Join(goadDir, "providers", provider, "inventory"), []byte("[all]\n"), 0o644); err != nil {
+			t.Fatalf("WriteFile inventory: %v", err)
+		}
 	}
 
 	// MINI lab with no providers and no config.json
@@ -101,6 +108,133 @@ func TestDiscoverLabs_Providers(t *testing.T) {
 	}
 	if len(goad.Providers) != 2 {
 		t.Errorf("expected 2 providers, got %d: %v", len(goad.Providers), goad.Providers)
+	}
+}
+
+func TestDiscoverLabsCreationMetadataRequiresACompleteTemplate(t *testing.T) {
+	root := buildFakeProject(t)
+	template := filepath.Join(root, "infra", "azure", "goad-deployment", "test")
+	if err := os.MkdirAll(filepath.Join(template, "centralus", "goad", "DC01"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(template, "centralus", "goad", "DC02"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for path, body := range map[string]string{
+		filepath.Join(template, "env.hcl"):                                     "locals {}\n",
+		filepath.Join(template, "centralus", "region.hcl"):                     "locals {}\n",
+		filepath.Join(template, "centralus", "goad", "DC01", "terragrunt.hcl"): "terraform {}\n",
+		filepath.Join(template, "centralus", "goad", "DC02", "terragrunt.hcl"): "terraform {}\n",
+	} {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	labs, err := DiscoverLabs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, found := range labs {
+		if found.Name == "GOAD" {
+			if _, ok := found.ProviderSettings["azure"]; !ok {
+				t.Fatalf("complete Azure template was not advertised: %#v", found)
+			}
+			if _, ok := found.ProviderSettings["aws"]; ok {
+				t.Fatalf("missing AWS template was advertised: %#v", found)
+			}
+			return
+		}
+	}
+	t.Fatal("GOAD not discovered")
+}
+
+func TestTemplateSupportRequiresTheDeclaredDefaultRegion(t *testing.T) {
+	root := t.TempDir()
+	template := filepath.Join(root, "infra", "azure", "custom", "seed")
+	if err := os.MkdirAll(filepath.Join(template, "wrong-region"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for path, body := range map[string]string{
+		filepath.Join(template, "env.hcl"):                    "locals {}\n",
+		filepath.Join(template, "wrong-region", "region.hcl"): "locals {}\n",
+	} {
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	spec := rangeconfig.ProviderSpec{
+		Deployment:          "custom",
+		ScaffoldProfile:     rangeconfig.ProfileTemplate,
+		TemplateEnvironment: "seed",
+		DefaultRegion:       "centralus",
+	}
+	if templateSupportsLab(root, "azure", spec, nil) {
+		t.Fatal("template with only the wrong region was advertised")
+	}
+	if err := os.MkdirAll(filepath.Join(template, "centralus"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(template, "centralus", "region.hcl"), []byte("locals {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !templateSupportsLab(root, "azure", spec, nil) {
+		t.Fatal("template with the declared default region was not advertised")
+	}
+}
+
+func TestDiscoverLabsCreationMetadataRequiresProviderInventory(t *testing.T) {
+	root := buildFakeProject(t)
+	template := filepath.Join(root, "infra", "azure", "goad-deployment", "test", "centralus")
+	for _, host := range []string{"DC01", "DC02"} {
+		if err := os.MkdirAll(filepath.Join(template, "goad", host), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(template, "goad", host, "terragrunt.hcl"), []byte("terraform {}\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(filepath.Dir(template), "env.hcl"), []byte("locals {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(template, "region.hcl"), []byte("locals {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, "ad", "GOAD", "providers", "azure", "inventory")); err != nil {
+		t.Fatal(err)
+	}
+	labs, err := DiscoverLabs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, found := range labs {
+		if found.Name == "GOAD" {
+			if _, ok := found.ProviderSettings["azure"]; ok {
+				t.Fatal("provider without an inventory was advertised")
+			}
+			return
+		}
+	}
+	t.Fatal("GOAD not discovered")
+}
+
+func TestDiscoverLabsExcludesGeneratedRangesByMarker(t *testing.T) {
+	root := buildFakeProject(t)
+	generated := filepath.Join(root, "ad", "GOAD-redteam")
+	if err := os.MkdirAll(generated, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(generated, "mapping.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	labs, err := DiscoverLabs(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, found := range labs {
+		if found.Name == "GOAD-redteam" {
+			t.Fatal("generated range was exposed as a base range")
+		}
 	}
 }
 

@@ -170,6 +170,30 @@ def main() -> None:
         )
         print("PASS create requires env")
 
+        # Request models reject non-string scalar values before route logic can
+        # call string methods on them and turn operator input into a 500.
+        malformed_session_requests = (
+            {"config_path": str(cfg), "env": {"name": "dev"}},
+            {
+                "mode": "create_range",
+                "range": "SERVICE",
+                "provider": "azure",
+                "region": ["centralus"],
+                "env": "service-dev",
+            },
+            {
+                "mode": "create_range",
+                "range": "SERVICE",
+                "provider": "azure",
+                "vpc_cidr": {"cidr": "10.50.0.0/16"},
+                "env": "service-dev",
+            },
+        )
+        for malformed in malformed_session_requests:
+            response = client.post("/api/sessions", json=malformed)
+            assert response.status_code == 422, (malformed, response.text)
+        print("PASS malformed session fields → 422")
+
         # bad config path → 400 (not 500)
         assert (
             client.post(

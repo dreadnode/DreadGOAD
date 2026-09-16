@@ -138,6 +138,11 @@ resource "aws_security_group" "this" {
 
   lifecycle {
     create_before_destroy = true
+
+    precondition {
+      condition     = var.private_ip == null || !local.create_asg
+      error_message = "private_ip can only be set for a standalone instance."
+    }
   }
 
   tags = merge(

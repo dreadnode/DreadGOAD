@@ -48,5 +48,6 @@ inputs = {
   additional_tags = {
     Project = "DreadGOAD"
     Lab     = "${local.deployment_name}"
+    Range   = "GOAD"
   }
 }

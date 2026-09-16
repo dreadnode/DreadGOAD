@@ -12,6 +12,8 @@ import (
 	"sort"
 	"strings"
 	"unicode/utf8"
+
+	"go.yaml.in/yaml/v3"
 )
 
 // CompletionMarkerName is written only after a variant generation run reaches
@@ -19,6 +21,45 @@ import (
 const CompletionMarkerName = ".dreadgoad-variant-complete"
 
 const completionMarkerContent = "complete\n"
+
+const activeDirectoryRangeKind = "active-directory"
+
+type rangeManifest struct {
+	Kind string `yaml:"kind"`
+}
+
+// ValidateSource rejects range kinds that the GOAD-specific generator
+// cannot transform coherently. Manifests are optional for backward
+// compatibility with older Active Directory labs, but an explicit kind is
+// authoritative and defaults closed when it is unsupported or malformed.
+func ValidateSource(source string) error {
+	manifestPath := filepath.Join(source, "range.yml")
+	raw, err := os.ReadFile(manifestPath)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read range manifest %s: %w", manifestPath, err)
+	}
+
+	var manifest rangeManifest
+	if err := yaml.Unmarshal(raw, &manifest); err != nil {
+		return fmt.Errorf("parse range manifest %s: %w", manifestPath, err)
+	}
+	kind := strings.TrimSpace(manifest.Kind)
+	if kind == activeDirectoryRangeKind {
+		return nil
+	}
+	if kind == "" {
+		return fmt.Errorf("range manifest %s has no kind", manifestPath)
+	}
+	return fmt.Errorf(
+		"variants are only supported for %s ranges; %s declares kind %q",
+		activeDirectoryRangeKind,
+		source,
+		kind,
+	)
+}
 
 // IsComplete reports whether target contains a valid completion marker.
 func IsComplete(target string) (bool, error) {
@@ -232,6 +273,7 @@ type Generator struct {
 	preservedUsers  map[string]bool
 	pwdInDescUsers  map[string]bool // new_username -> has password in description
 	nameComponents  map[string]bool // Misc keys that are firstname/surname components
+	targetCreated   bool
 }
 
 // hostnameAliases maps canonical hostnames to known typos/aliases in upstream GOAD.
@@ -265,8 +307,20 @@ func NewGenerator(source, target, name string) *Generator {
 	}
 }
 
+// CreatedTarget reports whether the most recent Run call atomically created
+// the target directory. Callers can use this to clean up a partial result
+// without risking deletion of a target created by another process.
+func (g *Generator) CreatedTarget() bool {
+	return g.targetCreated
+}
+
 // Run executes the full variant generation process.
 func (g *Generator) Run() error {
+	g.targetCreated = false
+	if err := ValidateSource(g.SourcePath); err != nil {
+		return err
+	}
+
 	fmt.Printf("\n%s\n", strings.Repeat("=", 60))
 	fmt.Printf("GOAD Variant Generator - %s\n", g.VariantName)
 	fmt.Printf("%s\n", strings.Repeat("=", 60))
@@ -284,6 +338,7 @@ func (g *Generator) Run() error {
 	if err := createFreshTarget(g.TargetPath); err != nil {
 		return err
 	}
+	g.targetCreated = true
 
 	if err := g.copyAndTransform(); err != nil {
 		return fmt.Errorf("transform: %w", err)

@@ -6,14 +6,22 @@
 locals {
   env_vars = read_terragrunt_config(find_in_parent_folders("env.hcl"))
 
-  aws_region = coalesce(
+  # The selected environment directory is authoritative. Falling back to the
+  # process environment retains support for older layouts without region.hcl,
+  # while preventing a stale shell default from redirecting an explicit CLI or
+  # console region selection.
+  aws_region = can(read_terragrunt_config(find_in_parent_folders("region.hcl"))) ? read_terragrunt_config(find_in_parent_folders("region.hcl")).locals.aws_region : coalesce(
     get_env("AWS_DEFAULT_REGION", ""),
-    can(read_terragrunt_config(find_in_parent_folders("region.hcl"))) ? read_terragrunt_config(find_in_parent_folders("region.hcl")).locals.aws_region : "us-east-1"
+    "us-east-1",
   )
 
   deployment_name = local.env_vars.locals.deployment_name
   account_id      = local.env_vars.locals.aws_account_id
   env             = local.env_vars.locals.env
+  state_bucket_prefix = try(
+    local.env_vars.locals.state_bucket_prefix,
+    join("-", ["dreadgoad", local.deployment_name, local.env]),
+  )
 }
 
 generate "versions" {
@@ -41,7 +49,7 @@ remote_state {
   backend = "s3"
   config = {
     encrypt        = true
-    bucket         = join("-", ["dreadgoad", local.deployment_name, local.env, local.aws_region])
+    bucket         = join("-", [local.state_bucket_prefix, local.aws_region])
     key            = "${path_relative_to_include()}/terraform.tfstate"
     region         = local.aws_region
     dynamodb_table = join("-", [local.deployment_name, "tfstate"])

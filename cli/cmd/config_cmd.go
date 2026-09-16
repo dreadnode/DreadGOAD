@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/dreadnode/dreadgoad/internal/config"
+	"github.com/dreadnode/dreadgoad/internal/lab"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
@@ -26,7 +27,10 @@ var configShowCmd = &cobra.Command{
 			return err
 		}
 		fmt.Printf("Environment:    %s\n", cfg.Env)
-		fmt.Printf("Region:         %s\n", valueOrDefault(cfg.Region, "(unset — required for AWS commands)"))
+		fmt.Printf("Lab:            %s\n", cfg.ResolvedLab())
+		fmt.Printf("Provider:       %s\n", cfg.ResolvedProvider())
+		fmt.Printf("Deployment:     %s\n", cfg.ResolvedDeployment())
+		fmt.Printf("Region:         %s\n", valueOrDefault(cfg.ResolvedRegion(), "(unset — required for cloud commands)"))
 		fmt.Printf("Debug:          %v\n", cfg.Debug)
 		fmt.Printf("Max Retries:    %d\n", cfg.MaxRetries)
 		fmt.Printf("Retry Delay:    %ds\n", cfg.RetryDelay)
@@ -35,7 +39,8 @@ var configShowCmd = &cobra.Command{
 		fmt.Printf("Project Root:   %s\n", cfg.ProjectRoot)
 		fmt.Printf("Inventory:      %s\n", cfg.InventoryPath())
 		fmt.Printf("Ansible Config: %s\n", cfg.AnsibleCfgPath())
-		fmt.Printf("Playbooks:      %s\n", strings.Join(cfg.Playbooks, ", "))
+		playbooks := lab.PlaybooksForLab(cfg.ProjectRoot, cfg.ResolvedLab(), cfg.Playbooks)
+		fmt.Printf("Playbooks:      %s\n", strings.Join(playbooks, ", "))
 
 		fmt.Println("\nEnvironments:")
 		if len(cfg.Environments) == 0 {
@@ -47,6 +52,9 @@ var configShowCmd = &cobra.Command{
 					marker = " (active)"
 				}
 				fmt.Printf("  %s%s:\n", name, marker)
+				fmt.Printf("    lab: %s\n", valueOrDefault(ec.Lab, cfg.Lab))
+				fmt.Printf("    provider: %s\n", valueOrDefault(ec.Provider, cfg.Provider))
+				fmt.Printf("    deployment: %s\n", valueOrDefault(ec.Deployment, cfg.Infra.Deployment))
 				fmt.Printf("    variant: %v\n", ec.Variant)
 				if ec.Variant {
 					fmt.Printf("    variant_source: %s\n", valueOrDefault(ec.VariantSource, "ad/GOAD"))
@@ -85,6 +93,7 @@ var configInitCmd = &cobra.Command{
 
 		content := `# DreadGOAD CLI Configuration
 env: staging
+lab: GOAD
 # region: us-east-1  # AWS region (required for AWS commands; can also be set via DREADGOAD_REGION or --region)
 debug: false
 max_retries: 3
@@ -102,6 +111,7 @@ environments:
     variant_name: variant-1
     vpc_cidr: "10.0.0.0/16"
   staging:
+    # lab, provider, and deployment may be overridden per environment.
     variant: false
     vpc_cidr: "10.1.0.0/16"
   prod:

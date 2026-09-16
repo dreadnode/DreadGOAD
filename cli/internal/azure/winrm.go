@@ -28,6 +28,7 @@ import (
 type winrmRunner struct {
 	client        *Client
 	env           string
+	rangeTag      string
 	inventoryPath string
 
 	initOnce sync.Once
@@ -75,10 +76,11 @@ type hostCreds struct {
 	useNTLM bool
 }
 
-func newWinRMRunner(c *Client, env, inventoryPath string) *winrmRunner {
+func newWinRMRunner(c *Client, env, rangeTag, inventoryPath string) *winrmRunner {
 	return &winrmRunner{
 		client:        c,
 		env:           env,
+		rangeTag:      rangeTag,
 		inventoryPath: inventoryPath,
 		winrmByVMID:   make(map[string]*winrm.Client),
 		vmLocks:       make(map[string]*sync.Mutex),
@@ -124,7 +126,7 @@ func (r *winrmRunner) doInit(ctx context.Context) error {
 	}
 
 	slog.Info("opening Bastion → controller → SOCKS5 chain for WinRM validation", "env", r.env)
-	tunnel, err := StartProvisionTunnel(ctx, r.client, r.env)
+	tunnel, err := StartProvisionTunnel(ctx, r.client, r.env, r.rangeTag)
 	if err != nil {
 		return fmt.Errorf("start provision tunnel: %w", err)
 	}
