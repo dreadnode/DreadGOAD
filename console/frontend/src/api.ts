@@ -232,8 +232,9 @@ export interface CommandDef {
 export const api = {
   config: (): Promise<AppConfig> => authenticatedFetch('/api/config').then(r => json<AppConfig>(r)),
 
-  commands: (): Promise<{ commands: CommandDef[] }> =>
-    authenticatedFetch('/api/commands').then(r => json(r)),
+  commands: (sessionId?: string | null): Promise<{ commands: CommandDef[] }> =>
+    authenticatedFetch('/api/commands' + (sessionId ? `?session_id=${encodeURIComponent(sessionId)}` : ''))
+      .then(r => json(r)),
 
   configs: (): Promise<ConfigListing> => authenticatedFetch('/api/configs').then(r => json<ConfigListing>(r)),
 

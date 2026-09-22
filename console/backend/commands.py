@@ -247,35 +247,80 @@ AGENT_RUNNABLE: frozenset[str] = frozenset(
     name for name, command in REGISTRY.items() if command.verb and name != "/login"
 )
 
+RANGE_SEMANTIC_COMMANDS: frozenset[str] = frozenset(
+    {"/health", "/validate", "/score", "/reset", "/scrub"}
+)
 
-def command_catalog() -> list[dict[str, t.Any]]:
+
+def agent_runnable_for(
+    capabilities: t.Mapping[str, t.Mapping[str, t.Any]],
+) -> frozenset[str]:
+    """Return model-runnable commands for one range capability snapshot.
+
+    Non-semantic lifecycle commands remain globally available. Semantic
+    commands fail closed when the selected range omits or disables them; the
+    CLI retains its own independent enforcement as defense in depth.
+    """
+    allowed = set(AGENT_RUNNABLE)
+    for name in RANGE_SEMANTIC_COMMANDS:
+        capability = capabilities.get(name)
+        if capability is None or capability.get("supported") is not True:
+            allowed.discard(name)
+    return frozenset(allowed)
+
+
+def command_catalog(
+    capabilities: t.Mapping[str, t.Mapping[str, t.Any]] | None = None,
+) -> list[dict[str, t.Any]]:
     """Registry as a JSON-able list for the frontend autocomplete menu (§5.1).
 
     Preserves REGISTRY insertion order. ``dispatch`` lets the UI tag each row
     (direct vs agent); ``takes_args`` hints whether free-form args are expected.
     """
-    return [
-        {
-            "name": name,
-            "description": c.description,
-            "detail": c.detail,
-            # The CLI verb it maps to — an operator who knows `dreadgoad` can
-            # tell at a glance what will actually run. Empty for composite
-            # commands that run multiple verbs via the agent.
-            "cli": ("dreadgoad " + " ".join(c.verb)).strip() if c.verb else "",
-            "dispatch": c.dispatch,
-            "long_running": c.long_running,
-            "takes_args": c.takes_args,
-            # Irreversible. The backend approval boundary currently covers
-            # /destroy and /up; this remains useful catalog metadata for UI copy
-            # and for warning about future commands before they are gated.
-            "destructive": c.destructive,
-        }
-        for name, c in REGISTRY.items()
-    ]
+    catalog: list[dict[str, t.Any]] = []
+    for name, c in REGISTRY.items():
+        capability = capabilities.get(name) if capabilities is not None else None
+        if capability is not None and capability.get("supported") is False:
+            continue
+        # /status is only meaningful when its range-owned /health child exists.
+        if name == "/status" and capabilities is not None:
+            health = capabilities.get("/health")
+            if health is not None and health.get("supported") is False:
+                continue
+        catalog.append(
+            {
+                "name": name,
+                "description": (
+                    str(capability.get("description"))
+                    if capability and capability.get("description")
+                    else c.description
+                ),
+                "detail": (
+                    str(capability.get("detail"))
+                    if capability and capability.get("detail")
+                    else c.detail
+                ),
+                # The CLI verb it maps to — an operator who knows `dreadgoad` can
+                # tell at a glance what will actually run. Empty for composite
+                # commands that run multiple verbs via the agent.
+                "cli": ("dreadgoad " + " ".join(c.verb)).strip() if c.verb else "",
+                "dispatch": c.dispatch,
+                "long_running": c.long_running,
+                "takes_args": c.takes_args,
+                # Irreversible. The backend approval boundary currently covers
+                # /destroy and /up; this remains useful catalog metadata for UI copy
+                # and for warning about future commands before they are gated.
+                "destructive": c.destructive,
+            }
+        )
+    return catalog
 
 
-def expand_command_prompt(name: str, extra: list[str]) -> str:
+def expand_command_prompt(
+    name: str,
+    extra: list[str],
+    capabilities: t.Mapping[str, t.Mapping[str, t.Any]] | None = None,
+) -> str:
     """Turn a ``dispatch="agent"`` command into a structured prompt (ALFRED-style).
 
     The agent interprets the operator's free-form args into flags and runs the
@@ -284,6 +329,18 @@ def expand_command_prompt(name: str, extra: list[str]) -> str:
     guidance (flag semantics, gotchas); otherwise the generic template stands.
     """
     cmd = REGISTRY[name]
+    capability = capabilities.get(name) if capabilities is not None else None
+    description = (
+        str(capability.get("description"))
+        if capability and capability.get("description")
+        else cmd.description
+    )
+    detail = (
+        str(capability.get("detail"))
+        if capability and capability.get("detail")
+        else cmd.detail
+    )
+    detail_line = f"\nRange command detail: {detail}" if detail else ""
     verb = " ".join(cmd.verb)
     freeform = " ".join(extra) if extra else "(no extra arguments given)"
     guidance = load_prompt(name.lstrip("/"))
@@ -293,7 +350,8 @@ def expand_command_prompt(name: str, extra: list[str]) -> str:
             f"command={tool_name!r} with args=[]" for tool_name in cmd.agent_commands
         )
         return (
-            f"The operator invoked the {name} command — {cmd.description}.\n\n"
+            f"The operator invoked the {name} command — {description}."
+            f"{detail_line}\n\n"
             f"This is a composite console command, not a runnable dreadgoad command. "
             f"Use only the `run_dreadgoad` tool and run exactly these steps in order: "
             f"{steps}. Do NOT call command={name!r}, do not use any other command, "
@@ -303,7 +361,8 @@ def expand_command_prompt(name: str, extra: list[str]) -> str:
             f"Operator's request: {name} {freeform}"
         )
     return (
-        f"The operator invoked the {name} command — {cmd.description}.\n\n"
+        f"The operator invoked the {name} command — {description}."
+        f"{detail_line}\n\n"
         f"Run it using the `run_dreadgoad` tool with command={name!r}. Do NOT use "
         f"any other command, and NEVER use raw cloud CLI (aws/az/terraform) — only "
         f"`run_dreadgoad`. The range (config/env) is fixed by the tool; don't pass "
@@ -465,7 +524,9 @@ _AGENT_LOCAL_PATH_FLAGS: dict[str, frozenset[str]] = {
     "/up": frozenset({"--module", "--plays"}),
     "/provision": frozenset({"--plays"}),
     "/reset": frozenset({"--plays"}),
-    "/score": frozenset({"--report", "--answer-key", "--output", "--ssh-key"}),
+    "/score": frozenset(
+        {"--report", "--answer-key", "--output", "--ssh-key", "--range-artifacts"}
+    ),
     "/scrub": frozenset({"--report-output", "--ssh-key"}),
     "/validate": frozenset({"--output"}),
     "/variant": frozenset({"--source", "--target"}),

@@ -8,12 +8,14 @@ import (
 	"github.com/dreadnode/dreadgoad/internal/config"
 )
 
+const serviceHealthManifest = "commands:\n  health:\n    protocol: health/v1\n    handler:\n      type: executable\n      path: commands/health\n"
+
 func TestOperationsForSelectedProfile(t *testing.T) {
 	root := t.TempDir()
 	const profile = "test-service"
 	rangeOperationProfiles[profile] = rangeOperations{autoBootstrapAWSBackend: true}
 	t.Cleanup(func() { delete(rangeOperationProfiles, profile) })
-	writeOperationsManifest(t, root, "service", "schema_version: 1\nkind: service-range\noperations:\n  profile: test-service\n")
+	writeOperationsManifest(t, root, "service", "schema_version: 1\nkind: service-range\n"+serviceHealthManifest+"operations:\n  profile: test-service\n")
 
 	operations, err := operationsFor(&config.Config{ProjectRoot: root, Lab: "service"})
 	if err != nil {
@@ -39,8 +41,8 @@ func TestOperationsForActiveDirectoryDefaults(t *testing.T) {
 
 func TestOperationsForRejectsMissingAndUnsupportedProfiles(t *testing.T) {
 	root := t.TempDir()
-	writeOperationsManifest(t, root, "missing", "schema_version: 1\nkind: service-range\n")
-	writeOperationsManifest(t, root, "unknown", "schema_version: 1\nkind: service-range\noperations:\n  profile: unknown\n")
+	writeOperationsManifest(t, root, "missing", "schema_version: 1\nkind: service-range\n"+serviceHealthManifest)
+	writeOperationsManifest(t, root, "unknown", "schema_version: 1\nkind: service-range\n"+serviceHealthManifest+"operations:\n  profile: unknown\n")
 
 	for _, lab := range []string{"missing", "unknown"} {
 		if _, err := operationsFor(&config.Config{ProjectRoot: root, Lab: lab}); err == nil {

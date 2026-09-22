@@ -13,6 +13,9 @@ import typing as t
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
+if t.TYPE_CHECKING:
+    from .range_capabilities import RangeContext
+
 
 @dataclass(slots=True)
 class PendingApproval:
@@ -55,6 +58,8 @@ class SessionRuntime:
     """Every in-memory resource owned by one console session."""
 
     agent: t.Any = None
+    agent_capabilities: RangeContext | None = None
+    agent_commands: frozenset[str] | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     conn: t.Any = None
     turn: TurnState | None = None
@@ -100,6 +105,24 @@ def active_turn(session_id: str) -> TurnState | None:
     """The running turn for a session, or None if it is idle."""
     current = runtimes.get(session_id)
     return current.turn if current is not None else None
+
+
+def invalidate_range_context(session_id: str) -> None:
+    """Force the next turn to rebuild range-owned agent context.
+
+    Variant generation can replace the effective range root during `/up`,
+    `/provision`, or `/variant`. The active agent may finish its current turn,
+    but retaining it afterward would keep the source prompt and capability
+    snapshot even though future CLI commands resolve against the target.
+    Conversation history is persisted separately and is restored when the next
+    agent is created.
+    """
+    current = runtimes.get(session_id)
+    if current is None:
+        return
+    current.agent = None
+    current.agent_capabilities = None
+    current.agent_commands = None
 
 
 def begin_cleanup(session_id: str) -> bool:
@@ -211,6 +234,8 @@ async def cleanup_session(session_id: str, *, timeout: float = 15.0) -> None:
                 force_kill()
 
     current.agent = None
+    current.agent_capabilities = None
+    current.agent_commands = None
     current.conn = None
     current.turn = None
     current.running.clear()

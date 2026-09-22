@@ -12,6 +12,7 @@ import (
 	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/dreadnode/dreadgoad/internal/labmap"
 	"github.com/dreadnode/dreadgoad/internal/provider"
+	"github.com/dreadnode/dreadgoad/internal/rangecommand"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
@@ -73,11 +74,16 @@ func runHealthCheck(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	inspector, err := inspectorFor(cfg)
+	capability, err := rangecommand.Require(cfg, "health")
 	if err != nil {
 		return err
 	}
-	return inspector.health(ctx, cmd, cfg, jsonOut)
+	if capability.HandlerType == rangecommand.HandlerExecutable {
+		return rangecommand.Execute(ctx, cfg, capability, rangecommand.Request{
+			Options: map[string]any{"json": jsonOut},
+		}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+	}
+	return runGOADHealthCheck(ctx, cmd, cfg, jsonOut)
 }
 
 func runGOADHealthCheck(

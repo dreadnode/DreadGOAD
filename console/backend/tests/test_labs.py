@@ -162,6 +162,12 @@ async def test_service_ranges_are_not_variant_sources() -> None:
         service_range.mkdir(parents=True)
         (service_range / "range.yml").write_text(
             "schema_version: 1\nkind: service-range\n"
+            "commands:\n"
+            "  health:\n"
+            "    protocol: health/v1\n"
+            "    handler:\n"
+            "      type: executable\n"
+            "      path: commands/health\n"
         )
         payload = json.dumps(
             [

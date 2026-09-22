@@ -1,23 +1,23 @@
-`/reset` runs `dreadgoad lab reset`, restoring the lab to a known-clean AD
-baseline. It is a two-stage reset: (1) purge unmanaged AD objects (users/
-computers/groups not in the lab config), then (2) re-run the AD-state playbooks.
+`/reset` invokes the selected range's baseline-restore implementation. The
+range owns what “baseline” means; do not assume it is Active Directory unless
+the selected range is an AD range.
 
-Flags (all optional — default runs both stages):
+The core CLI retains these compatibility options for the built-in Active
+Directory implementation:
 
 - `--skip-purge`         skip the unmanaged-object purge stage
 - `--skip-provision`     skip the AD-state playbook stage
-- `--plays <csv>`        comma-separated playbooks (default: the AD-state set)
+- `--plays <csv>`        comma-separated playbooks
 - `--limit <hosts>`      limit playbook execution to specific hosts
-- `--skip-creator-check` skip the Domain/Enterprise Admin creator-SID safety belt
-- `--max-retries <n>`    retry attempts (default: from config)
-- `--retry-delay <sec>`  delay between retries (seconds)
+- `--skip-creator-check` disable the privileged creator-SID safety belt
+- `--max-retries <n>` and `--retry-delay <sec>`
 
 Guidance:
 
-- Plain `/reset` with NO args does the full two-stage reset — the common case.
-- "just re-apply AD state, don't delete anything" → `--skip-purge`. "only clean
-  up stray objects" → `--skip-provision`.
-- The purge DELETES AD objects an agent created. That is the point of a reset,
-  but if the operator seems unsure whether they want data wiped, confirm first.
-- Do NOT pass `--skip-creator-check` unless the operator explicitly asks — it
-  disables a safety belt protecting privileged accounts.
+- Plain `/reset` asks the selected range to perform its complete reset.
+- Never send AD-only flags to a non-AD range merely because they are listed
+  above. Range-owned implementations read their behavior from the range package
+  and may accept positional arguments after `--`.
+- Reset mutates live range state. If the operator's request is ambiguous about
+  data loss, explain the selected range's catalog description and ask first.
+- On AD ranges, do not pass `--skip-creator-check` unless explicitly requested.

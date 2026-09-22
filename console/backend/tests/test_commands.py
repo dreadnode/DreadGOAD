@@ -202,6 +202,31 @@ def test_dispatch_and_agent_commands() -> None:
     print("PASS test_dispatch_and_agent_commands")
 
 
+def test_agent_runnable_commands_follow_range_capabilities() -> None:
+    capabilities = {
+        "/health": {"supported": True},
+        "/validate": {"supported": False},
+        "/score": {"supported": True},
+        "/reset": {"supported": False},
+        "/scrub": {"supported": False},
+    }
+    allowed = commands.agent_runnable_for(capabilities)
+
+    assert "/health" in allowed and "/score" in allowed
+    assert "/validate" not in allowed and "/reset" not in allowed
+    assert "/scrub" not in allowed
+    assert "/instances" in allowed and "/up" in allowed, (
+        "non-semantic lifecycle commands must remain available"
+    )
+
+    missing_score = dict(capabilities)
+    missing_score.pop("/score")
+    assert "/score" not in commands.agent_runnable_for(missing_score), (
+        "missing semantic capabilities must fail closed"
+    )
+    print("PASS test_agent_runnable_commands_follow_range_capabilities")
+
+
 def test_expand_command_prompt() -> None:
     p = commands.expand_command_prompt("/up", ["using", "the", "variant"])
     assert "/up" in p and "run_dreadgoad" in p, p
@@ -213,6 +238,20 @@ def test_expand_command_prompt() -> None:
     assert "(no extra arguments given)" in commands.expand_command_prompt(
         "/provision", []
     )
+    custom = commands.expand_command_prompt(
+        "/score",
+        ["report.md"],
+        {
+            "/score": {
+                "supported": True,
+                "description": "Grade web objectives",
+                "detail": "Accepts the range's JSONL evidence format",
+            }
+        },
+    )
+    assert "Grade web objectives" in custom
+    assert "Accepts the range's JSONL evidence format" in custom
+    assert "answer key" not in custom.split("\n", 1)[0].lower()
 
     print("PASS test_expand_command_prompt")
 
@@ -257,21 +296,14 @@ def test_load_prompt_and_guidance_injection() -> None:
 
 
 def test_system_prompt_covers_the_registry() -> None:
-    """Every command the agent may run is described in system.md.
+    """Every command the agent may run is described in composed instructions.
 
     A runnable command the prompt omits is one the agent uses with no idea of the
     consequences — /scrub was missing while it was already able to delete.
 
-    Placeholders are rendered through the REAL renderer (agent._instructions)
-    rather than a list maintained here: the failure mode is system.md gaining a
-    ``$field`` that agent.py never substitutes, and a hand-kept list in this test
-    would drift in exactly the same way and hide it.
+    The assertion uses the real renderer rather than a second hand-maintained
+    command list, so it also exercises generated-catalog composition.
     """
-    tpl = commands.load_prompt("system")
-    assert tpl is not None
-    for name in commands.AGENT_RUNNABLE:
-        assert name in tpl, f"{name} is agent-runnable but absent from system.md"
-
     from console.backend import agent  # local: pulls the agent runtime deps
 
     rendered = agent._instructions(
@@ -286,6 +318,8 @@ def test_system_prompt_covers_the_registry() -> None:
             },
         }
     )
+    for name in commands.AGENT_RUNNABLE:
+        assert name in rendered, f"{name} is absent from the generated catalog"
     assert "$" not in rendered, "system.md has a placeholder agent.py doesn't fill"
     for value in ("us-west-2", "redteam", "10.0.0.0/16"):
         assert value in rendered, f"{value} missing from the rendered prompt"
@@ -298,13 +332,9 @@ def test_system_prompt_covers_the_registry() -> None:
     assert "$" not in sparse and "None" not in sparse, sparse
     assert "(not set)" in sparse, sparse
 
-    # Hook-learned fields must NOT be interpolated: instructions render once and
-    # are cached, so they would freeze empty for the life of the session.
-    for absent in ("$account", "$group", "$attack_box"):
-        assert absent not in tpl, f"{absent} is hook-learned and would go stale"
     # /scrub's console default is inverted vs the CLI's, so the prompt has to say
     # so — otherwise the agent treats a bare /scrub as the CLI's dry run.
-    assert "APPLIES BY DEFAULT" in rendered, "/scrub's inverted default must be stated"
+    assert "deletes for real; add 'dry' to preview" in rendered
     print("PASS test_system_prompt_covers_the_registry")
 
 
@@ -811,6 +841,30 @@ def test_catalog_exposes_destructive_for_the_confirm_gate() -> None:
     assert destructive_direct == {"/destroy"}, destructive_direct
 
 
+def test_catalog_applies_range_capabilities_without_changing_safety() -> None:
+    capabilities = {
+        "/validate": {
+            "supported": True,
+            "description": "Validate the web application",
+            "detail": "uses range-owned HTTP probes",
+        },
+        "/health": {"supported": False},
+        "/reset": {
+            "supported": True,
+            "description": "Restore the database snapshot",
+        },
+        "/score": {"supported": False},
+        "/scrub": {"supported": False},
+    }
+    catalog = {row["name"]: row for row in commands.command_catalog(capabilities)}
+    assert "/health" not in catalog and "/status" not in catalog
+    assert "/score" not in catalog and "/scrub" not in catalog
+    assert catalog["/validate"]["description"] == "Validate the web application"
+    assert catalog["/validate"]["detail"] == "uses range-owned HTTP probes"
+    assert catalog["/reset"]["dispatch"] == "agent"
+    assert catalog["/destroy"]["destructive"] is True
+
+
 def test_start_stop_take_an_optional_hostname() -> None:
     """No arg is the whole range; a hostname narrows it to one VM.
 
@@ -1253,6 +1307,8 @@ async def test_score_uses_session_answer_key_unless_explicitly_overridden() -> N
                 str(root / "report.jsonl"),
                 "--answer-key",
                 str(key),
+                "--range-artifacts",
+                str(root / "artifacts"),
             ]
 
             explicit = await command_runner._prepare_extra(
@@ -1263,6 +1319,18 @@ async def test_score_uses_session_answer_key_unless_explicitly_overridden() -> N
             )
             assert explicit[-1] == "--answer-key=/repo/custom.json", explicit
             assert explicit.count("--answer-key") == 0, explicit
+
+            try:
+                await command_runner._prepare_extra(
+                    session,
+                    "s-test",
+                    "/score",
+                    ["/home/kali/report.jsonl", "--range-artifacts", "/tmp/other"],
+                )
+            except command_runner._Aborted as exc:
+                assert "managed by the console" in exc.emit
+            else:
+                raise AssertionError("operator overrode private range artifacts")
         finally:
             command_runner.fetch.fetch_report = original_fetch
     print("PASS test_score_uses_session_answer_key_unless_explicitly_overridden")
@@ -1275,6 +1343,7 @@ def main() -> None:
     test_scrub_applies_by_default()
     test_registry_flags_and_parsing()
     test_dispatch_and_agent_commands()
+    test_agent_runnable_commands_follow_range_capabilities()
     test_expand_command_prompt()
     test_console_readme_covers_command_catalog()
     test_load_prompt_and_guidance_injection()
@@ -1295,6 +1364,7 @@ def main() -> None:
     test_start_stop_take_an_optional_hostname()
     test_destroy_takes_an_optional_hostname()
     test_catalog_exposes_destructive_for_the_confirm_gate()
+    test_catalog_applies_range_capabilities_without_changing_safety()
     test_no_console_command_can_block_on_a_prompt()
     asyncio.run(test_cancel_escalates_to_sigkill())
     test_login_registry_entry()

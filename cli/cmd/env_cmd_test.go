@@ -297,7 +297,7 @@ func TestScaffoldEnvRejectsServiceRangeBeforeWriting(t *testing.T) {
 	if err := os.MkdirAll(source, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	manifest := "schema_version: 1\nkind: service-range\n"
+	manifest := "schema_version: 1\nkind: service-range\n" + serviceHealthManifest
 	if err := os.WriteFile(filepath.Join(source, "range.yml"), []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -336,6 +336,12 @@ func TestTemplateProfileScaffoldsSERVICEWithoutGOADArtifacts(t *testing.T) {
 kind: service-range
 variants:
   supported: false
+commands:
+  health:
+    protocol: health/v1
+    handler:
+      type: executable
+      path: commands/health
 infrastructure:
   azure:
     deployment: service-deployment
@@ -413,6 +419,12 @@ func TestTemplateProfileScaffoldsAWSRegionAndInventory(t *testing.T) {
 kind: service-range
 variants:
   supported: false
+commands:
+  health:
+    protocol: health/v1
+    handler:
+      type: executable
+      path: commands/health
 infrastructure:
   aws:
     deployment: service-deployment
@@ -476,7 +488,7 @@ func TestFailedScaffoldRemovesOnlyNewArtifacts(t *testing.T) {
 		}
 	}
 	for path, body := range map[string]string{
-		filepath.Join(lab, "range.yml"):                    "schema_version: 1\nkind: service-range\ninfrastructure:\n  azure:\n    deployment: service-deployment\n    scaffold_profile: template\n    template_environment: service-dev\n    network:\n      cidr: 10.50.0.0/16\n      editable: false\n",
+		filepath.Join(lab, "range.yml"):                    "schema_version: 1\nkind: service-range\n" + serviceHealthManifest + "infrastructure:\n  azure:\n    deployment: service-deployment\n    scaffold_profile: template\n    template_environment: service-dev\n    network:\n      cidr: 10.50.0.0/16\n      editable: false\n",
 		filepath.Join(lab, "data", "config.json"):          "{}\n",
 		filepath.Join(template, "env.hcl"):                 "locals { env = \"service-dev\" }\n",
 		filepath.Join(template, "centralus", "region.hcl"): "locals {}\n",

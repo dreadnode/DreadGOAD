@@ -14,6 +14,7 @@ import (
 
 	"github.com/dreadnode/dreadgoad/internal/inventory"
 	"github.com/dreadnode/dreadgoad/internal/jsonmerge"
+	"github.com/dreadnode/dreadgoad/internal/variant"
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/spf13/viper"
 	"gopkg.in/yaml.v3"
@@ -158,6 +159,21 @@ func SetRegionOverride(region string) { regionOverride = region }
 // Commands that depend on provider configuration should check this and warn
 // the user (e.g. "no config found, using defaults; run 'dreadgoad init'").
 func ConfigMissing() bool { return configMissing }
+
+// ConfigFileUsed returns the absolute configuration file selected for this CLI
+// invocation. Range-owned command handlers run from the range directory, so a
+// caller's relative --config path would otherwise resolve against the wrong cwd.
+func ConfigFileUsed() string {
+	path := viper.ConfigFileUsed()
+	if path == "" || filepath.IsAbs(path) {
+		return path
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	return absolute
+}
 
 // Init initializes Viper configuration. Called from PersistentPreRunE.
 func Init() error {
@@ -417,6 +433,67 @@ func (c *Config) ResolvedLab() string {
 // LabPath returns the root directory for the active lab definition.
 func (c *Config) LabPath() string {
 	return filepath.Join(c.ProjectRoot, "ad", c.ResolvedLab())
+}
+
+// RangeRootSource identifies why EffectiveRangeRoot selected a directory.
+type RangeRootSource string
+
+const (
+	RangeRootBase          RangeRootSource = "base"
+	RangeRootVariantSource RangeRootSource = "variant-source"
+	RangeRootVariantTarget RangeRootSource = "variant-target"
+)
+
+// RangeRoot is the one directory that owns a command capability snapshot.
+// Consumers must use Path consistently for the manifest, prompts, executable
+// handlers, working directory, and handler request context.
+type RangeRoot struct {
+	Path   string
+	Source RangeRootSource
+}
+
+// EffectiveRangeRoot returns the directory that owns range command and agent
+// context.
+//
+// A variant uses its source until generation starts and its target after the
+// generator's completion marker is present. An existing but incomplete target
+// is an error: silently mixing the source manifest with partial target files
+// could run health, reset, or scoring logic against the wrong topology.
+func (c *Config) EffectiveRangeRoot() (RangeRoot, error) {
+	if !c.ActiveEnvironment().Variant {
+		return RangeRoot{Path: c.LabPath(), Source: RangeRootBase}, nil
+	}
+
+	source, target := c.ResolvedVariantPaths()
+	info, err := os.Stat(target)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		sourceInfo, sourceErr := os.Stat(source)
+		if sourceErr != nil {
+			return RangeRoot{}, fmt.Errorf("inspect variant source %s: %w", source, sourceErr)
+		}
+		if !sourceInfo.IsDir() {
+			return RangeRoot{}, fmt.Errorf("variant source is not a directory: %s", source)
+		}
+		return RangeRoot{Path: source, Source: RangeRootVariantSource}, nil
+	case err != nil:
+		return RangeRoot{}, fmt.Errorf("inspect variant target %s: %w", target, err)
+	case !info.IsDir():
+		return RangeRoot{}, fmt.Errorf("variant target exists but is not a directory: %s", target)
+	}
+
+	complete, err := variant.IsComplete(target)
+	if err != nil {
+		return RangeRoot{}, fmt.Errorf("inspect variant target %s: %w", target, err)
+	}
+	if !complete {
+		return RangeRoot{}, fmt.Errorf(
+			"variant directory is incomplete (missing %s): %s",
+			variant.CompletionMarkerName,
+			target,
+		)
+	}
+	return RangeRoot{Path: target, Source: RangeRootVariantTarget}, nil
 }
 
 // repairDottedEnvironmentKeys reloads the `environments` map straight from the

@@ -23,7 +23,7 @@ class InitResult(t.TypedDict):
     message: t.NotRequired[str]
 
 
-def artifacts_dir(session: SessionDocument) -> Path:
+def artifacts_dir(session: t.Mapping[str, t.Any]) -> Path:
     """Return the private, session-local destination for generated artifacts."""
     return Path(session["session_dir"]) / "artifacts"
 

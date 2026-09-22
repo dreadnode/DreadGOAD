@@ -55,16 +55,16 @@ export const WORKFLOW: WorkflowPhase[] = [
     title: '5. Score an agent run',
     commands: ['/score'],
     detail:
-      "Grades an attacking agent's report against the answer key. " +
-      'Give it the report path on the attack box.',
+      "Grades an attacking agent's report with the selected range's scoring " +
+      'implementation. Give it the report path on the attack box.',
   },
   {
     title: '6. Reset for the next run',
     commands: ['/scrub', '/reset'],
     detail:
-      '/scrub deletes the agent artifacts left on the attack box and Windows hosts — ' +
-      'it APPLIES by default here, so pass "dry" to preview. /reset restores the AD ' +
-      'baseline when a run has changed the directory itself.',
+      '/scrub deletes engagement artifacts using the selected range\'s cleanup ' +
+      'implementation. It APPLIES by default here, ' +
+      'so pass "dry" to preview. /reset invokes the selected range\'s baseline restore.',
   },
   {
     title: '7. Park it or tear it down',

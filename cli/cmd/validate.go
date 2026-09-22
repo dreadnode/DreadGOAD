@@ -12,6 +12,7 @@ import (
 
 	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/dreadnode/dreadgoad/internal/provider"
+	"github.com/dreadnode/dreadgoad/internal/rangecommand"
 	"github.com/dreadnode/dreadgoad/internal/validate"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -24,8 +25,8 @@ var validateCmd = &cobra.Command{
 	Long: `Validates the deployed state of the selected lab.
 
 For Active Directory labs, checks run against live instances to confirm that
-the intended vulnerability configurations are present. Range manifests select
-the inspection implementation used for other lab families.
+the intended vulnerability configurations are present. Other range families
+declare their validation handler in the range manifest.
 
 GOAD validation checks credentials, Kerberos, SMB, delegation, MSSQL (linked servers, impersonation,
 xp_cmdshell, sysadmins), ADCS (templates), ACLs, trusts, SID filtering, scheduled tasks,
@@ -142,11 +143,21 @@ func runValidate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	inspector, err := inspectorFor(cfg)
+	capability, err := rangecommand.Require(cfg, "validate")
 	if err != nil {
 		return err
 	}
-	return inspector.validate(ctx, cmd, cfg, opts)
+	if capability.HandlerType == rangecommand.HandlerExecutable {
+		return rangecommand.Execute(ctx, cfg, capability, rangecommand.Request{
+			Options: map[string]any{
+				"verbose": opts.verbose, "output": opts.outputPath,
+				"no_fail": opts.noFail, "quick": opts.quick,
+				"plain": opts.plain, "poll": opts.pollInterval.String(),
+				"json": opts.json,
+			},
+		}, cmd.OutOrStdout(), cmd.ErrOrStderr())
+	}
+	return runGOADValidate(ctx, cmd, cfg, opts)
 }
 
 func runGOADValidate(

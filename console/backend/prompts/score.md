@@ -1,24 +1,22 @@
-`/score` runs `dreadgoad score --report <path>`, scoring an agent's JSONL report
-against the answer key.
+`/score` fetches an agent report and invokes the selected range's scoring
+implementation. The range owns its objectives and scoring algorithm; never
+assume every range scores AD credentials, hosts, or domains.
 
-The FIRST argument you pass is the report path; the console handles fetching it
-(a remote path on the attack box is copied locally automatically before scoring).
-Everything after the report path is passed through to the CLI as flags.
+The FIRST argument is the report path. The console copies that remote attack-box
+path into the private session workspace before invoking the range scorer.
+Everything after the report path is passed through as compatible CLI options.
 
-Useful flags:
+Built-in Active Directory scoring supports:
 
-- `--live-verify`         re-verify findings live against the attack box
-- `--answer-key <path>`   override the answer key (default `scoreboard/answer_key.json`)
-- `--output <path>`       write the JSON result to a file instead of stdout
+- `--live-verify`         re-verify findings against the live attack box
+- `--answer-key <path>`   override its generated answer key
+- `--output <path>`       write the JSON result to a file
 
 Guidance:
 
 - Always pass the report path as args[0].
-- **Always include `--live-verify` unless the operator explicitly says not to.**
-  Static scoring alone misses credentials the agent changed during exploitation
-  (password resets, shadow credentials). Live verification is the only way to
-  confirm those, and it is what the operator expects when they ask to score a run.
-  Example: score `/root/report.jsonl` → args = `["/root/report.jsonl", "--live-verify"]`.
-- If the operator doesn't give a report path, ask for one — do not guess.
-- Do NOT pass `--attack-box`/`--region`/`--ssh-key`; the range's cloud context is
-  resolved for you.
+- For an Active Directory range, include `--live-verify` unless the operator
+  explicitly asks for static scoring. Do not assume another range implements
+  that option or uses an answer key.
+- If the operator does not provide a report path, ask for one.
+- Do not override cloud selectors; the session fixes the range context.

@@ -8,9 +8,9 @@ the key in a Bubbletea/Lipgloss TUI.
 ## Quick Start
 
 ```bash
-dreadgoad score generate-key                 # build answer_key.json once per lab
+dreadgoad score generate-key                 # built-in Active Directory ranges only
 dreadgoad scoreboard run --report ./report.jsonl
-dreadgoad scoreboard demo                    # preview the layout with mock findings
+dreadgoad scoreboard demo                    # preview the built-in AD scoreboard
 ```
 
 > The scoreboard uses static-only scoring for fast polling. For
@@ -25,7 +25,9 @@ reports use `--transport ssm` or `--transport ares` (see below).
 
 See [`scoring.md`](./scoring.md#generating-the-answer-key). The command
 moved to `dreadgoad score generate-key` (`dreadgoad scoreboard
-generate-key` still works as a hidden alias).
+generate-key` still works as a hidden alias). Answer-key generation belongs to
+the built-in Active Directory scorer; ranges with executable-owned scoring use
+their range-owned initialization and scoring workflow instead.
 
 ```bash
 dreadgoad score generate-key
@@ -99,13 +101,15 @@ dreadgoad scoreboard run --interval 1500ms
 
 ## `scoreboard demo`
 
-Generates a synthetic report against the current lab config and renders
-the static board. Use it to preview the layout, sanity-check the answer
-key, or screenshot the dashboard without running a real agent.
+Generates a synthetic report for the built-in Active Directory scorer and
+renders it against the current lab config. Ranges with disabled or executable
+scoring are rejected because their scoring model may not match the legacy AD
+answer key. Use it to preview the layout or screenshot the dashboard without
+running a real agent.
 
 | Flag       | Description                                                     |
 |------------|-----------------------------------------------------------------|
-| `--config` | Path to GOAD `config.json` (default `ad/GOAD/data/config.json`) |
+| `--config` | Path to GOAD `config.json` (default: active environment's resolved lab config) |
 
 ```bash
 dreadgoad scoreboard demo

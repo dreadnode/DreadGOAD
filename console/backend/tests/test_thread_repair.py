@@ -25,11 +25,15 @@ from console.backend.thread_repair import (  # noqa: E402
 )
 
 
-def _call(call_id: str, name: str = "run_dreadgoad") -> ToolCall:
+def _call(
+    call_id: str,
+    name: str = "run_dreadgoad",
+    arguments: str = '{"command": "/health"}',
+) -> ToolCall:
     return ToolCall(
         id=call_id,
         type="function",
-        function=FunctionCall(name=name, arguments='{"command": "/health"}'),
+        function=FunctionCall(name=name, arguments=arguments),
     )
 
 
@@ -293,6 +297,53 @@ async def test_genuine_task_cancellation_is_not_swallowed() -> None:
     print("PASS test_genuine_task_cancellation_is_not_swallowed")
 
 
+async def test_run_tool_enforces_session_command_set() -> None:
+    """Two session-bound tools cannot borrow one another's capabilities."""
+    from console.backend import agent as agent_mod
+
+    calls: list[tuple[str, str]] = []
+
+    async def run_cli(
+        _app: object, session_id: str, command: str, _args: list[str]
+    ) -> tuple[int, str]:
+        calls.append((session_id, command))
+        return 0, "ok"
+
+    enabled = agent_mod._make_run_dreadgoad(
+        object(),
+        "enabled",
+        run_cli,
+        project_root="/repo",
+        session_dir="/session/enabled",
+        allowed_commands={"/score"},
+    )
+    disabled = agent_mod._make_run_dreadgoad(
+        object(),
+        "disabled",
+        run_cli,
+        project_root="/repo",
+        session_dir="/session/disabled",
+        allowed_commands={"/health"},
+    )
+
+    assert "/score" in enabled.description and "/health" not in enabled.description
+    assert "/health" in disabled.description and "/score" not in disabled.description
+
+    score_call = '{"command": "/score", "args": []}'
+    enabled_message, _ = await enabled.handle_tool_call(
+        _call("toolu_enabled", arguments=score_call)
+    )
+    disabled_message, _ = await disabled.handle_tool_call(
+        _call("toolu_disabled", arguments=score_call)
+    )
+
+    assert calls == [("enabled", "/score")], calls
+    assert "succeeded" in str(enabled_message.content)
+    assert "Refused" in str(disabled_message.content)
+    assert "Valid commands for this session" in str(disabled_message.content)
+    print("PASS test_run_tool_enforces_session_command_set")
+
+
 async def test_cancellederror_is_silently_dropped_by_the_agent_plumbing() -> None:
     """Pin the library behaviour the fix exists because of.
 
@@ -414,6 +465,7 @@ def main() -> None:
     asyncio.run(test_cancellederror_is_silently_dropped_by_the_agent_plumbing())
     asyncio.run(test_cancelled_command_yields_a_paired_result_and_stops())
     asyncio.run(test_genuine_task_cancellation_is_not_swallowed())
+    asyncio.run(test_run_tool_enforces_session_command_set())
     asyncio.run(test_run_agent_heals_a_poisoned_thread_before_streaming())
     print("ALL PASS")
 

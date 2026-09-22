@@ -22,13 +22,22 @@ A range that needs no initialization should declare an empty list:
 ```yaml
 schema_version: 1
 kind: service-range
+commands:
+  health:
+    protocol: health/v1
+    handler:
+      type: executable
+      path: commands/health
 lifecycle:
   session_init: []
 ```
 
 The console invokes `dreadgoad range init-session` generically. Generated
 artifacts are written beneath the private console session directory rather than
-into the range source tree.
+into the range source tree. `generate_answer_key` is reserved for the built-in
+Active Directory scorer. An executable scorer must use its
+`commands.score.initializer` instead; the two initialization mechanisms cannot
+be combined.
 
 ## Range creation metadata
 
@@ -42,6 +51,12 @@ display_name: Example Range
 kind: service-range
 variants:
   supported: false
+commands:
+  health:
+    protocol: health/v1
+    handler:
+      type: executable
+      path: commands/health
 infrastructure:
   azure:
     deployment: example-deployment

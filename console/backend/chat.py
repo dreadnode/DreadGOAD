@@ -29,6 +29,7 @@ from . import (
     command_runner,
     commands,
     paths,
+    range_capabilities,
     summary,
     thread_repair,
 )
@@ -152,6 +153,39 @@ def _turn_task_done(
         task.exception()
 
 
+async def _agent_capabilities(
+    app: t.Any,
+    session_id: str,
+    session: dict[str, t.Any] | None = None,
+) -> range_capabilities.RangeContext | None:
+    """Resolve and cache the selected range's complete capability snapshot."""
+    runtime = chat_runtime.runtime(session_id)
+    if runtime.agent_capabilities is not None:
+        return runtime.agent_capabilities
+    current = session or await app.state.db.get_session(session_id)
+    if current is None:
+        return None
+    capabilities = await range_capabilities.load(current, str(paths.repo_root()))
+    runtime.agent_capabilities = capabilities
+    return capabilities
+
+
+async def _agent_commands(
+    app: t.Any,
+    session_id: str,
+    session: dict[str, t.Any] | None = None,
+) -> frozenset[str] | None:
+    """Resolve and cache the model command set for one selected range."""
+    runtime = chat_runtime.runtime(session_id)
+    if runtime.agent_commands is not None:
+        return runtime.agent_commands
+    capabilities = await _agent_capabilities(app, session_id, session)
+    if capabilities is None:
+        return None
+    runtime.agent_commands = commands.agent_runnable_for(capabilities)
+    return runtime.agent_commands
+
+
 async def _get_agent(app: t.Any, session_id: str) -> t.Any | None:
     runtime = chat_runtime.runtime(session_id)
     if runtime.agent is not None:
@@ -159,6 +193,11 @@ async def _get_agent(app: t.Any, session_id: str) -> t.Any | None:
     session = await app.state.db.get_session(session_id)
     if session is None:
         return None
+    capabilities = await _agent_capabilities(app, session_id, session)
+    if capabilities is None:
+        return None
+    allowed_commands = commands.agent_runnable_for(capabilities)
+    runtime.agent_commands = allowed_commands
     agent = create_agent(
         # Falls back to the shared default rather than a literal of its own:
         # a session row written before the model column existed, or with a
@@ -169,6 +208,9 @@ async def _get_agent(app: t.Any, session_id: str) -> t.Any | None:
         app,
         session_id,
         run_cli,
+        allowed_commands=allowed_commands,
+        capabilities=capabilities,
+        range_prompt=capabilities.agent_prompt,
     )
     messages = await _load_thread(app, session_id)
     if messages is not None:
@@ -199,7 +241,21 @@ async def swap_model(
         old = runtime.agent
         if old is not None:
             history = deepcopy(old.thread.messages)
-            fresh = create_agent(new_model, session, app, session_id, run_cli)
+            capabilities = await _agent_capabilities(app, session_id, session)
+            if capabilities is None:
+                return None
+            allowed_commands = commands.agent_runnable_for(capabilities)
+            runtime.agent_commands = allowed_commands
+            fresh = create_agent(
+                new_model,
+                session,
+                app,
+                session_id,
+                run_cli,
+                allowed_commands=allowed_commands,
+                capabilities=capabilities,
+                range_prompt=capabilities.agent_prompt,
+            )
             fresh.thread.messages = history
             runtime.agent = fresh
             await _save_thread(app, session_id, fresh)
@@ -311,7 +367,36 @@ async def handle_message(app: t.Any, session_id: str, content: str) -> None:
             return
         # dispatch="agent": expand to a structured prompt; the agent runs it via
         # its run_dreadgoad tool (robust arg interpretation, constrained).
-        await _run_agent(app, session_id, commands.expand_command_prompt(name, extra))
+        try:
+            capabilities = await _agent_capabilities(app, session_id, session)
+            allowed_commands = (
+                commands.agent_runnable_for(capabilities)
+                if capabilities is not None
+                else None
+            )
+        except (OSError, ValueError) as exc:
+            await emit_event(
+                app,
+                session_id,
+                "error",
+                {"message": f"could not load range command capabilities: {exc}"},
+            )
+            await emit_event(app, session_id, "agent_end", {"failed": True})
+            return
+        if allowed_commands is None or name not in allowed_commands:
+            await emit_event(
+                app,
+                session_id,
+                "error",
+                {"message": f"{name} is not supported by the selected range"},
+            )
+            await emit_event(app, session_id, "agent_end", {"failed": True})
+            return
+        await _run_agent(
+            app,
+            session_id,
+            commands.expand_command_prompt(name, extra, capabilities),
+        )
         return
 
     await _run_agent(app, session_id, content)
@@ -319,7 +404,17 @@ async def handle_message(app: t.Any, session_id: str, content: str) -> None:
 
 async def _run_agent(app: t.Any, session_id: str, prompt: str) -> None:
     """Stream one agent turn (free-text or an expanded command) to the client."""
-    agent = await _get_agent(app, session_id)
+    try:
+        agent = await _get_agent(app, session_id)
+    except (OSError, ValueError) as exc:
+        await emit_event(
+            app,
+            session_id,
+            "error",
+            {"message": f"could not load range command capabilities: {exc}"},
+        )
+        await emit_event(app, session_id, "agent_end", {"failed": True})
+        return
     if agent is None:
         await emit_event(app, session_id, "error", {"message": "session not found"})
         await emit_event(app, session_id, "agent_end", {"failed": True})

@@ -9,7 +9,7 @@ import (
 func TestProviderRangeTagFollowsManifest(t *testing.T) {
 	root := t.TempDir()
 	for lab, body := range map[string]string{
-		"service": "schema_version: 1\nkind: service-range\ndiscovery:\n  range_tag: SERVICE\n",
+		"service": "schema_version: 1\nkind: service-range\ncommands:\n  health:\n    protocol: health/v1\n    handler:\n      type: executable\n      path: commands/health\ndiscovery:\n  range_tag: SERVICE\n",
 		"ad":      "schema_version: 1\nkind: active-directory\ndiscovery:\n  range_tag: GOAD\n",
 	} {
 		dir := filepath.Join(root, "ad", lab)
@@ -54,7 +54,8 @@ func TestProviderRangeTagRequiresManifestIdentity(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "range.yml"), []byte("schema_version: 1\nkind: service-range\n"), 0o644); err != nil {
+	manifest := "schema_version: 1\nkind: service-range\ncommands:\n  health:\n    protocol: health/v1\n    handler:\n      type: executable\n      path: commands/health\n"
+	if err := os.WriteFile(filepath.Join(dir, "range.yml"), []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := (&Config{ProjectRoot: root, Lab: "service"}).ProviderRangeTag(); err == nil {

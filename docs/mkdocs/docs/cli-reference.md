@@ -504,17 +504,19 @@ See [validation.md](https://github.com/dreadnode/DreadGOAD/blob/main/docs/valida
 
 Live status board for GOAD engagements. Parses the lab `config.json` into a checklist of objectives ("answer key"), polls an agent's JSONL report (local, SSM, or `ares`), and renders a verification TUI.
 
-#### `scoreboard generate-key`
+#### `score generate-key`
 
-Build the answer key from the lab configuration. Run this once per lab (or after lab edits) so `scoreboard run` and `scoreboard demo` have something to verify against.
+Build the answer key for a built-in Active Directory range. Run this once per lab
+(or after lab edits) for `scoreboard run`. The demo derives its answer key directly
+from the selected lab configuration and does not use this persisted file.
 
 | Flag | Description |
 |------|-------------|
-| `--config string` | Path to GOAD `config.json` (default `ad/GOAD/data/config.json`) |
+| `--config string` | Path to GOAD `config.json` (default: active environment's resolved lab config) |
 | `--output string` | Output path for the answer key (default `scoreboard/answer_key.json`) |
 
 ```bash
-dreadgoad scoreboard generate-key
+dreadgoad score generate-key
 ```
 
 #### `scoreboard run`
@@ -546,11 +548,11 @@ dreadgoad scoreboard run --once
 
 #### `scoreboard demo`
 
-Render a sample board with mock findings so you can see the layout before running a real engagement.
+Render a sample board for the built-in Active Directory scorer. Ranges with disabled or executable scoring are rejected because their scoring model may not match the legacy AD answer key.
 
 | Flag | Description |
 |------|-------------|
-| `--config string` | Path to GOAD `config.json` (default `ad/GOAD/data/config.json`) |
+| `--config string` | Path to GOAD `config.json` (default: active environment's resolved lab config) |
 
 ```bash
 dreadgoad scoreboard demo

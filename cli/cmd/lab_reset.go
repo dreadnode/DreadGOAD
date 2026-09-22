@@ -12,6 +12,7 @@ import (
 	"github.com/dreadnode/dreadgoad/internal/config"
 	inv "github.com/dreadnode/dreadgoad/internal/inventory"
 	"github.com/dreadnode/dreadgoad/internal/labconfig"
+	"github.com/dreadnode/dreadgoad/internal/rangecommand"
 	"github.com/spf13/cobra"
 )
 
@@ -213,8 +214,10 @@ naming pattern (DESKTOP-*, custom names like ARES01$, etc.).`,
 
 var labResetCmd = &cobra.Command{
 	Use:   "reset",
-	Short: "Reset the lab to a known-clean AD baseline",
-	Long: `Two-stage reset:
+	Short: "Restore the selected range to its authored baseline",
+	Long: `Invokes the selected range's baseline-restore implementation.
+
+The built-in Active Directory implementation performs a two-stage reset:
   1. Delete unmanaged AD objects (users, computers, groups not in the lab config).
   2. Re-run AD-state playbooks to restore users, ACLs, group membership,
      trusts, and vulnerability seeding.
@@ -228,7 +231,7 @@ Stage 2 writes. To see what it would change without changing it, rehearse with
 -E ad_reconcile_check_only=true, which reports drift and corrects nothing. That
 is also how to measure how far an attack run moved the lab before resetting it.
 
-Idempotent: safe to re-run.`,
+Range-owned handlers define their own reset semantics and should be idempotent.`,
 	Example: `  dreadgoad lab reset
   dreadgoad lab reset --skip-purge
   dreadgoad lab reset --plays ad-data.yml,ad-acl.yml
@@ -491,6 +494,13 @@ func runLabReset(cmd *cobra.Command, args []string) error {
 	// with `provision`, so it opens the same Bastion tunnel and needs the same
 	// cancellation path to tear it down on interrupt.
 	ctx := cmd.Context()
+	capability, err := rangecommand.Require(cfg, "reset")
+	if err != nil {
+		return err
+	}
+	if capability.HandlerType == rangecommand.HandlerExecutable {
+		return runExternalLabReset(ctx, cmd, cfg, capability, args)
+	}
 
 	skipPurge, _ := cmd.Flags().GetBool("skip-purge")
 	skipProvision, _ := cmd.Flags().GetBool("skip-provision")
@@ -533,4 +543,24 @@ func runLabReset(cmd *cobra.Command, args []string) error {
 
 	fmt.Println("=== lab-reset complete ===")
 	return nil
+}
+
+func runExternalLabReset(ctx context.Context, cmd *cobra.Command, cfg *config.Config, capability rangecommand.Capability, args []string) error {
+	skipPurge, _ := cmd.Flags().GetBool("skip-purge")
+	skipProvision, _ := cmd.Flags().GetBool("skip-provision")
+	plays, _ := cmd.Flags().GetString("plays")
+	limit, _ := cmd.Flags().GetString("limit")
+	maxRetries, _ := cmd.Flags().GetInt("max-retries")
+	retryDelay, _ := cmd.Flags().GetInt("retry-delay")
+	skipCreator, _ := cmd.Flags().GetBool("skip-creator-check")
+	extraVars, _ := cmd.Flags().GetStringArray("extra-vars")
+	return rangecommand.Execute(ctx, cfg, capability, rangecommand.Request{
+		Options: map[string]any{
+			"skip_purge": skipPurge, "skip_provision": skipProvision,
+			"plays": plays, "limit": limit, "max_retries": maxRetries,
+			"retry_delay": retryDelay, "skip_creator_check": skipCreator,
+			"extra_vars": extraVars,
+		},
+		Arguments: args,
+	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }

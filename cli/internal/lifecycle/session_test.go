@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -68,6 +69,12 @@ func TestRunSessionInitIsNoopWithoutDeclaredActions(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, filepath.Join(root, "ad", "SERVICE", manifestName), `schema_version: 1
 kind: service-range
+commands:
+  health:
+    protocol: health/v1
+    handler:
+      type: executable
+      path: commands/health
 lifecycle:
   session_init: []
 `)
@@ -83,6 +90,95 @@ lifecycle:
 	}
 	if _, err := os.Stat(outputDir); !os.IsNotExist(err) {
 		t.Fatalf("no-op initializer created artifact directory: %v", err)
+	}
+}
+
+func TestRunSessionInitRunsRangeScoreInitializer(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture")
+	}
+	root := t.TempDir()
+	labDir := filepath.Join(root, "ad", "SERVICE")
+	writeFixture(t, filepath.Join(labDir, manifestName), `schema_version: 1
+kind: service-range
+commands:
+  health:
+    protocol: health/v1
+    handler:
+      type: executable
+      path: commands/health
+  score:
+    protocol: score/v1
+    handler:
+      type: executable
+      path: commands/score
+    initializer:
+      type: executable
+      path: commands/init-score
+`)
+	outputDir := filepath.Join(root, "private", "artifacts")
+	artifact := filepath.Join(outputDir, "objectives.json")
+	score := filepath.Join(labDir, "commands", "score")
+	initializer := filepath.Join(labDir, "commands", "init-score")
+	writeFixture(t, score, "#!/bin/sh\nexit 0\n")
+	writeFixture(t, initializer, "#!/bin/sh\ncat >/dev/null\nprintf '{}' > '"+artifact+"'\nprintf '%s\\n' '{\"schema\":\"session-init/v1\",\"artifacts\":[\""+artifact+"\"],\"message\":\"ready\"}'\n")
+	for _, path := range []string{score, initializer} {
+		if err := os.Chmod(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	results, err := RunSessionInit(
+		&config.Config{ProjectRoot: root, Env: "dev", Lab: "SERVICE"}, outputDir,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 || results[0].Action != "initialize_score" || results[0].Status != "completed" {
+		t.Fatalf("results = %#v", results)
+	}
+	if len(results[0].Artifacts) != 1 {
+		t.Fatalf("artifacts = %#v", results[0].Artifacts)
+	}
+}
+
+func TestGenerateAnswerKeyRejectsExecutableScorerWithoutWriting(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("executable fixture")
+	}
+	root := t.TempDir()
+	labDir := filepath.Join(root, "ad", "SERVICE")
+	writeFixture(t, filepath.Join(labDir, manifestName), `schema_version: 1
+kind: service-range
+commands:
+  health:
+    protocol: health/v1
+    handler:
+      type: executable
+      path: commands/health
+  score:
+    protocol: score/v1
+    handler:
+      type: executable
+      path: commands/score
+`)
+	for _, name := range []string{"health", "score"} {
+		path := filepath.Join(labDir, "commands", name)
+		writeFixture(t, path, "#!/bin/sh\nexit 0\n")
+		if err := os.Chmod(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	outputDir := filepath.Join(root, "must-not-exist")
+
+	result, err := generateAnswerKey(
+		&config.Config{ProjectRoot: root, Env: "dev", Lab: "SERVICE"}, outputDir,
+	)
+	if err == nil || result.Status != "failed" {
+		t.Fatalf("generateAnswerKey() = (%#v, %v), want failed", result, err)
+	}
+	if _, err := os.Stat(outputDir); !os.IsNotExist(err) {
+		t.Fatalf("rejected generator created output directory: %v", err)
 	}
 }
 
@@ -170,5 +266,39 @@ func TestEveryShippedRangeHasAValidManifest(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestConfinedArtifactsRejectsOutsideAndSymlinkTargets(t *testing.T) {
+	root := t.TempDir()
+	inside := filepath.Join(root, "score.json")
+	if err := os.WriteFile(inside, []byte("{}"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	artifacts, err := confinedArtifacts(root, []string{inside})
+	resolvedInside, resolveErr := filepath.EvalSymlinks(inside)
+	if resolveErr != nil {
+		t.Fatal(resolveErr)
+	}
+	if err != nil || len(artifacts) != 1 || artifacts[0] != resolvedInside {
+		t.Fatalf("confinedArtifacts() = %v, %v", artifacts, err)
+	}
+
+	outside := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := confinedArtifacts(root, []string{outside}); err == nil {
+		t.Fatal("outside artifact was accepted")
+	}
+	if _, err := confinedArtifacts(root, []string{"score.json"}); err == nil {
+		t.Fatal("relative artifact was accepted")
+	}
+	link := filepath.Join(root, "linked")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := confinedArtifacts(root, []string{link}); err == nil {
+		t.Fatal("artifact symlink escaping output directory was accepted")
 	}
 }
