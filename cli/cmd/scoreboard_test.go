@@ -89,6 +89,52 @@ commands:
 	}
 }
 
+func TestScoreboardRunRejectsNonBuiltinScorerBeforeReadingAnswerKey(t *testing.T) {
+	for name, manifest := range map[string]string{
+		"executable": `schema_version: 1
+kind: active-directory
+commands:
+  score:
+    protocol: score/v1
+    handler:
+      type: executable
+      path: commands/score
+`,
+		"disabled": `schema_version: 1
+kind: active-directory
+commands:
+  score:
+    enabled: false
+`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			writeScoreManifest(t, root, manifest)
+			if name == "executable" {
+				handler := filepath.Join(root, "ad", "TEST", "commands", "score")
+				if err := os.MkdirAll(filepath.Dir(handler), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(handler, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			command := &cobra.Command{Use: "run"}
+			err := runScoreboardRunWithConfig(command, &config.Config{
+				ProjectRoot: root,
+				Lab:         "TEST",
+				Env:         "test",
+			})
+			if err == nil || !strings.Contains(err.Error(), "scoreboard run is only available") {
+				t.Fatalf("error = %v", err)
+			}
+			if strings.Contains(err.Error(), "answer_key.json") {
+				t.Fatalf("scoreboard read answer key before ownership check: %v", err)
+			}
+		})
+	}
+}
+
 func scoreboardDemoTestCommand(t *testing.T, configPath string) (*cobra.Command, *bytes.Buffer) {
 	t.Helper()
 	command := &cobra.Command{Use: "demo"}

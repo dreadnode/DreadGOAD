@@ -74,6 +74,13 @@ func runScoreboardRun(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	return runScoreboardRunWithConfig(cmd, cfg)
+}
+
+func runScoreboardRunWithConfig(cmd *cobra.Command, cfg *config.Config) error {
+	if _, err := rangecommand.RequireBuiltinProfile(cfg, "score", rangecommand.ProfileActiveDir); err != nil {
+		return fmt.Errorf("scoreboard run is only available for the built-in active-directory scorer: %w", err)
+	}
 	answerKeyPath, _ := cmd.Flags().GetString("answer-key")
 	if answerKeyPath == "" {
 		answerKeyPath = filepath.Join(cfg.ProjectRoot, "scoreboard", "answer_key.json")

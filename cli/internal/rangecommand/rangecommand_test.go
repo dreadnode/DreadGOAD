@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -383,5 +384,106 @@ commands:
 	}
 	if _, err := os.Stat(artifact); err != nil {
 		t.Fatalf("initializer artifact: %v", err)
+	}
+}
+
+func TestExecuteScoreInitializerResolvesRelativeOutputFromCallerDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture")
+	}
+	cfg := testConfig(t, "service", `schema_version: 1
+kind: service-range
+commands:
+  health:
+    protocol: health/v1
+    handler:
+      type: executable
+      path: commands/health
+  score:
+    protocol: score/v1
+    handler:
+      type: executable
+      path: commands/score
+    initializer:
+      type: executable
+      path: commands/init-score
+`)
+	commandsDir := filepath.Join(cfg.LabPath(), "commands")
+	if err := os.MkdirAll(commandsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(commandsDir, "score"), []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := `#!/bin/sh
+request=$(cat)
+printf '%s\n' "$request" >&2
+printf '%s\n' '{"schema":"session-init/v1","artifacts":[]}'
+`
+	if err := os.WriteFile(filepath.Join(commandsDir, "init-score"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	callerDir := t.TempDir()
+	previousDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(callerDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previousDir) })
+
+	capability, err := Require(cfg, "score")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if err := ExecuteScoreInitializer(context.Background(), cfg, capability, "artifacts", &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	var request Request
+	if err := json.Unmarshal(bytes.TrimSpace(stderr.Bytes()), &request); err != nil {
+		t.Fatalf("request JSON: %v\n%s", err, stderr.String())
+	}
+	want, err := filepath.Abs("artifacts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := request.Options["output_dir"]; got != want {
+		t.Fatalf("output_dir option = %v, want %q", got, want)
+	}
+	if info, err := os.Stat(want); err != nil || !info.IsDir() {
+		t.Fatalf("absolute artifact directory was not created: %v", err)
+	}
+}
+
+func TestTailWriterPreservesCompleteFinalProtocolLine(t *testing.T) {
+	var destination bytes.Buffer
+	writer := &tailWriter{destination: &destination, limit: maxResultLine}
+	progress := append(bytes.Repeat([]byte("x"), maxResultLine+100), '\n')
+	result := []byte("{\"schema\":\"health/v1\",\"checks\":[]}\n")
+	if _, err := writer.Write(progress); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := writer.Write(result); err != nil {
+		t.Fatal(err)
+	}
+	output, oversized := writer.ValidationOutput()
+	if oversized {
+		t.Fatal("complete final protocol line was treated as oversized")
+	}
+	if err := validateResult("health/v1", output); err != nil {
+		t.Fatalf("validateResult() error = %v", err)
+	}
+}
+
+func TestTailWriterReportsOversizedFinalProtocolLine(t *testing.T) {
+	writer := &tailWriter{destination: io.Discard, limit: maxResultLine}
+	if _, err := writer.Write(bytes.Repeat([]byte("x"), maxResultLine+1)); err != nil {
+		t.Fatal(err)
+	}
+	if _, oversized := writer.ValidationOutput(); !oversized {
+		t.Fatal("oversized final protocol line was not reported")
 	}
 }

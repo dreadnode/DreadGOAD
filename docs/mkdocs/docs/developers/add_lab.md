@@ -298,10 +298,12 @@ Handlers are trusted range code and may read files below `lab_path` when needed.
 
 A handler may stream human-readable progress to stdout. Its final non-empty
 stdout line must be a single JSON object whose `schema` exactly matches the
-command protocol. Write diagnostics to stderr and return a non-zero status on
-failure. A non-zero exit, missing final object, malformed JSON, or invalid
-protocol payload fails the command. Handlers should ignore unknown option keys
-so later CLI versions can add inputs compatibly.
+command protocol and must not exceed 1 MiB. Earlier progress output is streamed
+without counting toward that record limit. Write diagnostics to stderr and
+return a non-zero status on failure. A non-zero exit, missing or oversized
+final object, malformed JSON, or invalid protocol payload fails the command.
+Handlers should ignore unknown option keys so later CLI versions can add inputs
+compatibly.
 
 The `options` object contains these command-specific values:
 

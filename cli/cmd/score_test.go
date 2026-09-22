@@ -2,9 +2,12 @@ package cmd
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -144,6 +147,73 @@ commands:
 	assertOutputNotCreated(t, outputPath)
 }
 
+func TestExternalScoreResolvesRelativeReportFromCallerDirectory(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture")
+	}
+	root := t.TempDir()
+	writeScoreManifest(t, root, `schema_version: 1
+kind: active-directory
+commands:
+  score:
+    protocol: score/v1
+    handler:
+      type: executable
+      path: commands/score
+`)
+	handler := filepath.Join(root, "ad", "TEST", "commands", "score")
+	if err := os.MkdirAll(filepath.Dir(handler), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := `#!/bin/sh
+request=$(cat)
+printf '%s\n' "$request" >&2
+printf '%s\n' '{"schema":"score/v1","score":0,"maximum":0,"objectives":[]}'
+`
+	if err := os.WriteFile(handler, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	callerDir := t.TempDir()
+	reportPath := filepath.Join(callerDir, "report.jsonl")
+	if err := os.WriteFile(reportPath, []byte("{}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	previousDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(callerDir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(previousDir) })
+
+	command := externalScoreTestCommand()
+	command.SetContext(context.Background())
+	var stdout, stderr bytes.Buffer
+	command.SetOut(&stdout)
+	command.SetErr(&stderr)
+	cfg := &config.Config{ProjectRoot: root, Lab: "TEST", Env: "test"}
+	capability, err := rangecommand.Require(cfg, "score")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runExternalScore(command, cfg, capability, "report.jsonl"); err != nil {
+		t.Fatal(err)
+	}
+	var request rangecommand.Request
+	if err := json.Unmarshal(bytes.TrimSpace(stderr.Bytes()), &request); err != nil {
+		t.Fatalf("request JSON: %v\n%s", err, stderr.String())
+	}
+	expectedReportPath, err := filepath.Abs("report.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := request.Options["report"]; got != expectedReportPath {
+		t.Fatalf("report option = %v, want %q", got, expectedReportPath)
+	}
+}
+
 func TestResolveScoreAnswerKeyPath(t *testing.T) {
 	root := t.TempDir()
 	artifacts := filepath.Join(root, "session", "artifacts")
@@ -181,6 +251,15 @@ func scoreGenerateKeyTestCommand(t *testing.T, configPath, outputPath string) (*
 	stdout := &bytes.Buffer{}
 	command.SetOut(stdout)
 	return command, stdout
+}
+
+func externalScoreTestCommand() *cobra.Command {
+	command := &cobra.Command{Use: "score"}
+	for _, flag := range []string{"answer-key", "output", "range-artifacts", "attack-box", "region", "profile", "ssh-key", "ssh-user"} {
+		command.Flags().String(flag, "", "")
+	}
+	command.Flags().Bool("live-verify", false, "")
+	return command
 }
 
 func writeScoreManifest(t *testing.T, root, body string) {

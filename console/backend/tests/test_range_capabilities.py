@@ -17,6 +17,7 @@ from console.backend import (  # noqa: E402
     command_runner,
     commands,
     hook,
+    lifecycle,
     range_capabilities,
 )
 
@@ -153,12 +154,17 @@ def test_variant_generating_command_invalidates_cached_context() -> None:
         async def fake_overlays(*_args, **_kwargs) -> None:
             return None
 
+        async def fake_initialization(*_args, **_kwargs) -> None:
+            return None
+
         original_check = hook.run_check
         original_emit = chat_events.emit_event
         original_overlays = command_runner._emit_overlays
+        original_initialization = command_runner._refresh_range_initialization
         hook.run_check = fake_check
         chat_events.emit_event = fake_emit
         command_runner._emit_overlays = fake_overlays
+        command_runner._refresh_range_initialization = fake_initialization
         try:
             plan = command_runner._CommandPlan(
                 "/up", ("dreadgoad", "up"), "/repo", commands.REGISTRY["/up"]
@@ -179,6 +185,7 @@ def test_variant_generating_command_invalidates_cached_context() -> None:
             hook.run_check = original_check
             chat_events.emit_event = original_emit
             command_runner._emit_overlays = original_overlays
+            command_runner._refresh_range_initialization = original_initialization
             chat_runtime.runtimes.pop(session_id, None)
 
     asyncio.run(run())
@@ -195,8 +202,13 @@ def test_variant_context_invalidation_survives_refresh_failure() -> None:
         async def failed_check(*_args, **_kwargs):  # noqa: ANN202
             raise RuntimeError("refresh failed")
 
+        async def fake_initialization(*_args, **_kwargs) -> None:
+            return None
+
         original_check = hook.run_check
+        original_initialization = command_runner._refresh_range_initialization
         hook.run_check = failed_check
+        command_runner._refresh_range_initialization = fake_initialization
         try:
             plan = command_runner._CommandPlan(
                 "/variant",
@@ -220,7 +232,101 @@ def test_variant_context_invalidation_survives_refresh_failure() -> None:
             assert current.agent_commands is None
         finally:
             hook.run_check = original_check
+            command_runner._refresh_range_initialization = original_initialization
             chat_runtime.runtimes.pop(session_id, None)
+
+    asyncio.run(run())
+
+
+def test_root_change_replaces_and_reinitializes_session_artifacts() -> None:
+    async def run() -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            session_id = "variant-artifact-refresh-test"
+            session = {
+                "id": session_id,
+                "session_dir": str(root / "session"),
+                "anchor": {"config_path": str(root / "dreadgoad.yaml"), "env": "dev"},
+            }
+            artifacts = lifecycle.artifacts_dir(session)
+            artifacts.mkdir(parents=True)
+            stale = artifacts / "answer_key.json"
+            stale.write_text("source")
+            emitted: list[tuple[str, dict[str, object]]] = []
+
+            class FakeDB:
+                async def get_session(self, requested_id: str):  # noqa: ANN202
+                    assert requested_id == session_id
+                    return session
+
+            app = SimpleNamespace(state=SimpleNamespace(db=FakeDB()))
+            current = chat_runtime.runtime(session_id)
+            current.agent = object()
+            current.agent_capabilities = range_capabilities.RangeContext({}, "Source.")
+            current.agent_commands = frozenset({"/health"})
+
+            async def fake_check(*_args, **_kwargs):  # noqa: ANN202
+                return {}
+
+            async def fake_overlays(*_args, **_kwargs) -> None:
+                return None
+
+            async def fake_initialize(
+                initialized_session, _fallback_root, capture_command=None
+            ):  # noqa: ANN001, ANN202
+                assert initialized_session is session
+                assert capture_command is not None
+                assert artifacts.is_dir()
+                assert not stale.exists()
+                (artifacts / "answer_key.json").write_text("target")
+                return [
+                    {
+                        "action": "generate_answer_key",
+                        "status": "completed",
+                        "artifacts": [str(artifacts / "answer_key.json")],
+                    }
+                ]
+
+            async def fake_emit(_app, _sid, kind, payload, **_kwargs) -> None:  # noqa: ANN001
+                emitted.append((kind, payload))
+
+            original_check = hook.run_check
+            original_overlays = command_runner._emit_overlays
+            original_initialize = lifecycle.initialize_session
+            original_emit = chat_events.emit_event
+            hook.run_check = fake_check
+            command_runner._emit_overlays = fake_overlays
+            lifecycle.initialize_session = fake_initialize
+            chat_events.emit_event = fake_emit
+            try:
+                plan = command_runner._CommandPlan(
+                    "/variant",
+                    ("dreadgoad", "variant"),
+                    str(root),
+                    commands.REGISTRY["/variant"],
+                )
+                await command_runner._finalize_command(
+                    app,
+                    session_id,
+                    plan,
+                    command_runner._RunResult(0, "generated", cancelled=False),
+                )
+                assert (artifacts / "answer_key.json").read_text() == "target"
+                initialization_events = [
+                    payload
+                    for kind, payload in emitted
+                    if kind == "status" and "initialization" in payload
+                ]
+                assert len(initialization_events) == 1
+                assert current.agent is None
+                assert current.agent_capabilities is None
+                assert current.agent_commands is None
+            finally:
+                hook.run_check = original_check
+                command_runner._emit_overlays = original_overlays
+                lifecycle.initialize_session = original_initialize
+                chat_events.emit_event = original_emit
+                chat_runtime.runtimes.pop(session_id, None)
 
     asyncio.run(run())
 

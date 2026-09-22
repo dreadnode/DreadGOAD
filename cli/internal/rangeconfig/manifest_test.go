@@ -175,6 +175,36 @@ commands:
 	}
 }
 
+func TestDecodeRejectsUnsupportedBuiltinCommandProfile(t *testing.T) {
+	_, err := Decode([]byte(`schema_version: 1
+kind: active-directory
+commands:
+  health:
+    protocol: health/v1
+    handler:
+      type: builtin
+      profile: web
+`))
+	if err == nil || !strings.Contains(err.Error(), `profile "web" is unsupported`) {
+		t.Fatalf("Decode() error = %v", err)
+	}
+}
+
+func TestDecodeRejectsProtocolAssignedToWrongCommand(t *testing.T) {
+	_, err := Decode([]byte(`schema_version: 1
+kind: active-directory
+commands:
+  health:
+    protocol: score/v1
+    handler:
+      type: builtin
+      profile: active-directory
+`))
+	if err == nil || !strings.Contains(err.Error(), `expected "health/v1"`) {
+		t.Fatalf("Decode() error = %v", err)
+	}
+}
+
 func TestDecodeRequiresMandatoryHealth(t *testing.T) {
 	for name, manifest := range map[string]string{
 		"service missing":  "schema_version: 1\nkind: service-range\n",

@@ -711,6 +711,41 @@ async def _execute_command(
     )
 
 
+async def _refresh_range_initialization(app: t.Any, session_id: str) -> None:
+    """Replace and rebuild private artifacts after the effective range may change."""
+    session = await app.state.db.get_session(session_id)
+    if session is None:
+        return
+    try:
+        lifecycle.reset_artifacts(session)
+        results = await lifecycle.initialize_session(
+            session,
+            str(paths.repo_root()),
+            capture_command=_capture_command(session_id),
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - initialization remains non-fatal
+        results = [
+            {
+                "action": "range_init",
+                "status": "failed",
+                "message": str(exc),
+            }
+        ]
+    for result in results:
+        action = result["action"].replace("_", " ")
+        content = f"Session initialization: {action} {result['status']}."
+        if detail := result.get("message"):
+            content += f" {detail}"
+        await chat_events.emit_event(
+            app,
+            session_id,
+            "status",
+            {"content": content, "initialization": result},
+        )
+
+
 async def _finalize_command(
     app: t.Any, session_id: str, plan: _CommandPlan, result: _RunResult
 ) -> tuple[int, str]:
@@ -755,7 +790,11 @@ async def _finalize_command(
             # Generation may have completed before a later command stage,
             # refresh, overlay, or cancellation failed. Never carry the old
             # prompt and capability snapshot into the next turn.
-            chat_runtime.invalidate_range_context(session_id)
+            try:
+                if not result.cancelled:
+                    await _refresh_range_initialization(app, session_id)
+            finally:
+                chat_runtime.invalidate_range_context(session_id)
 
 
 async def run_cli(

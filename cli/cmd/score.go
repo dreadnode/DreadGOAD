@@ -150,7 +150,11 @@ func runScore(cmd *cobra.Command, _ []string) error {
 }
 
 func runExternalScore(cmd *cobra.Command, cfg *config.Config, capability rangecommand.Capability, reportPath string) error {
-	options := map[string]any{"report": reportPath}
+	absoluteReportPath, err := filepath.Abs(reportPath)
+	if err != nil {
+		return fmt.Errorf("resolve report path: %w", err)
+	}
+	options := map[string]any{"report": absoluteReportPath}
 	for _, flag := range []string{"answer-key", "output", "range-artifacts", "attack-box", "region", "profile", "ssh-key", "ssh-user"} {
 		value, err := cmd.Flags().GetString(flag)
 		if err != nil {

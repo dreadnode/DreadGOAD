@@ -22,14 +22,10 @@ const (
 	HandlerBuiltin    = "builtin"
 	HandlerExecutable = "executable"
 	ProfileActiveDir  = "active-directory"
+	maxResultLine     = 1 << 20
 )
 
 var Names = []string{"health", "validate", "score", "reset", "scrub"}
-
-var protocols = map[string]string{
-	"health": "health/v1", "validate": "validate/v1", "score": "score/v1",
-	"reset": "operation/v1", "scrub": "operation/v1",
-}
 
 var defaultDescriptions = map[string]string{
 	"health":   "Check each host and the range's core services",
@@ -100,7 +96,7 @@ func Resolve(cfg *config.Config, name string) (Capability, error) {
 }
 
 func resolveAtRoot(cfg *config.Config, root config.RangeRoot, name string) (Capability, error) {
-	protocol, known := protocols[name]
+	protocol, known := rangeconfig.CommandProtocol(name)
 	if !known {
 		return Capability{}, fmt.Errorf("unknown range command %q", name)
 	}
@@ -169,10 +165,14 @@ func ExecuteScoreInitializer(ctx context.Context, cfg *config.Config, capability
 	if capability.Name != "score" || !capability.Initializes || capability.InitializerPath == "" {
 		return errors.New("score capability has no initializer")
 	}
-	if err := os.MkdirAll(outputDir, 0o700); err != nil {
+	absoluteOutputDir, err := filepath.Abs(outputDir)
+	if err != nil {
+		return fmt.Errorf("resolve score artifact directory: %w", err)
+	}
+	if err := os.MkdirAll(absoluteOutputDir, 0o700); err != nil {
 		return fmt.Errorf("create score artifact directory: %w", err)
 	}
-	if err := os.Chmod(outputDir, 0o700); err != nil {
+	if err := os.Chmod(absoluteOutputDir, 0o700); err != nil {
 		return fmt.Errorf("secure score artifact directory: %w", err)
 	}
 	initializer := Capability{
@@ -181,7 +181,7 @@ func ExecuteScoreInitializer(ctx context.Context, cfg *config.Config, capability
 		RangeRoot: capability.RangeRoot,
 	}
 	return Execute(ctx, cfg, initializer, Request{
-		Options: map[string]any{"output_dir": outputDir},
+		Options: map[string]any{"output_dir": absoluteOutputDir},
 	}, stdout, stderr)
 }
 
@@ -301,13 +301,20 @@ func Execute(ctx context.Context, cfg *config.Config, capability Capability, req
 	command.Dir = capability.RangeRoot
 	command.Env = handlerEnvironment(os.Environ())
 	command.Stdin = strings.NewReader(string(payload))
-	captured := &tailWriter{destination: stdout, limit: 1 << 20}
+	captured := &tailWriter{destination: stdout, limit: maxResultLine}
 	command.Stdout = captured
 	command.Stderr = stderr
 	if err := command.Run(); err != nil {
 		return fmt.Errorf("range %s command %s failed: %w", cfg.ResolvedLab(), capability.Name, err)
 	}
-	if err := validateResult(capability.Protocol, captured.Bytes()); err != nil {
+	validationOutput, oversizedFinalLine := captured.ValidationOutput()
+	if oversizedFinalLine {
+		return fmt.Errorf(
+			"range %s command %s returned an invalid %s result: final stdout line exceeds %d bytes",
+			cfg.ResolvedLab(), capability.Name, capability.Protocol, maxResultLine,
+		)
+	}
+	if err := validateResult(capability.Protocol, validationOutput); err != nil {
 		return fmt.Errorf("range %s command %s returned an invalid %s result: %w", cfg.ResolvedLab(), capability.Name, capability.Protocol, err)
 	}
 	return nil
@@ -349,21 +356,37 @@ func handlerEnvironment(parent []string) []string {
 }
 
 type tailWriter struct {
-	destination io.Writer
-	buffer      []byte
-	limit       int
+	destination   io.Writer
+	buffer        []byte
+	limit         int
+	startsMidLine bool
 }
 
 func (w *tailWriter) Write(payload []byte) (int, error) {
 	written, err := w.destination.Write(payload)
 	w.buffer = append(w.buffer, payload...)
 	if len(w.buffer) > w.limit {
-		w.buffer = append([]byte(nil), w.buffer[len(w.buffer)-w.limit:]...)
+		cut := len(w.buffer) - w.limit
+		w.startsMidLine = w.buffer[cut-1] != '\n'
+		w.buffer = append([]byte(nil), w.buffer[cut:]...)
 	}
 	return written, err
 }
 
-func (w *tailWriter) Bytes() []byte { return w.buffer }
+func (w *tailWriter) ValidationOutput() ([]byte, bool) {
+	if !w.startsMidLine {
+		return w.buffer, false
+	}
+	newline := bytes.IndexByte(w.buffer, '\n')
+	if newline < 0 {
+		return nil, true
+	}
+	completeLines := w.buffer[newline+1:]
+	if len(bytes.TrimSpace(completeLines)) == 0 {
+		return nil, true
+	}
+	return completeLines, false
+}
 
 func validateResult(protocol string, output []byte) error {
 	lines := bytes.Split(output, []byte{'\n'})

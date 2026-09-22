@@ -212,12 +212,20 @@ func validateLegacyScoreInitialization(manifest *Manifest) error {
 	return nil
 }
 
-var rangeCommandNames = map[string]struct{}{
-	"health": {}, "validate": {}, "score": {}, "reset": {}, "scrub": {},
+var rangeCommandProtocols = map[string]string{
+	"health": "health/v1", "validate": "validate/v1", "score": "score/v1",
+	"reset": "operation/v1", "scrub": "operation/v1",
+}
+
+// CommandProtocol returns the fixed wire protocol for one semantic command.
+func CommandProtocol(name string) (string, bool) {
+	protocol, ok := rangeCommandProtocols[name]
+	return protocol, ok
 }
 
 func validateCommandSpec(name string, command CommandSpec) error {
-	if _, ok := rangeCommandNames[name]; !ok {
+	expectedProtocol, ok := CommandProtocol(name)
+	if !ok {
 		return fmt.Errorf("commands.%s is unsupported", name)
 	}
 	if strings.TrimSpace(command.Description) != command.Description {
@@ -237,6 +245,12 @@ func validateCommandSpec(name string, command CommandSpec) error {
 		if !pathComponent.MatchString(command.Handler.Profile) {
 			return fmt.Errorf("commands.%s.handler.profile must be a safe identifier", name)
 		}
+		if command.Handler.Profile != ProfileActiveDir {
+			return fmt.Errorf(
+				"commands.%s.handler.profile %q is unsupported (expected %q)",
+				name, command.Handler.Profile, ProfileActiveDir,
+			)
+		}
 		if command.Handler.Path != "" {
 			return fmt.Errorf("commands.%s builtin handler must not declare path", name)
 		}
@@ -252,6 +266,12 @@ func validateCommandSpec(name string, command CommandSpec) error {
 	}
 	if command.Protocol == "" {
 		return fmt.Errorf("commands.%s requires protocol", name)
+	}
+	if command.Protocol != expectedProtocol {
+		return fmt.Errorf(
+			"commands.%s.protocol %q is unsupported (expected %q)",
+			name, command.Protocol, expectedProtocol,
+		)
 	}
 	if command.Initializer != nil {
 		if name != "score" {
