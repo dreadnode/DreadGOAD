@@ -348,6 +348,16 @@ async def _prepare_extra(
     if rc_fetch != 0:
         raise _Aborted(rc_fetch, f"report fetch failed: {message[-300:]}", message)
     trailing = extra[1:]
+    if _has_option(trailing, "--range-artifacts"):
+        raise _Aborted(
+            1,
+            "--range-artifacts is managed by the console for this session",
+        )
+    trailing = [
+        "--range-artifacts",
+        str(lifecycle.artifacts_dir(session)),
+        *trailing,
+    ]
     if not _has_option(trailing, "--answer-key"):
         generated_key = lifecycle.answer_key_path(session)
         if generated_key.is_file():
@@ -701,6 +711,51 @@ async def _execute_command(
     )
 
 
+async def _refresh_range_initialization(
+    app: t.Any,
+    session_id: str,
+    *,
+    cancellation_cleanup: bool = False,
+) -> None:
+    """Replace and rebuild private artifacts after the effective range may change."""
+    session = await app.state.db.get_session(session_id)
+    if session is None:
+        return
+    try:
+        lifecycle.reset_artifacts(session)
+        capture_command = (
+            partial(_capture_for_refresh, session_id)
+            if cancellation_cleanup
+            else _capture_command(session_id)
+        )
+        results = await lifecycle.initialize_session(
+            session,
+            str(paths.repo_root()),
+            capture_command=capture_command,
+        )
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - initialization remains non-fatal
+        results = [
+            {
+                "action": "range_init",
+                "status": "failed",
+                "message": str(exc),
+            }
+        ]
+    for result in results:
+        action = result["action"].replace("_", " ")
+        content = f"Session initialization: {action} {result['status']}."
+        if detail := result.get("message"):
+            content += f" {detail}"
+        await chat_events.emit_event(
+            app,
+            session_id,
+            "status",
+            {"content": content, "initialization": result},
+        )
+
+
 async def _finalize_command(
     app: t.Any, session_id: str, plan: _CommandPlan, result: _RunResult
 ) -> tuple[int, str]:
@@ -708,30 +763,51 @@ async def _finalize_command(
     if not result.started:
         return result.exit_code, result.output
 
-    if result.cancelled:
-        if plan.spec.cloud_ops:
-            try:
-                payload = await asyncio.wait_for(
-                    hook.run_check(
-                        app, session_id, partial(_capture_for_refresh, session_id)
-                    ),
-                    _REFRESH_TIMEOUT,
-                )
-                await chat_events.emit_event(app, session_id, "check_run", payload)
-            except asyncio.CancelledError:
-                raise
-            except Exception:  # noqa: BLE001 - a stale view beats a lost cancel
-                pass
-        raise asyncio.CancelledError
+    changes_range_root = plan.name in {"/up", "/provision", "/variant"}
+    try:
+        if result.cancelled:
+            if plan.spec.cloud_ops:
+                try:
+                    payload = await asyncio.wait_for(
+                        hook.run_check(
+                            app, session_id, partial(_capture_for_refresh, session_id)
+                        ),
+                        _REFRESH_TIMEOUT,
+                    )
+                    await chat_events.emit_event(app, session_id, "check_run", payload)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001 - a stale view beats a lost cancel
+                    pass
+            raise asyncio.CancelledError
 
-    instances = parse_instances(result.output) if plan.name == "/instances" else None
-    if instances is not None:
-        payload = await hook.apply_instances(app, session_id, instances)
-    else:
-        payload = await hook.run_check(app, session_id, _capture_command(session_id))
-    await chat_events.emit_event(app, session_id, "check_run", payload)
-    await _emit_overlays(app, session_id, plan.name, result.output, result.exit_code)
-    return result.exit_code, result.output
+        instances = (
+            parse_instances(result.output) if plan.name == "/instances" else None
+        )
+        if instances is not None:
+            payload = await hook.apply_instances(app, session_id, instances)
+        else:
+            payload = await hook.run_check(
+                app, session_id, _capture_command(session_id)
+            )
+        await chat_events.emit_event(app, session_id, "check_run", payload)
+        await _emit_overlays(
+            app, session_id, plan.name, result.output, result.exit_code
+        )
+        return result.exit_code, result.output
+    finally:
+        if changes_range_root:
+            # Generation may have completed before a later command stage,
+            # refresh, overlay, or cancellation failed. Never carry the old
+            # prompt and capability snapshot into the next turn.
+            try:
+                await _refresh_range_initialization(
+                    app,
+                    session_id,
+                    cancellation_cleanup=result.cancelled,
+                )
+            finally:
+                chat_runtime.invalidate_range_context(session_id)
 
 
 async def run_cli(

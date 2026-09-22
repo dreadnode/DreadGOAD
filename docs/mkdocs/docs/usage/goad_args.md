@@ -82,11 +82,11 @@ dreadgoad exec --hosts dc02 --cmd 'Get-Service WinRM'   # control plane, works w
 ### Engagement scoreboard
 
 ```bash
-dreadgoad scoreboard generate-key                                         # build answer_key.json
+dreadgoad score generate-key                                              # built-in AD ranges only
 dreadgoad scoreboard run --report ./report.jsonl                          # local transport
 dreadgoad scoreboard run --transport ssm --instance-id i-0123456789abcdef0
 dreadgoad scoreboard run --once                                           # one-shot static board
-dreadgoad scoreboard demo                                                 # sample board with mock findings
+dreadgoad scoreboard demo                                                 # built-in AD sample board
 ```
 
 ### Environment and configuration

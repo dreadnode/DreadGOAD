@@ -11,6 +11,7 @@ import (
 	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/dreadnode/dreadgoad/internal/doctor"
 	"github.com/dreadnode/dreadgoad/internal/provider"
+	"github.com/dreadnode/dreadgoad/internal/rangecommand"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
@@ -81,6 +82,14 @@ type upStep struct {
 }
 
 func runUp(cmd *cobra.Command, args []string) error {
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
+	if err := requireUpHealth(cfg); err != nil {
+		return err
+	}
+
 	steps := []upStep{
 		{id: "doctor", name: "Pre-flight checks", run: runUpDoctor},
 		{id: "infra", name: "Infrastructure apply", run: runUpInfraApply},
@@ -127,6 +136,13 @@ func runUp(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	color.Green("✓ Lab is up. Total time: %s", time.Since(start).Round(time.Second))
 	fmt.Println(upNextStep())
+	return nil
+}
+
+func requireUpHealth(cfg *config.Config) error {
+	if _, err := rangecommand.Require(cfg, "health"); err != nil {
+		return fmt.Errorf("validate mandatory health command before deployment: %w", err)
+	}
 	return nil
 }
 

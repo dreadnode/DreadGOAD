@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -246,6 +248,51 @@ func TestUpDoctorFailureDoesNotRecommendBypass(t *testing.T) {
 func TestUpNextStepMatchesLabValidation(t *testing.T) {
 	if got := upNextStep(); !strings.Contains(got, "dreadgoad validate") || !strings.Contains(got, "range-specific") {
 		t.Fatalf("next step = %q, want range-specific validation guidance", got)
+	}
+}
+
+func TestRequireUpHealthRejectsBrokenHandlerBeforePipeline(t *testing.T) {
+	root := t.TempDir()
+	labPath := filepath.Join(root, "ad", "service")
+	if err := os.MkdirAll(labPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `schema_version: 1
+kind: service-range
+commands:
+  health:
+    protocol: health/v1
+    handler:
+      type: executable
+      path: commands/health
+`
+	if err := os.WriteFile(filepath.Join(labPath, "range.yml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	err := requireUpHealth(&config.Config{ProjectRoot: root, Lab: "service"})
+	if err == nil || !strings.Contains(err.Error(), "before deployment") || !strings.Contains(err.Error(), "commands/health") {
+		t.Fatalf("requireUpHealth() error = %v, want pre-deployment handler error", err)
+	}
+	handler := filepath.Join(labPath, "commands", "health")
+	if err := os.MkdirAll(filepath.Dir(handler), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(handler, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireUpHealth(&config.Config{ProjectRoot: root, Lab: "service"}); err != nil {
+		t.Fatalf("requireUpHealth() rejected installed handler: %v", err)
+	}
+}
+
+func TestRequireUpHealthKeepsLegacyBuiltIn(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "ad", "legacy"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := requireUpHealth(&config.Config{ProjectRoot: root, Lab: "legacy"}); err != nil {
+		t.Fatalf("requireUpHealth() rejected legacy built-in: %v", err)
 	}
 }
 

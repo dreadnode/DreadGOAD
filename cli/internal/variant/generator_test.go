@@ -719,7 +719,7 @@ func TestServiceRangeRejectedBeforeWritingTarget(t *testing.T) {
 	if err := os.MkdirAll(sourceDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	manifest := "schema_version: 1\nkind: service-range\n"
+	manifest := "schema_version: 1\nkind: service-range\ncommands:\n  health:\n    protocol: health/v1\n    handler:\n      type: executable\n      path: commands/health\n"
 	if err := os.WriteFile(filepath.Join(sourceDir, "range.yml"), []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
 	}

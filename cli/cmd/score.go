@@ -12,25 +12,31 @@ import (
 	"github.com/dreadnode/dreadgoad/internal/azure"
 	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/dreadnode/dreadgoad/internal/provider"
+	"github.com/dreadnode/dreadgoad/internal/rangecommand"
 	"github.com/dreadnode/dreadgoad/internal/scoreboard"
 	"github.com/spf13/cobra"
 )
 
 var scoreCmd = &cobra.Command{
 	Use:   "score",
-	Short: "Score an agent's report against the answer key",
-	Long: `Scores an agent's JSONL report against the answer key and outputs
-a JSON result. Supports live verification via --live-verify to test
-credentials against the running GOAD lab.
+	Short: "Score an engagement report for the selected range",
+	Long: `Invokes the selected range's scorer and outputs a JSON result.
 
-Use 'score generate-key' to build the answer key from a lab config.`,
+The built-in Active Directory scorer evaluates a JSONL report against an
+answer key and can use --live-verify to test credentials against the live lab.
+
+When the selected range uses that built-in scorer, use 'score generate-key' to
+build its answer key from the resolved lab config.`,
 	RunE: runScore,
 }
 
 var scoreGenerateKeyCmd = &cobra.Command{
 	Use:   "generate-key",
-	Short: "Generate the answer key from a GOAD config.json",
-	RunE:  runScoreGenerateKey,
+	Short: "Generate an answer key for the built-in Active Directory scorer",
+	Long: `Generate an answer key for the selected range's built-in Active Directory
+scorer. Ranges with executable-owned scoring use their range-owned handler and,
+when setup artifacts are required, their declared initializer instead.`,
+	RunE: runScoreGenerateKey,
 }
 
 func init() {
@@ -38,8 +44,9 @@ func init() {
 	scoreCmd.AddCommand(scoreGenerateKeyCmd)
 
 	scoreCmd.Flags().String("report", "", "Path to the agent's JSONL report file (required)")
-	scoreCmd.Flags().String("answer-key", "", "Path to answer_key.json (default: scoreboard/answer_key.json)")
+	scoreCmd.Flags().String("answer-key", "", "Path to answer_key.json (default: <range-artifacts>/answer_key.json when set, otherwise scoreboard/answer_key.json)")
 	scoreCmd.Flags().String("output", "", "Write JSON result to file instead of stdout")
+	scoreCmd.Flags().String("range-artifacts", "", "Private session artifact directory for the selected range scorer")
 	scoreCmd.Flags().Bool("live-verify", false, "Enable live verification via the attack box")
 	scoreCmd.Flags().String("attack-box", "", "Instance ID (AWS) or resource ID (Azure) of the Kali attack box")
 	scoreCmd.Flags().String("region", "", "AWS region for SSM")
@@ -65,41 +72,66 @@ func runScore(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("--report is required")
 	}
 
-	answerKeyPath, _ := cmd.Flags().GetString("answer-key")
-	if answerKeyPath == "" {
-		answerKeyPath = filepath.Join(cfg.ProjectRoot, "scoreboard", "answer_key.json")
-	}
-
-	ak, err := scoreboard.LoadAnswerKey(answerKeyPath)
+	capability, err := rangecommand.Require(cfg, "score")
 	if err != nil {
-		return fmt.Errorf("%w (run 'dreadgoad score generate-key' first)", err)
+		return err
 	}
+	if capability.HandlerType == rangecommand.HandlerExecutable {
+		return runExternalScore(cmd, cfg, capability, reportPath)
+	}
+	return runBuiltinScore(cmd, cfg, reportPath)
+}
 
+func runBuiltinScore(cmd *cobra.Command, cfg *config.Config, reportPath string) error {
+	answerKeyPath := resolveScoreAnswerKeyPath(cmd, cfg)
+	ak, err := loadScoreAnswerKey(cmd, answerKeyPath)
+	if err != nil {
+		return err
+	}
 	raw, err := os.ReadFile(reportPath)
 	if err != nil {
 		return fmt.Errorf("read report: %w", err)
 	}
 	report := scoreboard.ParseReport(string(raw))
-
-	ctx := cmd.Context()
-	var lv *scoreboard.LiveVerifier
-	if live, _ := cmd.Flags().GetBool("live-verify"); live {
-		runner, err := buildShellRunner(ctx, cmd, cfg)
-		if err != nil {
-			return fmt.Errorf("live verification setup: %w", err)
-		}
-		lv = scoreboard.NewLiveVerifier(runner)
+	liveVerifier, err := buildLiveVerifier(cmd, cfg)
+	if err != nil {
+		return err
 	}
-
-	result := scoreboard.ScoreReport(ctx, report, ak, lv)
-
+	result := scoreboard.ScoreReport(cmd.Context(), report, ak, liveVerifier)
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal result: %w", err)
 	}
+	writeScoreSummary(cmd, result)
+	return writeScoreOutput(cmd, data)
+}
 
-	out := cmd.OutOrStdout()
+func loadScoreAnswerKey(cmd *cobra.Command, answerKeyPath string) (*scoreboard.AnswerKey, error) {
+	ak, err := scoreboard.LoadAnswerKey(answerKeyPath)
+	if err == nil {
+		return ak, nil
+	}
+	explicitAnswerKey, _ := cmd.Flags().GetString("answer-key")
+	rangeArtifacts, _ := cmd.Flags().GetString("range-artifacts")
+	if explicitAnswerKey == "" && rangeArtifacts != "" {
+		return nil, fmt.Errorf("%w (session answer key is unavailable; rerun range session initialization)", err)
+	}
+	return nil, fmt.Errorf("%w (run 'dreadgoad score generate-key' first)", err)
+}
 
+func buildLiveVerifier(cmd *cobra.Command, cfg *config.Config) (*scoreboard.LiveVerifier, error) {
+	live, _ := cmd.Flags().GetBool("live-verify")
+	if !live {
+		return nil, nil
+	}
+	runner, err := buildShellRunner(cmd.Context(), cmd, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("live verification setup: %w", err)
+	}
+	return scoreboard.NewLiveVerifier(runner), nil
+}
+
+func writeScoreSummary(cmd *cobra.Command, result *scoreboard.ScoreResult) {
 	// Human-readable summary on stderr so stdout stays valid JSON.
 	stderr := cmd.ErrOrStderr()
 	_, _ = fmt.Fprintf(stderr, "\n  Score: %s (%s)\n\n", result.AgentID, result.Mode)
@@ -118,18 +150,41 @@ func runScore(cmd *cobra.Command, _ []string) error {
 		_, _ = fmt.Fprintf(stderr, "\n    %d failed check(s) — see JSON output for details\n", len(result.FailedChecks))
 	}
 	_, _ = fmt.Fprintln(stderr)
+}
 
+func writeScoreOutput(cmd *cobra.Command, data []byte) error {
 	outputPath, _ := cmd.Flags().GetString("output")
 	if outputPath != "" {
 		if err := os.WriteFile(outputPath, data, 0o644); err != nil {
 			return fmt.Errorf("write output: %w", err)
 		}
-		_, err = fmt.Fprintf(cmd.ErrOrStderr(), "JSON result written to %s\n", outputPath)
+		_, err := fmt.Fprintf(cmd.ErrOrStderr(), "JSON result written to %s\n", outputPath)
 		return err
 	}
-
-	_, err = fmt.Fprintln(out, string(data))
+	_, err := fmt.Fprintln(cmd.OutOrStdout(), string(data))
 	return err
+}
+
+func runExternalScore(cmd *cobra.Command, cfg *config.Config, capability rangecommand.Capability, reportPath string) error {
+	absoluteReportPath, err := filepath.Abs(reportPath)
+	if err != nil {
+		return fmt.Errorf("resolve report path: %w", err)
+	}
+	options := map[string]any{"report": absoluteReportPath}
+	for _, flag := range []string{"answer-key", "output", "range-artifacts", "attack-box", "region", "profile", "ssh-key", "ssh-user"} {
+		value, err := cmd.Flags().GetString(flag)
+		if err != nil {
+			return err
+		}
+		if value != "" {
+			options[strings.ReplaceAll(flag, "-", "_")] = value
+		}
+	}
+	live, _ := cmd.Flags().GetBool("live-verify")
+	options["live_verify"] = live
+	return rangecommand.Execute(cmd.Context(), cfg, capability, rangecommand.Request{
+		Options: options,
+	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 
 func buildShellRunner(ctx context.Context, cmd *cobra.Command, cfg *config.Config) (scoreboard.ShellRunner, error) {
@@ -277,15 +332,24 @@ func runScoreGenerateKey(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	return runScoreGenerateKeyWithConfig(cmd, cfg)
+}
+
+func runScoreGenerateKeyWithConfig(cmd *cobra.Command, cfg *config.Config) error {
+	if _, err := rangecommand.RequireBuiltinProfile(cfg, "score", rangecommand.ProfileActiveDir); err != nil {
+		return fmt.Errorf("score generate-key is only available for the built-in active-directory scorer: %w", err)
+	}
+
 	configPath, _ := cmd.Flags().GetString("config")
 	if configPath == "" {
 		// Resolve through the active environment so overlays and variant labs
 		// are honored. Hardcoding ad/GOAD/data/config.json scores the base lab
 		// no matter which --env is selected.
-		configPath, err = cfg.ResolvedLabConfigPath()
+		resolved, err := cfg.ResolvedLabConfigPath()
 		if err != nil {
 			return err
 		}
+		configPath = resolved
 	}
 	outputPath, _ := cmd.Flags().GetString("output")
 	if outputPath == "" {
@@ -318,4 +382,14 @@ func runScoreGenerateKey(cmd *cobra.Command, _ []string) error {
 		}
 	}
 	return nil
+}
+
+func resolveScoreAnswerKeyPath(cmd *cobra.Command, cfg *config.Config) string {
+	if path, _ := cmd.Flags().GetString("answer-key"); path != "" {
+		return path
+	}
+	if artifacts, _ := cmd.Flags().GetString("range-artifacts"); artifacts != "" {
+		return filepath.Join(artifacts, "answer_key.json")
+	}
+	return filepath.Join(cfg.ProjectRoot, "scoreboard", "answer_key.json")
 }

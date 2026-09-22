@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
 )
@@ -28,6 +29,9 @@ const (
 	ProfileActiveDir = "active-directory"
 	// ProfileTemplate selects the template-copy scaffolding implementation.
 	ProfileTemplate = "template"
+	// MaxAgentPromptBytes bounds range-authored model context before it reaches
+	// the console or an API request.
+	MaxAgentPromptBytes = 32 * 1024
 )
 
 // ActionSpec names one allowlisted lifecycle action. The consumer, not the
@@ -79,6 +83,34 @@ type OperationsSpec struct {
 	Profile string `yaml:"profile,omitempty" json:"profile,omitempty"`
 }
 
+// AgentSpec points at optional, range-owned model guidance. The path is
+// resolved and confined beneath the selected range directory when loaded.
+type AgentSpec struct {
+	Prompt string `yaml:"prompt,omitempty" json:"prompt,omitempty"`
+}
+
+// HandlerSpec selects either a CLI-owned implementation or a trusted
+// executable shipped by the range. Executable paths are resolved and confined
+// beneath the selected range directory by the rangecommand package.
+type HandlerSpec struct {
+	Type    string `yaml:"type" json:"type"`
+	Profile string `yaml:"profile,omitempty" json:"profile,omitempty"`
+	Path    string `yaml:"path,omitempty" json:"path,omitempty"`
+}
+
+// CommandSpec customizes one stable semantic command for a range. Safety
+// classification deliberately does not live here: manifests may select an
+// implementation or disable a capability, but cannot downgrade policy owned
+// by the CLI and console.
+type CommandSpec struct {
+	Enabled     *bool        `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	Description string       `yaml:"description,omitempty" json:"description,omitempty"`
+	Detail      string       `yaml:"detail,omitempty" json:"detail,omitempty"`
+	Protocol    string       `yaml:"protocol,omitempty" json:"protocol,omitempty"`
+	Handler     HandlerSpec  `yaml:"handler,omitempty" json:"handler,omitempty"`
+	Initializer *HandlerSpec `yaml:"initializer,omitempty" json:"initializer,omitempty"`
+}
+
 // Manifest is the shared, strict range.yml schema used by discovery,
 // scaffolding, and session lifecycle handling.
 type Manifest struct {
@@ -90,6 +122,8 @@ type Manifest struct {
 	Inspection     InspectionSpec          `yaml:"inspection,omitempty" json:"inspection,omitempty"`
 	Discovery      DiscoverySpec           `yaml:"discovery,omitempty" json:"discovery,omitempty"`
 	Operations     OperationsSpec          `yaml:"operations,omitempty" json:"operations,omitempty"`
+	Agent          AgentSpec               `yaml:"agent,omitempty" json:"agent,omitempty"`
+	Commands       map[string]CommandSpec  `yaml:"commands,omitempty" json:"commands,omitempty"`
 	Lifecycle      struct {
 		SessionInit []ActionSpec `yaml:"session_init" json:"session_init"`
 	} `yaml:"lifecycle" json:"lifecycle"`
@@ -103,39 +137,304 @@ func Decode(raw []byte) (*Manifest, error) {
 	if err := decoder.Decode(&manifest); err != nil {
 		return nil, err
 	}
+	if err := rejectAdditionalDocuments(decoder); err != nil {
+		return nil, err
+	}
+	if err := validateManifest(&manifest); err != nil {
+		return nil, err
+	}
+	return &manifest, nil
+}
+
+func rejectAdditionalDocuments(decoder *yaml.Decoder) error {
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		if err == nil {
-			return nil, fmt.Errorf("multiple YAML documents are not supported")
+			return fmt.Errorf("multiple YAML documents are not supported")
 		}
-		return nil, err
+		return err
 	}
+	return nil
+}
+
+func validateManifest(manifest *Manifest) error {
+	for _, validate := range []func(*Manifest) error{
+		validateManifestIdentity,
+		validateManifestInfrastructure,
+		validateManifestMetadata,
+		validateManifestCommands,
+		validateManifestDiscovery,
+	} {
+		if err := validate(manifest); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateManifestIdentity(manifest *Manifest) error {
 	if manifest.SchemaVersion != 1 {
-		return nil, fmt.Errorf("unsupported schema_version %d (expected 1)", manifest.SchemaVersion)
+		return fmt.Errorf("unsupported schema_version %d (expected 1)", manifest.SchemaVersion)
 	}
 	manifest.Kind = strings.TrimSpace(manifest.Kind)
 	if manifest.Kind != KindActiveDirectory && manifest.Kind != KindServiceRange {
-		return nil, fmt.Errorf(
+		return fmt.Errorf(
 			"kind %q is unsupported (expected %q or %q)",
 			manifest.Kind, KindActiveDirectory, KindServiceRange,
 		)
 	}
+	return nil
+}
+
+func validateManifestInfrastructure(manifest *Manifest) error {
 	for provider, spec := range manifest.Infrastructure {
 		if err := validateProviderSpec(provider, spec); err != nil {
-			return nil, err
+			return err
 		}
 	}
+	return nil
+}
+
+func validateManifestMetadata(manifest *Manifest) error {
 	if manifest.Inspection.Profile != "" && !pathComponent.MatchString(manifest.Inspection.Profile) {
-		return nil, fmt.Errorf("inspection.profile %q is not a safe identifier", manifest.Inspection.Profile)
+		return fmt.Errorf("inspection.profile %q is not a safe identifier", manifest.Inspection.Profile)
 	}
 	if manifest.Operations.Profile != "" && !pathComponent.MatchString(manifest.Operations.Profile) {
-		return nil, fmt.Errorf("operations.profile %q is not a safe identifier", manifest.Operations.Profile)
+		return fmt.Errorf("operations.profile %q is not a safe identifier", manifest.Operations.Profile)
 	}
+	if manifest.Agent.Prompt != "" {
+		if err := validateRangeRelativePath(manifest.Agent.Prompt); err != nil {
+			return fmt.Errorf("agent.prompt %w", err)
+		}
+	}
+	return nil
+}
+
+func validateManifestCommands(manifest *Manifest) error {
+	for name, command := range manifest.Commands {
+		if err := validateCommandSpec(name, command); err != nil {
+			return err
+		}
+	}
+	if err := validateLegacyScoreInitialization(manifest); err != nil {
+		return err
+	}
+	health, declaresHealth := manifest.Commands["health"]
+	if declaresHealth && health.Enabled != nil && !*health.Enabled {
+		return fmt.Errorf("commands.health is mandatory and cannot be disabled")
+	}
+	if manifest.Kind == KindServiceRange && !declaresHealth {
+		return fmt.Errorf("service-range manifests must declare commands.health")
+	}
+	return nil
+}
+
+func validateManifestDiscovery(manifest *Manifest) error {
 	manifest.Discovery.RangeTag = strings.TrimSpace(manifest.Discovery.RangeTag)
 	if manifest.Discovery.RangeTag != "" && !pathComponent.MatchString(manifest.Discovery.RangeTag) {
-		return nil, fmt.Errorf("discovery.range_tag %q is not a safe tag value", manifest.Discovery.RangeTag)
+		return fmt.Errorf("discovery.range_tag %q is not a safe tag value", manifest.Discovery.RangeTag)
 	}
-	return &manifest, nil
+	return nil
+}
+
+func validateLegacyScoreInitialization(manifest *Manifest) error {
+	for _, action := range manifest.Lifecycle.SessionInit {
+		if action.Action != "generate_answer_key" {
+			continue
+		}
+		score, declared := manifest.Commands["score"]
+		builtinActiveDirectory := !declared && manifest.Kind == KindActiveDirectory
+		if declared {
+			builtinActiveDirectory = (score.Enabled == nil || *score.Enabled) &&
+				score.Handler.Type == "builtin" && score.Handler.Profile == ProfileActiveDir
+		}
+		if !builtinActiveDirectory {
+			return fmt.Errorf(
+				"lifecycle.session_init action generate_answer_key requires the built-in active-directory score handler; executable scorers must use commands.score.initializer and disabled scorers must declare no scoring initialization",
+			)
+		}
+	}
+	return nil
+}
+
+var rangeCommandProtocols = map[string]string{
+	"health": "health/v1", "validate": "validate/v1", "score": "score/v1",
+	"reset": "operation/v1", "scrub": "operation/v1",
+}
+
+// CommandProtocol returns the fixed wire protocol for one semantic command.
+func CommandProtocol(name string) (string, bool) {
+	protocol, ok := rangeCommandProtocols[name]
+	return protocol, ok
+}
+
+func validateCommandSpec(name string, command CommandSpec) error {
+	expectedProtocol, ok := CommandProtocol(name)
+	if !ok {
+		return fmt.Errorf("commands.%s is unsupported", name)
+	}
+	if err := validateCommandText(name, command); err != nil {
+		return err
+	}
+	if command.Enabled != nil && !*command.Enabled {
+		return validateDisabledCommand(name, command)
+	}
+	if err := validateCommandHandler(name, command.Handler); err != nil {
+		return err
+	}
+	if command.Protocol == "" {
+		return fmt.Errorf("commands.%s requires protocol", name)
+	}
+	if command.Protocol != expectedProtocol {
+		return fmt.Errorf(
+			"commands.%s.protocol %q is unsupported (expected %q)",
+			name, command.Protocol, expectedProtocol,
+		)
+	}
+	return validateCommandInitializer(name, command)
+}
+
+func validateCommandText(name string, command CommandSpec) error {
+	if strings.TrimSpace(command.Description) != command.Description {
+		return fmt.Errorf("commands.%s.description must not have surrounding whitespace", name)
+	}
+	if strings.TrimSpace(command.Detail) != command.Detail {
+		return fmt.Errorf("commands.%s.detail must not have surrounding whitespace", name)
+	}
+	return nil
+}
+
+func validateDisabledCommand(name string, command CommandSpec) error {
+	if command.Handler != (HandlerSpec{}) || command.Protocol != "" || command.Initializer != nil {
+		return fmt.Errorf("commands.%s is disabled and must not declare a handler, initializer, or protocol", name)
+	}
+	return nil
+}
+
+func validateCommandHandler(name string, handler HandlerSpec) error {
+	switch handler.Type {
+	case "builtin":
+		if !pathComponent.MatchString(handler.Profile) {
+			return fmt.Errorf("commands.%s.handler.profile must be a safe identifier", name)
+		}
+		if handler.Profile != ProfileActiveDir {
+			return fmt.Errorf(
+				"commands.%s.handler.profile %q is unsupported (expected %q)",
+				name, handler.Profile, ProfileActiveDir,
+			)
+		}
+		if handler.Path != "" {
+			return fmt.Errorf("commands.%s builtin handler must not declare path", name)
+		}
+	case "executable":
+		if err := validateRangeExecutablePath(handler.Path); err != nil {
+			return fmt.Errorf("commands.%s executable path %w", name, err)
+		}
+		if handler.Profile != "" {
+			return fmt.Errorf("commands.%s executable handler must not declare profile", name)
+		}
+	default:
+		return fmt.Errorf("commands.%s handler type must be builtin or executable", name)
+	}
+	return nil
+}
+
+func validateCommandInitializer(name string, command CommandSpec) error {
+	if command.Initializer == nil {
+		return nil
+	}
+	if name != "score" {
+		return fmt.Errorf("commands.%s must not declare an initializer", name)
+	}
+	if command.Handler.Type != "executable" {
+		return fmt.Errorf("commands.score initializer requires an executable score handler")
+	}
+	if command.Initializer.Type != "executable" {
+		return fmt.Errorf("commands.score.initializer must be an executable handler with a path")
+	}
+	if err := validateRangeExecutablePath(command.Initializer.Path); err != nil {
+		return fmt.Errorf("commands.score.initializer path %w", err)
+	}
+	if command.Initializer.Profile != "" {
+		return fmt.Errorf("commands.score.initializer must not declare profile")
+	}
+	return nil
+}
+
+func validateRangeExecutablePath(path string) error {
+	return validateRangeRelativePath(path)
+}
+
+func validateRangeRelativePath(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return fmt.Errorf("is required")
+	}
+	clean := filepath.Clean(path)
+	if filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("must stay relative to the range")
+	}
+	return nil
+}
+
+// LoadAgentPrompt reads optional range-owned model guidance through the same
+// strict manifest and path boundary used by the rest of range discovery.
+func LoadAgentPrompt(labDir string) (string, error) {
+	manifest, found, err := Load(labDir)
+	if err != nil || !found || manifest.Agent.Prompt == "" {
+		return "", err
+	}
+	candidate, err := resolveAgentPromptPath(labDir, manifest.Agent.Prompt)
+	if err != nil {
+		return "", err
+	}
+	return readAgentPrompt(candidate, manifest.Agent.Prompt)
+}
+
+func resolveAgentPromptPath(labDir, declared string) (string, error) {
+	root, err := filepath.EvalSymlinks(labDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve range directory: %w", err)
+	}
+	candidate, err := filepath.EvalSymlinks(filepath.Join(root, declared))
+	if err != nil {
+		return "", fmt.Errorf("resolve agent prompt %q: %w", declared, err)
+	}
+	relative, err := filepath.Rel(root, candidate)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("agent prompt %q escapes the range directory", declared)
+	}
+	info, err := os.Stat(candidate)
+	if err != nil {
+		return "", fmt.Errorf("inspect agent prompt %q: %w", declared, err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", fmt.Errorf("agent prompt %q is not a regular file", declared)
+	}
+	if info.Size() > MaxAgentPromptBytes {
+		return "", fmt.Errorf("agent prompt %q exceeds %d bytes", declared, MaxAgentPromptBytes)
+	}
+	return candidate, nil
+}
+
+func readAgentPrompt(candidate, declared string) (string, error) {
+	raw, err := os.ReadFile(candidate)
+	if err != nil {
+		return "", fmt.Errorf("read agent prompt %q: %w", declared, err)
+	}
+	if len(raw) > MaxAgentPromptBytes {
+		return "", fmt.Errorf("agent prompt %q exceeds %d bytes", declared, MaxAgentPromptBytes)
+	}
+	if !utf8.Valid(raw) {
+		return "", fmt.Errorf("agent prompt %q must be UTF-8 text", declared)
+	}
+	if bytes.IndexByte(raw, 0) >= 0 {
+		return "", fmt.Errorf("agent prompt %q must not contain NUL bytes", declared)
+	}
+	prompt := strings.TrimSpace(string(raw))
+	if prompt == "" {
+		return "", fmt.Errorf("agent prompt %q is empty", declared)
+	}
+	return prompt, nil
 }
 
 // Load reads range.yml below a lab directory. Missing manifests are reported

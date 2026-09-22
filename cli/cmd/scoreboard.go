@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dreadnode/dreadgoad/internal/config"
+	"github.com/dreadnode/dreadgoad/internal/rangecommand"
 	"github.com/dreadnode/dreadgoad/internal/scoreboard"
 	"github.com/spf13/cobra"
 )
@@ -18,13 +19,14 @@ var scoreboardCmd = &cobra.Command{
 	Long: `Tracks an agent's progress against a GOAD lab: parses the lab config
 into a checklist of objectives ("answer key"), polls a JSONL report file
 locally or from an EC2 instance via SSM, and verifies findings against the
-key. Run 'dreadgoad score generate-key' first to build the answer key.`,
+key. For a built-in Active Directory range, run 'dreadgoad score generate-key'
+first to build the answer key.`,
 }
 
 // Hidden alias for backward compatibility — actual implementation is in score.go.
 var scoreboardGenerateKeyAlias = &cobra.Command{
 	Use:    "generate-key",
-	Short:  "Generate the answer key (use 'dreadgoad score generate-key' instead)",
+	Short:  "Generate a built-in Active Directory answer key (use 'dreadgoad score generate-key' instead)",
 	RunE:   runScoreGenerateKey,
 	Hidden: true,
 }
@@ -40,7 +42,7 @@ TUI. Use --transport=local to read a local file, or --transport=ssm with
 
 var scoreboardDemoCmd = &cobra.Command{
 	Use:   "demo",
-	Short: "Render a sample scoreboard with mock findings",
+	Short: "Render a sample scoreboard for the built-in Active Directory scorer",
 	RunE:  runScoreboardDemo,
 }
 
@@ -71,6 +73,13 @@ func runScoreboardRun(cmd *cobra.Command, _ []string) error {
 	cfg, err := config.Get()
 	if err != nil {
 		return err
+	}
+	return runScoreboardRunWithConfig(cmd, cfg)
+}
+
+func runScoreboardRunWithConfig(cmd *cobra.Command, cfg *config.Config) error {
+	if _, err := rangecommand.RequireBuiltinProfile(cfg, "score", rangecommand.ProfileActiveDir); err != nil {
+		return fmt.Errorf("scoreboard run is only available for the built-in active-directory scorer: %w", err)
 	}
 	answerKeyPath, _ := cmd.Flags().GetString("answer-key")
 	if answerKeyPath == "" {
@@ -194,15 +203,24 @@ func runScoreboardDemo(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	return runScoreboardDemoWithConfig(cmd, cfg)
+}
+
+func runScoreboardDemoWithConfig(cmd *cobra.Command, cfg *config.Config) error {
+	if _, err := rangecommand.RequireBuiltinProfile(cfg, "score", rangecommand.ProfileActiveDir); err != nil {
+		return fmt.Errorf("scoreboard demo is only available for the built-in active-directory scorer: %w", err)
+	}
+
 	configPath, _ := cmd.Flags().GetString("config")
 	if configPath == "" {
 		// Resolve through the active environment so overlays and variant labs
 		// are honored. Hardcoding ad/GOAD/data/config.json scores the base lab
 		// no matter which --env is selected.
-		configPath, err = cfg.ResolvedLabConfigPath()
+		resolved, err := cfg.ResolvedLabConfigPath()
 		if err != nil {
 			return err
 		}
+		configPath = resolved
 	}
 	ak, err := scoreboard.GenerateAnswerKey(configPath)
 	if err != nil {

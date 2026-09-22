@@ -10,7 +10,7 @@ import yaml
 from fastapi import APIRouter, HTTPException, Request
 
 from . import __version__ as VERSION
-from . import commands, configstore, labconfig, labs, paths
+from . import commands, configstore, labconfig, labs, paths, range_capabilities
 
 router = APIRouter()
 
@@ -135,9 +135,23 @@ async def update_settings(body: dict[str, t.Any]) -> dict[str, t.Any]:
 
 
 @router.get("/api/commands")
-async def get_commands() -> dict[str, t.Any]:
-    """Return the slash-command registry for frontend autocomplete."""
-    return {"commands": commands.command_catalog()}
+async def get_commands(
+    request: Request, session_id: str | None = None
+) -> dict[str, t.Any]:
+    """Return the global or selected range's slash-command catalog."""
+    if session_id is None:
+        return {"commands": commands.command_catalog()}
+    session = await request.app.state.db.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    try:
+        capabilities = await range_capabilities.load(session, str(paths.repo_root()))
+    except (OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"could not load range command capabilities: {exc}",
+        ) from exc
+    return {"commands": commands.command_catalog(capabilities)}
 
 
 def _config_path_problem(config_path: str) -> str | None:

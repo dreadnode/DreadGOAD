@@ -76,24 +76,34 @@ loop.
 |---------|--------------|----------|---------|
 | `/up` | `up` | 🤖 agent | Full bring-up (doctor→infra→provision→health) |
 | `/provision` | `provision` | 🤖 agent | Re-run config playbooks |
-| `/reset` | `lab reset` | 🤖 agent | Restore known-clean AD baseline |
+| `/reset` | `lab reset` | 🤖 agent | Restore the selected range's authored baseline |
 | `/variant` | `variant generate` | 🤖 agent | Generate a randomized-name variant |
 | `/extensions` | `extension` | 🤖 agent | List available extensions, or provision one |
-| `/score` | `score` | 🤖 agent | Fetch an agent report off the attack box and score it |
+| `/score` | `score` | 🤖 agent | Fetch an engagement report and apply the selected range's scoring logic |
 | `/exec` | `exec --json` | 🤖 agent | Run a script on named hosts via the cloud control plane |
 | `/restart` | `lab restart-vm` | 🤖 agent | Reboot one host, leaving the rest of the range up |
 | `/status` | `lab status --json`, then `health-check --json` | ⚡ direct composite | Cloud power state and host health in one pass |
 | `/instances` | `lab status --json` | ⚡ direct | Cloud power state |
-| `/health` | `health-check --json` | ⚡ direct | Per-host core service health (rendered as a table) |
+| `/health` | `health-check --json` | ⚡ direct | Run the selected range's health checks |
 | `/secure` | `security-check --json` | ⚡ direct | Network security posture |
-| `/validate` | `validate --json` | ⚡ direct | Full expected-state validation for the selected lab |
+| `/validate` | `validate --json` | ⚡ direct | Full expected-state validation for the selected range |
 | `/start [host]` | `lab start` / `lab start-vm` | ⚡ direct | Power on the range or one VM |
 | `/stop [host]` | `lab stop` / `lab stop-vm` | ⚡ direct | Power off the range or one VM |
-| `/scrub` | `score reset` | ⚡ direct | Clean agent artifacts (add `dry` to preview) |
+| `/scrub` | `score reset` | ⚡ direct | Run the selected range's engagement cleanup (add `dry` to preview) |
 | `/destroy [host]` | `infra destroy` / `lab destroy-vm` | ⚡ direct | Tear down the range or one VM (operator-confirmed) |
 | `/login` | provider login flow | ⚡ direct | Re-authenticate with AWS SSO or Azure |
 | `/help` | — | browser | Show the range workflow guide |
 | `/copy` | — | browser | Copy all or part of the conversation |
+
+The selected range owns the implementations and availability of `/health`,
+`/validate`, `/score`, `/reset`, and `/scrub`. The console loads and caches a
+capability snapshot for each session, then hides commands the range does not
+implement. That snapshot also restricts the model's instructions and command
+tool; the CLI independently rechecks availability when a command runs. Dispatch
+and destructive-action policy remain console-owned. Active Directory ranges
+retain the built-in behavior when they do not declare custom handlers. See
+**[Range-owned commands](../docs/mkdocs/docs/developers/add_lab.md#range-owned-commands)**
+for the manifest and handler contracts.
 
 The `/help` and `/copy` commands are client-side only. `/help` is what an empty
 chat pane shows, so a new session opens on the guide rather than a blank screen.
@@ -190,8 +200,9 @@ second tab is rejected with a 409 rather than overwriting the newer layout.
 | `chat_runtime.py` | Per-session state, connection ownership, cancellation, cleanup |
 | `chat_events.py` | Event formatting, persistence, WebSocket delivery, replay |
 | `command_runner.py` | Shared CLI pipeline, streaming, hooks, and report overlays |
-| `agent.py` | Per-session `LocalTaskAgent` + the constrained `run_dreadgoad` tool |
+| `agent.py` | Composed general/range/capability instructions + per-session agent and constrained tool |
 | `commands.py` | Slash-command registry, argv builder, prompt loader |
+| `range_capabilities.py` | Validated CLI-backed command metadata and optional range-owned agent guidance |
 | `summary.py` | Condenses CLI output into bounded tool results (structured, else clipped with a marker) |
 | `cli.py` | Subprocess runner (streaming + cancel; `capture` for JSON reads) |
 | `hook.py` | Compatibility facade for post-command synchronization |

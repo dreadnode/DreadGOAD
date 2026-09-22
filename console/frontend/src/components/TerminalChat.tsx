@@ -492,6 +492,20 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
     return { input: inp, output: out }
   }, [messages])
 
+  const rangeContextRevision = useMemo(() => {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const event = messages[index]
+      if (
+        event.kind === 'command_run'
+        && event.phase === 'end'
+        && ['/up', '/provision', '/variant'].includes(event.command)
+      ) {
+        return event.seq ?? event._cid ?? index
+      }
+    }
+    return null
+  }, [messages])
+
   const handleScroll = () => {
     if (autoScrollingRef.current) return
     const el = scrollRef.current
@@ -539,17 +553,26 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
     setHelpAfter(prev => reanchorHelp(prev, messages.length))
   }, [messages.length])
 
-  // Load the slash-command registry once for the autocomplete menu (§5.1).
+  // Reload the slash-command registry when sessions change or an operation can
+  // replace a variant's effective range root. Semantic commands such as
+  // /validate, /score, and /reset belong to that selected root rather than
+  // being a promise every range implements.
   // Sorted by name: the registry is grouped by lifecycle, but in a menu you
   // scan for a command you already know the name of, so alphabetical wins.
   // HELP_COMMAND is merged in client-side — it has no CLI verb, so it isn't in
   // the server registry, but it must still be discoverable by typing "/".
   useEffect(() => {
-    api.commands()
-      .then(r => setCommands(
-        [...r.commands, HELP_COMMAND, COPY_COMMAND].sort((a, b) => a.name.localeCompare(b.name)),
-      ))
+    let current = true
+    setCatalogOk(true)
+    api.commands(sessionId)
+      .then(r => {
+        if (!current) return
+        setCommands(
+          [...r.commands, HELP_COMMAND, COPY_COMMAND].sort((a, b) => a.name.localeCompare(b.name)),
+        )
+      })
       .catch(() => {
+        if (!current) return
         // Falling back to help-only leaves every command unclassifiable, which
         // matters because the destructive-command confirm below is keyed on
         // catalog data. Recorded so that gate can fail closed rather than
@@ -557,7 +580,8 @@ export default function TerminalChat({ sessionId, messages, status, onSend, proc
         setCommands([HELP_COMMAND, COPY_COMMAND])
         setCatalogOk(false)
       })
-  }, [])
+    return () => { current = false }
+  }, [sessionId, rangeContextRevision])
 
   // One verb per turn. Pure in render because the seed only changes when a turn
   // starts (App owns it per session): latching locally would re-roll the word

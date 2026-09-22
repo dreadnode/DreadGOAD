@@ -14,6 +14,7 @@ import pathlib
 import stat
 import sys
 import tempfile
+import typing as t
 from types import SimpleNamespace
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
@@ -229,6 +230,48 @@ async def test_session_options_flattens_environments_and_ranges() -> None:
     print("PASS test_session_options_flattens_environments_and_ranges")
 
 
+async def test_command_catalog_uses_selected_session_capabilities() -> None:
+    class FakeDB:
+        async def get_session(self, session_id):  # noqa: ANN001, ANN202
+            if session_id == "selected":
+                return {"anchor": {"config_path": "/repo/dreadgoad.yaml", "env": "dev"}}
+            return None
+
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(db=FakeDB())))
+    original_load = config_routes.range_capabilities.load
+
+    async def load(_session, _root):  # noqa: ANN001, ANN202
+        return {
+            "/health": {"name": "health", "supported": False},
+            "/validate": {
+                "name": "validate",
+                "supported": True,
+                "description": "Validate the service range",
+            },
+            "/score": {"name": "score", "supported": False},
+            "/reset": {"name": "reset", "supported": False},
+            "/scrub": {"name": "scrub", "supported": False},
+        }
+
+    config_routes.range_capabilities.load = load
+    try:
+        result = await config_routes.get_commands(t.cast(t.Any, request), "selected")
+        catalog = {row["name"]: row for row in result["commands"]}
+        assert "/health" not in catalog and "/status" not in catalog
+        assert catalog["/validate"]["description"] == "Validate the service range"
+        assert catalog["/destroy"]["destructive"] is True
+
+        try:
+            await config_routes.get_commands(t.cast(t.Any, request), "missing")
+        except config_routes.HTTPException as exc:
+            assert exc.status_code == 404
+        else:
+            raise AssertionError("missing session was accepted")
+    finally:
+        config_routes.range_capabilities.load = original_load
+    print("PASS test_command_catalog_uses_selected_session_capabilities")
+
+
 def main() -> None:
     test_typo_in_filename_names_the_directory()
     test_wrong_directory_says_so()
@@ -243,6 +286,7 @@ def main() -> None:
     import asyncio
 
     asyncio.run(test_session_options_flattens_environments_and_ranges())
+    asyncio.run(test_command_catalog_uses_selected_session_capabilities())
     print("ALL PASS")
 
 

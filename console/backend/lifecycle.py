@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import shutil
+import tempfile
 import typing as t
 from pathlib import Path
 
@@ -23,7 +26,7 @@ class InitResult(t.TypedDict):
     message: t.NotRequired[str]
 
 
-def artifacts_dir(session: SessionDocument) -> Path:
+def artifacts_dir(session: t.Mapping[str, t.Any]) -> Path:
     """Return the private, session-local destination for generated artifacts."""
     return Path(session["session_dir"]) / "artifacts"
 
@@ -31,6 +34,28 @@ def artifacts_dir(session: SessionDocument) -> Path:
 def answer_key_path(session: t.Mapping[str, t.Any]) -> Path:
     """Return the deterministic answer-key artifact path for a session."""
     return Path(str(session["session_dir"])) / "artifacts" / "answer_key.json"
+
+
+def reset_artifacts(session: t.Mapping[str, t.Any]) -> Path:
+    """Replace the fixed artifact directory without following stale symlinks."""
+    target = artifacts_dir(session)
+    session_dir = target.parent
+    session_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    stale: Path | None = None
+    if target.exists() or target.is_symlink():
+        stale = Path(tempfile.mkdtemp(prefix=".artifacts-stale-", dir=session_dir))
+        stale.rmdir()
+        os.replace(target, stale)
+    try:
+        target.mkdir(mode=0o700)
+        target.chmod(0o700)
+    finally:
+        if stale is not None:
+            if stale.is_symlink() or not stale.is_dir():
+                stale.unlink(missing_ok=True)
+            else:
+                shutil.rmtree(stale)
+    return target
 
 
 async def initialize_session(

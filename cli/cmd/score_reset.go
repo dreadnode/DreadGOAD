@@ -14,14 +14,18 @@ import (
 	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/dreadnode/dreadgoad/internal/labmap"
 	"github.com/dreadnode/dreadgoad/internal/provider"
+	"github.com/dreadnode/dreadgoad/internal/rangecommand"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
 
 var scoreResetCmd = &cobra.Command{
 	Use:   "reset",
-	Short: "Clean file artifacts from the attack box and Windows hosts between agent runs",
-	Long: `Removes agent-created files from the Kali attack box (nxc databases,
+	Short: "Clean engagement artifacts using the selected range's implementation",
+	Long: `Invokes the selected range's engagement-artifact cleanup.
+
+The built-in Active Directory implementation removes files from the Kali
+attack box (nxc databases,
 Kerberos tickets, NTDS dumps, Responder logs, Dreadnode session data)
 and Windows hosts (webshells, share drops, temp scripts, registry dumps).
 
@@ -68,6 +72,13 @@ func runScoreReset(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	ctx := cmd.Context()
+	capability, err := rangecommand.Require(cfg, "scrub")
+	if err != nil {
+		return err
+	}
+	if capability.HandlerType == rangecommand.HandlerExecutable {
+		return runExternalScoreReset(ctx, cmd, cfg, capability)
+	}
 
 	apply, _ := cmd.Flags().GetBool("apply")
 	skipKali, _ := cmd.Flags().GetBool("skip-kali")
@@ -119,6 +130,27 @@ func runScoreReset(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("%d phase(s) had errors", len(errs))
 	}
 	return nil
+}
+
+func runExternalScoreReset(ctx context.Context, cmd *cobra.Command, cfg *config.Config, capability rangecommand.Capability) error {
+	options := make(map[string]any)
+	for _, flag := range []string{"attack-box", "ssh-key", "ssh-user", "report-output"} {
+		value, err := cmd.Flags().GetString(flag)
+		if err != nil {
+			return err
+		}
+		options[strings.ReplaceAll(flag, "-", "_")] = value
+	}
+	for _, flag := range []string{"apply", "skip-kali", "skip-windows", "purge-ad", "save-report"} {
+		value, err := cmd.Flags().GetBool(flag)
+		if err != nil {
+			return err
+		}
+		options[strings.ReplaceAll(flag, "-", "_")] = value
+	}
+	return rangecommand.Execute(ctx, cfg, capability, rangecommand.Request{
+		Options: options,
+	}, cmd.OutOrStdout(), cmd.ErrOrStderr())
 }
 
 // resetKali cleans the Kali attack box via the ShellRunner (SSM or Bastion).

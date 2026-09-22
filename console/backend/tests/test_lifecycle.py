@@ -79,6 +79,43 @@ def test_result_parser_rejects_malformed_entries() -> None:
     assert lifecycle._parse_results('{"actions":[]}') == []
 
 
+def test_reset_artifacts_replaces_stale_directory() -> None:
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        session = _session(root)
+        artifacts = lifecycle.artifacts_dir(session)
+        artifacts.mkdir(parents=True)
+        stale = artifacts / "answer_key.json"
+        stale.write_text("old")
+
+        replaced = lifecycle.reset_artifacts(session)
+
+        assert replaced == artifacts
+        assert replaced.is_dir()
+        assert not stale.exists()
+        assert replaced.stat().st_mode & 0o777 == 0o700
+
+
+def test_reset_artifacts_does_not_follow_stale_symlink() -> None:
+    with tempfile.TemporaryDirectory() as d:
+        root = pathlib.Path(d)
+        session = _session(root)
+        session_dir = pathlib.Path(session["session_dir"])
+        session_dir.mkdir(parents=True)
+        outside = root / "outside"
+        outside.mkdir()
+        marker = outside / "keep.txt"
+        marker.write_text("keep")
+        artifacts = lifecycle.artifacts_dir(session)
+        artifacts.symlink_to(outside, target_is_directory=True)
+
+        replaced = lifecycle.reset_artifacts(session)
+
+        assert marker.read_text() == "keep"
+        assert replaced.is_dir()
+        assert not replaced.is_symlink()
+
+
 async def test_failed_spawn_becomes_a_nonfatal_result() -> None:
     with tempfile.TemporaryDirectory() as d:
         root = pathlib.Path(d)
@@ -113,6 +150,8 @@ async def test_nonzero_empty_response_is_not_silently_treated_as_noop() -> None:
 async def _main() -> None:
     await test_initializer_uses_one_generic_cli_command()
     test_result_parser_rejects_malformed_entries()
+    test_reset_artifacts_replaces_stale_directory()
+    test_reset_artifacts_does_not_follow_stale_symlink()
     await test_failed_spawn_becomes_a_nonfatal_result()
     await test_nonzero_empty_response_is_not_silently_treated_as_noop()
     print("ALL PASS")

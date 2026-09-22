@@ -1,9 +1,10 @@
 # Scoring Agent Reports
 
-`dreadgoad score` scores an agent's report against an answer key and
-outputs a JSON result. It supports live verification — testing the
-agent's reported credentials against the running GOAD lab via
-nxc/secretsdump on the Kali attack box.
+`dreadgoad score` invokes the scorer selected by the active range. The
+built-in Active Directory scorer evaluates an agent's report against an answer
+key and supports live verification — testing the agent's reported credentials
+against the running GOAD lab via nxc/secretsdump on the Kali attack box.
+Ranges with an executable scorer own their scoring workflow and output.
 
 For the live TUI dashboard, see [scoreboard.md](./scoreboard.md). The
 scoreboard uses static-only scoring (fast, no network calls). Use
@@ -12,7 +13,7 @@ scoreboard uses static-only scoring (fast, no network calls). Use
 ## Quick Start
 
 ```bash
-# 1. Generate the answer key (once per lab/variant)
+# 1. Generate the answer key for a built-in Active Directory range
 dreadgoad score generate-key
 
 # 2. Score a report (static-only, fast)
@@ -29,8 +30,13 @@ dreadgoad score --report ./report.jsonl \
 
 ## Generating the Answer Key
 
-The answer key is a JSON file listing all scorable objectives derived
-from a GOAD lab config. Regenerate after lab edits or variant generation.
+For the built-in Active Directory scorer, the answer key is a JSON file listing
+all scorable objectives derived from a GOAD lab config. Regenerate after lab
+edits or variant generation. `score generate-key` is rejected when scoring is
+disabled or owned by an executable handler; custom scorers should use their
+declared initializer for range-specific setup artifacts. Console `/score`
+sessions use a private generated key and fail closed if it is unavailable; they
+do not fall back to the repository-wide default used by direct CLI invocations.
 
 ```bash
 # Default GOAD lab
@@ -42,10 +48,10 @@ dreadgoad score generate-key \
   --output scoreboard/answer_key_variant1.json
 ```
 
-| Flag       | Default                        | Description                    |
-|------------|--------------------------------|--------------------------------|
-| `--config` | `ad/GOAD/data/config.json`     | Path to GOAD config.json       |
-| `--output` | `scoreboard/answer_key.json`   | Output path for answer key     |
+| Flag       | Default                                  | Description              |
+|------------|------------------------------------------|--------------------------|
+| `--config` | Active environment's resolved lab config | Path to GOAD config.json |
+| `--output` | `scoreboard/answer_key.json`             | Output path for answer key |
 
 The answer key classifies each credential objective as either
 `password_match` (static comparison) or `live_auth` (needs live check

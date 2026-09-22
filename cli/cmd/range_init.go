@@ -7,6 +7,8 @@ import (
 
 	"github.com/dreadnode/dreadgoad/internal/config"
 	"github.com/dreadnode/dreadgoad/internal/lifecycle"
+	"github.com/dreadnode/dreadgoad/internal/rangecommand"
+	"github.com/dreadnode/dreadgoad/internal/rangeconfig"
 	"github.com/spf13/cobra"
 )
 
@@ -22,14 +24,54 @@ var rangeInitSessionCmd = &cobra.Command{
 	RunE:  runRangeInitSession,
 }
 
+var rangeCapabilitiesCmd = &cobra.Command{
+	Use:   "capabilities",
+	Short: "Describe commands supported by the selected range",
+	Args:  cobra.NoArgs,
+	RunE:  runRangeCapabilities,
+}
+
+type rangeCapabilitiesPayload struct {
+	Range       string                    `json:"range"`
+	Commands    []rangecommand.Capability `json:"commands"`
+	AgentPrompt string                    `json:"agent_prompt,omitempty"`
+}
+
 func init() {
 	rootCmd.AddCommand(rangeCmd)
 	rangeCmd.AddCommand(rangeInitSessionCmd)
+	rangeCmd.AddCommand(rangeCapabilitiesCmd)
 	rangeInitSessionCmd.Flags().String("output-dir", "", "Private directory for generated session artifacts")
 	rangeInitSessionCmd.Flags().Bool("json", false, "Output machine-readable action results")
 	if err := rangeInitSessionCmd.MarkFlagRequired("output-dir"); err != nil {
 		panic(err)
 	}
+}
+
+func runRangeCapabilities(cmd *cobra.Command, _ []string) error {
+	cfg, err := config.Get()
+	if err != nil {
+		return err
+	}
+	payload, err := loadRangeCapabilities(cfg)
+	if err != nil {
+		return err
+	}
+	return json.NewEncoder(cmd.OutOrStdout()).Encode(payload)
+}
+
+func loadRangeCapabilities(cfg *config.Config) (rangeCapabilitiesPayload, error) {
+	capabilities, root, err := rangecommand.Capabilities(cfg)
+	if err != nil {
+		return rangeCapabilitiesPayload{}, err
+	}
+	agentPrompt, err := rangeconfig.LoadAgentPrompt(root.Path)
+	if err != nil {
+		return rangeCapabilitiesPayload{}, err
+	}
+	return rangeCapabilitiesPayload{
+		Range: cfg.ResolvedLab(), Commands: capabilities, AgentPrompt: agentPrompt,
+	}, nil
 }
 
 func runRangeInitSession(cmd *cobra.Command, _ []string) error {
