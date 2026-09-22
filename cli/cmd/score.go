@@ -79,44 +79,59 @@ func runScore(cmd *cobra.Command, _ []string) error {
 	if capability.HandlerType == rangecommand.HandlerExecutable {
 		return runExternalScore(cmd, cfg, capability, reportPath)
 	}
+	return runBuiltinScore(cmd, cfg, reportPath)
+}
 
+func runBuiltinScore(cmd *cobra.Command, cfg *config.Config, reportPath string) error {
 	answerKeyPath := resolveScoreAnswerKeyPath(cmd, cfg)
-
-	ak, err := scoreboard.LoadAnswerKey(answerKeyPath)
+	ak, err := loadScoreAnswerKey(cmd, answerKeyPath)
 	if err != nil {
-		explicitAnswerKey, _ := cmd.Flags().GetString("answer-key")
-		rangeArtifacts, _ := cmd.Flags().GetString("range-artifacts")
-		if explicitAnswerKey == "" && rangeArtifacts != "" {
-			return fmt.Errorf("%w (session answer key is unavailable; rerun range session initialization)", err)
-		}
-		return fmt.Errorf("%w (run 'dreadgoad score generate-key' first)", err)
+		return err
 	}
-
 	raw, err := os.ReadFile(reportPath)
 	if err != nil {
 		return fmt.Errorf("read report: %w", err)
 	}
 	report := scoreboard.ParseReport(string(raw))
-
-	ctx := cmd.Context()
-	var lv *scoreboard.LiveVerifier
-	if live, _ := cmd.Flags().GetBool("live-verify"); live {
-		runner, err := buildShellRunner(ctx, cmd, cfg)
-		if err != nil {
-			return fmt.Errorf("live verification setup: %w", err)
-		}
-		lv = scoreboard.NewLiveVerifier(runner)
+	liveVerifier, err := buildLiveVerifier(cmd, cfg)
+	if err != nil {
+		return err
 	}
-
-	result := scoreboard.ScoreReport(ctx, report, ak, lv)
-
+	result := scoreboard.ScoreReport(cmd.Context(), report, ak, liveVerifier)
 	data, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal result: %w", err)
 	}
+	writeScoreSummary(cmd, result)
+	return writeScoreOutput(cmd, data)
+}
 
-	out := cmd.OutOrStdout()
+func loadScoreAnswerKey(cmd *cobra.Command, answerKeyPath string) (*scoreboard.AnswerKey, error) {
+	ak, err := scoreboard.LoadAnswerKey(answerKeyPath)
+	if err == nil {
+		return ak, nil
+	}
+	explicitAnswerKey, _ := cmd.Flags().GetString("answer-key")
+	rangeArtifacts, _ := cmd.Flags().GetString("range-artifacts")
+	if explicitAnswerKey == "" && rangeArtifacts != "" {
+		return nil, fmt.Errorf("%w (session answer key is unavailable; rerun range session initialization)", err)
+	}
+	return nil, fmt.Errorf("%w (run 'dreadgoad score generate-key' first)", err)
+}
 
+func buildLiveVerifier(cmd *cobra.Command, cfg *config.Config) (*scoreboard.LiveVerifier, error) {
+	live, _ := cmd.Flags().GetBool("live-verify")
+	if !live {
+		return nil, nil
+	}
+	runner, err := buildShellRunner(cmd.Context(), cmd, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("live verification setup: %w", err)
+	}
+	return scoreboard.NewLiveVerifier(runner), nil
+}
+
+func writeScoreSummary(cmd *cobra.Command, result *scoreboard.ScoreResult) {
 	// Human-readable summary on stderr so stdout stays valid JSON.
 	stderr := cmd.ErrOrStderr()
 	_, _ = fmt.Fprintf(stderr, "\n  Score: %s (%s)\n\n", result.AgentID, result.Mode)
@@ -135,17 +150,18 @@ func runScore(cmd *cobra.Command, _ []string) error {
 		_, _ = fmt.Fprintf(stderr, "\n    %d failed check(s) — see JSON output for details\n", len(result.FailedChecks))
 	}
 	_, _ = fmt.Fprintln(stderr)
+}
 
+func writeScoreOutput(cmd *cobra.Command, data []byte) error {
 	outputPath, _ := cmd.Flags().GetString("output")
 	if outputPath != "" {
 		if err := os.WriteFile(outputPath, data, 0o644); err != nil {
 			return fmt.Errorf("write output: %w", err)
 		}
-		_, err = fmt.Fprintf(cmd.ErrOrStderr(), "JSON result written to %s\n", outputPath)
+		_, err := fmt.Fprintf(cmd.ErrOrStderr(), "JSON result written to %s\n", outputPath)
 		return err
 	}
-
-	_, err = fmt.Fprintln(out, string(data))
+	_, err := fmt.Fprintln(cmd.OutOrStdout(), string(data))
 	return err
 }
 

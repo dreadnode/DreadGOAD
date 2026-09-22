@@ -137,59 +137,104 @@ func Decode(raw []byte) (*Manifest, error) {
 	if err := decoder.Decode(&manifest); err != nil {
 		return nil, err
 	}
+	if err := rejectAdditionalDocuments(decoder); err != nil {
+		return nil, err
+	}
+	if err := validateManifest(&manifest); err != nil {
+		return nil, err
+	}
+	return &manifest, nil
+}
+
+func rejectAdditionalDocuments(decoder *yaml.Decoder) error {
 	var extra any
 	if err := decoder.Decode(&extra); !errors.Is(err, io.EOF) {
 		if err == nil {
-			return nil, fmt.Errorf("multiple YAML documents are not supported")
+			return fmt.Errorf("multiple YAML documents are not supported")
 		}
-		return nil, err
+		return err
 	}
+	return nil
+}
+
+func validateManifest(manifest *Manifest) error {
+	for _, validate := range []func(*Manifest) error{
+		validateManifestIdentity,
+		validateManifestInfrastructure,
+		validateManifestMetadata,
+		validateManifestCommands,
+		validateManifestDiscovery,
+	} {
+		if err := validate(manifest); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateManifestIdentity(manifest *Manifest) error {
 	if manifest.SchemaVersion != 1 {
-		return nil, fmt.Errorf("unsupported schema_version %d (expected 1)", manifest.SchemaVersion)
+		return fmt.Errorf("unsupported schema_version %d (expected 1)", manifest.SchemaVersion)
 	}
 	manifest.Kind = strings.TrimSpace(manifest.Kind)
 	if manifest.Kind != KindActiveDirectory && manifest.Kind != KindServiceRange {
-		return nil, fmt.Errorf(
+		return fmt.Errorf(
 			"kind %q is unsupported (expected %q or %q)",
 			manifest.Kind, KindActiveDirectory, KindServiceRange,
 		)
 	}
+	return nil
+}
+
+func validateManifestInfrastructure(manifest *Manifest) error {
 	for provider, spec := range manifest.Infrastructure {
 		if err := validateProviderSpec(provider, spec); err != nil {
-			return nil, err
+			return err
 		}
 	}
+	return nil
+}
+
+func validateManifestMetadata(manifest *Manifest) error {
 	if manifest.Inspection.Profile != "" && !pathComponent.MatchString(manifest.Inspection.Profile) {
-		return nil, fmt.Errorf("inspection.profile %q is not a safe identifier", manifest.Inspection.Profile)
+		return fmt.Errorf("inspection.profile %q is not a safe identifier", manifest.Inspection.Profile)
 	}
 	if manifest.Operations.Profile != "" && !pathComponent.MatchString(manifest.Operations.Profile) {
-		return nil, fmt.Errorf("operations.profile %q is not a safe identifier", manifest.Operations.Profile)
+		return fmt.Errorf("operations.profile %q is not a safe identifier", manifest.Operations.Profile)
 	}
 	if manifest.Agent.Prompt != "" {
 		if err := validateRangeRelativePath(manifest.Agent.Prompt); err != nil {
-			return nil, fmt.Errorf("agent.prompt %w", err)
+			return fmt.Errorf("agent.prompt %w", err)
 		}
 	}
+	return nil
+}
+
+func validateManifestCommands(manifest *Manifest) error {
 	for name, command := range manifest.Commands {
 		if err := validateCommandSpec(name, command); err != nil {
-			return nil, err
+			return err
 		}
 	}
-	if err := validateLegacyScoreInitialization(&manifest); err != nil {
-		return nil, err
+	if err := validateLegacyScoreInitialization(manifest); err != nil {
+		return err
 	}
 	health, declaresHealth := manifest.Commands["health"]
 	if declaresHealth && health.Enabled != nil && !*health.Enabled {
-		return nil, fmt.Errorf("commands.health is mandatory and cannot be disabled")
+		return fmt.Errorf("commands.health is mandatory and cannot be disabled")
 	}
 	if manifest.Kind == KindServiceRange && !declaresHealth {
-		return nil, fmt.Errorf("service-range manifests must declare commands.health")
+		return fmt.Errorf("service-range manifests must declare commands.health")
 	}
+	return nil
+}
+
+func validateManifestDiscovery(manifest *Manifest) error {
 	manifest.Discovery.RangeTag = strings.TrimSpace(manifest.Discovery.RangeTag)
 	if manifest.Discovery.RangeTag != "" && !pathComponent.MatchString(manifest.Discovery.RangeTag) {
-		return nil, fmt.Errorf("discovery.range_tag %q is not a safe tag value", manifest.Discovery.RangeTag)
+		return fmt.Errorf("discovery.range_tag %q is not a safe tag value", manifest.Discovery.RangeTag)
 	}
-	return &manifest, nil
+	return nil
 }
 
 func validateLegacyScoreInitialization(manifest *Manifest) error {
@@ -228,41 +273,14 @@ func validateCommandSpec(name string, command CommandSpec) error {
 	if !ok {
 		return fmt.Errorf("commands.%s is unsupported", name)
 	}
-	if strings.TrimSpace(command.Description) != command.Description {
-		return fmt.Errorf("commands.%s.description must not have surrounding whitespace", name)
-	}
-	if strings.TrimSpace(command.Detail) != command.Detail {
-		return fmt.Errorf("commands.%s.detail must not have surrounding whitespace", name)
+	if err := validateCommandText(name, command); err != nil {
+		return err
 	}
 	if command.Enabled != nil && !*command.Enabled {
-		if command.Handler != (HandlerSpec{}) || command.Protocol != "" || command.Initializer != nil {
-			return fmt.Errorf("commands.%s is disabled and must not declare a handler, initializer, or protocol", name)
-		}
-		return nil
+		return validateDisabledCommand(name, command)
 	}
-	switch command.Handler.Type {
-	case "builtin":
-		if !pathComponent.MatchString(command.Handler.Profile) {
-			return fmt.Errorf("commands.%s.handler.profile must be a safe identifier", name)
-		}
-		if command.Handler.Profile != ProfileActiveDir {
-			return fmt.Errorf(
-				"commands.%s.handler.profile %q is unsupported (expected %q)",
-				name, command.Handler.Profile, ProfileActiveDir,
-			)
-		}
-		if command.Handler.Path != "" {
-			return fmt.Errorf("commands.%s builtin handler must not declare path", name)
-		}
-	case "executable":
-		if err := validateRangeExecutablePath(command.Handler.Path); err != nil {
-			return fmt.Errorf("commands.%s executable path %w", name, err)
-		}
-		if command.Handler.Profile != "" {
-			return fmt.Errorf("commands.%s executable handler must not declare profile", name)
-		}
-	default:
-		return fmt.Errorf("commands.%s handler type must be builtin or executable", name)
+	if err := validateCommandHandler(name, command.Handler); err != nil {
+		return err
 	}
 	if command.Protocol == "" {
 		return fmt.Errorf("commands.%s requires protocol", name)
@@ -273,22 +291,72 @@ func validateCommandSpec(name string, command CommandSpec) error {
 			name, command.Protocol, expectedProtocol,
 		)
 	}
-	if command.Initializer != nil {
-		if name != "score" {
-			return fmt.Errorf("commands.%s must not declare an initializer", name)
+	return validateCommandInitializer(name, command)
+}
+
+func validateCommandText(name string, command CommandSpec) error {
+	if strings.TrimSpace(command.Description) != command.Description {
+		return fmt.Errorf("commands.%s.description must not have surrounding whitespace", name)
+	}
+	if strings.TrimSpace(command.Detail) != command.Detail {
+		return fmt.Errorf("commands.%s.detail must not have surrounding whitespace", name)
+	}
+	return nil
+}
+
+func validateDisabledCommand(name string, command CommandSpec) error {
+	if command.Handler != (HandlerSpec{}) || command.Protocol != "" || command.Initializer != nil {
+		return fmt.Errorf("commands.%s is disabled and must not declare a handler, initializer, or protocol", name)
+	}
+	return nil
+}
+
+func validateCommandHandler(name string, handler HandlerSpec) error {
+	switch handler.Type {
+	case "builtin":
+		if !pathComponent.MatchString(handler.Profile) {
+			return fmt.Errorf("commands.%s.handler.profile must be a safe identifier", name)
 		}
-		if command.Handler.Type != "executable" {
-			return fmt.Errorf("commands.score initializer requires an executable score handler")
+		if handler.Profile != ProfileActiveDir {
+			return fmt.Errorf(
+				"commands.%s.handler.profile %q is unsupported (expected %q)",
+				name, handler.Profile, ProfileActiveDir,
+			)
 		}
-		if command.Initializer.Type != "executable" {
-			return fmt.Errorf("commands.score.initializer must be an executable handler with a path")
+		if handler.Path != "" {
+			return fmt.Errorf("commands.%s builtin handler must not declare path", name)
 		}
-		if err := validateRangeExecutablePath(command.Initializer.Path); err != nil {
-			return fmt.Errorf("commands.score.initializer path %w", err)
+	case "executable":
+		if err := validateRangeExecutablePath(handler.Path); err != nil {
+			return fmt.Errorf("commands.%s executable path %w", name, err)
 		}
-		if command.Initializer.Profile != "" {
-			return fmt.Errorf("commands.score.initializer must not declare profile")
+		if handler.Profile != "" {
+			return fmt.Errorf("commands.%s executable handler must not declare profile", name)
 		}
+	default:
+		return fmt.Errorf("commands.%s handler type must be builtin or executable", name)
+	}
+	return nil
+}
+
+func validateCommandInitializer(name string, command CommandSpec) error {
+	if command.Initializer == nil {
+		return nil
+	}
+	if name != "score" {
+		return fmt.Errorf("commands.%s must not declare an initializer", name)
+	}
+	if command.Handler.Type != "executable" {
+		return fmt.Errorf("commands.score initializer requires an executable score handler")
+	}
+	if command.Initializer.Type != "executable" {
+		return fmt.Errorf("commands.score.initializer must be an executable handler with a path")
+	}
+	if err := validateRangeExecutablePath(command.Initializer.Path); err != nil {
+		return fmt.Errorf("commands.score.initializer path %w", err)
+	}
+	if command.Initializer.Profile != "" {
+		return fmt.Errorf("commands.score.initializer must not declare profile")
 	}
 	return nil
 }
@@ -315,44 +383,56 @@ func LoadAgentPrompt(labDir string) (string, error) {
 	if err != nil || !found || manifest.Agent.Prompt == "" {
 		return "", err
 	}
+	candidate, err := resolveAgentPromptPath(labDir, manifest.Agent.Prompt)
+	if err != nil {
+		return "", err
+	}
+	return readAgentPrompt(candidate, manifest.Agent.Prompt)
+}
+
+func resolveAgentPromptPath(labDir, declared string) (string, error) {
 	root, err := filepath.EvalSymlinks(labDir)
 	if err != nil {
 		return "", fmt.Errorf("resolve range directory: %w", err)
 	}
-	candidate, err := filepath.EvalSymlinks(filepath.Join(root, manifest.Agent.Prompt))
+	candidate, err := filepath.EvalSymlinks(filepath.Join(root, declared))
 	if err != nil {
-		return "", fmt.Errorf("resolve agent prompt %q: %w", manifest.Agent.Prompt, err)
+		return "", fmt.Errorf("resolve agent prompt %q: %w", declared, err)
 	}
 	relative, err := filepath.Rel(root, candidate)
 	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("agent prompt %q escapes the range directory", manifest.Agent.Prompt)
+		return "", fmt.Errorf("agent prompt %q escapes the range directory", declared)
 	}
 	info, err := os.Stat(candidate)
 	if err != nil {
-		return "", fmt.Errorf("inspect agent prompt %q: %w", manifest.Agent.Prompt, err)
+		return "", fmt.Errorf("inspect agent prompt %q: %w", declared, err)
 	}
 	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("agent prompt %q is not a regular file", manifest.Agent.Prompt)
+		return "", fmt.Errorf("agent prompt %q is not a regular file", declared)
 	}
 	if info.Size() > MaxAgentPromptBytes {
-		return "", fmt.Errorf("agent prompt %q exceeds %d bytes", manifest.Agent.Prompt, MaxAgentPromptBytes)
+		return "", fmt.Errorf("agent prompt %q exceeds %d bytes", declared, MaxAgentPromptBytes)
 	}
+	return candidate, nil
+}
+
+func readAgentPrompt(candidate, declared string) (string, error) {
 	raw, err := os.ReadFile(candidate)
 	if err != nil {
-		return "", fmt.Errorf("read agent prompt %q: %w", manifest.Agent.Prompt, err)
+		return "", fmt.Errorf("read agent prompt %q: %w", declared, err)
 	}
 	if len(raw) > MaxAgentPromptBytes {
-		return "", fmt.Errorf("agent prompt %q exceeds %d bytes", manifest.Agent.Prompt, MaxAgentPromptBytes)
+		return "", fmt.Errorf("agent prompt %q exceeds %d bytes", declared, MaxAgentPromptBytes)
 	}
 	if !utf8.Valid(raw) {
-		return "", fmt.Errorf("agent prompt %q must be UTF-8 text", manifest.Agent.Prompt)
+		return "", fmt.Errorf("agent prompt %q must be UTF-8 text", declared)
 	}
 	if bytes.IndexByte(raw, 0) >= 0 {
-		return "", fmt.Errorf("agent prompt %q must not contain NUL bytes", manifest.Agent.Prompt)
+		return "", fmt.Errorf("agent prompt %q must not contain NUL bytes", declared)
 	}
 	prompt := strings.TrimSpace(string(raw))
 	if prompt == "" {
-		return "", fmt.Errorf("agent prompt %q is empty", manifest.Agent.Prompt)
+		return "", fmt.Errorf("agent prompt %q is empty", declared)
 	}
 	return prompt, nil
 }

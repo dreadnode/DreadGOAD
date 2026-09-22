@@ -140,6 +140,33 @@ func TestVariantExecutesHandlerFromCompletedTarget(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell fixture")
 	}
+	cfg, target := variantHandlerConfig(t)
+
+	capability, err := Require(cfg, "health")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedHandler, err := filepath.EvalSymlinks(filepath.Join(target, "commands", "health"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if capability.RangeRoot != target || capability.Path != expectedHandler {
+		t.Fatalf("variant capability = %#v", capability)
+	}
+	var stdout, stderr bytes.Buffer
+	if err := Execute(context.Background(), cfg, capability, Request{}, &stdout, &stderr); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(stdout.String(), "source") || !strings.Contains(stdout.String(), "target") {
+		t.Fatalf("variant handler output = %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), target) || !strings.Contains(stderr.String(), `"lab_path":"`+target+`"`) {
+		t.Fatalf("variant handler context = %q", stderr.String())
+	}
+}
+
+func variantHandlerConfig(t *testing.T) (*config.Config, string) {
+	t.Helper()
 	root := t.TempDir()
 	source := filepath.Join(root, "ad", "BASE")
 	target := filepath.Join(root, "ad", "BASE-random")
@@ -183,28 +210,7 @@ commands:
 			},
 		},
 	}
-
-	capability, err := Require(cfg, "health")
-	if err != nil {
-		t.Fatal(err)
-	}
-	expectedHandler, err := filepath.EvalSymlinks(filepath.Join(target, "commands", "health"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if capability.RangeRoot != target || capability.Path != expectedHandler {
-		t.Fatalf("variant capability = %#v", capability)
-	}
-	var stdout, stderr bytes.Buffer
-	if err := Execute(context.Background(), cfg, capability, Request{}, &stdout, &stderr); err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(stdout.String(), "source") || !strings.Contains(stdout.String(), "target") {
-		t.Fatalf("variant handler output = %q", stdout.String())
-	}
-	if !strings.Contains(stderr.String(), target) || !strings.Contains(stderr.String(), `"lab_path":"`+target+`"`) {
-		t.Fatalf("variant handler context = %q", stderr.String())
-	}
+	return cfg, target
 }
 
 func TestResolveRejectsSymlinkEscape(t *testing.T) {

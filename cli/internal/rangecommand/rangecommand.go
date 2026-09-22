@@ -109,53 +109,61 @@ func resolveAtRoot(cfg *config.Config, root config.RangeRoot, name string) (Capa
 	}
 
 	if spec, declared := manifest.Commands[name]; declared {
-		if spec.Enabled != nil && !*spec.Enabled {
-			return Capability{Name: name, Description: description(name, spec.Description)}, nil
+		return resolveDeclaredCapability(cfg, root.Path, name, protocol, spec)
+	}
+	return resolveDefaultCapability(cfg, root.Path, manifest, name, protocol)
+}
+
+func resolveDeclaredCapability(cfg *config.Config, root, name, protocol string, spec rangeconfig.CommandSpec) (Capability, error) {
+	if spec.Enabled != nil && !*spec.Enabled {
+		return Capability{Name: name, Description: description(name, spec.Description)}, nil
+	}
+	capability := Capability{
+		Name: name, Supported: true, Description: description(name, spec.Description),
+		Detail: detail(name, spec.Detail), Protocol: spec.Protocol, HandlerType: spec.Handler.Type, Profile: spec.Handler.Profile,
+		RangeRoot: root,
+	}
+	if spec.Protocol != protocol {
+		return Capability{}, fmt.Errorf("range %s command %s uses protocol %q; expected %q", cfg.ResolvedLab(), name, spec.Protocol, protocol)
+	}
+	switch spec.Handler.Type {
+	case HandlerBuiltin:
+		if spec.Handler.Profile != ProfileActiveDir {
+			return Capability{}, fmt.Errorf("range %s command %s uses unsupported builtin profile %q", cfg.ResolvedLab(), name, spec.Handler.Profile)
 		}
-		capability := Capability{
-			Name: name, Supported: true, Description: description(name, spec.Description),
-			Detail: detail(name, spec.Detail), Protocol: spec.Protocol, HandlerType: spec.Handler.Type, Profile: spec.Handler.Profile,
-			RangeRoot: root.Path,
+	case HandlerExecutable:
+		path, err := confinedExecutable(root, spec.Handler.Path)
+		if err != nil {
+			return Capability{}, fmt.Errorf("range %s command %s: %w", cfg.ResolvedLab(), name, err)
 		}
-		if spec.Protocol != protocol {
-			return Capability{}, fmt.Errorf("range %s command %s uses protocol %q; expected %q", cfg.ResolvedLab(), name, spec.Protocol, protocol)
-		}
-		switch spec.Handler.Type {
-		case HandlerBuiltin:
-			if spec.Handler.Profile != ProfileActiveDir {
-				return Capability{}, fmt.Errorf("range %s command %s uses unsupported builtin profile %q", cfg.ResolvedLab(), name, spec.Handler.Profile)
-			}
-		case HandlerExecutable:
-			path, err := confinedExecutable(root.Path, spec.Handler.Path)
-			if err != nil {
-				return Capability{}, fmt.Errorf("range %s command %s: %w", cfg.ResolvedLab(), name, err)
-			}
-			capability.Path = path
-		default:
-			return Capability{}, fmt.Errorf("range %s command %s has unsupported handler type %q", cfg.ResolvedLab(), name, spec.Handler.Type)
-		}
-		if spec.Initializer != nil {
-			path, err := confinedExecutable(root.Path, spec.Initializer.Path)
-			if err != nil {
-				return Capability{}, fmt.Errorf("range %s command %s initializer: %w", cfg.ResolvedLab(), name, err)
-			}
-			capability.Initializes = true
-			capability.InitializerPath = path
-		}
+		capability.Path = path
+	default:
+		return Capability{}, fmt.Errorf("range %s command %s has unsupported handler type %q", cfg.ResolvedLab(), name, spec.Handler.Type)
+	}
+	if spec.Initializer == nil {
 		return capability, nil
 	}
+	initializerPath, err := confinedExecutable(root, spec.Initializer.Path)
+	if err != nil {
+		return Capability{}, fmt.Errorf("range %s command %s initializer: %w", cfg.ResolvedLab(), name, err)
+	}
+	capability.Initializes = true
+	capability.InitializerPath = initializerPath
+	return capability, nil
+}
 
+func resolveDefaultCapability(cfg *config.Config, root string, manifest *rangeconfig.Manifest, name, protocol string) (Capability, error) {
 	// inspection.profile was the original health/validate extension point.
 	if (name == "health" || name == "validate") && manifest.Inspection.Profile != "" {
 		if manifest.Inspection.Profile != ProfileActiveDir {
 			return Capability{}, fmt.Errorf("range %s command %s uses unsupported legacy inspection profile %q", cfg.ResolvedLab(), name, manifest.Inspection.Profile)
 		}
-		return builtinCapability(name, protocol, root.Path), nil
+		return builtinCapability(name, protocol, root), nil
 	}
 	if manifest.Kind == rangeconfig.KindActiveDirectory {
-		return builtinCapability(name, protocol, root.Path), nil
+		return builtinCapability(name, protocol, root), nil
 	}
-	return Capability{Name: name, Description: defaultDescriptions[name], Detail: defaultDetails[name], RangeRoot: root.Path}, nil
+	return Capability{Name: name, Description: defaultDescriptions[name], Detail: defaultDetails[name], RangeRoot: root}, nil
 }
 
 // ExecuteScoreInitializer prepares private per-session scoring data for a
@@ -389,6 +397,21 @@ func (w *tailWriter) ValidationOutput() ([]byte, bool) {
 }
 
 func validateResult(protocol string, output []byte) error {
+	result, err := decodeFinalResult(output)
+	if err != nil {
+		return err
+	}
+	if result["schema"] != protocol {
+		return fmt.Errorf("schema is %q", result["schema"])
+	}
+	validate, ok := resultValidators[protocol]
+	if !ok {
+		return fmt.Errorf("unsupported protocol %q", protocol)
+	}
+	return validate(result)
+}
+
+func decodeFinalResult(output []byte) (map[string]any, error) {
 	lines := bytes.Split(output, []byte{'\n'})
 	var final []byte
 	for index := len(lines) - 1; index >= 0; index-- {
@@ -399,59 +422,63 @@ func validateResult(protocol string, output []byte) error {
 		}
 	}
 	if len(final) == 0 {
-		return errors.New("stdout has no final JSON result object")
+		return nil, errors.New("stdout has no final JSON result object")
 	}
 	var result map[string]any
 	if json.Unmarshal(final, &result) != nil {
-		return errors.New("final stdout line is not a JSON result object")
+		return nil, errors.New("final stdout line is not a JSON result object")
 	}
-	if result["schema"] != protocol {
-		return fmt.Errorf("schema is %q", result["schema"])
+	return result, nil
+}
+
+var resultValidators = map[string]func(map[string]any) error{
+	"health/v1":       validateHealthResult,
+	"validate/v1":     validateValidationResult,
+	"score/v1":        validateScoreResult,
+	"operation/v1":    validateOperationResult,
+	"session-init/v1": validateSessionInitResult,
+}
+
+func validateHealthResult(result map[string]any) error {
+	if err := requireObjectArray(result, "checks"); err != nil {
+		return err
 	}
-	switch protocol {
-	case "health/v1":
-		if err := requireObjectArray(result, "checks"); err != nil {
-			return err
+	return requireNumbers(result, "passed", "failed", "skipped")
+}
+
+func validateValidationResult(result map[string]any) error {
+	if err := requireObjectArray(result, "checks"); err != nil {
+		return err
+	}
+	return requireNumbers(result, "passed", "failed", "warnings", "total_checks")
+}
+
+func validateScoreResult(result map[string]any) error {
+	if err := requireObjectArray(result, "objectives"); err != nil {
+		return err
+	}
+	return requireNumbers(result, "score", "maximum")
+}
+
+func validateOperationResult(result map[string]any) error {
+	if _, ok := result["changed"].(bool); !ok {
+		return errors.New("changed must be a boolean")
+	}
+	if _, ok := result["steps"].([]any); !ok {
+		return errors.New("steps must be an array")
+	}
+	return nil
+}
+
+func validateSessionInitResult(result map[string]any) error {
+	artifacts, ok := result["artifacts"].([]any)
+	if !ok {
+		return errors.New("artifacts must be an array")
+	}
+	for _, artifact := range artifacts {
+		if _, ok := artifact.(string); !ok {
+			return errors.New("artifacts entries must be strings")
 		}
-		if err := requireNumbers(result, "passed", "failed", "skipped"); err != nil {
-			return err
-		}
-	case "validate/v1":
-		if err := requireObjectArray(result, "checks"); err != nil {
-			return err
-		}
-		if err := requireNumbers(result, "passed", "failed", "warnings", "total_checks"); err != nil {
-			return err
-		}
-	case "score/v1":
-		if err := requireObjectArray(result, "objectives"); err != nil {
-			return err
-		}
-		if _, ok := result["score"].(float64); !ok {
-			return errors.New("score must be a number")
-		}
-		if _, ok := result["maximum"].(float64); !ok {
-			return errors.New("maximum must be a number")
-		}
-	case "operation/v1":
-		if _, ok := result["changed"].(bool); !ok {
-			return errors.New("changed must be a boolean")
-		}
-		if _, ok := result["steps"].([]any); !ok {
-			return errors.New("steps must be an array")
-		}
-	case "session-init/v1":
-		artifacts, ok := result["artifacts"].([]any)
-		if !ok {
-			return errors.New("artifacts must be an array")
-		}
-		for _, artifact := range artifacts {
-			if _, ok := artifact.(string); !ok {
-				return errors.New("artifacts entries must be strings")
-			}
-		}
-	default:
-		return fmt.Errorf("unsupported protocol %q", protocol)
 	}
 	return nil
 }
