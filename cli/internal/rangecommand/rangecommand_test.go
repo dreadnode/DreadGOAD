@@ -105,7 +105,7 @@ commands:
 	script := `#!/bin/sh
 request=$(cat)
 printf '%s\n' "$request" >&2
-printf '%s\n' '{"schema":"validate/v1","passed":1,"failed":0,"checks":[]}'
+printf '%s\n' '{"schema":"validate/v1","passed":1,"failed":0,"warnings":0,"total_checks":1,"checks":[]}'
 `
 	if err := os.WriteFile(handler, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
@@ -162,7 +162,7 @@ commands:
 	}
 	writeHandler := func(path, detail string) {
 		t.Helper()
-		script := fmt.Sprintf("#!/bin/sh\nrequest=$(cat)\nprintf '%%s\\n' \"$PWD\" \"$request\" >&2\nprintf '%%s\\n' '{\"schema\":\"health/v1\",\"checks\":[{\"detail\":\"%s\"}]}'\n", detail)
+		script := fmt.Sprintf("#!/bin/sh\nrequest=$(cat)\nprintf '%%s\\n' \"$PWD\" \"$request\" >&2\nprintf '%%s\\n' '{\"schema\":\"health/v1\",\"passed\":1,\"failed\":0,\"skipped\":0,\"checks\":[{\"detail\":\"%s\"}]}'\n", detail)
 		if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -303,9 +303,38 @@ commands:
 }
 
 func TestValidateResultRejectsNonObjectChecks(t *testing.T) {
-	err := validateResult("health/v1", []byte(`{"schema":"health/v1","checks":[1]}`))
+	err := validateResult("health/v1", []byte(`{"schema":"health/v1","passed":0,"failed":0,"skipped":0,"checks":[1]}`))
 	if err == nil || !strings.Contains(err.Error(), "checks entries must be objects") {
 		t.Fatalf("validateResult() error = %v", err)
+	}
+}
+
+func TestValidateResultRequiresDocumentedAggregateFields(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		protocol string
+		payload  string
+		missing  string
+	}{
+		{
+			"health",
+			"health/v1",
+			`{"schema":"health/v1","passed":1,"failed":0,"checks":[]}`,
+			"skipped",
+		},
+		{
+			"validate",
+			"validate/v1",
+			`{"schema":"validate/v1","passed":1,"failed":0,"warnings":0,"checks":[]}`,
+			"total_checks",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateResult(test.protocol, []byte(test.payload))
+			if err == nil || !strings.Contains(err.Error(), test.missing+" must be a number") {
+				t.Fatalf("validateResult() error = %v", err)
+			}
+		})
 	}
 }
 
@@ -462,7 +491,7 @@ func TestTailWriterPreservesCompleteFinalProtocolLine(t *testing.T) {
 	var destination bytes.Buffer
 	writer := &tailWriter{destination: &destination, limit: maxResultLine}
 	progress := append(bytes.Repeat([]byte("x"), maxResultLine+100), '\n')
-	result := []byte("{\"schema\":\"health/v1\",\"checks\":[]}\n")
+	result := []byte("{\"schema\":\"health/v1\",\"passed\":0,\"failed\":0,\"skipped\":0,\"checks\":[]}\n")
 	if _, err := writer.Write(progress); err != nil {
 		t.Fatal(err)
 	}

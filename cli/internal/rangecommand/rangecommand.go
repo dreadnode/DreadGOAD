@@ -409,8 +409,18 @@ func validateResult(protocol string, output []byte) error {
 		return fmt.Errorf("schema is %q", result["schema"])
 	}
 	switch protocol {
-	case "health/v1", "validate/v1":
+	case "health/v1":
 		if err := requireObjectArray(result, "checks"); err != nil {
+			return err
+		}
+		if err := requireNumbers(result, "passed", "failed", "skipped"); err != nil {
+			return err
+		}
+	case "validate/v1":
+		if err := requireObjectArray(result, "checks"); err != nil {
+			return err
+		}
+		if err := requireNumbers(result, "passed", "failed", "warnings", "total_checks"); err != nil {
 			return err
 		}
 	case "score/v1":
@@ -454,6 +464,15 @@ func requireObjectArray(result map[string]any, field string) error {
 	for _, value := range values {
 		if _, ok := value.(map[string]any); !ok {
 			return fmt.Errorf("%s entries must be objects", field)
+		}
+	}
+	return nil
+}
+
+func requireNumbers(result map[string]any, fields ...string) error {
+	for _, field := range fields {
+		if _, ok := result[field].(float64); !ok {
+			return fmt.Errorf("%s must be a number", field)
 		}
 	}
 	return nil

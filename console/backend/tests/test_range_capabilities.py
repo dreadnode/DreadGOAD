@@ -345,10 +345,19 @@ def test_cancelled_variant_command_invalidates_cached_context() -> None:
         async def fake_emit(*_args, **_kwargs) -> None:
             return None
 
+        initialization_modes: list[bool] = []
+
+        async def fake_initialization(
+            *_args, cancellation_cleanup: bool = False, **_kwargs
+        ) -> None:
+            initialization_modes.append(cancellation_cleanup)
+
         original_check = hook.run_check
         original_emit = chat_events.emit_event
+        original_initialization = command_runner._refresh_range_initialization
         hook.run_check = fake_check
         chat_events.emit_event = fake_emit
+        command_runner._refresh_range_initialization = fake_initialization
         try:
             plan = command_runner._CommandPlan(
                 "/up", ("dreadgoad", "up"), "/repo", commands.REGISTRY["/up"]
@@ -367,9 +376,11 @@ def test_cancelled_variant_command_invalidates_cached_context() -> None:
             assert current.agent is None
             assert current.agent_capabilities is None
             assert current.agent_commands is None
+            assert initialization_modes == [True]
         finally:
             hook.run_check = original_check
             chat_events.emit_event = original_emit
+            command_runner._refresh_range_initialization = original_initialization
             chat_runtime.runtimes.pop(session_id, None)
 
     asyncio.run(run())

@@ -6,73 +6,109 @@
 
 import type { CommandDef } from './api'
 
+export interface WorkflowCommand {
+  name: string
+  /** Context or caution beyond the command catalog's short description. */
+  guidance: string
+}
+
 /** One phase of the range lifecycle, in the order an operator meets it. */
 export interface WorkflowPhase {
   title: string
   /** Commands central to this phase, in the order you'd reach for them. */
-  commands: string[]
-  /** What the phase is for, and the thing people get wrong. One or two lines. */
-  detail: string
+  commands: WorkflowCommand[]
 }
 
 // Ordered deliberately: this is a cycle, not a list. Score → scrub → reset
 // returns you to step 3 for the next agent run without redeploying.
 export const WORKFLOW: WorkflowPhase[] = [
   {
-    title: '1. Deploy the range',
-    commands: ['/variant', '/up', '/extensions'],
-    detail:
-      '/variant first if this engagement needs fresh names and passwords — it ' +
-      'rewrites the answer key, so never run it against a range already deployed. ' +
-      '/up then builds and provisions end to end; it runs for tens of minutes and ' +
-      'starts billing. /extensions adds optional machines (ELK, Wazuh, …).',
+    title: 'Deploy the range',
+    commands: [
+      {
+        name: '/variant',
+        guidance: 'Use first when the engagement needs fresh names and passwords; never run it against a deployed range.',
+      },
+      {
+        name: '/up',
+        guidance: 'Builds and provisions end to end; it runs for tens of minutes and starts billing.',
+      },
+      {
+        name: '/extensions',
+        guidance: 'Adds optional machines such as ELK or Wazuh.',
+      },
+    ],
   },
   {
-    title: '2. Confirm it came up',
-    commands: ['/status', '/instances', '/health', '/secure'],
-    detail:
-      '/status runs /instances then /health in one pass. Use them separately when ' +
-      'you only need one: /instances is the cloud view (power state, IPs), ' +
-      "/health runs the selected lab's core service checks. /secure audits network " +
-      'security posture (NSGs, public IPs, bastion).',
+    title: 'Confirm it came up',
+    commands: [
+      {
+        name: '/status',
+        guidance: 'Runs the available instance and health checks in one pass.',
+      },
+      {
+        name: '/instances',
+        guidance: 'Shows the cloud view: power state and IP addresses.',
+      },
+      {
+        name: '/health',
+        guidance: "Runs the selected range's core service checks.",
+      },
+      {
+        name: '/secure',
+        guidance: 'Audits network security posture, including public IPs and bastion access.',
+      },
+    ],
   },
   {
-    title: '3. Validate the lab content',
-    commands: ['/validate'],
-    detail:
-      "Checks the selected lab's complete expected state. For GOAD this includes " +
-      'intentional range state, which may include services, apps, users, and seeded data.',
+    title: 'Validate the lab content',
+    commands: [
+      {
+        name: '/validate',
+        guidance: "Checks the selected range's complete expected services, apps, users, and seeded data.",
+      },
+    ],
   },
   {
-    title: '4. Fix what is wrong',
-    commands: ['/exec', '/restart', '/provision'],
-    detail:
-      '/exec runs a script on a named host through the cloud control plane, so it ' +
-      'reaches a host whose WinRM is down. /restart reboots one host. /provision ' +
-      're-runs the playbooks across the range.',
+    title: 'Fix what is wrong',
+    commands: [
+      {
+        name: '/exec',
+        guidance: 'Runs a script through the cloud control plane, even when host management is down.',
+      },
+      { name: '/restart', guidance: 'Reboots one host.' },
+      { name: '/provision', guidance: 'Re-runs the playbooks across the range.' },
+    ],
   },
   {
-    title: '5. Score an agent run',
-    commands: ['/score'],
-    detail:
-      "Grades an attacking agent's report with the selected range's scoring " +
-      'implementation. Give it the report path on the attack box.',
+    title: 'Score an agent run',
+    commands: [
+      {
+        name: '/score',
+        guidance: "Grades an agent report with the selected range's scorer; provide its path on the attack box.",
+      },
+    ],
   },
   {
-    title: '6. Reset for the next run',
-    commands: ['/scrub', '/reset'],
-    detail:
-      '/scrub deletes engagement artifacts using the selected range\'s cleanup ' +
-      'implementation. It APPLIES by default here, ' +
-      'so pass "dry" to preview. /reset invokes the selected range\'s baseline restore.',
+    title: 'Reset for the next run',
+    commands: [
+      {
+        name: '/scrub',
+        guidance: 'Deletes engagement artifacts and applies by default; pass "dry" to preview.',
+      },
+      {
+        name: '/reset',
+        guidance: "Invokes the selected range's baseline restore.",
+      },
+    ],
   },
   {
-    title: '7. Park it or tear it down',
-    commands: ['/stop', '/start', '/destroy'],
-    detail:
-      '/stop halts compute billing while keeping disks and range state; /start ' +
-      'brings the same range back. /destroy is irreversible — it deletes the VMs, ' +
-      'disks and network, and the next run starts again from step 1.',
+    title: 'Park it or tear it down',
+    commands: [
+      { name: '/stop', guidance: 'Halts compute billing while keeping disks and range state.' },
+      { name: '/start', guidance: 'Brings the same stopped range back.' },
+      { name: '/destroy', guidance: 'Irreversibly deletes the machines, disks, and network.' },
+    ],
   },
 ]
 
@@ -110,21 +146,22 @@ export function buildHelpLines(catalog: CommandDef[]): HelpLine[] {
     { text: '', kind: 'blank' },
   ]
 
+  let step = 1
   for (const phase of WORKFLOW) {
-    lines.push({ text: phase.title, kind: 'title' })
-    // Only surface commands the backend actually offers; if one disappears
-    // from the registry it silently drops out rather than lying about it.
-    const present = phase.commands.filter(n => byName.has(n))
-    if (present.length > 0) {
-      const width = Math.max(...present.map(n => n.length)) + 3
-      for (const name of present) {
-        lines.push({
-          text: `  ${name.padEnd(width)}${byName.get(name)!.description}`,
-          kind: 'command',
-        })
-      }
+    // Phase text is capability-bound too: omitting only unsupported command
+    // rows would leave headings and guidance that promise unavailable flows.
+    const present = phase.commands.filter(command => byName.has(command.name))
+    if (present.length === 0) continue
+    lines.push({ text: `${step}. ${phase.title}`, kind: 'title' })
+    step += 1
+    const width = Math.max(...present.map(command => command.name.length)) + 3
+    for (const command of present) {
+      lines.push({
+        text: `  ${command.name.padEnd(width)}${byName.get(command.name)!.description}`,
+        kind: 'command',
+      })
+      lines.push({ text: `  ${command.guidance}`, kind: 'detail' })
     }
-    lines.push({ text: `  ${phase.detail}`, kind: 'detail' })
     lines.push({ text: '', kind: 'blank' })
   }
 

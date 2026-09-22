@@ -711,17 +711,27 @@ async def _execute_command(
     )
 
 
-async def _refresh_range_initialization(app: t.Any, session_id: str) -> None:
+async def _refresh_range_initialization(
+    app: t.Any,
+    session_id: str,
+    *,
+    cancellation_cleanup: bool = False,
+) -> None:
     """Replace and rebuild private artifacts after the effective range may change."""
     session = await app.state.db.get_session(session_id)
     if session is None:
         return
     try:
         lifecycle.reset_artifacts(session)
+        capture_command = (
+            partial(_capture_for_refresh, session_id)
+            if cancellation_cleanup
+            else _capture_command(session_id)
+        )
         results = await lifecycle.initialize_session(
             session,
             str(paths.repo_root()),
-            capture_command=_capture_command(session_id),
+            capture_command=capture_command,
         )
     except asyncio.CancelledError:
         raise
@@ -791,8 +801,11 @@ async def _finalize_command(
             # refresh, overlay, or cancellation failed. Never carry the old
             # prompt and capability snapshot into the next turn.
             try:
-                if not result.cancelled:
-                    await _refresh_range_initialization(app, session_id)
+                await _refresh_range_initialization(
+                    app,
+                    session_id,
+                    cancellation_cleanup=result.cancelled,
+                )
             finally:
                 chat_runtime.invalidate_range_context(session_id)
 
