@@ -177,6 +177,23 @@ func TestLabConfigDataDirUsesActiveLab(t *testing.T) {
 	}
 }
 
+func TestMaterializedLabConfigPathUsesVariantTarget(t *testing.T) {
+	root := resolveSymlinks(t, t.TempDir())
+	variantData := filepath.Join(root, "ad", "GOAD-kraken", "data")
+	cfg := &Config{
+		ProjectRoot: root,
+		Env:         "kraken",
+		Environments: map[string]EnvironmentConfig{
+			"kraken": {Variant: true, VariantTarget: "ad/GOAD-kraken"},
+		},
+	}
+
+	want := filepath.Join(variantData, "kraken-config.json")
+	if got := cfg.MaterializedLabConfigPath(); got != want {
+		t.Errorf("MaterializedLabConfigPath() = %q, want %q", got, want)
+	}
+}
+
 func TestGetRegionOverridePrecedence(t *testing.T) {
 	t.Run("an explicit --region beats DREADGOAD_REGION", func(t *testing.T) {
 		Reset()

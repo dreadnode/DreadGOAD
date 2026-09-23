@@ -115,21 +115,36 @@ func init() {
 }
 
 // materializeLabConfig ensures the merged lab config JSON exists at the path
-// terragrunt HCL expects (ad/GOAD/data/{env}-config.json). When an overlay
-// file exists, the base config.json is merged with the overlay and written
-// to disk so that terragrunt's file() function can read it directly.
+// terragrunt HCL expects (ad/<active-range>/data/{env}-config.json). When an
+// overlay file exists, the base config.json is merged with the overlay and
+// written to disk so that terragrunt's file() function can read it directly.
 func materializeLabConfig(cfg *config.Config) error {
+	expected := cfg.MaterializedLabConfigPath()
+	dataDir := filepath.Dir(expected)
+	if cfg.ActiveEnvironment().Variant {
+		info, err := os.Stat(dataDir)
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("variant lab config directory does not exist: %s", dataDir)
+		}
+		if err != nil {
+			return fmt.Errorf("inspect variant lab config directory: %w", err)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("variant lab config path is not a directory: %s", dataDir)
+		}
+	}
+
 	resolved, err := cfg.ResolvedLabConfigPath()
 	if err != nil {
 		if errors.Is(err, config.ErrLabConfigNotFound) {
+			if cfg.ActiveEnvironment().Variant {
+				return fmt.Errorf("resolve variant lab config: %w", err)
+			}
 			slog.Debug("no lab config to materialize; continuing for standalone infrastructure", "error", err)
 			return nil
 		}
 		return fmt.Errorf("resolve lab config: %w", err)
 	}
-
-	dataDir := filepath.Join(cfg.LabPath(), "data")
-	expected := filepath.Join(dataDir, cfg.Env+"-config.json")
 
 	if resolved == expected {
 		return nil // already in the right place (legacy layout)

@@ -231,16 +231,6 @@ func preflightChecks(ctx context.Context, cfg *config.Config, limit string) erro
 	return validateInventoryCredentials(cfg)
 }
 
-// materializedLabConfigPath is the lab config Terraform actually read when it
-// built the machines: infra_cmd.go's materializeLabConfig copies the resolved
-// config here, and every Azure goad unit hardcodes this path to source
-// admin_password. It is deliberately NOT cfg.ResolvedLabConfigPath() — that is
-// what the *playbooks* will read, and the two can disagree, which is precisely
-// the failure this check exists to catch.
-func materializedLabConfigPath(cfg *config.Config) string {
-	return filepath.Join(cfg.ProjectRoot, "ad", "GOAD", "data", cfg.Env+"-config.json")
-}
-
 // validateInventoryCredentials checks that the password Ansible will present
 // is the one the machines were actually built with.
 //
@@ -272,7 +262,7 @@ func validateInventoryCredentials(cfg *config.Config) error {
 		slog.Debug("skipping credential check; no materialized lab config", "error", err)
 		return nil
 	}
-	configPath := materializedLabConfigPath(cfg)
+	configPath := cfg.MaterializedLabConfigPath()
 
 	parsed, err := inv.Parse(cfg.InventoryPath())
 	if err != nil {
@@ -371,7 +361,7 @@ func validateInventoryResolved(cfg *config.Config, limit string) error {
 // built with, keyed by lowercased host id, read from the lab config Terraform
 // actually consumed.
 func materializedHostPasswords(cfg *config.Config) (map[string]string, error) {
-	raw, err := os.ReadFile(materializedLabConfigPath(cfg))
+	raw, err := os.ReadFile(cfg.MaterializedLabConfigPath())
 	if err != nil {
 		return nil, err
 	}
@@ -465,7 +455,7 @@ func syncAzureInventoryPasswords(cfg *config.Config) error {
 		return fmt.Errorf("write inventory: %w", err)
 	}
 	fmt.Printf("Reconciled ansible_password for %d host(s) from %s\n",
-		updated, filepath.Base(materializedLabConfigPath(cfg)))
+		updated, filepath.Base(cfg.MaterializedLabConfigPath()))
 	return nil
 }
 

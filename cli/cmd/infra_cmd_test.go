@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -15,6 +16,53 @@ func TestMaterializeLabConfigAllowsMissingOptionalConfig(t *testing.T) {
 
 	if err := materializeLabConfig(cfg); err != nil {
 		t.Fatalf("materializeLabConfig() error = %v, want nil", err)
+	}
+}
+
+func TestMaterializeLabConfigRejectsMissingVariantTarget(t *testing.T) {
+	root := t.TempDir()
+	baseData := filepath.Join(root, "ad", "GOAD", "data")
+	if err := os.MkdirAll(baseData, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(baseData, "config.json"), []byte(`{"base":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		ProjectRoot: root,
+		Env:         "kraken",
+		Environments: map[string]config.EnvironmentConfig{
+			"kraken": {Variant: true, VariantTarget: "ad/GOAD-kraken"},
+		},
+	}
+
+	err := materializeLabConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "variant lab config directory does not exist") {
+		t.Fatalf("materializeLabConfig() error = %v, want missing variant target error", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(baseData, "kraken-config.json")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("base config was materialized despite missing variant target: %v", statErr)
+	}
+}
+
+func TestMaterializeLabConfigRejectsVariantTargetWithoutConfig(t *testing.T) {
+	root := t.TempDir()
+	variantData := filepath.Join(root, "ad", "GOAD-kraken", "data")
+	if err := os.MkdirAll(variantData, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		ProjectRoot: root,
+		Env:         "kraken",
+		Environments: map[string]config.EnvironmentConfig{
+			"kraken": {Variant: true, VariantTarget: "ad/GOAD-kraken"},
+		},
+	}
+
+	err := materializeLabConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "resolve variant lab config") ||
+		!errors.Is(err, config.ErrLabConfigNotFound) {
+		t.Fatalf("materializeLabConfig() error = %v, want missing variant config error", err)
 	}
 }
 
@@ -84,7 +132,7 @@ func TestMaterializeLabConfigRejectsOverlayWithoutBase(t *testing.T) {
 	}
 }
 
-func TestMaterializeLabConfigCreatesDestinationDirectory(t *testing.T) {
+func TestMaterializeLabConfigWritesVariantTarget(t *testing.T) {
 	root := t.TempDir()
 	variantData := filepath.Join(root, "ad", "custom-variant", "data")
 	if err := os.MkdirAll(variantData, 0o755); err != nil {
@@ -105,13 +153,66 @@ func TestMaterializeLabConfigCreatesDestinationDirectory(t *testing.T) {
 	if err := materializeLabConfig(cfg); err != nil {
 		t.Fatalf("materializeLabConfig() error: %v", err)
 	}
-	destination := filepath.Join(root, "ad", "GOAD", "data", "dev-config.json")
+	destination := filepath.Join(variantData, "dev-config.json")
 	got, err := os.ReadFile(destination)
 	if err != nil {
 		t.Fatalf("read materialized config: %v", err)
 	}
 	if string(got) != string(want) {
 		t.Errorf("materialized config = %s, want %s", got, want)
+	}
+	wrongDestination := filepath.Join(root, "ad", "GOAD", "data", "dev-config.json")
+	if _, err := os.Stat(wrongDestination); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("base-lab config unexpectedly materialized at %s: %v", wrongDestination, err)
+	}
+}
+
+func TestMaterializeLabConfigWritesMergedVariantConfigToTarget(t *testing.T) {
+	root := t.TempDir()
+	variantData := filepath.Join(root, "ad", "GOAD-kraken", "data")
+	if err := os.MkdirAll(variantData, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(variantData, "config.json"),
+		[]byte(`{"lab":{"name":"base","keep":true}}`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(variantData, "kraken-overlay.json"),
+		[]byte(`{"lab":{"name":"kraken"}}`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		ProjectRoot: root,
+		Env:         "kraken",
+		Environments: map[string]config.EnvironmentConfig{
+			"kraken": {Variant: true, VariantTarget: "ad/GOAD-kraken"},
+		},
+	}
+
+	if err := materializeLabConfig(cfg); err != nil {
+		t.Fatalf("materializeLabConfig() error: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(variantData, "kraken-config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Lab struct {
+			Name string `json:"name"`
+			Keep bool   `json:"keep"`
+		} `json:"lab"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("parse materialized config: %v", err)
+	}
+	if got.Lab.Name != "kraken" || !got.Lab.Keep {
+		t.Errorf("materialized config did not merge base + overlay: %s", raw)
 	}
 }
 
@@ -139,32 +240,6 @@ func TestMaterializeLabConfigLeavesLegacyDestinationUntouched(t *testing.T) {
 	}
 }
 
-func TestMaterializeLabConfigReportsDirectoryCreationFailure(t *testing.T) {
-	root := t.TempDir()
-	variantData := filepath.Join(root, "ad", "custom-variant", "data")
-	if err := os.MkdirAll(variantData, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(variantData, "config.json"), []byte(`{}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "ad", "GOAD"), []byte("not a directory"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg := &config.Config{
-		ProjectRoot: root,
-		Env:         "dev",
-		Environments: map[string]config.EnvironmentConfig{
-			"dev": {Variant: true, VariantTarget: "ad/custom-variant"},
-		},
-	}
-
-	err := materializeLabConfig(cfg)
-	if err == nil || !strings.Contains(err.Error(), "create lab config directory") {
-		t.Fatalf("materializeLabConfig() error = %v, want directory creation error", err)
-	}
-}
-
 func TestMaterializeLabConfigReportsWriteFailure(t *testing.T) {
 	root := t.TempDir()
 	variantData := filepath.Join(root, "ad", "custom-variant", "data")
@@ -174,7 +249,7 @@ func TestMaterializeLabConfigReportsWriteFailure(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(variantData, "config.json"), []byte(`{}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	destination := filepath.Join(root, "ad", "GOAD", "data", "dev-config.json")
+	destination := filepath.Join(variantData, "dev-config.json")
 	if err := os.MkdirAll(destination, 0o755); err != nil {
 		t.Fatal(err)
 	}
