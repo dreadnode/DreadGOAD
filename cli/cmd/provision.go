@@ -195,6 +195,12 @@ func preflightChecks(ctx context.Context, cfg *config.Config, limit string) erro
 	if err := bootstrapInventory(cfg.InventoryPath()); err != nil {
 		return fmt.Errorf("inventory bootstrap failed: %w", err)
 	}
+	// A runtime/reference inventory may carry perfectly valid live connection
+	// details while missing the lab's group graph. Reconcile that graph before
+	// Ansible evaluates plays such as hosts: domain or groups['dc'].
+	if err := ensureInventoryTopology(cfg); err != nil {
+		return fmt.Errorf("inventory topology: %w", err)
+	}
 
 	// AWS-specific preflight: ensure the SSM transfer bucket exists, sync
 	// inventory instance IDs, and generate IP mappings. Skipped for non-SSM
