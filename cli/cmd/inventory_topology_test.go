@@ -96,6 +96,25 @@ func TestEnsureInventoryTopologySkipsServiceRangeWithoutCanonicalInventory(t *te
 }
 
 func TestEnsureInventoryTopologyRepairsStaleReferenceInventory(t *testing.T) {
+	runtime, canonical := staleInventoryFixture(t)
+
+	if err := ensureInventoryTopologyFromSource(runtime, canonical); err != nil {
+		t.Fatalf("repair topology: %v", err)
+	}
+	got := readInventoryForTest(t, runtime)
+	assertRepairedStaleInventory(t, runtime, got)
+
+	// A second preflight must be byte-for-byte idempotent.
+	if err := ensureInventoryTopologyFromSource(runtime, canonical); err != nil {
+		t.Fatalf("second repair: %v", err)
+	}
+	if second := readInventoryForTest(t, runtime); second != got {
+		t.Errorf("idempotent repair changed inventory:\nfirst:\n%s\nsecond:\n%s", got, second)
+	}
+}
+
+func staleInventoryFixture(t *testing.T) (string, string) {
+	t.Helper()
 	root := t.TempDir()
 	runtime := filepath.Join(root, "kraken-inventory")
 	canonical := filepath.Join(root, "ad", "GOAD-kraken", "data", "inventory")
@@ -122,15 +141,20 @@ func TestEnsureInventoryTopologyRepairsStaleReferenceInventory(t *testing.T) {
 	if err := os.WriteFile(canonical, []byte(canonicalBody), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	return runtime, canonical
+}
 
-	if err := ensureInventoryTopologyFromSource(runtime, canonical); err != nil {
-		t.Fatalf("repair topology: %v", err)
-	}
-	first, err := os.ReadFile(runtime)
+func readInventoryForTest(t *testing.T, path string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := string(first)
+	return string(raw)
+}
+
+func assertRepairedStaleInventory(t *testing.T, runtime, got string) {
+	t.Helper()
 	for _, want := range []string{
 		"dc01 ansible_host=10.68.1.4 ansible_user=ansible ansible_password=live-secret",
 		"srv02 ansible_host=10.68.1.7 ansible_user=ansible ansible_password=other-secret",
@@ -158,18 +182,6 @@ func TestEnsureInventoryTopologyRepairsStaleReferenceInventory(t *testing.T) {
 	}
 	if info, err := os.Stat(runtime); err != nil || info.Mode().Perm() != 0o640 {
 		t.Errorf("inventory mode changed: info=%v err=%v", info, err)
-	}
-
-	// A second preflight must be byte-for-byte idempotent.
-	if err := ensureInventoryTopologyFromSource(runtime, canonical); err != nil {
-		t.Fatalf("second repair: %v", err)
-	}
-	second, err := os.ReadFile(runtime)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(second) != got {
-		t.Errorf("idempotent repair changed inventory:\nfirst:\n%s\nsecond:\n%s", got, second)
 	}
 }
 

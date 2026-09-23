@@ -23,6 +23,25 @@ type inventorySection struct {
 	members []string
 }
 
+type canonicalInventory struct {
+	order     []string
+	sections  map[string]inventorySection
+	varOrder  []string
+	variables map[string]string
+}
+
+type inventoryRepairPlan struct {
+	missingMembers  map[string][]string
+	missingSections map[string]bool
+	missingVars     []string
+	groupsAdded     int
+	membersAdded    int
+}
+
+func (p inventoryRepairPlan) empty() bool {
+	return p.groupsAdded == 0 && p.membersAdded == 0 && len(p.missingVars) == 0
+}
+
 // ensureInventoryTopology restores the lab group graph and range defaults to an
 // existing runtime inventory. Runtime inventories own connection details (live
 // IPs, instance IDs, credentials); ad/<lab>/data/inventory owns host-to-group
@@ -59,44 +78,96 @@ func ensureInventoryTopology(cfg *config.Config) error {
 // copied because provider-synchronized connection settings belong exclusively
 // to the runtime inventory.
 func ensureInventoryTopologyFromSource(inventoryPath, canonicalPath string) error {
-	canonicalRaw, err := os.ReadFile(canonicalPath)
-	if errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("canonical AD inventory topology is missing: %s", canonicalPath)
-	}
+	canonical, isAD, err := loadCanonicalInventory(canonicalPath)
 	if err != nil {
-		return fmt.Errorf("read canonical inventory topology: %w", err)
+		return err
+	}
+	if !isAD {
+		return nil
 	}
 
-	canonicalOrder, canonical := topologySections(string(canonicalRaw))
-	canonicalVarOrder, canonicalVars := inventoryAllVars(string(canonicalRaw))
-	_, hasDomain := canonical["domain"]
-	_, hasDC := canonical["dc"]
+	runtimeRaw, activeHosts, err := loadRuntimeInventory(inventoryPath)
+	if err != nil {
+		return err
+	}
+	if err := filterCanonicalTopology(canonical.sections, activeHosts, inventoryPath); err != nil {
+		return err
+	}
+
+	_, runtimeSections := topologySections(string(runtimeRaw))
+	_, runtimeVars := inventoryAllVars(string(runtimeRaw))
+	plan := planInventoryRepair(canonical, runtimeSections, runtimeVars)
+	if plan.empty() {
+		return validateInventoryContract(inventoryPath, canonical.sections, canonical.variables)
+	}
+
+	updated := addInventoryTopology(
+		string(runtimeRaw), canonical.order, plan.missingSections, plan.missingMembers,
+	)
+	updated = addInventoryVariables(updated, plan.missingVars)
+	if err := writeInventoryAtomically(inventoryPath, []byte(updated)); err != nil {
+		return err
+	}
+	if err := validateInventoryContract(inventoryPath, canonical.sections, canonical.variables); err != nil {
+		return err
+	}
+	slog.Info("repaired inventory topology",
+		"inventory", inventoryPath,
+		"source", canonicalPath,
+		"groups_added", plan.groupsAdded,
+		"members_added", plan.membersAdded,
+		"variables_added", len(plan.missingVars))
+	return nil
+}
+
+func loadCanonicalInventory(path string) (canonicalInventory, bool, error) {
+	raw, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return canonicalInventory{}, false, fmt.Errorf("canonical AD inventory topology is missing: %s", path)
+	}
+	if err != nil {
+		return canonicalInventory{}, false, fmt.Errorf("read canonical inventory topology: %w", err)
+	}
+
+	order, sections := topologySections(string(raw))
+	varOrder, variables := inventoryAllVars(string(raw))
+	_, hasDomain := sections["domain"]
+	_, hasDC := sections["dc"]
 	if !hasDomain && !hasDC {
-		return nil // This is not an Active Directory inventory.
+		return canonicalInventory{}, false, nil
 	}
 	if !hasDomain || !hasDC {
-		return fmt.Errorf("canonical inventory %s has incomplete AD topology (need [domain] and [dc])", canonicalPath)
+		return canonicalInventory{}, false,
+			fmt.Errorf("canonical inventory %s has incomplete AD topology (need [domain] and [dc])", path)
 	}
+	return canonicalInventory{
+		order: order, sections: sections, varOrder: varOrder, variables: variables,
+	}, true, nil
+}
 
-	runtimeRaw, err := os.ReadFile(inventoryPath)
+func loadRuntimeInventory(path string) ([]byte, map[string]bool, error) {
+	raw, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("read runtime inventory: %w", err)
+		return nil, nil, fmt.Errorf("read runtime inventory: %w", err)
 	}
-	parsed, err := inv.Parse(inventoryPath)
+	parsed, err := inv.Parse(path)
 	if err != nil {
-		return fmt.Errorf("parse runtime inventory: %w", err)
+		return nil, nil, fmt.Errorf("parse runtime inventory: %w", err)
 	}
 	if len(parsed.Hosts) == 0 {
-		return fmt.Errorf("inventory %s has AD topology but no runtime hosts", inventoryPath)
+		return nil, nil, fmt.Errorf("inventory %s has AD topology but no runtime hosts", path)
 	}
 	activeHosts := make(map[string]bool, len(parsed.Hosts))
 	for host := range parsed.Hosts {
 		activeHosts[strings.ToLower(host)] = true
 	}
+	return raw, activeHosts, nil
+}
 
-	// Filter canonical membership to the hosts actually deployed in this
-	// environment. This is essential for GOAD-Light/Mini and --hosts ranges.
-	for name, section := range canonical {
+// filterCanonicalTopology preserves deliberately reduced GOAD-Light/Mini and
+// --hosts deployments while retaining every applicable canonical group.
+func filterCanonicalTopology(sections map[string]inventorySection, activeHosts map[string]bool, inventoryPath string) error {
+	for name, section := range sections {
 		filtered := section.members[:0]
 		for _, host := range section.members {
 			if activeHosts[strings.ToLower(host)] {
@@ -104,26 +175,30 @@ func ensureInventoryTopologyFromSource(inventoryPath, canonicalPath string) erro
 			}
 		}
 		section.members = filtered
-		canonical[name] = section
+		sections[name] = section
 	}
-	if len(canonical["dc"].members) == 0 {
+	if len(sections["dc"].members) == 0 {
 		return fmt.Errorf("inventory %s has no deployed host belonging to canonical [dc] topology", inventoryPath)
 	}
+	return nil
+}
 
-	_, runtime := topologySections(string(runtimeRaw))
-	_, runtimeVars := inventoryAllVars(string(runtimeRaw))
-	missingMembers := make(map[string][]string)
-	missingSections := make(map[string]bool)
-	missingVars := make([]string, 0, len(canonicalVars))
-	groupsAdded := 0
-	membersAdded := 0
-
-	for _, name := range canonicalOrder {
-		expected := canonical[name]
-		current, exists := runtime[name]
+func planInventoryRepair(
+	canonical canonicalInventory,
+	runtimeSections map[string]inventorySection,
+	runtimeVars map[string]string,
+) inventoryRepairPlan {
+	plan := inventoryRepairPlan{
+		missingMembers:  make(map[string][]string),
+		missingSections: make(map[string]bool),
+		missingVars:     make([]string, 0, len(canonical.variables)),
+	}
+	for _, name := range canonical.order {
+		expected := canonical.sections[name]
+		current, exists := runtimeSections[name]
 		if !exists {
-			missingSections[name] = true
-			groupsAdded++
+			plan.missingSections[name] = true
+			plan.groupsAdded++
 		}
 		seen := make(map[string]bool, len(current.members))
 		for _, member := range current.members {
@@ -131,42 +206,21 @@ func ensureInventoryTopologyFromSource(inventoryPath, canonicalPath string) erro
 		}
 		for _, member := range expected.members {
 			if !seen[strings.ToLower(member)] {
-				missingMembers[name] = append(missingMembers[name], member)
-				membersAdded++
+				plan.missingMembers[name] = append(plan.missingMembers[name], member)
+				plan.membersAdded++
 			}
 		}
 	}
-	for _, key := range canonicalVarOrder {
+	for _, key := range canonical.varOrder {
 		if strings.HasPrefix(strings.ToLower(key), "ansible_") {
 			continue
 		}
 		if _, exists := runtimeVars[key]; exists {
 			continue
 		}
-		missingVars = append(missingVars, canonicalVars[key])
+		plan.missingVars = append(plan.missingVars, canonical.variables[key])
 	}
-
-	if groupsAdded == 0 && membersAdded == 0 && len(missingVars) == 0 {
-		return validateInventoryContract(inventoryPath, canonical, canonicalVars)
-	}
-
-	updated := addInventoryTopology(
-		string(runtimeRaw), canonicalOrder, missingSections, missingMembers,
-	)
-	updated = addInventoryVariables(updated, missingVars)
-	if err := writeInventoryAtomically(inventoryPath, []byte(updated)); err != nil {
-		return err
-	}
-	if err := validateInventoryContract(inventoryPath, canonical, canonicalVars); err != nil {
-		return err
-	}
-	slog.Info("repaired inventory topology",
-		"inventory", inventoryPath,
-		"source", canonicalPath,
-		"groups_added", groupsAdded,
-		"members_added", membersAdded,
-		"variables_added", len(missingVars))
-	return nil
+	return plan
 }
 
 // inventoryAllVars returns assignments from [all:vars] in source order. The
