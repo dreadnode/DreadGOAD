@@ -292,6 +292,7 @@ def test_load_prompt_and_guidance_injection() -> None:
     assert "pipeline" in up_prompt.lower()
     assert "continues through provisioning" in up_prompt
     assert "dreadgoad infra apply" in up_prompt
+    assert "--from-playbook" in up_prompt
     print("PASS test_load_prompt_and_guidance_injection")
 
 
@@ -323,6 +324,7 @@ def test_system_prompt_covers_the_registry() -> None:
     assert "$" not in rendered, "system.md has a placeholder agent.py doesn't fill"
     for value in ("us-west-2", "redteam", "10.0.0.0/16"):
         assert value in rendered, f"{value} missing from the rendered prompt"
+    assert "--from-playbook <playbook>" in rendered
 
     # A fresh session has no region/variant yet; the prompt must say so rather
     # than rendering the literal string "None", which reads as a real value.
@@ -403,7 +405,9 @@ def test_agent_local_paths_are_confined_without_changing_cli_builder() -> None:
 
         allowed = (
             ("/up", ["--module", "goad/dc01", "--plays=ad.yml,acl.yml"]),
+            ("/up", ["--from", "provision", "--from-playbook", "build.yml"]),
             ("/provision", ["--plays", "ad.yml,acl.yml"]),
+            ("/provision", ["--from=build.yml"]),
             ("/reset", ["--plays=ad.yml,acl.yml"]),
             (
                 "/score",
@@ -425,7 +429,9 @@ def test_agent_local_paths_are_confined_without_changing_cli_builder() -> None:
 
         blocked = (
             ("/up", ["--module", "../../outside"]),
+            ("/up", ["--from-playbook", "../../../outside.yml"]),
             ("/provision", ["--plays", "good/a/b/c.yml,../../../outside.yml"]),
+            ("/provision", ["--from=../../../outside.yml"]),
             # The first positional report is remote, but a repeated --report
             # would override the fetched session-local path (pflag last-wins).
             ("/score", ["remote.jsonl", "--report", "/etc/passwd"]),
@@ -443,6 +449,8 @@ def test_agent_local_paths_are_confined_without_changing_cli_builder() -> None:
                 )
             except ValueError as exc:
                 assert "must stay within" in str(exc), (name, args, exc)
+                if name == "/up" and "--from-playbook" in args:
+                    assert "ansible/playbooks" in str(exc), exc
             else:
                 raise AssertionError(f"escaped agent path accepted: {name} {args!r}")
 

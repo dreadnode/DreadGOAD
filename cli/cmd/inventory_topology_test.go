@@ -109,7 +109,9 @@ func TestEnsureInventoryTopologyRepairsStaleReferenceInventory(t *testing.T) {
 		"dc01 ansible_host=10.68.1.4 ansible_user=ansible ansible_password=live-secret\n" +
 		"srv02 ansible_host=10.68.1.7 ansible_user=ansible ansible_password=other-secret\n\n" +
 		"[all:vars]\ndomain_name=GOAD-kraken\nadmin_user=goadmin\n"
-	canonicalBody := "[all:vars]\ndomain_name=GOAD-kraken\n\n" +
+	canonicalBody := "[all:vars]\ndomain_name=canonical-must-not-win\n" +
+		"force_dns_server=no\ndns_server=1.1.1.1\ndns_server_forwarder=1.1.1.1\n" +
+		"ansible_user=vagrant\nansible_password=vagrant\n\n" +
 		"[domain]\ndc01\nsrv02\ndc03\n\n" +
 		"[dc]\ndc01\ndc03\n\n" +
 		"[server]\nsrv02\n\n" +
@@ -136,6 +138,10 @@ func TestEnsureInventoryTopologyRepairsStaleReferenceInventory(t *testing.T) {
 		"[dc]\ndc01",
 		"[server]\nsrv02",
 		"[extensions]",
+		"domain_name=GOAD-kraken",
+		"force_dns_server=no",
+		"dns_server=1.1.1.1",
+		"dns_server_forwarder=1.1.1.1",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("repaired inventory is missing %q:\n%s", want, got)
@@ -143,6 +149,12 @@ func TestEnsureInventoryTopologyRepairsStaleReferenceInventory(t *testing.T) {
 	}
 	if strings.Contains(got, "dc03") {
 		t.Errorf("repair added an undeployed host:\n%s", got)
+	}
+	if strings.Contains(got, "domain_name=canonical-must-not-win") {
+		t.Errorf("repair replaced an existing runtime variable:\n%s", got)
+	}
+	if strings.Contains(got, "ansible_user=vagrant") || strings.Contains(got, "ansible_password=vagrant") {
+		t.Errorf("repair copied canonical connection credentials:\n%s", got)
 	}
 	if info, err := os.Stat(runtime); err != nil || info.Mode().Perm() != 0o640 {
 		t.Errorf("inventory mode changed: info=%v err=%v", info, err)
@@ -168,7 +180,9 @@ func TestScaffoldInventoryReconcilesTopologyFromVariant(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(canonical, []byte(
-		"[domain]\ndc01\nsrv02\n\n[dc]\ndc01\n\n[server]\nsrv02\n\n[extensions]\n"), 0o644); err != nil {
+		"[all:vars]\nforce_dns_server=no\ndns_server=1.1.1.1\n"+
+			"dns_server_forwarder=1.1.1.1\nansible_user=vagrant\n\n"+
+			"[domain]\ndc01\nsrv02\n\n[dc]\ndc01\n\n[server]\nsrv02\n\n[extensions]\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// Azure's default reference is a local, ignored runtime artifact. This
@@ -199,9 +213,42 @@ func TestScaffoldInventoryReconcilesTopologyFromVariant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"domain_name=GOAD-kraken", "[domain]", "[dc]", "[server]", "[extensions]"} {
+	for _, want := range []string{
+		"domain_name=GOAD-kraken", "force_dns_server=no", "dns_server=1.1.1.1",
+		"dns_server_forwarder=1.1.1.1", "[domain]", "[dc]", "[server]", "[extensions]",
+	} {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("scaffolded inventory is missing %q:\n%s", want, raw)
+		}
+	}
+	if strings.Contains(string(raw), "ansible_user=vagrant") {
+		t.Errorf("scaffold copied canonical connection settings:\n%s", raw)
+	}
+}
+
+func TestEnsureInventoryTopologyCreatesMissingAllVarsSection(t *testing.T) {
+	root := t.TempDir()
+	runtime := filepath.Join(root, "range-inventory")
+	canonical := filepath.Join(root, "inventory")
+	if err := os.WriteFile(runtime, []byte(
+		"[default]\ndc01 ansible_host=10.0.0.1 ansible_password=live\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(canonical, []byte(
+		"[all:vars]\nforce_dns_server=no\n\n[domain]\ndc01\n\n[dc]\ndc01\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ensureInventoryTopologyFromSource(runtime, canonical); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"ansible_password=live", "[all:vars]\nforce_dns_server=no"} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("repaired inventory is missing %q:\n%s", want, raw)
 		}
 	}
 }

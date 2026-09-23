@@ -23,11 +23,12 @@ type inventorySection struct {
 	members []string
 }
 
-// ensureInventoryTopology restores the lab group graph to an existing runtime
-// inventory. Runtime inventories own connection details (live IPs, instance
-// IDs, credentials); ad/<lab>/data/inventory owns host-to-group membership.
-// Keeping those responsibilities separate lets this repair stale inventories
-// without replacing values that were synchronized from the provider.
+// ensureInventoryTopology restores the lab group graph and range defaults to an
+// existing runtime inventory. Runtime inventories own connection details (live
+// IPs, instance IDs, credentials); ad/<lab>/data/inventory owns host-to-group
+// membership and non-connection [all:vars] defaults. Keeping those
+// responsibilities separate lets this repair stale inventories without
+// replacing values that were synchronized from the provider.
 func ensureInventoryTopology(cfg *config.Config) error {
 	manifest, found, err := rangeconfig.Load(cfg.LabPath())
 	if err != nil {
@@ -50,11 +51,13 @@ func ensureInventoryTopology(cfg *config.Config) error {
 	)
 }
 
-// ensureInventoryTopologyFromSource adds missing topology sections and members
-// from canonicalPath to inventoryPath. It never removes runtime groups or
-// changes host definitions, variables, addresses, usernames, or passwords.
-// Canonical members absent from the runtime [default] host set are filtered
-// out, preserving deliberately reduced lab topologies.
+// ensureInventoryTopologyFromSource adds missing topology sections, members,
+// and non-connection [all:vars] defaults from canonicalPath to inventoryPath.
+// It never removes runtime content or replaces existing values. Canonical
+// members absent from the runtime host set are filtered out, preserving
+// deliberately reduced lab topologies. Canonical ansible_* variables are not
+// copied because provider-synchronized connection settings belong exclusively
+// to the runtime inventory.
 func ensureInventoryTopologyFromSource(inventoryPath, canonicalPath string) error {
 	canonicalRaw, err := os.ReadFile(canonicalPath)
 	if errors.Is(err, os.ErrNotExist) {
@@ -65,6 +68,7 @@ func ensureInventoryTopologyFromSource(inventoryPath, canonicalPath string) erro
 	}
 
 	canonicalOrder, canonical := topologySections(string(canonicalRaw))
+	canonicalVarOrder, canonicalVars := inventoryAllVars(string(canonicalRaw))
 	_, hasDomain := canonical["domain"]
 	_, hasDC := canonical["dc"]
 	if !hasDomain && !hasDC {
@@ -107,8 +111,10 @@ func ensureInventoryTopologyFromSource(inventoryPath, canonicalPath string) erro
 	}
 
 	_, runtime := topologySections(string(runtimeRaw))
+	_, runtimeVars := inventoryAllVars(string(runtimeRaw))
 	missingMembers := make(map[string][]string)
 	missingSections := make(map[string]bool)
+	missingVars := make([]string, 0, len(canonicalVars))
 	groupsAdded := 0
 	membersAdded := 0
 
@@ -130,26 +136,72 @@ func ensureInventoryTopologyFromSource(inventoryPath, canonicalPath string) erro
 			}
 		}
 	}
+	for _, key := range canonicalVarOrder {
+		if strings.HasPrefix(strings.ToLower(key), "ansible_") {
+			continue
+		}
+		if _, exists := runtimeVars[key]; exists {
+			continue
+		}
+		missingVars = append(missingVars, canonicalVars[key])
+	}
 
-	if groupsAdded == 0 && membersAdded == 0 {
-		return validateInventoryTopology(inventoryPath, canonical)
+	if groupsAdded == 0 && membersAdded == 0 && len(missingVars) == 0 {
+		return validateInventoryContract(inventoryPath, canonical, canonicalVars)
 	}
 
 	updated := addInventoryTopology(
 		string(runtimeRaw), canonicalOrder, missingSections, missingMembers,
 	)
+	updated = addInventoryVariables(updated, missingVars)
 	if err := writeInventoryAtomically(inventoryPath, []byte(updated)); err != nil {
 		return err
 	}
-	if err := validateInventoryTopology(inventoryPath, canonical); err != nil {
+	if err := validateInventoryContract(inventoryPath, canonical, canonicalVars); err != nil {
 		return err
 	}
 	slog.Info("repaired inventory topology",
 		"inventory", inventoryPath,
 		"source", canonicalPath,
 		"groups_added", groupsAdded,
-		"members_added", membersAdded)
+		"members_added", membersAdded,
+		"variables_added", len(missingVars))
 	return nil
+}
+
+// inventoryAllVars returns assignments from [all:vars] in source order. The
+// original assignment line is retained so list and quoted values survive
+// without a lossy parse/render cycle.
+func inventoryAllVars(content string) ([]string, map[string]string) {
+	order := []string{}
+	variables := make(map[string]string)
+	inAllVars := false
+	for _, line := range strings.Split(content, "\n") {
+		if match := inventorySectionRe.FindStringSubmatch(line); match != nil {
+			inAllVars = strings.EqualFold(strings.TrimSpace(match[1]), "all:vars")
+			continue
+		}
+		if !inAllVars {
+			continue
+		}
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, ";") {
+			continue
+		}
+		equals := strings.Index(trimmed, "=")
+		if equals <= 0 {
+			continue
+		}
+		key := strings.TrimSpace(trimmed[:equals])
+		if key == "" {
+			continue
+		}
+		if _, exists := variables[key]; !exists {
+			order = append(order, key)
+		}
+		variables[key] = trimmed
+	}
+	return order, variables
 }
 
 // topologySections returns ordinary inventory groups in source order. Variable
@@ -228,6 +280,63 @@ func addInventoryTopology(
 		out = append(out, missingMembers[name]...)
 	}
 	return strings.Join(out, "\n") + "\n"
+}
+
+func addInventoryVariables(content string, missing []string) string {
+	if len(missing) == 0 {
+		return content
+	}
+	lines := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
+	out := make([]string, 0, len(lines)+len(missing)+2)
+	inAllVars := false
+	inserted := false
+	insert := func() {
+		if !inAllVars || inserted {
+			return
+		}
+		out = append(out, missing...)
+		inserted = true
+	}
+	for _, line := range lines {
+		if match := inventorySectionRe.FindStringSubmatch(line); match != nil {
+			insert()
+			inAllVars = strings.EqualFold(strings.TrimSpace(match[1]), "all:vars")
+		}
+		out = append(out, line)
+	}
+	insert()
+	if !inserted {
+		if len(out) > 0 && strings.TrimSpace(out[len(out)-1]) != "" {
+			out = append(out, "")
+		}
+		out = append(out, "[all:vars]")
+		out = append(out, missing...)
+	}
+	return strings.Join(out, "\n") + "\n"
+}
+
+func validateInventoryContract(
+	inventoryPath string,
+	canonical map[string]inventorySection,
+	canonicalVars map[string]string,
+) error {
+	if err := validateInventoryTopology(inventoryPath, canonical); err != nil {
+		return err
+	}
+	raw, err := os.ReadFile(inventoryPath)
+	if err != nil {
+		return fmt.Errorf("read repaired inventory variables: %w", err)
+	}
+	_, actual := inventoryAllVars(string(raw))
+	for key := range canonicalVars {
+		if strings.HasPrefix(strings.ToLower(key), "ansible_") {
+			continue
+		}
+		if _, exists := actual[key]; !exists {
+			return fmt.Errorf("inventory %s is missing required [all:vars] value %s", inventoryPath, key)
+		}
+	}
+	return nil
 }
 
 func validateInventoryTopology(inventoryPath string, canonical map[string]inventorySection) error {

@@ -4,6 +4,7 @@ pipeline in order: doctor → infra → provision → health-check.
 Flags (all optional — default is a clean full run, no args needed):
 
 - `--from <step>`        resume from a step: `doctor`, `infra`, `provision`, or `health-check`
+- `--from-playbook <yml>` resume provisioning from this playbook onward
 - `--skip-doctor`        skip the pre-flight doctor checks
 - `--limit <hosts>`      limit provisioning to specific hosts
 - `--plays <csv>`        comma-separated playbooks to run (default: all)
@@ -21,6 +22,9 @@ Guidance:
   health-check. For "just redo infra", run `dreadgoad infra apply` directly instead.
   Map the operator's step name to the four valid values above; if theirs doesn't
   match, ask.
+- "resume from build.yml" → `--from provision --from-playbook build.yml`.
+  Preserve `--from-playbook` when the operator supplies it; it is a valid `/up`
+  flag and is distinct from the pipeline-level `--from` flag.
 - `/up` deploys real cloud infra and costs money. If the request is ambiguous,
   clarify it first. Once intent and arguments are clear, call the command; the
   backend separately shows the exact argv and requires operator approval before

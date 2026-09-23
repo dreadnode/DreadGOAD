@@ -521,8 +521,8 @@ _DURATION_PART_RE = re.compile(r"(\d+(?:\.\d+)?)(ms|s|m|h)")
 # that shared builder too and retain the CLI's full path behavior. The agent
 # wrapper calls validate_agent_local_paths() before entering the shared runner.
 _AGENT_LOCAL_PATH_FLAGS: dict[str, frozenset[str]] = {
-    "/up": frozenset({"--module", "--plays"}),
-    "/provision": frozenset({"--plays"}),
+    "/up": frozenset({"--module", "--plays", "--from-playbook"}),
+    "/provision": frozenset({"--plays", "--from"}),
     "/reset": frozenset({"--plays"}),
     "/score": frozenset(
         {"--report", "--answer-key", "--output", "--ssh-key", "--range-artifacts"}
@@ -538,6 +538,9 @@ _AGENT_LOCAL_PATH_FLAGS: dict[str, frozenset[str]] = {
 # member to absorb enough ``..`` components to hide a later escaping member.
 _AGENT_PLAYBOOK_LIST_FLAGS = frozenset(
     {("/up", "--plays"), ("/provision", "--plays"), ("/reset", "--plays")}
+)
+_AGENT_PLAYBOOK_PATH_FLAGS = _AGENT_PLAYBOOK_LIST_FLAGS | frozenset(
+    {("/up", "--from-playbook"), ("/provision", "--from")}
 )
 
 
@@ -609,11 +612,12 @@ def validate_agent_local_paths(
         if not value:
             raise ValueError(f"{flag} requires a non-empty path")
         playbook_list = (name, flag) in _AGENT_PLAYBOOK_LIST_FLAGS
+        playbook_path = (name, flag) in _AGENT_PLAYBOOK_PATH_FLAGS
         values = value.split(",") if playbook_list else [value]
         if any(not item for item in values):
             raise ValueError(f"{flag} contains an empty path")
-        base = project / "ansible" / "playbooks" if playbook_list else project
-        allowed_roots = (base,) if playbook_list else roots
+        base = project / "ansible" / "playbooks" if playbook_path else project
+        allowed_roots = (base,) if playbook_path else roots
         for item in values:
             try:
                 path = Path(item)
@@ -627,7 +631,7 @@ def validate_agent_local_paths(
             if not confined:
                 boundary = (
                     "the range project's ansible/playbooks directory"
-                    if playbook_list
+                    if playbook_path
                     else "the range project or session workspace"
                 )
                 raise ValueError(f"{flag} must stay within {boundary}")

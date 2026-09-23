@@ -105,8 +105,8 @@ cannot do it.
   `--retry-delay`, and `--from <playbook>` (resume from that playbook onward).
 - **/up**: the same, plus `--skip-doctor`, `--module`, `--exclude`, and
   `--from <step>` — where a step is `doctor`, `infra`, `provision` or
-  `health-check`, NOT a playbook. The two flags share a name and mean
-  different things. On Azure it also deploys the Bastion and Ansible
+  `health-check`, NOT a playbook. Use `--from-playbook <playbook>` together with
+  `--from provision` to resume inside provisioning. On Azure it also deploys the Bastion and Ansible
   controller automatically, because provisioning cannot reach the Windows
   hosts without them; `--with-kali` adds the optional Kali attack box.
 - **/variant**: `--source <dir>`, `--target <dir>`, `--name <name>`.
