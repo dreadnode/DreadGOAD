@@ -100,22 +100,44 @@
 # attempting the cross-domain group membership adds.
 - name: Wait for trust secure channel to peer domains
   ansible.windows.win_powershell:
+    parameters:
+      CurrentDomain: "{{ domain }}"
     script: |
-      [CmdletBinding()] param()
-      $peers = @(
+      [CmdletBinding()]
+      param (
+        [Parameter(Mandatory)][string]$CurrentDomain
+      )
+      $members = @(
         {% for members in domain_groups_members.values() %}
         {% for m in members %}
-        "{{ m.split('\\')[0] }}"{% if not loop.last %},{% endif %}
+        "{{ m }}"{% if not loop.last %},{% endif %}
         {% endfor %}{% if not loop.last %},{% endif %}
         {% endfor %}
+      )
+
+      # Extract the domain in PowerShell. Ansible 2.20 does not reliably
+      # evaluate a backslash delimiter inside a Jinja expression embedded in
+      # a YAML block scalar, which previously left domain\principal intact and
+      # made nltest report ERROR_NO_SUCH_DOMAIN for the malformed value.
+      $peers = @(
+        foreach ($member in $members) {
+          $separator = $member.IndexOf([char]92)
+          if ($separator -le 0) {
+            throw "Invalid cross-domain principal: $member"
+          }
+          $peer = $member.Substring(0, $separator)
+          if ($peer -ine $CurrentDomain) {
+            $peer
+          }
+        }
       ) | Sort-Object -Unique
 
       foreach ($domain in $peers) {
-        $out = nltest /sc_query:$domain 2>&1
+        $out = nltest /sc_verify:$domain 2>&1
         if ($LASTEXITCODE -ne 0) {
           throw "Secure channel to $domain not ready (nltest exit $LASTEXITCODE): $out"
         }
-        Write-Output "Secure channel to $domain: OK"
+        Write-Output "Secure channel to ${domain}: OK"
       }
   register: trust_channel_check
   until: trust_channel_check is succeeded
