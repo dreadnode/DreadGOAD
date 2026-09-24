@@ -229,7 +229,7 @@ func prepareAWSProvisionInventory(ctx context.Context, cfg *config.Config, limit
 	if err := ensureSSMBucket(ctx, cfg); err != nil {
 		return fmt.Errorf("SSM transfer bucket: %w", err)
 	}
-	if err := inventorySyncFailure(ensureInventorySynced(ctx, cfg), limit); err != nil {
+	if err := inventorySyncFailure(ensureInventorySynced(ctx, cfg, limit), limit); err != nil {
 		return err
 	}
 	if err := generateInstanceMapping(ctx, ""); err != nil {
@@ -695,7 +695,7 @@ func materializeSSMBucketName(path, bucket string) error {
 // state and auto-syncs if they diverge. This prevents provisioning against
 // stale instance IDs after an infra destroy/apply cycle.
 // This is a no-op for non-AWS providers (e.g. Ludus, Proxmox).
-func ensureInventorySynced(ctx context.Context, cfg *config.Config) error {
+func ensureInventorySynced(ctx context.Context, cfg *config.Config, limit string) error {
 	if !cfg.IsAWS() {
 		return nil
 	}
@@ -724,6 +724,19 @@ func ensureInventorySynced(ctx context.Context, cfg *config.Config) error {
 	instances := providerInstanceUpdates(liveInstances)
 	expected, err := expectedAWSInventoryAddresses(parsed, instances)
 	if err != nil {
+		if limit != "" && len(expected) > 0 {
+			_, updates, applyErr := applyInventoryAddressUpdates(invPath, expected)
+			if applyErr != nil {
+				return fmt.Errorf("apply resolvable AWS inventory addresses: %w", applyErr)
+			}
+			if validateErr := validateAWSInventoryAddresses(invPath, expected); validateErr != nil {
+				return validateErr
+			}
+			if updates > 0 {
+				slog.Info("reconciled resolvable AWS inventory addresses for limited run",
+					"hosts_updated", updates)
+			}
+		}
 		return err
 	}
 	var staleHosts []string

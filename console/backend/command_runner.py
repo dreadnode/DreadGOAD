@@ -63,6 +63,18 @@ def _config_identity(session: t.Mapping[str, t.Any]) -> Path | None:
     return Path(raw).expanduser().resolve(strict=False) if raw else None
 
 
+async def _purge_config_conflicts(
+    app: t.Any, session_id: str, config_path: Path
+) -> list[t.Mapping[str, t.Any]]:
+    """Return other live sessions attached to one canonical config path."""
+    sessions = await app.state.sessions.list_sessions()
+    return [
+        other
+        for other in sessions
+        if other.get("id") != session_id and _config_identity(other) == config_path
+    ]
+
+
 async def _spawn_and_stream(
     app: t.Any,
     session_id: str,
@@ -681,14 +693,9 @@ async def _prepare_command(
                 purge_plan = environment_purge.build_plan(session)
             except (OSError, ValueError, yaml.YAMLError) as exc:
                 raise _Aborted(1, f"cannot purge this environment: {exc}") from exc
-            sessions = await app.state.sessions.list_sessions()
-            config_path = _config_identity(session)
-            conflicts = [
-                other
-                for other in sessions
-                if other.get("id") != session_id
-                and _config_identity(other) == config_path
-            ]
+            conflicts = await _purge_config_conflicts(
+                app, session_id, purge_plan.config_path
+            )
             if conflicts:
                 raise _Aborted(
                     1,
@@ -845,6 +852,20 @@ async def _finalize_command(
             raise asyncio.CancelledError
 
         if plan.purge is not None and result.exit_code == 0:
+            conflicts = await _purge_config_conflicts(
+                app, session_id, plan.purge.config_path
+            )
+            if conflicts:
+                message = (
+                    "Cloud infrastructure was destroyed, but local environment "
+                    "purge was blocked because another console session now uses "
+                    "this config; close the other session before removing local "
+                    "artifacts."
+                )
+                await chat_events.emit_event(
+                    app, session_id, "error", {"message": message}
+                )
+                return 1, f"{result.output}\n{message}".strip()
             try:
                 removed = environment_purge.execute(plan.purge)
             except (OSError, RuntimeError) as exc:

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/dreadnode/dreadgoad/internal/config"
+	inv "github.com/dreadnode/dreadgoad/internal/inventory"
 	"github.com/dreadnode/dreadgoad/internal/provider"
 )
 
@@ -250,6 +251,44 @@ func TestApplyAWSInstanceUpdatesRejectsIncompleteDiscoveryWithoutMutation(t *tes
 	}
 	if got := readInventoryForTest(t, path); got != body {
 		t.Errorf("inventory was partially mutated after incomplete discovery:\n%s", got)
+	}
+}
+
+func TestLimitedAWSReconciliationRetainsResolvableAddresses(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "inventory")
+	body := "[default]\n" +
+		"dc01 ansible_host=i-stale dict_key=dc01\n" +
+		"dc03 ansible_host=i-unrelated dict_key=dc03\n\n" +
+		"[all:vars]\nansible_connection=amazon.aws.aws_ssm\n"
+	writeInventoryTestFile(t, path, body, 0o644)
+
+	parsed, err := inv.Parse(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addresses, discoveryErr := expectedAWSInventoryAddresses(parsed, []instanceInfo{{
+		InstanceID: "i-current", Name: "dreadgoad-dc01",
+	}})
+	if discoveryErr == nil || !strings.Contains(discoveryErr.Error(), "dc03: no discovered instance") {
+		t.Fatalf("discovery error = %v, want missing dc03", discoveryErr)
+	}
+	if got := addresses["dc01"]; got != "i-current" {
+		t.Fatalf("resolvable dc01 address = %q, want i-current", got)
+	}
+
+	if _, _, err := applyInventoryAddressUpdates(path, addresses); err != nil {
+		t.Fatal(err)
+	}
+	if err := inventorySyncFailure(discoveryErr, "dc01"); err != nil {
+		t.Fatalf("limited run did not downgrade unrelated discovery error: %v", err)
+	}
+	got := readInventoryForTest(t, path)
+	if !strings.Contains(got, "dc01 ansible_host=i-current") {
+		t.Errorf("selected host retained stale address:\n%s", got)
+	}
+	if !strings.Contains(got, "dc03 ansible_host=i-unrelated") {
+		t.Errorf("unresolved host was unexpectedly changed:\n%s", got)
 	}
 }
 

@@ -13,7 +13,7 @@ import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
-from console.backend import scaffold  # noqa: E402
+from console.backend import paths, scaffold  # noqa: E402
 
 
 def _capture(rc: int = 0, out: str = "created", err: str = ""):
@@ -152,6 +152,51 @@ async def test_scaffold_runs_in_the_config_tree() -> None:
     print("PASS test_scaffold_runs_in_the_config_tree")
 
 
+async def test_successful_scaffold_records_ownership() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory).resolve()
+        original = os.environ.get("DREADGOAD_CONSOLE_STATE_ROOT")
+        os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = str(
+            root / ".dreadgoad" / "console"
+        )
+        try:
+            (root / "ansible").mkdir()
+            config = paths.configs_root() / "rt.yaml"
+            config.write_text("environments:\n  rt:\n    provider: azure\n")
+            run, _seen = _capture()
+
+            ok, out = await scaffold.scaffold_env(
+                str(config),
+                "rt",
+                "centralus",
+                provider="azure",
+                capture_command=run,
+            )
+
+            assert ok, out
+            marker = scaffold.require_ownership(
+                config, "rt", root, "azure", scaffold.DEFAULT_DEPLOYMENT
+            )
+            assert marker.is_file()
+
+            marker.unlink()
+            failed_run, _seen = _capture(rc=1, err="scaffold failed")
+            ok, _out = await scaffold.scaffold_env(
+                str(config),
+                "rt",
+                "centralus",
+                provider="azure",
+                capture_command=failed_run,
+            )
+            assert not ok and not marker.exists()
+        finally:
+            if original is None:
+                os.environ.pop("DREADGOAD_CONSOLE_STATE_ROOT", None)
+            else:
+                os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = original
+    print("PASS test_successful_scaffold_records_ownership")
+
+
 async def test_scaffold_refuses_before_spawning_when_preflight_fails() -> None:
     """Nothing is run when the state is one env create cannot recover from."""
     with tempfile.TemporaryDirectory() as d:
@@ -236,6 +281,7 @@ async def _main() -> None:
     test_preflight_ignores_the_variant_target_when_not_a_variant()
     test_build_argv_shape()
     await test_scaffold_runs_in_the_config_tree()
+    await test_successful_scaffold_records_ownership()
     await test_scaffold_refuses_before_spawning_when_preflight_fails()
     await test_scaffold_refuses_an_empty_region()
     await test_scaffold_passes_argv_without_a_shell()

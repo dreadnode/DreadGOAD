@@ -212,20 +212,13 @@ func applyInstanceUpdates(invPath string, instances []instanceInfo) error {
 }
 
 func applyInstanceUpdatesForProvider(invPath string, instances []instanceInfo, aws bool) error {
-	content, err := os.ReadFile(invPath)
-	if err != nil {
-		return fmt.Errorf("read inventory: %w", err)
-	}
 	addresses, err := inventoryAddressesForProvider(invPath, instances, aws)
 	if err != nil {
 		return err
 	}
-	lines, updates := applyInventoryAddresses(string(content), addresses)
-
-	if updates > 0 {
-		if err := writeInventoryAtomically(invPath, []byte(lines)); err != nil {
-			return fmt.Errorf("write updated inventory: %w", err)
-		}
+	lines, updates, err := applyInventoryAddressUpdates(invPath, addresses)
+	if err != nil {
+		return err
 	}
 	if aws {
 		if err := validateAWSInventoryAddresses(invPath, addresses); err != nil {
@@ -247,6 +240,20 @@ func applyInstanceUpdatesForProvider(invPath string, instances []instanceInfo, a
 		fmt.Printf("Updated %d entries in %s\n", updates, invPath)
 	}
 	return nil
+}
+
+func applyInventoryAddressUpdates(invPath string, addresses map[string]string) (string, int, error) {
+	content, err := os.ReadFile(invPath)
+	if err != nil {
+		return "", 0, fmt.Errorf("read inventory: %w", err)
+	}
+	lines, updates := applyInventoryAddresses(string(content), addresses)
+	if updates > 0 {
+		if err := writeInventoryAtomically(invPath, []byte(lines)); err != nil {
+			return "", 0, fmt.Errorf("write updated inventory: %w", err)
+		}
+	}
+	return lines, updates, nil
 }
 
 func inventoryAddressesForProvider(
@@ -342,7 +349,7 @@ func expectedAWSInventoryAddresses(parsed *inv.Inventory, instances []instanceIn
 	}
 	if len(problems) > 0 {
 		sort.Strings(problems)
-		return nil, fmt.Errorf("cannot reconcile AWS inventory addresses: %s", strings.Join(problems, "; "))
+		return addresses, fmt.Errorf("cannot reconcile AWS inventory addresses: %s", strings.Join(problems, "; "))
 	}
 	return addresses, nil
 }

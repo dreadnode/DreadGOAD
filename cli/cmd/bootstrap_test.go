@@ -30,7 +30,7 @@ func TestEnsureInventorySyncedSkipsNonAWSProvider(t *testing.T) {
 
 	// Should return nil (no-op) without attempting AWS calls.
 	// If it tried AWS, it would error on missing credentials/region.
-	if err := ensureInventorySynced(context.Background(), cfg); err != nil {
+	if err := ensureInventorySynced(context.Background(), cfg, ""); err != nil {
 		t.Errorf("ensureInventorySynced() should be no-op for non-AWS, got error: %v", err)
 	}
 }
