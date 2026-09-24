@@ -17,7 +17,7 @@ Install and configure Microsoft SQL Server Express
 | -------- | ---- | ------- | ----------- |
 | `sql_instance_name` | str | `SQLEXPRESS` | No description |
 | `sql_version` | str | `MSSQL_2019` | No description |
-| `download_url_2019` | str | `https://download.microsoft.com/download/7/f/8/7f8a9c43-8c8a-4f7c-9f92-83c18d96b681/SQL2019-SSEI-Expr.exe` | No description |
+| `download_url_2019` | str | `https://go.microsoft.com/fwlink/?linkid=866658` | No description |
 | `download_url_2022` | str | `https://download.microsoft.com/download/5/1/4/5145fe04-4d30-4b85-b0d1-39533663a2f1/SQL2022-SSEI-Expr.exe` | No description |
 | `connection_type_2019` | str | `-b -E -S localhost\SQLEXPRESS` | No description |
 | `connection_type_2022` | str | `-b -S 127.0.0.1,1433` | No description |
@@ -51,8 +51,8 @@ Install and configure Microsoft SQL Server Express
 - **Create SQL Server installation directories** (ansible.windows.win_file)
 - **Create and load user profile** (ansible.windows.win_shell)
 - **Create SQL Server configuration file** (ansible.windows.win_template)
-- **Check if installation media already exists** (ansible.windows.win_stat)
-- **Download SQL Server installation media** (ansible.windows.win_get_url) - Conditional
+- **Download SQL Server installation media** (ansible.windows.win_get_url)
+- **Validate SQL Server bootstrap installer** (ansible.windows.win_stat)
 - **Add service account to Log on as a service** (ansible.windows.win_user_right) - Conditional
 - **Check if SQL Express media file exists** (ansible.windows.win_stat)
 - **Run the installer to download SQL Express installation files** (ansible.windows.win_command) - Conditional
