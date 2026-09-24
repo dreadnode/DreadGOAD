@@ -276,6 +276,9 @@ func TestLimitedAWSReconciliationRetainsResolvableAddresses(t *testing.T) {
 	if got := addresses["dc01"]; got != "i-current" {
 		t.Fatalf("resolvable dc01 address = %q, want i-current", got)
 	}
+	if !awsReconciliationOutsideLimit(discoveryErr, "dc01", parsed) {
+		t.Fatal("unrelated dc03 failure was not proven outside the dc01 limit")
+	}
 
 	if _, _, err := applyInventoryAddressUpdates(path, addresses); err != nil {
 		t.Fatal(err)
@@ -289,6 +292,63 @@ func TestLimitedAWSReconciliationRetainsResolvableAddresses(t *testing.T) {
 	}
 	if !strings.Contains(got, "dc03 ansible_host=i-unrelated") {
 		t.Errorf("unresolved host was unexpectedly changed:\n%s", got)
+	}
+}
+
+func TestLimitedAWSReconciliationRejectsAmbiguousSelectedHost(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "inventory")
+	body := "[default]\n" +
+		"dc01 ansible_host=i-stale dict_key=dc01\n" +
+		"dc03 ansible_host=i-unrelated dict_key=dc03\n\n" +
+		"[all:vars]\nansible_connection=amazon.aws.aws_ssm\n"
+	writeInventoryTestFile(t, path, body, 0o644)
+
+	parsed, err := inv.Parse(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	addresses, discoveryErr := expectedAWSInventoryAddresses(parsed, []instanceInfo{
+		{InstanceID: "i-first", Name: "dreadgoad-dc01"},
+		{InstanceID: "i-second", Name: "other-dc01"},
+		{InstanceID: "i-dc03", Name: "dreadgoad-dc03"},
+	})
+	if discoveryErr == nil || !strings.Contains(discoveryErr.Error(), "map to the same inventory host") {
+		t.Fatalf("discovery error = %v, want dc01 ambiguity", discoveryErr)
+	}
+	if _, exists := addresses["dc01"]; exists {
+		t.Fatalf("ambiguous dc01 received an arbitrary address: %v", addresses)
+	}
+	if awsReconciliationOutsideLimit(discoveryErr, "dc01", parsed) {
+		t.Fatal("selected dc01 ambiguity was treated as out of scope")
+	}
+	if err := inventorySyncFailure(
+		&requiredInventorySyncError{cause: discoveryErr}, "dc01",
+	); err == nil {
+		t.Fatal("selected dc01 ambiguity was downgraded under --limit")
+	}
+	if _, _, err := applyInventoryAddressUpdates(path, addresses); err != nil {
+		t.Fatal(err)
+	}
+	if got := readInventoryForTest(t, path); !strings.Contains(got, "dc01 ansible_host=i-stale") {
+		t.Errorf("ambiguous selected host was changed:\n%s", got)
+	}
+}
+
+func TestAWSReconciliationFailsClosedForComplexLimit(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "inventory")
+	writeInventoryTestFile(t, path, "[default]\ndc01 ansible_host=i-stale dict_key=dc01\n", 0o644)
+	parsed, err := inv.Parse(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconcileErr := &awsInventoryReconcileError{
+		message:       "dc03 unresolved",
+		affectedHosts: map[string]bool{"dc03": true},
+	}
+	if awsReconciliationOutsideLimit(reconcileErr, "windows:&online", parsed) {
+		t.Fatal("group/intersection limit was incorrectly treated as exact-host scope")
 	}
 }
 

@@ -1368,6 +1368,7 @@ async def test_destroy_purge_runs_only_after_success() -> None:
     events: list[tuple[str, dict]] = []
     original_emit = chat_events.emit_event
     original_check = command_runner.hook.run_check
+    original_build = environment_purge.build_plan
 
     async def fake_emit(_app, _sid, kind, payload, **_kw):  # noqa: ANN001
         events.append((kind, payload))
@@ -1415,12 +1416,16 @@ async def test_destroy_purge_runs_only_after_success() -> None:
             }
 
             class FakeSessions:
+                async def get_session(self, _session_id):  # noqa: ANN001, ANN201
+                    return current_session
+
                 async def list_sessions(self):  # noqa: ANN201
                     return [current_session]
 
             app = types.SimpleNamespace(
                 state=types.SimpleNamespace(sessions=FakeSessions())
             )
+            environment_purge.build_plan = lambda _session: purge
             code, output = await command_runner._finalize_command(
                 app, "s", plan, succeeded
             )
@@ -1430,6 +1435,7 @@ async def test_destroy_purge_runs_only_after_success() -> None:
     finally:
         chat_events.emit_event = original_emit
         command_runner.hook.run_check = original_check
+        environment_purge.build_plan = original_build
     print("PASS test_destroy_purge_runs_only_after_success")
 
 
@@ -1467,6 +1473,9 @@ async def test_destroy_purge_rechecks_config_sharing_before_deletion() -> None:
             ]
 
             class FakeSessions:
+                async def get_session(self, _session_id):  # noqa: ANN001, ANN201
+                    return sessions[0]
+
                 async def list_sessions(self):  # noqa: ANN201
                     return sessions
 
@@ -1484,6 +1493,84 @@ async def test_destroy_purge_rechecks_config_sharing_before_deletion() -> None:
     finally:
         chat_events.emit_event = original_emit
     print("PASS test_destroy_purge_rechecks_config_sharing_before_deletion")
+
+
+async def test_destroy_purge_revalidates_plan_before_deletion() -> None:
+    from console.backend import chat_events, command_runner, environment_purge
+
+    events: list[tuple[str, dict]] = []
+    original_emit = chat_events.emit_event
+    original_build = environment_purge.build_plan
+    original_execute = environment_purge.execute
+
+    async def fake_emit(_app, _sid, kind, payload, **_kw):  # noqa: ANN001
+        events.append((kind, payload))
+
+    chat_events.emit_event = fake_emit
+    try:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory).resolve()
+            config = root / "range.yaml"
+            artifact = root / "range-inventory"
+            config.write_text("environments:\n  range: {}\n  other: {}\n")
+            artifact.write_text("[all]\n")
+            purge = environment_purge.PurgePlan(
+                "range", root, config, (artifact, config)
+            )
+            plan = command_runner._CommandPlan(
+                "/destroy",
+                ("dreadgoad", "infra", "destroy", "--auto-approve"),
+                str(root),
+                commands.REGISTRY["/destroy"],
+                purge,
+                "purge detail",
+            )
+            current_session = {
+                "id": "s",
+                "anchor": {"config_path": str(config), "env": "range"},
+            }
+
+            class FakeSessions:
+                async def get_session(self, _session_id):  # noqa: ANN001, ANN201
+                    return current_session
+
+                async def list_sessions(self):  # noqa: ANN201
+                    return [current_session]
+
+            def reject_shared(_session):  # noqa: ANN001, ANN202
+                raise ValueError("config now contains more than one environment")
+
+            executed = False
+
+            def track_execute(_plan):  # noqa: ANN001, ANN202
+                nonlocal executed
+                executed = True
+
+            environment_purge.build_plan = reject_shared
+            environment_purge.execute = track_execute
+            app = types.SimpleNamespace(
+                state=types.SimpleNamespace(sessions=FakeSessions())
+            )
+            result = command_runner._RunResult(0, "destroyed", cancelled=False)
+            code, output = await command_runner._finalize_command(
+                app, "s", plan, result
+            )
+
+            assert code == 1 and "more than one environment" in output
+            assert not executed and artifact.exists() and config.exists()
+            assert any(kind == "error" for kind, _ in events)
+
+            current_session["anchor"]["config_path"] = str(root / "other.yaml")
+            code, output = await command_runner._finalize_command(
+                app, "s", plan, result
+            )
+            assert code == 1 and "session config changed" in output
+            assert not executed and artifact.exists() and config.exists()
+    finally:
+        chat_events.emit_event = original_emit
+        environment_purge.build_plan = original_build
+        environment_purge.execute = original_execute
+    print("PASS test_destroy_purge_revalidates_plan_before_deletion")
 
 
 def test_purge_config_identity_resolves_aliases() -> None:
@@ -1554,6 +1641,7 @@ def main() -> None:
         asyncio.run(test_score_uses_session_answer_key_unless_explicitly_overridden())
         asyncio.run(test_destroy_purge_runs_only_after_success())
         asyncio.run(test_destroy_purge_rechecks_config_sharing_before_deletion())
+        asyncio.run(test_destroy_purge_revalidates_plan_before_deletion())
     else:
         print("SKIP command_runner tests (dreadnode not installed)")
     test_system_prompt_covers_the_registry()

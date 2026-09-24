@@ -319,11 +319,72 @@ func inventorySyncFailure(err error, limit string) error {
 		return nil
 	}
 	if limit != "" {
+		var required *requiredInventorySyncError
+		if errors.As(err, &required) {
+			return fmt.Errorf("inventory sync: %w", err)
+		}
 		slog.Warn("inventory sync did not resolve every host; continuing because the run is limited",
 			"limit", limit, "error", err)
 		return nil
 	}
 	return fmt.Errorf("inventory sync: %w", err)
+}
+
+type requiredInventorySyncError struct {
+	cause error
+}
+
+func (e *requiredInventorySyncError) Error() string {
+	return e.cause.Error()
+}
+
+func (e *requiredInventorySyncError) Unwrap() error {
+	return e.cause
+}
+
+var exactInventoryLimitToken = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
+
+func exactLimitedInventoryHosts(limit string, parsed *inv.Inventory) (map[string]bool, bool) {
+	selected := make(map[string]bool)
+	for _, token := range strings.FieldsFunc(limit, func(r rune) bool {
+		return r == ',' || r == ':'
+	}) {
+		token = strings.TrimSpace(token)
+		if !exactInventoryLimitToken.MatchString(token) {
+			return nil, false
+		}
+		matched := ""
+		for name := range parsed.Hosts {
+			if strings.EqualFold(name, token) {
+				if matched != "" {
+					return nil, false
+				}
+				matched = strings.ToLower(name)
+			}
+		}
+		if matched == "" {
+			return nil, false
+		}
+		selected[matched] = true
+	}
+	return selected, len(selected) > 0
+}
+
+func awsReconciliationOutsideLimit(err error, limit string, parsed *inv.Inventory) bool {
+	var reconcileErr *awsInventoryReconcileError
+	if !errors.As(err, &reconcileErr) || reconcileErr.global || len(reconcileErr.affectedHosts) == 0 {
+		return false
+	}
+	selected, exact := exactLimitedInventoryHosts(limit, parsed)
+	if !exact {
+		return false
+	}
+	for host := range reconcileErr.affectedHosts {
+		if selected[strings.ToLower(host)] {
+			return false
+		}
+	}
+	return true
 }
 
 // validateInventoryResolved refuses to hand Ansible an inventory that still
@@ -724,6 +785,9 @@ func ensureInventorySynced(ctx context.Context, cfg *config.Config, limit string
 	instances := providerInstanceUpdates(liveInstances)
 	expected, err := expectedAWSInventoryAddresses(parsed, instances)
 	if err != nil {
+		if limit != "" && !awsReconciliationOutsideLimit(err, limit, parsed) {
+			return &requiredInventorySyncError{cause: err}
+		}
 		if limit != "" && len(expected) > 0 {
 			_, updates, applyErr := applyInventoryAddressUpdates(invPath, expected)
 			if applyErr != nil {

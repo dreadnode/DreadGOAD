@@ -107,6 +107,68 @@ func TestMaterializeLabConfigRejectsIncompleteVariantTarget(t *testing.T) {
 	}
 }
 
+func TestMaterializeLabConfigRejectsSymlinkedVariantTarget(t *testing.T) {
+	root := t.TempDir()
+	realTarget := filepath.Join(root, "real-variant")
+	if err := os.MkdirAll(filepath.Join(realTarget, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	markVariantComplete(t, realTarget)
+	target := filepath.Join(root, "ad", "GOAD-kraken")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realTarget, target); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		ProjectRoot: root,
+		Env:         "kraken",
+		Environments: map[string]config.EnvironmentConfig{
+			"kraken": {Variant: true, VariantTarget: "ad/GOAD-kraken"},
+		},
+	}
+
+	err := materializeLabConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "symlink component") {
+		t.Fatalf("materializeLabConfig() error = %v, want symlink rejection", err)
+	}
+}
+
+func TestMaterializeLabConfigRejectsSymlinkedVariantData(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "ad", "GOAD-kraken")
+	baseData := filepath.Join(root, "ad", "GOAD", "data")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(baseData, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(baseData, "config.json"), []byte(`{"base":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(baseData, filepath.Join(target, "data")); err != nil {
+		t.Fatal(err)
+	}
+	markVariantComplete(t, target)
+	cfg := &config.Config{
+		ProjectRoot: root,
+		Env:         "kraken",
+		Environments: map[string]config.EnvironmentConfig{
+			"kraken": {Variant: true, VariantTarget: "ad/GOAD-kraken"},
+		},
+	}
+
+	err := materializeLabConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "symlink component") {
+		t.Fatalf("materializeLabConfig() error = %v, want symlink rejection", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(baseData, "kraken-config.json")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("config was materialized through data symlink: %v", statErr)
+	}
+}
+
 func TestMaterializeLabConfigUsesActiveLab(t *testing.T) {
 	root := t.TempDir()
 	dataDir := filepath.Join(root, "ad", "SERVICE", "data")
@@ -334,6 +396,43 @@ func TestShouldEnableAWSKali(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := shouldEnableAWSKali(tt.requested, tt.action, tt.path); got != tt.want {
 				t.Fatalf("shouldEnableAWSKali(%v, %q, %q) = %v, want %v", tt.requested, tt.action, tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSSMBucketCleanupTargetRequiresSSMTransport(t *testing.T) {
+	tests := []struct {
+		name      string
+		transport string
+		want      bool
+	}{
+		{name: "ssm", transport: "amazon.aws.aws_ssm", want: true},
+		{name: "ssh", transport: "ssh", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				ProjectRoot: t.TempDir(),
+				Env:         "range",
+				Provider:    "aws",
+				Region:      "us-east-2",
+			}
+			writeInventoryTestFile(t, cfg.InventoryPath(), "[default]\n\n[all:vars]\n"+
+				"ansible_connection="+tt.transport+"\n"+
+				"ansible_aws_ssm_bucket_name=user-bucket\n"+
+				"ansible_aws_ssm_region=us-east-2\n", 0o600)
+
+			bucket, region, cleanup, err := ssmBucketCleanupTarget(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cleanup != tt.want {
+				t.Fatalf("cleanup = %v, want %v", cleanup, tt.want)
+			}
+			if tt.want && (bucket != "user-bucket" || region != "us-east-2") {
+				t.Fatalf("target = %q/%q, want user-bucket/us-east-2", bucket, region)
 			}
 		})
 	}

@@ -54,14 +54,26 @@ def test_variant_purge_removes_only_owned_artifacts() -> None:
             scaffold.infra_env_dir(str(root), "azure", "ahab", "goad-deployment")
         )
         inventory = root / "ahab-inventory"
+        cache = root / ".dreadgoad" / "cache" / "ahab-config.json"
+        unrelated_cache = root / ".dreadgoad" / "cache" / "other-config.json"
         variant = root / "ad" / "GOAD-ahab"
         unrelated = root / "ad" / "GOAD"
         for target in (infra, variant, unrelated):
             target.mkdir(parents=True)
             (target / "keep.txt").write_text(target.name)
         inventory.write_text("[all]\n")
+        cache.parent.mkdir(parents=True)
+        cache.write_text('{"password":"generated"}')
+        unrelated_cache.write_text("{}")
         marker = scaffold.record_ownership(
-            config, "ahab", root, "azure", "goad-deployment"
+            config,
+            "ahab",
+            root,
+            "azure",
+            "goad-deployment",
+            variant=True,
+            variant_source="ad/GOAD",
+            variant_target="ad/GOAD-ahab",
         )
         assert marker is not None
 
@@ -69,10 +81,12 @@ def test_variant_purge_removes_only_owned_artifacts() -> None:
         removed = environment_purge.execute(plan)
 
         expected = {
-            str(path.resolve()) for path in (infra, inventory, variant, marker, config)
+            str(path.resolve())
+            for path in (infra, inventory, cache, variant, marker, config)
         }
         assert set(removed) == expected, (removed, expected)
         assert not infra.exists() and not inventory.exists() and not variant.exists()
+        assert not cache.exists() and unrelated_cache.exists()
         assert not config.exists()
         assert unrelated.is_dir(), "purge crossed into the authored base range"
         assert not list(root.glob(".dreadgoad-purge-*")), "staging directory leaked"
@@ -176,6 +190,60 @@ def test_purge_requires_scaffold_ownership_proof() -> None:
             raise AssertionError("unowned project artifacts were accepted for purge")
         assert infra.exists(), "ownership validation mutated project artifacts"
     print("PASS test_purge_requires_scaffold_ownership_proof")
+
+
+def test_purge_ownership_is_bound_to_variant_settings() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory).resolve()
+        os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = str(
+            root / ".dreadgoad" / "console"
+        )
+        (root / "ansible").mkdir()
+        config = paths.configs_root() / "ahab.yaml"
+        settings = {
+            "provider": "azure",
+            "variant": True,
+            "variant_source": "ad/GOAD",
+            "variant_target": "ad/GOAD-ahab",
+        }
+        config.write_text(yaml.safe_dump({"environments": {"ahab": settings}}))
+        marker = scaffold.record_ownership(
+            config,
+            "ahab",
+            root,
+            "azure",
+            "goad-deployment",
+            variant=True,
+            variant_source="ad/GOAD",
+            variant_target="ad/GOAD-ahab",
+        )
+        assert marker is not None
+        environment_purge.build_plan(_session(config))
+
+        settings["variant"] = False
+        config.write_text(yaml.safe_dump({"environments": {"ahab": settings}}))
+        try:
+            environment_purge.build_plan(_session(config))
+        except ValueError as exc:
+            assert "ownership marker does not match" in str(exc)
+        else:
+            raise AssertionError("variant mode edit retained purge ownership")
+
+        settings.update(
+            {
+                "variant": True,
+                "variant_source": "ad/SCCM",
+                "variant_target": "ad/SCCM-ahab",
+            }
+        )
+        config.write_text(yaml.safe_dump({"environments": {"ahab": settings}}))
+        try:
+            environment_purge.build_plan(_session(config))
+        except ValueError as exc:
+            assert "ownership marker does not match" in str(exc)
+        else:
+            raise AssertionError("variant source/target edit retained purge ownership")
+    print("PASS test_purge_ownership_is_bound_to_variant_settings")
 
 
 def test_purge_rejects_tampered_owned_paths() -> None:
@@ -317,6 +385,7 @@ def main() -> None:
         test_base_range_purge_removes_generated_data()
         test_purge_rejects_imported_or_shared_configs()
         test_purge_requires_scaffold_ownership_proof()
+        test_purge_ownership_is_bound_to_variant_settings()
         test_purge_rejects_tampered_owned_paths()
         test_purge_rejects_symlinked_artifacts()
         test_purge_rechecks_symlinks_before_move()

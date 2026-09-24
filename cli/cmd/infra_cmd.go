@@ -119,12 +119,52 @@ func init() {
 // terragrunt HCL expects (ad/<active-range>/data/{env}-config.json). When an
 // overlay file exists, the base config.json is merged with the overlay and
 // written to disk so that terragrunt's file() function can read it directly.
+func rejectSymlinkComponents(path, root string) error {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("resolve root path: %w", err)
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolve path: %w", err)
+	}
+	rel, err := filepath.Rel(absRoot, absPath)
+	if err != nil {
+		return fmt.Errorf("compare path with root: %w", err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return fmt.Errorf("path is outside project root: %s", path)
+	}
+
+	current := absRoot
+	for _, component := range strings.Split(rel, string(os.PathSeparator)) {
+		if component == "." || component == "" {
+			continue
+		}
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("inspect path component %s: %w", current, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("path contains symlink component: %s", current)
+		}
+	}
+	return nil
+}
+
 func materializeLabConfig(cfg *config.Config) error {
 	expected := cfg.MaterializedLabConfigPath()
 	dataDir := filepath.Dir(expected)
 	if cfg.ActiveEnvironment().Variant {
 		_, target := cfg.ResolvedVariantPaths()
-		targetInfo, err := os.Stat(target)
+		if err := rejectSymlinkComponents(target, cfg.ProjectRoot); err != nil {
+			return fmt.Errorf("inspect variant target %s: %w", target, err)
+		}
+		targetInfo, err := os.Lstat(target)
 		if errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("variant target does not exist: %s", target)
 		}
@@ -145,8 +185,15 @@ func materializeLabConfig(cfg *config.Config) error {
 				target,
 			)
 		}
+		marker := filepath.Join(target, variant.CompletionMarkerName)
+		if err := rejectSymlinkComponents(marker, cfg.ProjectRoot); err != nil {
+			return fmt.Errorf("inspect variant completion marker: %w", err)
+		}
 
-		info, err := os.Stat(dataDir)
+		if err := rejectSymlinkComponents(dataDir, cfg.ProjectRoot); err != nil {
+			return fmt.Errorf("inspect variant lab config directory: %w", err)
+		}
+		info, err := os.Lstat(dataDir)
 		if errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("variant lab config directory does not exist: %s", dataDir)
 		}
@@ -518,24 +565,35 @@ func shouldBootstrapAWSBackend(operations rangeOperations, action string, reques
 
 // deleteSSMBucket removes the S3 bucket the Ansible SSM connection plugin
 // used for file transfer. Called after a successful infra destroy.
-func deleteSSMBucket(ctx context.Context, cfg *config.Config) error {
+func ssmBucketCleanupTarget(cfg *config.Config) (string, string, bool, error) {
 	if !cfg.IsAWS() {
-		return nil
+		return "", "", false, nil
 	}
 	parsed, err := inv.Parse(cfg.InventoryPath())
 	if err != nil {
-		return nil
+		return "", "", false, nil
+	}
+	if !parsed.IsSSM() {
+		return "", "", false, nil
 	}
 	bucket := parsed.SSMBucketName()
 	if bucket == "" || strings.EqualFold(strings.TrimSpace(bucket), "AUTO") {
-		return nil
+		return "", "", false, nil
 	}
 	region := parsed.Region()
 	if region == "" {
 		region, err = cfg.ResolveRegion()
 		if err != nil {
-			return err
+			return "", "", false, err
 		}
+	}
+	return bucket, region, true, nil
+}
+
+func deleteSSMBucket(ctx context.Context, cfg *config.Config) error {
+	bucket, region, cleanup, err := ssmBucketCleanupTarget(cfg)
+	if err != nil || !cleanup {
+		return err
 	}
 	client, err := daws.NewClient(ctx, region, "")
 	if err != nil {

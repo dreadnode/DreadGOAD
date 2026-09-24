@@ -852,9 +852,28 @@ async def _finalize_command(
             raise asyncio.CancelledError
 
         if plan.purge is not None and result.exit_code == 0:
-            conflicts = await _purge_config_conflicts(
-                app, session_id, plan.purge.config_path
-            )
+            current_session = await app.state.sessions.get_session(session_id)
+            if current_session is None:
+                message = (
+                    "Cloud infrastructure was destroyed, but local environment "
+                    "purge was blocked because the console session no longer exists."
+                )
+                await chat_events.emit_event(
+                    app, session_id, "error", {"message": message}
+                )
+                return 1, f"{result.output}\n{message}".strip()
+            current_config = _config_identity(current_session)
+            if current_config is None or current_config != plan.purge.config_path:
+                message = (
+                    "Cloud infrastructure was destroyed, but local environment "
+                    "purge was blocked because the session config changed while "
+                    "destroy was running."
+                )
+                await chat_events.emit_event(
+                    app, session_id, "error", {"message": message}
+                )
+                return 1, f"{result.output}\n{message}".strip()
+            conflicts = await _purge_config_conflicts(app, session_id, current_config)
             if conflicts:
                 message = (
                     "Cloud infrastructure was destroyed, but local environment "
@@ -867,8 +886,9 @@ async def _finalize_command(
                 )
                 return 1, f"{result.output}\n{message}".strip()
             try:
-                removed = environment_purge.execute(plan.purge)
-            except (OSError, RuntimeError) as exc:
+                refreshed_purge = environment_purge.build_plan(current_session)
+                removed = environment_purge.execute(refreshed_purge)
+            except (OSError, RuntimeError, ValueError, yaml.YAMLError) as exc:
                 message = (
                     "Cloud infrastructure was destroyed, but local environment "
                     f"purge failed: {exc}"
@@ -878,7 +898,7 @@ async def _finalize_command(
                 )
                 return 1, f"{result.output}\n{message}".strip()
             message = (
-                f"Purged environment {plan.purge.env}: removed "
+                f"Purged environment {refreshed_purge.env}: removed "
                 f"{len(removed)} local artifact(s). Close this session before "
                 "creating a new environment with the same name."
             )

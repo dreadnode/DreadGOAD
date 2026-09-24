@@ -102,9 +102,13 @@ def build_plan(session: dict[str, object]) -> PurgePlan:
     candidates = [
         Path(scaffold.infra_env_dir(str(project_root), provider, env, deployment)),
         project_root / f"{env}-inventory",
+        project_root / ".dreadgoad" / "cache" / f"{env}-config.json",
     ]
 
-    if bool(settings.get("variant")):
+    is_variant = bool(settings.get("variant"))
+    source: str | None = None
+    variant_target: Path | None = None
+    if is_variant:
         source = str(settings.get("variant_source") or "ad/GOAD")
         expected_target = project_root / "ad" / f"{Path(source).name}-{env}"
         raw_target = str(settings.get("variant_target") or expected_target)
@@ -136,6 +140,9 @@ def build_plan(session: dict[str, object]) -> PurgePlan:
         project_root,
         provider,
         deployment,
+        variant=is_variant,
+        variant_source=source,
+        variant_target=variant_target,
     )
 
     for candidate in candidates:

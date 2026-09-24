@@ -326,22 +326,41 @@ func unresolvedInventoryHostsError(invPath string, stale []string, instances []i
 		invPath, strings.Join(stale, ", "), len(instances), strings.Join(names, ", "))
 }
 
+type awsInventoryReconcileError struct {
+	message       string
+	affectedHosts map[string]bool
+	global        bool
+}
+
+func (e *awsInventoryReconcileError) Error() string {
+	return e.message
+}
+
 func expectedAWSInventoryAddresses(parsed *inv.Inventory, instances []instanceInfo) (map[string]string, error) {
 	wantedRoles, problems := wantedAWSInventoryRoles(parsed)
-	byRole, discoveryProblems := discoveredAWSInstancesByRole(instances, wantedRoles)
+	byRole, ambiguousRoles, discoveryProblems := discoveredAWSInstancesByRole(instances, wantedRoles)
 	problems = append(problems, discoveryProblems...)
+	affectedHosts := make(map[string]bool)
+	globalProblem := len(problems) > len(discoveryProblems)
+	for role := range ambiguousRoles {
+		affectedHosts[role] = true
+	}
 
 	addresses := make(map[string]string, len(parsed.Hosts))
 	for name, host := range parsed.Hosts {
 		role := strings.ToLower(name)
 		instance, exists := byRole[role]
 		if !exists {
-			problems = append(problems, fmt.Sprintf("%s: no discovered instance maps to this host", name))
+			affectedHosts[role] = true
+			if !ambiguousRoles[role] {
+				problems = append(problems, fmt.Sprintf("%s: no discovered instance maps to this host", name))
+			}
 			continue
 		}
 
 		address, err := expectedAWSHostAddress(name, host, parsed.Vars, instance)
 		if err != nil {
+			affectedHosts[role] = true
 			problems = append(problems, err.Error())
 			continue
 		}
@@ -349,7 +368,11 @@ func expectedAWSInventoryAddresses(parsed *inv.Inventory, instances []instanceIn
 	}
 	if len(problems) > 0 {
 		sort.Strings(problems)
-		return addresses, fmt.Errorf("cannot reconcile AWS inventory addresses: %s", strings.Join(problems, "; "))
+		return addresses, &awsInventoryReconcileError{
+			message:       "cannot reconcile AWS inventory addresses: " + strings.Join(problems, "; "),
+			affectedHosts: affectedHosts,
+			global:        globalProblem,
+		}
 	}
 	return addresses, nil
 }
@@ -377,12 +400,16 @@ func wantedAWSInventoryRoles(parsed *inv.Inventory) (map[string]string, []string
 func discoveredAWSInstancesByRole(
 	instances []instanceInfo,
 	wanted map[string]string,
-) (map[string]instanceInfo, []string) {
+) (map[string]instanceInfo, map[string]bool, []string) {
 	byRole := make(map[string]instanceInfo, len(wanted))
+	ambiguous := make(map[string]bool)
 	var problems []string
 	for _, instance := range instances {
 		role := extractHostRole(instance.Name)
 		if _, exists := wanted[role]; role == "" || !exists {
+			continue
+		}
+		if ambiguous[role] {
 			continue
 		}
 		if previous, exists := byRole[role]; exists {
@@ -390,11 +417,13 @@ func discoveredAWSInstancesByRole(
 				"%s: discovered names %q and %q map to the same inventory host",
 				role, previous.Name, instance.Name,
 			))
+			delete(byRole, role)
+			ambiguous[role] = true
 			continue
 		}
 		byRole[role] = instance
 	}
-	return byRole, problems
+	return byRole, ambiguous, problems
 }
 
 func expectedAWSHostAddress(
