@@ -195,7 +195,7 @@ func validateAWSWindowsHostVariables(content string) error {
 	_, globals := inventoryAllVars(content)
 	for _, variable := range awsWindowsHostVariables {
 		if _, exists := globals[variable.key]; exists {
-			return fmt.Errorf("Windows-only inventory value %s must not be global", variable.key)
+			return fmt.Errorf("windows-only inventory value %s must not be global", variable.key)
 		}
 	}
 	for _, line := range strings.Split(content, "\n") {
