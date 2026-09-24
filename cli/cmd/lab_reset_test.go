@@ -75,35 +75,47 @@ func targetNames(targets []dcTarget) []string {
 }
 
 func TestCollectDCTargets(t *testing.T) {
-	t.Run("returns hosts with valid instance IDs", func(t *testing.T) {
+	t.Run("uses fresh discovery instead of stale inventory IDs", func(t *testing.T) {
 		parsed := newDCInventory(map[string]string{
-			"dc01": "i-aaa",
-			"dc02": "i-bbb",
+			"dc01": "i-stale-a",
+			"dc02": "10.0.0.22",
 		})
-		got := targetNames(collectDCTargets(parsed, nil))
+		got, err := collectDCTargets(parsed, nil, []instanceInfo{
+			{InstanceID: "i-live-a", Name: "dreadgoad-dc01"},
+			{InstanceID: "i-live-b", Name: "dreadgoad-dc02"},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
 		want := []string{"dc01", "dc02"}
-		if !reflect.DeepEqual(got, want) {
-			t.Errorf("got=%v want=%v", got, want)
+		if !reflect.DeepEqual(targetNames(got), want) {
+			t.Errorf("got=%v want=%v", targetNames(got), want)
+		}
+		if got[0].instanceID != "i-live-a" || got[1].instanceID != "i-live-b" {
+			t.Errorf("targets retained stale inventory addresses: %+v", got)
 		}
 	})
 
-	t.Run("skips hosts with empty or PENDING instance IDs", func(t *testing.T) {
+	t.Run("fails when a selected DC has no live instance", func(t *testing.T) {
 		parsed := newDCInventory(map[string]string{
-			"dc01": "i-aaa",
-			"dc02": "",
-			"dc03": "PENDING",
+			"dc01": "i-stale",
+			"dc02": "PENDING",
 		})
-		got := targetNames(collectDCTargets(parsed, nil))
-		if !reflect.DeepEqual(got, []string{"dc01"}) {
-			t.Errorf("got=%v want=[dc01]", got)
+		_, err := collectDCTargets(parsed, nil, []instanceInfo{{
+			InstanceID: "i-live", Name: "dreadgoad-dc01",
+		}})
+		if err == nil || !strings.Contains(err.Error(), "dc02") {
+			t.Errorf("error=%v want missing live dc02", err)
 		}
 	})
 
-	t.Run("skips host listed in dc group but missing from Hosts map", func(t *testing.T) {
+	t.Run("rejects host listed in dc group but missing from Hosts map", func(t *testing.T) {
 		parsed := newDCInventory(map[string]string{"dc01": "i-aaa"}, "phantom")
-		got := targetNames(collectDCTargets(parsed, nil))
-		if !reflect.DeepEqual(got, []string{"dc01"}) {
-			t.Errorf("got=%v want=[dc01]", got)
+		_, err := collectDCTargets(parsed, nil, []instanceInfo{{
+			InstanceID: "i-live", Name: "dreadgoad-dc01",
+		}})
+		if err == nil || !strings.Contains(err.Error(), "phantom") {
+			t.Errorf("error=%v want malformed phantom DC", err)
 		}
 	})
 
@@ -112,9 +124,14 @@ func TestCollectDCTargets(t *testing.T) {
 			"DC01": "i-aaa",
 			"dc02": "i-bbb",
 		})
-		got := targetNames(collectDCTargets(parsed, []string{"dc01"}))
-		if !reflect.DeepEqual(got, []string{"DC01"}) {
-			t.Errorf("got=%v want=[DC01]", got)
+		got, err := collectDCTargets(parsed, []string{"dc01"}, []instanceInfo{{
+			InstanceID: "i-live", Name: "dreadgoad-dc01",
+		}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if names := targetNames(got); !reflect.DeepEqual(names, []string{"DC01"}) {
+			t.Errorf("got=%v want=[DC01]", names)
 		}
 	})
 
@@ -123,8 +140,17 @@ func TestCollectDCTargets(t *testing.T) {
 			"dc01": "i-aaa",
 			"dc02": "i-bbb",
 		})
-		nilGot := targetNames(collectDCTargets(parsed, nil))
-		emptyGot := targetNames(collectDCTargets(parsed, []string{}))
+		instances := []instanceInfo{
+			{InstanceID: "i-live-a", Name: "dreadgoad-dc01"},
+			{InstanceID: "i-live-b", Name: "dreadgoad-dc02"},
+		}
+		nilTargets, nilErr := collectDCTargets(parsed, nil, instances)
+		emptyTargets, emptyErr := collectDCTargets(parsed, []string{}, instances)
+		if nilErr != nil || emptyErr != nil {
+			t.Fatalf("nil error=%v empty error=%v", nilErr, emptyErr)
+		}
+		nilGot := targetNames(nilTargets)
+		emptyGot := targetNames(emptyTargets)
 		want := []string{"dc01", "dc02"}
 		if !reflect.DeepEqual(nilGot, want) || !reflect.DeepEqual(emptyGot, want) {
 			t.Errorf("nil=%v empty=%v want=%v", nilGot, emptyGot, want)
@@ -133,17 +159,23 @@ func TestCollectDCTargets(t *testing.T) {
 
 	t.Run("filter with no match returns empty", func(t *testing.T) {
 		parsed := newDCInventory(map[string]string{"dc01": "i-aaa"})
-		got := collectDCTargets(parsed, []string{"dc99"})
+		got, err := collectDCTargets(parsed, []string{"dc99"}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if len(got) != 0 {
 			t.Errorf("got=%+v want empty", got)
 		}
 	})
 
-	t.Run("instance ID preserved on returned target", func(t *testing.T) {
+	t.Run("rejects ambiguous live instances", func(t *testing.T) {
 		parsed := newDCInventory(map[string]string{"dc01": "i-aaa"})
-		got := collectDCTargets(parsed, nil)
-		if len(got) != 1 || got[0].hostname != "dc01" || got[0].instanceID != "i-aaa" {
-			t.Errorf("got=%+v want hostname=dc01 instanceID=i-aaa", got)
+		_, err := collectDCTargets(parsed, nil, []instanceInfo{
+			{InstanceID: "i-first", Name: "dreadgoad-dc01"},
+			{InstanceID: "i-second", Name: "other-dc01"},
+		})
+		if err == nil || !strings.Contains(err.Error(), "map to the same inventory host") {
+			t.Errorf("error=%v want ambiguous dc01 discovery", err)
 		}
 	})
 }

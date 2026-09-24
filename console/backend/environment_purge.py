@@ -11,7 +11,7 @@ from pathlib import Path
 
 import yaml
 
-from . import paths, projectroot, scaffold
+from . import labconfig, paths, projectroot, scaffold
 
 
 _SAFE_ENV = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
@@ -50,7 +50,9 @@ def _symlink_component(path: Path, root: Path) -> Path | None:
     return None
 
 
-def _environment_settings(config_path: Path, env: str) -> dict[str, object]:
+def _environment_settings(
+    config_path: Path, env: str
+) -> tuple[dict[str, object], dict[str, object]]:
     with config_path.open(encoding="utf-8") as handle:
         document = yaml.safe_load(handle) or {}
     if not isinstance(document, dict):
@@ -66,14 +68,13 @@ def _environment_settings(config_path: Path, env: str) -> dict[str, object]:
     settings = environments[env] or {}
     if not isinstance(settings, dict):
         raise ValueError(f"environment {env!r} in {config_path} is not a mapping")
-    return settings
+    return document, settings
 
 
 def build_plan(session: dict[str, object]) -> PurgePlan:
     """Validate ownership and enumerate artifacts before cloud destruction starts."""
     anchor = session.get("anchor")
-    snapshot = session.get("snapshot")
-    if not isinstance(anchor, dict) or not isinstance(snapshot, dict):
+    if not isinstance(anchor, dict):
         raise ValueError("session is missing its environment anchor")
 
     env = str(anchor.get("env") or "")
@@ -91,11 +92,11 @@ def build_plan(session: dict[str, object]) -> PurgePlan:
             f"{config_path}"
         )
 
-    settings = _environment_settings(config_path, env)
+    document, settings = _environment_settings(config_path, env)
     project_root, _ = projectroot.resolve_root(config_path)
     project_root = project_root.resolve(strict=False)
-    provider = str(snapshot.get("provider") or "")
-    deployment = str(snapshot.get("deployment") or scaffold.DEFAULT_DEPLOYMENT)
+    provider = labconfig.resolve_provider(settings, document.get("provider"))
+    deployment = labconfig.resolve_deployment(settings, document)
     if not _SAFE_ENV.fullmatch(deployment):
         raise ValueError(f"refusing to purge unsafe deployment name {deployment!r}")
 
@@ -124,7 +125,7 @@ def build_plan(session: dict[str, object]) -> PurgePlan:
             )
         candidates.append(variant_target)
     else:
-        lab = str(snapshot.get("lab") or "")
+        lab = labconfig.resolve_lab(settings, document.get("lab"))
         if lab == "GOAD" or Path(lab).parts == ("ad", "GOAD"):
             data_dir = project_root / "ad" / "GOAD" / "data"
             candidates.extend(

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -303,29 +304,47 @@ type dcTarget struct {
 	instanceID string
 }
 
-// collectDCTargets returns the inventory's DC hosts that have usable instance IDs.
-// Hosts without IDs are reported as warnings rather than failing the run.
-// If filter is non-empty, only hostnames in filter (case-insensitive) are returned.
-func collectDCTargets(parsed *inv.Inventory, filter []string) []dcTarget {
+// collectDCTargets maps inventory DC roles to freshly discovered AWS instance
+// IDs. Inventory addresses are deliberately ignored: a damaged/imported file
+// may contain a private IP or an instance ID belonging to an earlier range.
+func collectDCTargets(
+	parsed *inv.Inventory, filter []string, instances []instanceInfo,
+) ([]dcTarget, error) {
 	allowed := map[string]struct{}{}
 	for _, f := range filter {
 		allowed[strings.ToLower(f)] = struct{}{}
 	}
-	var targets []dcTarget
+	wanted := make(map[string]string)
 	for _, name := range parsed.Groups["dc"] {
 		if len(allowed) > 0 {
 			if _, ok := allowed[strings.ToLower(name)]; !ok {
 				continue
 			}
 		}
-		h := parsed.HostByName(name)
-		if h == nil || h.InstanceID == "" || h.InstanceID == "PENDING" {
-			fmt.Printf("WARN: skipping %s — no instance ID in inventory (run `dreadgoad inventory sync`)\n", name)
-			continue
+		if parsed.HostByName(name) == nil {
+			return nil, fmt.Errorf("DC %s is listed in [dc] but has no host definition", name)
 		}
-		targets = append(targets, dcTarget{hostname: name, instanceID: h.InstanceID})
+		role := strings.ToLower(name)
+		if previous, exists := wanted[role]; exists {
+			return nil, fmt.Errorf("DC hosts %q and %q map to the same AWS role", previous, name)
+		}
+		wanted[role] = name
 	}
-	return targets
+
+	byRole, ambiguous, problems := discoveredAWSInstancesByRole(instances, wanted)
+	if len(problems) > 0 {
+		return nil, fmt.Errorf("cannot resolve live DC instances: %s", strings.Join(problems, "; "))
+	}
+	targets := make([]dcTarget, 0, len(wanted))
+	for role, name := range wanted {
+		instance, exists := byRole[role]
+		if !exists || ambiguous[role] || instance.InstanceID == "" {
+			return nil, fmt.Errorf("no unique live AWS instance maps to DC %s", name)
+		}
+		targets = append(targets, dcTarget{hostname: name, instanceID: instance.InstanceID})
+	}
+	sort.Slice(targets, func(i, j int) bool { return targets[i].hostname < targets[j].hostname })
+	return targets, nil
 }
 
 // buildPurgeScript marshals args, base64-encodes them, and substitutes into
@@ -389,7 +408,23 @@ func purgeUnmanaged(ctx context.Context, cfg *config.Config, opts purgeOptions) 
 		return fmt.Errorf("no hosts in [dc] group of inventory %s", cfg.InventoryPath())
 	}
 
-	targets := collectDCTargets(parsed, opts.hostFilter)
+	prov, err := cfg.NewProvider(ctx)
+	if err != nil {
+		return fmt.Errorf("create AWS provider: %w", err)
+	}
+	liveInstances, err := prov.DiscoverInstances(ctx, cfg.Env)
+	if err != nil {
+		return fmt.Errorf("discover live purge targets: %w", err)
+	}
+	if len(liveInstances) == 0 {
+		return fmt.Errorf("no running instances found for env=%s", cfg.Env)
+	}
+	targets, err := collectDCTargets(
+		parsed, opts.hostFilter, providerInstanceUpdates(liveInstances),
+	)
+	if err != nil {
+		return err
+	}
 	if len(targets) == 0 {
 		return fmt.Errorf("no DC instance IDs available; sync the inventory first")
 	}

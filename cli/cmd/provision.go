@@ -309,11 +309,10 @@ func validateInventoryCredentials(cfg *config.Config) error {
 
 // inventorySyncFailure decides whether a failed inventory sync stops the run.
 //
-// Under --limit it must not. A provider sync can fail when some host cannot be
-// resolved, but a limited run may never target that host, and
-// validateInventoryResolved applies the same policy a few lines later. Letting
-// the sync hard-fail here would silently override the limit and block a
-// legitimate partial run.
+// Under --limit, only a typed AWS reconciliation error that has already been
+// proven outside the selected host set may be downgraded. Discovery failures,
+// empty discovery results, and other ordinary errors cannot prove that the
+// selected host is safe and therefore fail closed.
 func inventorySyncFailure(err error, limit string) error {
 	if err == nil {
 		return nil
@@ -321,6 +320,10 @@ func inventorySyncFailure(err error, limit string) error {
 	if limit != "" {
 		var required *requiredInventorySyncError
 		if errors.As(err, &required) {
+			return fmt.Errorf("inventory sync: %w", err)
+		}
+		var reconcile *awsInventoryReconcileError
+		if !errors.As(err, &reconcile) {
 			return fmt.Errorf("inventory sync: %w", err)
 		}
 		slog.Warn("inventory sync did not resolve every host; continuing because the run is limited",

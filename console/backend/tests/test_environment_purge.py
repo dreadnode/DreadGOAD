@@ -246,6 +246,56 @@ def test_purge_ownership_is_bound_to_variant_settings() -> None:
     print("PASS test_purge_ownership_is_bound_to_variant_settings")
 
 
+def test_purge_reloads_provider_deployment_and_lab_from_config() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory).resolve()
+        os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = str(
+            root / ".dreadgoad" / "console"
+        )
+        (root / "ansible").mkdir()
+        config = paths.configs_root() / "ahab.yaml"
+        config.write_text(
+            yaml.safe_dump(
+                {
+                    "provider": "azure",
+                    "infra": {"deployment": "goad-deployment"},
+                    "environments": {"ahab": {}},
+                }
+            )
+        )
+        marker = scaffold.record_ownership(
+            config, "ahab", root, "azure", "goad-deployment"
+        )
+        assert marker is not None
+
+        session = _session(config)
+        session["snapshot"].update(
+            {
+                "provider": "azure",
+                "deployment": "goad-deployment",
+                "lab": "ad/GOAD",
+            }
+        )
+        config.write_text(
+            yaml.safe_dump(
+                {
+                    "provider": "aws",
+                    "lab": "GOAD-Light",
+                    "infra": {"deployment": "other-deployment"},
+                    "environments": {"ahab": {}},
+                }
+            )
+        )
+
+        try:
+            environment_purge.build_plan(session)
+        except ValueError as exc:
+            assert "ownership marker does not match" in str(exc)
+        else:
+            raise AssertionError("stale session metadata retained purge ownership")
+    print("PASS test_purge_reloads_provider_deployment_and_lab_from_config")
+
+
 def test_purge_rejects_tampered_owned_paths() -> None:
     with tempfile.TemporaryDirectory() as directory:
         root = pathlib.Path(directory)
@@ -274,11 +324,10 @@ def test_purge_rejects_tampered_owned_paths() -> None:
             raise AssertionError("tampered variant target was accepted for purge")
 
         document["environments"]["ahab"]["variant_target"] = "ad/GOAD-ahab"
+        document["environments"]["ahab"]["deployment"] = "../.."
         config.write_text(yaml.safe_dump(document))
-        session = _session(config)
-        session["snapshot"]["deployment"] = "../.."
         try:
-            environment_purge.build_plan(session)
+            environment_purge.build_plan(_session(config))
         except ValueError as exc:
             assert "unsafe deployment name" in str(exc)
         else:
@@ -386,6 +435,7 @@ def main() -> None:
         test_purge_rejects_imported_or_shared_configs()
         test_purge_requires_scaffold_ownership_proof()
         test_purge_ownership_is_bound_to_variant_settings()
+        test_purge_reloads_provider_deployment_and_lab_from_config()
         test_purge_rejects_tampered_owned_paths()
         test_purge_rejects_symlinked_artifacts()
         test_purge_rechecks_symlinks_before_move()
