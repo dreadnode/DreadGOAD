@@ -925,6 +925,23 @@ def test_destroy_takes_an_optional_hostname() -> None:
     assert commands.REGISTRY["/destroy"].dispatch == "direct"
 
 
+def test_destroy_purge_is_whole_environment_only() -> None:
+    assert commands.destroy_mode(["--purge"]) == (True, [])
+    assert _argv("/destroy", ["--purge"])[5:] == [
+        "infra",
+        "destroy",
+        "--auto-approve",
+    ]
+    for args in (["dc01", "--purge"], ["--purge", "dc01"], ["--purge", "--purge"]):
+        try:
+            _argv("/destroy", list(args))
+        except ValueError as exc:
+            assert "--purge" in str(exc)
+        else:
+            raise AssertionError(f"unsafe destroy args accepted: {args}")
+    print("PASS test_destroy_purge_is_whole_environment_only")
+
+
 def test_login_registry_entry() -> None:
     """/login is direct, no verb, not cloud_ops (must not gate itself)."""
     cmd = commands.REGISTRY["/login"]
@@ -1344,6 +1361,81 @@ async def test_score_uses_session_answer_key_unless_explicitly_overridden() -> N
     print("PASS test_score_uses_session_answer_key_unless_explicitly_overridden")
 
 
+async def test_destroy_purge_runs_only_after_success() -> None:
+    from console.backend import chat_events, command_runner, environment_purge
+
+    events: list[tuple[str, dict]] = []
+    original_emit = chat_events.emit_event
+    original_check = command_runner.hook.run_check
+
+    async def fake_emit(_app, _sid, kind, payload, **_kw):  # noqa: ANN001
+        events.append((kind, payload))
+
+    async def fake_check(_app, _sid, _capture):  # noqa: ANN001
+        return {}
+
+    chat_events.emit_event = fake_emit
+    command_runner.hook.run_check = fake_check
+    try:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory).resolve()
+            artifact = root / "range-inventory"
+            artifact.write_text("[all]\n")
+            purge = environment_purge.PurgePlan("range", root, (artifact,))
+            plan = command_runner._CommandPlan(
+                "/destroy",
+                ("dreadgoad", "infra", "destroy", "--auto-approve"),
+                str(root),
+                commands.REGISTRY["/destroy"],
+                purge,
+                "purge detail",
+            )
+
+            failed = command_runner._RunResult(1, "destroy failed", cancelled=False)
+            code, _ = await command_runner._finalize_command(None, "s", plan, failed)
+            assert code == 1 and artifact.exists(), "failed destroy purged local state"
+
+            cancelled = command_runner._RunResult(
+                130, "destroy cancelled", cancelled=True
+            )
+            try:
+                await command_runner._finalize_command(None, "s", plan, cancelled)
+            except asyncio.CancelledError:
+                pass
+            else:
+                raise AssertionError("cancelled destroy did not propagate cancellation")
+            assert artifact.exists(), "cancelled destroy purged local state"
+
+            succeeded = command_runner._RunResult(0, "destroyed", cancelled=False)
+            code, output = await command_runner._finalize_command(
+                None, "s", plan, succeeded
+            )
+            assert code == 0 and not artifact.exists()
+            assert "Purged environment range" in output
+            assert any(kind == "status" for kind, _ in events)
+    finally:
+        chat_events.emit_event = original_emit
+        command_runner.hook.run_check = original_check
+    print("PASS test_destroy_purge_runs_only_after_success")
+
+
+def test_purge_config_identity_resolves_aliases() -> None:
+    from console.backend import command_runner
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        config = root / "range.yaml"
+        alias = root / "alias.yaml"
+        config.write_text("environments: {}\n")
+        alias.symlink_to(config)
+        direct = {"anchor": {"config_path": str(config)}}
+        indirect = {"anchor": {"config_path": str(alias)}}
+        assert command_runner._config_identity(
+            direct
+        ) == command_runner._config_identity(indirect)
+    print("PASS test_purge_config_identity_resolves_aliases")
+
+
 def main() -> None:
     test_argv_injects_config_and_env()
     test_argv_multiword_and_flag_verbs()
@@ -1371,6 +1463,7 @@ def main() -> None:
     test_destroy_carries_auto_approve()
     test_start_stop_take_an_optional_hostname()
     test_destroy_takes_an_optional_hostname()
+    test_destroy_purge_is_whole_environment_only()
     test_catalog_exposes_destructive_for_the_confirm_gate()
     test_catalog_applies_range_capabilities_without_changing_safety()
     test_no_console_command_can_block_on_a_prompt()
@@ -1378,6 +1471,7 @@ def main() -> None:
     test_login_registry_entry()
     test_build_argv_rejects_empty_verb()
     if _HAS_COMMAND_RUNNER:
+        test_purge_config_identity_resolves_aliases()
         test_login_argv_aws_with_profile()
         test_login_argv_aws_no_profile()
         test_login_argv_azure()
@@ -1391,6 +1485,7 @@ def main() -> None:
         asyncio.run(test_spawn_and_stream_oserror_returns_not_started())
         asyncio.run(test_spawn_and_stream_success_returns_result())
         asyncio.run(test_score_uses_session_answer_key_unless_explicitly_overridden())
+        asyncio.run(test_destroy_purge_runs_only_after_success())
     else:
         print("SKIP command_runner tests (dreadnode not installed)")
     test_system_prompt_covers_the_registry()

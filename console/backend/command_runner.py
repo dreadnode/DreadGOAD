@@ -13,12 +13,16 @@ import shutil
 import typing as t
 from dataclasses import dataclass
 from functools import partial
+from pathlib import Path
+
+import yaml
 
 from . import (
     approvals,
     chat_events,
     chat_runtime,
     commands,
+    environment_purge,
     fetch,
     hook,
     lifecycle,
@@ -49,6 +53,14 @@ class _CommandPlan:
     argv: tuple[str, ...]
     cwd: str
     spec: commands.Command
+    purge: environment_purge.PurgePlan | None = None
+    approval_detail: str | None = None
+
+
+def _config_identity(session: t.Mapping[str, t.Any]) -> Path | None:
+    """Canonical config identity used to detect sessions sharing one file."""
+    raw = projectroot.config_path_of(session)
+    return Path(raw).expanduser().resolve(strict=False) if raw else None
 
 
 async def _spawn_and_stream(
@@ -657,6 +669,37 @@ async def _prepare_command(
 ) -> _CommandPlan:
     """Resolve and validate everything needed before operator approval."""
     extra = await _prepare_extra(session, session_id, name, extra)
+    purge_plan: environment_purge.PurgePlan | None = None
+    approval_detail: str | None = None
+    if name == "/destroy":
+        try:
+            purge_requested, extra = commands.destroy_mode(extra)
+        except ValueError as exc:
+            raise _Aborted(1, str(exc)) from exc
+        if purge_requested:
+            try:
+                purge_plan = environment_purge.build_plan(session)
+            except (OSError, ValueError, yaml.YAMLError) as exc:
+                raise _Aborted(1, f"cannot purge this environment: {exc}") from exc
+            sessions = await app.state.sessions.list_sessions()
+            config_path = _config_identity(session)
+            conflicts = [
+                other
+                for other in sessions
+                if other.get("id") != session_id
+                and _config_identity(other) == config_path
+            ]
+            if conflicts:
+                raise _Aborted(
+                    1,
+                    "cannot purge while another console session uses this config; "
+                    "close the other session first",
+                )
+            approval_detail = (
+                "irreversible — destroys the whole cloud environment, then "
+                "permanently deletes its console config, infrastructure tree, "
+                "inventory, and generated range data"
+            )
     try:
         argv = commands.build_argv(
             session, name, extra, repo_root=str(paths.repo_root())
@@ -675,7 +718,14 @@ async def _prepare_command(
     # by hand beside that config; repo_root() above still locates the binary.
     config_path = projectroot.config_path_of(session)
     if not config_path:
-        return _CommandPlan(name, tuple(argv), str(paths.repo_root()), command_spec)
+        return _CommandPlan(
+            name,
+            tuple(argv),
+            str(paths.repo_root()),
+            command_spec,
+            purge_plan,
+            approval_detail,
+        )
 
     checks = projectroot.preflight(
         config_path,
@@ -684,7 +734,14 @@ async def _prepare_command(
     )
     for warning in checks.warnings:
         await chat_events.emit_event(app, session_id, "status", {"content": warning})
-    return _CommandPlan(name, tuple(argv), str(checks.root), command_spec)
+    return _CommandPlan(
+        name,
+        tuple(argv),
+        str(checks.root),
+        command_spec,
+        purge_plan,
+        approval_detail,
+    )
 
 
 async def _execute_command(
@@ -694,7 +751,13 @@ async def _execute_command(
     # Keep approval adjacent to spawn. Preparation is complete, so no mutable
     # command input can change after the operator approves the exact argv.
     argv = list(plan.argv)
-    approved, approval_id = await approvals.require(app, session_id, plan.name, argv)
+    approved, approval_id = await approvals.require(
+        app,
+        session_id,
+        plan.name,
+        argv,
+        detail=plan.approval_detail,
+    )
     if not approved:
         return None
 
@@ -780,6 +843,28 @@ async def _finalize_command(
                 except Exception:  # noqa: BLE001 - a stale view beats a lost cancel
                     pass
             raise asyncio.CancelledError
+
+        if plan.purge is not None and result.exit_code == 0:
+            try:
+                removed = environment_purge.execute(plan.purge)
+            except (OSError, RuntimeError) as exc:
+                message = (
+                    "Cloud infrastructure was destroyed, but local environment "
+                    f"purge failed: {exc}"
+                )
+                await chat_events.emit_event(
+                    app, session_id, "error", {"message": message}
+                )
+                return 1, f"{result.output}\n{message}".strip()
+            message = (
+                f"Purged environment {plan.purge.env}: removed "
+                f"{len(removed)} local artifact(s). Close this session before "
+                "creating a new environment with the same name."
+            )
+            await chat_events.emit_event(
+                app, session_id, "status", {"content": message}
+            )
+            return 0, f"{result.output}\n{message}".strip()
 
         instances = (
             parse_instances(result.output) if plan.name == "/instances" else None

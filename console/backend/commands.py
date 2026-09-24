@@ -140,14 +140,15 @@ REGISTRY: dict[str, Command] = {
         long_running=True,
         cloud_ops=True,
         destructive=True,
-        description="Tear down all infrastructure for this environment",
+        description="Tear down infrastructure; add --purge to remove its local environment files",
         # Rendered verbatim in the confirmation dialog, so it has to be
         # unambiguous on first read. An earlier phrasing began "no host destroys
         # everything", which parses more naturally as "no host destroys
         # anything" — the opposite of what it does.
         detail=(
             "irreversible — with no hostname this destroys the whole "
-            "environment; with one, only that VM"
+            "environment; with one, only that VM; --purge also permanently "
+            "deletes console-managed local artifacts"
         ),
     ),
     "/instances": Command(
@@ -461,8 +462,9 @@ def _verb_for(cmd: Command, extra: list[str]) -> tuple[list[str], list[str]]:
         # confirms by reading stdin, and a console command has no terminal, so
         # without it the CLI prints "Aborted." and exits 0 — reporting success
         # for a VM it never touched.
-        if extra:
-            return ["lab", "destroy-vm", extra[0], "--yes"], extra[1:]
+        _purge, remaining = destroy_mode(extra)
+        if remaining:
+            return ["lab", "destroy-vm", remaining[0], "--yes"], remaining[1:]
         return list(cmd.verb), []
     if cmd.name in ("/start", "/stop"):
         # `lab start`/`lab stop` act on the whole range; `lab start-vm`/`stop-vm`
@@ -484,6 +486,21 @@ def _verb_for(cmd: Command, extra: list[str]) -> tuple[list[str], list[str]]:
             return ["score", "--report", extra[0]], extra[1:]
         return ["score"], []
     return list(cmd.verb), extra
+
+
+def destroy_mode(extra: list[str]) -> tuple[bool, list[str]]:
+    """Return (purge, remaining args), rejecting purge of only one host."""
+    purge_count = extra.count("--purge")
+    if purge_count > 1:
+        raise ValueError("/destroy accepts --purge only once")
+    purge = purge_count == 1
+    remaining = [arg for arg in extra if arg != "--purge"]
+    if purge and remaining:
+        raise ValueError(
+            "/destroy --purge applies only to the whole environment; "
+            "it cannot be combined with a hostname"
+        )
+    return purge, remaining
 
 
 # Flags that select WHICH range/cloud context the CLI acts on. The console
