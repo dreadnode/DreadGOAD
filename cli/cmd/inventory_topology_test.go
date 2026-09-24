@@ -14,33 +14,28 @@ func TestEnsureInventoryTopologyUsesConfiguredVariantTarget(t *testing.T) {
 	root := t.TempDir()
 	base := filepath.Join(root, "ad", "GOAD")
 	target := filepath.Join(root, "ad", "GOAD-kraken")
-	if err := os.MkdirAll(filepath.Join(target, "data"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(base, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(base, "range.yml"), []byte(
-		"schema_version: 1\nkind: active-directory\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(target, "data", "inventory"), []byte(
-		"[domain]\ndc01\n\n[dc]\ndc01\n\n[extensions]\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeInventoryTestFile(t, filepath.Join(base, "range.yml"),
+		"schema_version: 1\nkind: active-directory\n", 0o644)
+	writeInventoryTestFile(t, filepath.Join(target, "data", "inventory"),
+		"[domain]\ndc01\n\n[dc]\ndc01\n\n[extensions]\n", 0o644)
+	// The generated target is deliberately stale. Provider-owned identities
+	// must come from the authored source and not from this target copy.
+	writeInventoryTestFile(t, filepath.Join(target, "providers", "azure", "inventory"),
+		"[all:vars]\nadmin_user=goadmin\n", 0o644)
+	writeInventoryTestFile(t, filepath.Join(base, "providers", "azure", "inventory"),
+		"[all:vars]\nadmin_user=administrator\n", 0o644)
 	cfg := &config.Config{
 		ProjectRoot: root,
 		Env:         "kraken",
 		Environments: map[string]config.EnvironmentConfig{
 			"kraken": {
-				Lab: "GOAD", Variant: true, VariantTarget: "ad/GOAD-kraken",
+				Lab: "GOAD", Provider: "azure", Variant: true, VariantTarget: "ad/GOAD-kraken",
 			},
 		},
 	}
-	if err := os.WriteFile(cfg.InventoryPath(), []byte(
-		"[default]\ndc01 ansible_host=10.68.1.4 ansible_password=live\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	writeInventoryTestFile(t, cfg.InventoryPath(),
+		"[default]\ndc01 ansible_host=10.68.1.4 ansible_password=live\n\n"+
+			"[all:vars]\nadmin_user=goadmin\n", 0o640)
 	if err := ensureInventoryTopology(cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -48,10 +43,123 @@ func TestEnsureInventoryTopologyUsesConfiguredVariantTarget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"[domain]", "[dc]", "[extensions]"} {
+	for _, want := range []string{
+		"ansible_password=live", "admin_user=administrator", "[domain]", "[dc]", "[extensions]",
+	} {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("variant inventory is missing %q: %s", want, raw)
 		}
+	}
+	if strings.Contains(string(raw), "admin_user=goadmin") {
+		t.Errorf("variant inventory retained stale provider identity: %s", raw)
+	}
+	if info, err := os.Stat(cfg.InventoryPath()); err != nil || info.Mode().Perm() != 0o640 {
+		t.Errorf("inventory mode changed: info=%v err=%v", info, err)
+	}
+}
+
+func writeInventoryTestFile(t *testing.T, path, content string, mode os.FileMode) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnsureProviderInventoryVariablesUsesAWSIdentity(t *testing.T) {
+	root := t.TempDir()
+	providerInventory := filepath.Join(root, "ad", "GOAD", "providers", "aws", "inventory")
+	if err := os.MkdirAll(filepath.Dir(providerInventory), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(providerInventory, []byte(
+		"[all:vars]\nadmin_user=goadmin\nforce_dns_server=no\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{ProjectRoot: root, Env: "range", Provider: "aws"}
+	if err := os.WriteFile(cfg.InventoryPath(), []byte(
+		"[all:vars]\nadmin_user=administrator\nforce_dns_server=yes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ensureProviderInventoryVariables(cfg); err != nil {
+		t.Fatal(err)
+	}
+	got := readInventoryForTest(t, cfg.InventoryPath())
+	if !strings.Contains(got, "admin_user=goadmin") {
+		t.Errorf("AWS identity was not reconciled: %s", got)
+	}
+	if !strings.Contains(got, "force_dns_server=yes") {
+		t.Errorf("non-provider-owned setting was replaced: %s", got)
+	}
+}
+
+func TestEnsureProviderInventoryVariablesFallsBackToLabDefaults(t *testing.T) {
+	root := t.TempDir()
+	writeInventoryTestFile(t, filepath.Join(root, "ad", "GOAD-Light", "providers", "ludus", "inventory"),
+		"[all:vars]\nansible_user=localuser\n", 0o644)
+	writeInventoryTestFile(t, filepath.Join(root, "ad", "GOAD-Light", "data", "inventory"),
+		"[all:vars]\nadmin_user=administrator\n", 0o644)
+	cfg := &config.Config{ProjectRoot: root, Env: "range", Lab: "GOAD-Light", Provider: "ludus"}
+	writeInventoryTestFile(t, cfg.InventoryPath(),
+		"[all:vars]\nadmin_user=goadmin\nansible_user=live-user\n", 0o644)
+
+	if err := ensureProviderInventoryVariables(cfg); err != nil {
+		t.Fatal(err)
+	}
+	got := readInventoryForTest(t, cfg.InventoryPath())
+	if !strings.Contains(got, "admin_user=administrator") {
+		t.Errorf("lab-default identity was not reconciled: %s", got)
+	}
+	if !strings.Contains(got, "ansible_user=live-user") {
+		t.Errorf("live connection identity was replaced: %s", got)
+	}
+}
+
+func TestReplaceInventoryVariableEdgeCases(t *testing.T) {
+	tests := []struct {
+		name        string
+		content     string
+		want        string
+		wantChanged bool
+	}{
+		{
+			name:        "missing all vars section",
+			content:     "[default]\ndc01 ansible_host=10.0.0.1\n",
+			want:        "[all:vars]\nadmin_user=administrator\n",
+			wantChanged: true,
+		},
+		{
+			name: "duplicate stale assignments",
+			content: "[all:vars]\nadmin_user=goadmin\n" +
+				"admin_user = stale\nforce_dns_server=yes\n",
+			want:        "admin_user=administrator\nadmin_user=administrator\nforce_dns_server=yes",
+			wantChanged: true,
+		},
+		{
+			name:        "already correct is byte idempotent",
+			content:     "[all:vars]\nadmin_user=administrator\nforce_dns_server=yes\n",
+			want:        "[all:vars]\nadmin_user=administrator\nforce_dns_server=yes\n",
+			wantChanged: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, changed := replaceInventoryVariable(tt.content, "admin_user", "admin_user=administrator")
+			if changed != tt.wantChanged {
+				t.Errorf("changed = %v, want %v", changed, tt.wantChanged)
+			}
+			if tt.name == "already correct is byte idempotent" {
+				if got != tt.want {
+					t.Errorf("idempotent replacement changed bytes:\ngot:  %q\nwant: %q", got, tt.want)
+				}
+			} else if !strings.Contains(got, tt.want) {
+				t.Errorf("replacement missing %q:\n%s", tt.want, got)
+			}
+		})
 	}
 }
 

@@ -19,6 +19,10 @@ import (
 // not rejected by the parser.
 var inventorySectionRe = regexp.MustCompile(`^\s*\[([^]]+)]\s*$`)
 
+// These values describe identities created by a specific infrastructure
+// provider. A stale reference inventory must not carry them across providers.
+var providerOwnedInventoryVars = []string{"admin_user"}
+
 type inventorySection struct {
 	members []string
 }
@@ -64,10 +68,13 @@ func ensureInventoryTopology(cfg *config.Config) error {
 			labRoot = target
 		}
 	}
-	return ensureInventoryTopologyFromSource(
+	if err := ensureInventoryTopologyFromSource(
 		cfg.InventoryPath(),
 		filepath.Join(labRoot, "data", "inventory"),
-	)
+	); err != nil {
+		return err
+	}
+	return ensureProviderInventoryVariables(cfg)
 }
 
 // ensureInventoryTopologyFromSource adds missing topology sections, members,
@@ -221,6 +228,136 @@ func planInventoryRepair(
 		plan.missingVars = append(plan.missingVars, canonical.variables[key])
 	}
 	return plan
+}
+
+// ensureProviderInventoryVariables corrects values that belong to the active
+// infrastructure provider rather than to live host connectivity. In
+// particular, Azure expects the built-in Administrator identity while AWS
+// uses goadmin. Copying an inventory from another provider must not preserve a
+// stale admin_user and then authenticate AD mutations as the wrong principal.
+func ensureProviderInventoryVariables(cfg *config.Config) error {
+	sourceVars, sourcePath, err := loadProviderOwnedInventoryVariables(cfg)
+	if err != nil {
+		return err
+	}
+
+	runtimePath := cfg.InventoryPath()
+	runtimeRaw, err := os.ReadFile(runtimePath)
+	if err != nil {
+		return fmt.Errorf("read runtime provider variables: %w", err)
+	}
+	updated := string(runtimeRaw)
+	changed := 0
+	for _, key := range providerOwnedInventoryVars {
+		assignment, exists := sourceVars[key]
+		if !exists {
+			continue
+		}
+		var replaced bool
+		updated, replaced = replaceInventoryVariable(updated, key, assignment)
+		if replaced {
+			changed++
+		}
+	}
+	if changed == 0 {
+		return nil
+	}
+	if err := writeInventoryAtomically(runtimePath, []byte(updated)); err != nil {
+		return err
+	}
+	_, actual := inventoryAllVars(updated)
+	for _, key := range providerOwnedInventoryVars {
+		expected, exists := sourceVars[key]
+		if exists && actual[key] != expected {
+			return fmt.Errorf("inventory %s has incorrect provider-owned variable %s", runtimePath, key)
+		}
+	}
+	slog.Info("reconciled provider inventory variables",
+		"inventory", runtimePath,
+		"source", sourcePath,
+		"variables_updated", changed)
+	return nil
+}
+
+func loadProviderOwnedInventoryVariables(cfg *config.Config) (map[string]string, string, error) {
+	providerPath := providerInventoryVariableSourcePath(cfg)
+	rangeRoot := filepath.Dir(filepath.Dir(filepath.Dir(providerPath)))
+	candidates := []string{providerPath, filepath.Join(rangeRoot, "data", "inventory")}
+	variables := make(map[string]string, len(providerOwnedInventoryVars))
+	sourcePath := ""
+	for _, candidate := range candidates {
+		raw, err := os.ReadFile(candidate)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, "", fmt.Errorf("read provider inventory variables: %w", err)
+		}
+		_, available := inventoryAllVars(string(raw))
+		for _, key := range providerOwnedInventoryVars {
+			if _, found := variables[key]; found {
+				continue
+			}
+			if assignment, found := available[key]; found {
+				variables[key] = assignment
+				if sourcePath == "" {
+					sourcePath = candidate
+				}
+			}
+		}
+	}
+	if len(variables) == 0 {
+		return nil, "", fmt.Errorf(
+			"provider-owned inventory variables are missing from %s and its lab defaults", providerPath,
+		)
+	}
+	return variables, sourcePath, nil
+}
+
+// providerInventoryVariableSourcePath uses the authored variant source for
+// provider-owned identities. Generated targets own randomized topology, but
+// older targets may themselves contain stale provider values and therefore
+// cannot safely act as the authority for admin_user.
+func providerInventoryVariableSourcePath(cfg *config.Config) string {
+	providerName := cfg.ResolvedProvider()
+	if cfg.ActiveEnvironment().Variant {
+		if source, _ := cfg.ResolvedVariantPaths(); source != "" {
+			return filepath.Join(source, "providers", providerName, "inventory")
+		}
+	}
+	return providerInventoryTemplatePath(cfg)
+}
+
+func replaceInventoryVariable(content, key, assignment string) (string, bool) {
+	lines := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
+	inAllVars := false
+	found := false
+	changed := false
+	for i, line := range lines {
+		if match := inventorySectionRe.FindStringSubmatch(line); match != nil {
+			inAllVars = strings.EqualFold(strings.TrimSpace(match[1]), "all:vars")
+			continue
+		}
+		if !inAllVars {
+			continue
+		}
+		equals := strings.Index(line, "=")
+		if equals <= 0 || strings.TrimSpace(line[:equals]) != key {
+			continue
+		}
+		found = true
+		if strings.TrimSpace(line) != assignment {
+			lines[i] = assignment
+			changed = true
+		}
+	}
+	if !found {
+		return addInventoryVariables(content, []string{assignment}), true
+	}
+	if !changed {
+		return content, false
+	}
+	return strings.Join(lines, "\n") + "\n", true
 }
 
 // inventoryAllVars returns assignments from [all:vars] in source order. The

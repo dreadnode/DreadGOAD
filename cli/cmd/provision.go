@@ -146,17 +146,6 @@ func ensureVariant(cfg *config.Config) error {
 	return nil
 }
 
-// isSSMInventory checks whether the current inventory uses AWS SSM connections.
-// Returns false (non-SSM) if the inventory does not exist or cannot be parsed,
-// so that non-AWS providers are never blocked by AWS-specific operations.
-func isSSMInventory(cfg *config.Config) bool {
-	parsed, err := inv.Parse(cfg.InventoryPath())
-	if err != nil {
-		return false
-	}
-	return parsed.IsSSM()
-}
-
 func checkAnsibleRuntime(providerName string) error {
 	if err := doctor.CheckAnsibleCoreVersion(providerName); err != nil {
 		return fmt.Errorf("ansible-core version check failed: %w", err)
@@ -201,20 +190,16 @@ func preflightChecks(ctx context.Context, cfg *config.Config, limit string) erro
 	if err := ensureInventoryTopology(cfg); err != nil {
 		return fmt.Errorf("inventory topology: %w", err)
 	}
+	if err := ensureAWSInventoryTransport(cfg); err != nil {
+		return fmt.Errorf("AWS inventory transport: %w", err)
+	}
 
 	// AWS-specific preflight: ensure the SSM transfer bucket exists, sync
-	// inventory instance IDs, and generate IP mappings. Skipped for non-SSM
-	// providers (Ludus, Proxmox, etc.) where none of this applies.
-	if isSSMInventory(cfg) {
-		if err := ensureSSMBucket(ctx, cfg); err != nil {
-			return fmt.Errorf("SSM transfer bucket: %w", err)
-		}
-		if err := ensureInventorySynced(ctx, cfg); err != nil {
-			slog.Warn("inventory sync check failed", "error", err)
-		}
-		if err := generateInstanceMapping(ctx, ""); err != nil {
-			slog.Warn("instance mapping generation failed, playbooks will use runtime detection", "error", err)
-		}
+	// inventory instance IDs, and generate IP mappings. Provider configuration
+	// is authoritative here: a damaged AWS inventory must not silently turn
+	// these operations off by omitting ansible_connection.
+	if err := prepareAWSProvisionInventory(ctx, cfg, limit); err != nil {
+		return err
 	}
 
 	// Azure: `env create` writes the inventory with PENDING addresses and no
@@ -235,6 +220,22 @@ func preflightChecks(ctx context.Context, cfg *config.Config, limit string) erro
 		return err
 	}
 	return validateInventoryCredentials(cfg)
+}
+
+func prepareAWSProvisionInventory(ctx context.Context, cfg *config.Config, limit string) error {
+	if !cfg.IsAWS() {
+		return nil
+	}
+	if err := ensureSSMBucket(ctx, cfg); err != nil {
+		return fmt.Errorf("SSM transfer bucket: %w", err)
+	}
+	if err := inventorySyncFailure(ensureInventorySynced(ctx, cfg), limit); err != nil {
+		return err
+	}
+	if err := generateInstanceMapping(ctx, ""); err != nil {
+		slog.Warn("instance mapping generation failed, playbooks will use runtime detection", "error", err)
+	}
+	return nil
 }
 
 // validateInventoryCredentials checks that the password Ansible will present
@@ -308,10 +309,11 @@ func validateInventoryCredentials(cfg *config.Config) error {
 
 // inventorySyncFailure decides whether a failed inventory sync stops the run.
 //
-// Under --limit it must not. The sync fails when some host cannot be resolved,
-// but a limited run may never target that host, and validateInventoryResolved
-// applies the same policy a few lines later — so letting the sync hard-fail
-// here would silently override the limit and block a legitimate partial run.
+// Under --limit it must not. A provider sync can fail when some host cannot be
+// resolved, but a limited run may never target that host, and
+// validateInventoryResolved applies the same policy a few lines later. Letting
+// the sync hard-fail here would silently override the limit and block a
+// legitimate partial run.
 func inventorySyncFailure(err error, limit string) error {
 	if err == nil {
 		return nil
@@ -333,10 +335,10 @@ func inventorySyncFailure(err error, limit string) error {
 // back to the inventory.
 //
 // This runs for all providers rather than just the one that scaffolds PENDING,
-// because each arrives here unresolved by a different route: Azure had no
-// resolver at all, the AWS sync is warn-only at its call site above, and a
-// Ludus or Proxmox inventory that already exists on disk is never re-rendered,
-// so an unrendered {{ip_range}} survives bootstrap untouched.
+// because each arrives here unresolved by a different route: Azure addresses
+// come from live NIC state, an AWS sync failure can be downgraded by --limit,
+// and a Ludus or Proxmox inventory that already exists on disk is never
+// re-rendered, so an unrendered {{ip_range}} survives bootstrap untouched.
 //
 // Under --limit an unresolved host may simply be out of scope, so this warns
 // rather than fails: blocking a deliberate partial run would be worse than the
@@ -509,25 +511,7 @@ func bootstrapInventory(invPath string) error {
 
 func bootstrapFromProviderTemplate(invPath string, cfg *config.Config) error {
 	providerName := cfg.ResolvedProvider()
-
-	// Resolve the lab tree that holds the provider inventory template. For a
-	// variant environment, read from the variant target tree so the
-	// bootstrapped inventory (which carries domain_name and the asset layout)
-	// points at the variant's ad/<target>/ assets rather than the stock
-	// ad/GOAD/ tree. Falls back to the stock/proxmox path for non-variants.
-	var templatePath string
-	if ec := cfg.ActiveEnvironment(); ec.Variant {
-		if _, target := cfg.ResolvedVariantPaths(); target != "" {
-			templatePath = filepath.Join(target, "providers", providerName, "inventory")
-		}
-	}
-	if templatePath == "" {
-		labName := cfg.ResolvedLab()
-		if providerName == "proxmox" && labName == "GOAD" {
-			labName = cfg.ProxmoxLab()
-		}
-		templatePath = filepath.Join(cfg.ProjectRoot, "ad", labName, "providers", providerName, "inventory")
-	}
+	templatePath := providerInventoryTemplatePath(cfg)
 
 	data, err := os.ReadFile(templatePath)
 	if err != nil {
@@ -545,6 +529,24 @@ func bootstrapFromProviderTemplate(invPath string, cfg *config.Config) error {
 	}
 	slog.Info("bootstrapped inventory from provider template", "path", invPath, "provider", providerName)
 	return nil
+}
+
+// providerInventoryTemplatePath resolves the complete provider template used
+// to bootstrap a runtime inventory. Variants use their generated target so
+// randomized topology stays in the same range tree; provider-owned identities
+// are reconciled separately from the authored source.
+func providerInventoryTemplatePath(cfg *config.Config) string {
+	providerName := cfg.ResolvedProvider()
+	if cfg.ActiveEnvironment().Variant {
+		if _, target := cfg.ResolvedVariantPaths(); target != "" {
+			return filepath.Join(target, "providers", providerName, "inventory")
+		}
+	}
+	labName := cfg.ResolvedLab()
+	if providerName == "proxmox" && labName == "GOAD" {
+		labName = cfg.ProxmoxLab()
+	}
+	return filepath.Join(cfg.ProjectRoot, "ad", labName, "providers", providerName, "inventory")
 }
 
 func resolveIPRange(cfg *config.Config, providerName string) (string, error) {
@@ -692,8 +694,11 @@ func materializeSSMBucketName(path, bucket string) error {
 // ensureInventorySynced compares inventory instance IDs against live EC2
 // state and auto-syncs if they diverge. This prevents provisioning against
 // stale instance IDs after an infra destroy/apply cycle.
-// This is a no-op for non-SSM inventories (e.g. Ludus, Proxmox).
+// This is a no-op for non-AWS providers (e.g. Ludus, Proxmox).
 func ensureInventorySynced(ctx context.Context, cfg *config.Config) error {
+	if !cfg.IsAWS() {
+		return nil
+	}
 	invPath := cfg.InventoryPath()
 	if err := bootstrapInventory(invPath); err != nil {
 		return err
@@ -701,10 +706,6 @@ func ensureInventorySynced(ctx context.Context, cfg *config.Config) error {
 	parsed, err := inv.Parse(invPath)
 	if err != nil {
 		return fmt.Errorf("parse inventory: %w", err)
-	}
-
-	if !parsed.IsSSM() {
-		return nil
 	}
 
 	prov, err := cfg.NewProvider(ctx)
@@ -720,32 +721,26 @@ func ensureInventorySynced(ctx context.Context, cfg *config.Config) error {
 		return fmt.Errorf("no running instances found for env=%s", cfg.Env)
 	}
 
-	liveIDs := make(map[string]struct{}, len(liveInstances))
-	for _, inst := range liveInstances {
-		liveIDs[inst.ID] = struct{}{}
+	instances := providerInstanceUpdates(liveInstances)
+	expected, err := expectedAWSInventoryAddresses(parsed, instances)
+	if err != nil {
+		return err
 	}
-
-	stale := false
-	for _, host := range parsed.Hosts {
-		if host.InstanceID == "" {
-			continue
-		}
-		if _, ok := liveIDs[host.InstanceID]; !ok {
-			stale = true
-			break
+	var staleHosts []string
+	for name, want := range expected {
+		host := parsed.HostByName(name)
+		if host == nil || host.InstanceID != want {
+			staleHosts = append(staleHosts, name)
 		}
 	}
-
-	if !stale {
+	if len(staleHosts) == 0 {
 		return nil
 	}
 
-	slog.Info("inventory has stale instance IDs, auto-syncing from provider")
-	var instances []instanceInfo
-	for _, i := range liveInstances {
-		instances = append(instances, instanceInfo{InstanceID: i.ID, Name: i.Name})
-	}
-	return applyInstanceUpdates(invPath, instances)
+	sort.Strings(staleHosts)
+	slog.Info("AWS inventory addresses are stale, auto-syncing from provider",
+		"hosts", strings.Join(staleHosts, ","))
+	return applyInstanceUpdatesForProvider(invPath, instances, true)
 }
 
 func runProvision(cmd *cobra.Command, args []string) error {
@@ -930,7 +925,7 @@ func provisionPlaybooks(ctx context.Context, cfg *config.Config, playbooks []str
 	runVars := applyExtraVars(socksVars, extraVars)
 
 	log := slog.Default()
-	useSSM := isSSMInventory(cfg)
+	useSSM := cfg.IsAWS()
 
 	// Clean up stale SSM sessions before starting provisioning to prevent
 	// connection saturation from orphaned sessions of previous runs.

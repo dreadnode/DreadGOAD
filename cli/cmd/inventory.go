@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -78,6 +79,9 @@ func runInventorySync(cmd *cobra.Command, args []string) error {
 	if err := updateEnvField(invPath, cfg.Env); err != nil {
 		return err
 	}
+	if err := ensureAWSInventoryTransport(cfg); err != nil {
+		return fmt.Errorf("AWS inventory transport: %w", err)
+	}
 
 	// Passwords first, and independently of the address sync below: an
 	// unresolvable host makes applyInstanceUpdates return an error, and the
@@ -106,7 +110,7 @@ func runInventorySync(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no instances found for env=%s: nothing to sync", cfg.Env)
 	}
 
-	return applyInstanceUpdates(invPath, instances)
+	return applyInstanceUpdatesForProvider(invPath, instances, cfg.IsAWS())
 }
 
 func backupInventory(invPath string) error {
@@ -148,42 +152,27 @@ func loadInstances(ctx context.Context, jsonFile, invPath string, cfg *config.Co
 		return instances, nil
 	}
 
-	parsed, err := inv.Parse(invPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if !parsed.IsSSM() {
-		// For non-SSM inventories (Ludus, Proxmox), discover instances with IPs.
-		prov, err := cfg.NewProvider(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("inventory sync: use --json to provide instance data manually, or configure a provider: %w", err)
-		}
-		provInstances, err := prov.DiscoverInstances(ctx, cfg.Env)
-		if err != nil {
-			return nil, fmt.Errorf("discover instances: %w", err)
-		}
-		var instances []instanceInfo
-		for _, i := range provInstances {
-			instances = append(instances, instanceInfo{InstanceID: i.ID, Name: i.Name, PrivateIP: i.PrivateIP})
-		}
-		return instances, nil
-	}
-
-	// SSM inventory: use provider to discover.
 	prov, err := cfg.NewProvider(ctx)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("inventory sync: use --json to provide instance data manually, or configure a provider: %w", err)
 	}
 	provInstances, err := prov.DiscoverInstances(ctx, cfg.Env)
 	if err != nil {
 		return nil, fmt.Errorf("discover instances: %w", err)
 	}
-	var instances []instanceInfo
-	for _, i := range provInstances {
-		instances = append(instances, instanceInfo{InstanceID: i.ID, Name: i.Name})
+	return providerInstanceUpdates(provInstances), nil
+}
+
+func providerInstanceUpdates(discovered []provider.Instance) []instanceInfo {
+	instances := make([]instanceInfo, 0, len(discovered))
+	for _, instance := range discovered {
+		instances = append(instances, instanceInfo{
+			InstanceID: instance.ID,
+			Name:       instance.Name,
+			PrivateIP:  instance.PrivateIP,
+		})
 	}
-	return instances, nil
+	return instances
 }
 
 // extractHostRole extracts the Ansible inventory hostname from a VM name.
@@ -219,28 +208,90 @@ func extractHostRole(vmName string) string {
 }
 
 func applyInstanceUpdates(invPath string, instances []instanceInfo) error {
+	return applyInstanceUpdatesForProvider(invPath, instances, false)
+}
+
+func applyInstanceUpdatesForProvider(invPath string, instances []instanceInfo, aws bool) error {
 	content, err := os.ReadFile(invPath)
 	if err != nil {
 		return fmt.Errorf("read inventory: %w", err)
 	}
-	lines := string(content)
-	updates := 0
+	addresses, err := inventoryAddressesForProvider(invPath, instances, aws)
+	if err != nil {
+		return err
+	}
+	lines, updates := applyInventoryAddresses(string(content), addresses)
 
-	for _, inst := range instances {
-		hostname := extractHostRole(inst.Name)
+	if updates > 0 {
+		if err := writeInventoryAtomically(invPath, []byte(lines)); err != nil {
+			return fmt.Errorf("write updated inventory: %w", err)
+		}
+	}
+	if aws {
+		if err := validateAWSInventoryAddresses(invPath, addresses); err != nil {
+			return err
+		}
+	}
+
+	// A host still holding a placeholder is unreachable — Ansible resolves
+	// ansible_host to the literal string and every play fails "unreachable".
+	// Reporting "all values are current" over that state is a false success
+	// that surfaces minutes later as a provisioning failure, so name it here.
+	if stale := placeholderHosts(lines); len(stale) > 0 {
+		return unresolvedInventoryHostsError(invPath, stale, instances)
+	}
+
+	if updates == 0 {
+		fmt.Println("No inventory updates needed. All values are current.")
+	} else {
+		fmt.Printf("Updated %d entries in %s\n", updates, invPath)
+	}
+	return nil
+}
+
+func inventoryAddressesForProvider(
+	invPath string,
+	instances []instanceInfo,
+	aws bool,
+) (map[string]string, error) {
+	if aws {
+		parsed, err := inv.Parse(invPath)
+		if err != nil {
+			return nil, fmt.Errorf("parse AWS inventory before sync: %w", err)
+		}
+		return expectedAWSInventoryAddresses(parsed, instances)
+	}
+
+	addresses := make(map[string]string)
+	for _, instance := range instances {
+		hostname := extractHostRole(instance.Name)
 		if hostname == "" {
 			continue
 		}
-
-		// Determine what value to write as ansible_host:
-		// - If the instance has a PrivateIP, use it (Ludus/Proxmox IP-based inventory)
-		// - Otherwise, use the InstanceID (AWS SSM-based inventory)
-		newValue := inst.InstanceID
-		if inst.PrivateIP != "" {
-			newValue = inst.PrivateIP
+		address := instance.InstanceID
+		if instance.PrivateIP != "" {
+			address = instance.PrivateIP
 		}
+		addresses[hostname] = address
+	}
+	return addresses, nil
+}
 
-		re := regexp.MustCompile(`(?mi)^(` + regexp.QuoteMeta(hostname) + `\s+ansible_host=)\S+`)
+func applyInventoryAddresses(content string, addresses map[string]string) (string, int) {
+	lines := content
+	updates := 0
+	hostnames := make([]string, 0, len(addresses))
+	for hostname := range addresses {
+		hostnames = append(hostnames, hostname)
+	}
+	sort.Strings(hostnames)
+	for _, hostname := range hostnames {
+		newValue := addresses[hostname]
+		// Allow Ansible's valid indentation and arbitrary host-variable order.
+		// \S* also repairs an explicitly blank ansible_host value.
+		re := regexp.MustCompile(
+			`(?mi)^(\s*` + regexp.QuoteMeta(hostname) + `\s+[^\r\n]*?\bansible_host=)\S*`,
+		)
 		if re.MatchString(lines) {
 			newLines := re.ReplaceAllString(lines, "${1}"+newValue)
 			if newLines != lines {
@@ -250,35 +301,137 @@ func applyInstanceUpdates(invPath string, instances []instanceInfo) error {
 			}
 		}
 	}
+	return lines, updates
+}
 
-	if err := os.WriteFile(invPath, []byte(lines), 0o644); err != nil {
-		return fmt.Errorf("write updated inventory: %w", err)
+func unresolvedInventoryHostsError(invPath string, stale []string, instances []instanceInfo) error {
+	names := make([]string, 0, len(instances))
+	for _, instance := range instances {
+		names = append(names, instance.Name)
 	}
+	// Says "for these hosts", not "nothing matched": a sync routinely resolves
+	// most of the inventory and leaves one host behind, and an error claiming
+	// total failure would send the operator looking in the wrong place.
+	return fmt.Errorf(
+		"inventory %s still has placeholder ansible_host for %s — "+
+			"no discovered machine name maps to those hosts\n"+
+			"  discovered %d machine(s): %s",
+		invPath, strings.Join(stale, ", "), len(instances), strings.Join(names, ", "))
+}
 
-	// A host still holding a placeholder is unreachable — Ansible resolves
-	// ansible_host to the literal string and every play fails "unreachable".
-	// Reporting "all values are current" over that state is a false success
-	// that surfaces minutes later as a provisioning failure, so name it here.
-	if stale := placeholderHosts(lines); len(stale) > 0 {
-		names := make([]string, 0, len(instances))
-		for _, inst := range instances {
-			names = append(names, inst.Name)
+func expectedAWSInventoryAddresses(parsed *inv.Inventory, instances []instanceInfo) (map[string]string, error) {
+	wantedRoles, problems := wantedAWSInventoryRoles(parsed)
+	byRole, discoveryProblems := discoveredAWSInstancesByRole(instances, wantedRoles)
+	problems = append(problems, discoveryProblems...)
+
+	addresses := make(map[string]string, len(parsed.Hosts))
+	for name, host := range parsed.Hosts {
+		role := strings.ToLower(name)
+		instance, exists := byRole[role]
+		if !exists {
+			problems = append(problems, fmt.Sprintf("%s: no discovered instance maps to this host", name))
+			continue
 		}
-		// Says "for these hosts", not "nothing matched": a sync routinely
-		// resolves most of the inventory and leaves one host behind, and an
-		// error claiming total failure would send the operator looking in the
-		// wrong place.
-		return fmt.Errorf(
-			"inventory %s still has placeholder ansible_host for %s — "+
-				"no discovered machine name maps to those hosts\n"+
-				"  discovered %d machine(s): %s",
-			invPath, strings.Join(stale, ", "), len(instances), strings.Join(names, ", "))
-	}
 
-	if updates == 0 {
-		fmt.Println("No inventory updates needed. All values are current.")
-	} else {
-		fmt.Printf("Updated %d entries in %s\n", updates, invPath)
+		address, err := expectedAWSHostAddress(name, host, parsed.Vars, instance)
+		if err != nil {
+			problems = append(problems, err.Error())
+			continue
+		}
+		addresses[name] = address
+	}
+	if len(problems) > 0 {
+		sort.Strings(problems)
+		return nil, fmt.Errorf("cannot reconcile AWS inventory addresses: %s", strings.Join(problems, "; "))
+	}
+	return addresses, nil
+}
+
+func wantedAWSInventoryRoles(parsed *inv.Inventory) (map[string]string, []string) {
+	wanted := make(map[string]string, len(parsed.Hosts))
+	var problems []string
+	for name := range parsed.Hosts {
+		role := strings.ToLower(name)
+		if previous, exists := wanted[role]; exists {
+			problems = append(problems, fmt.Sprintf(
+				"inventory hosts %q and %q map to the same discovered role %q",
+				previous, name, role,
+			))
+			continue
+		}
+		wanted[role] = name
+	}
+	if len(parsed.Hosts) == 0 {
+		problems = append(problems, "inventory has no host definitions")
+	}
+	return wanted, problems
+}
+
+func discoveredAWSInstancesByRole(
+	instances []instanceInfo,
+	wanted map[string]string,
+) (map[string]instanceInfo, []string) {
+	byRole := make(map[string]instanceInfo, len(wanted))
+	var problems []string
+	for _, instance := range instances {
+		role := extractHostRole(instance.Name)
+		if _, exists := wanted[role]; role == "" || !exists {
+			continue
+		}
+		if previous, exists := byRole[role]; exists {
+			problems = append(problems, fmt.Sprintf(
+				"%s: discovered names %q and %q map to the same inventory host",
+				role, previous.Name, instance.Name,
+			))
+			continue
+		}
+		byRole[role] = instance
+	}
+	return byRole, problems
+}
+
+func expectedAWSHostAddress(
+	name string,
+	host *inv.Host,
+	globalVars map[string]string,
+	instance instanceInfo,
+) (string, error) {
+	connection := strings.TrimSpace(host.Connection)
+	if connection == "" {
+		connection = globalVars["ansible_connection"]
+	}
+	connection = strings.ToLower(strings.TrimSpace(connection))
+	if connection == "" || strings.Contains(connection, "aws_ssm") {
+		if instance.InstanceID == "" {
+			return "", fmt.Errorf("%s: SSM transport requires an EC2 instance ID", name)
+		}
+		return instance.InstanceID, nil
+	}
+	if instance.PrivateIP == "" {
+		return "", fmt.Errorf("%s: %s transport requires a discovered private IP", name, connection)
+	}
+	return instance.PrivateIP, nil
+}
+
+func validateAWSInventoryAddresses(path string, expected map[string]string) error {
+	parsed, err := inv.Parse(path)
+	if err != nil {
+		return fmt.Errorf("parse AWS inventory after sync: %w", err)
+	}
+	var mismatches []string
+	for name, want := range expected {
+		host := parsed.HostByName(name)
+		if host == nil {
+			mismatches = append(mismatches, fmt.Sprintf("%s is missing", name))
+			continue
+		}
+		if host.InstanceID != want {
+			mismatches = append(mismatches, fmt.Sprintf("%s has %q, expected %q", name, host.InstanceID, want))
+		}
+	}
+	if len(mismatches) > 0 {
+		sort.Strings(mismatches)
+		return fmt.Errorf("AWS inventory remains out of sync after repair: %s", strings.Join(mismatches, "; "))
 	}
 	return nil
 }
@@ -344,19 +497,14 @@ func runInventoryMapping(cmd *cobra.Command, args []string) error {
 // mapping to a JSON file that Ansible's network_discovery role uses to avoid
 // slow runtime detection. If outputPath is empty, it defaults to
 // /tmp/aws_instance_mapping_<env>.json.
-// This is a no-op for non-SSM inventories (e.g. Ludus, Proxmox).
+// This is a no-op for non-AWS providers (e.g. Ludus, Proxmox).
 func generateInstanceMapping(ctx context.Context, outputPath string) error {
 	cfg, err := config.Get()
 	if err != nil {
 		return err
 	}
 
-	parsed, err := inv.Parse(cfg.InventoryPath())
-	if err != nil {
-		return err
-	}
-
-	if !parsed.IsSSM() {
+	if !cfg.IsAWS() {
 		return nil
 	}
 

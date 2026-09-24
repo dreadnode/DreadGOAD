@@ -375,12 +375,15 @@ func purgeUnmanaged(ctx context.Context, cfg *config.Config, opts purgeOptions) 
 		opts.classes = []string{"user", "computer", "group"}
 	}
 
+	if !cfg.IsAWS() {
+		return fmt.Errorf("purge-unmanaged currently requires the AWS provider")
+	}
+	if err := ensureAWSInventoryTransport(cfg); err != nil {
+		return fmt.Errorf("AWS inventory transport: %w", err)
+	}
 	parsed, err := inv.Parse(cfg.InventoryPath())
 	if err != nil {
 		return fmt.Errorf("parse inventory: %w", err)
-	}
-	if !parsed.IsSSM() {
-		return fmt.Errorf("purge-unmanaged currently requires an SSM-based inventory")
 	}
 	if len(parsed.Groups["dc"]) == 0 {
 		return fmt.Errorf("no hosts in [dc] group of inventory %s", cfg.InventoryPath())

@@ -12,6 +12,7 @@ import (
 type Host struct {
 	Name       string
 	InstanceID string // ansible_host value (e.g. i-0e428dfc02f5007dd or 10.8.1.8 for IP-based connections)
+	Connection string // host-level ansible_connection override; empty means use [all:vars]
 	DictKey    string
 	DNSDomain  string
 	User       string
@@ -111,6 +112,8 @@ func (inv *Inventory) parseHostDef(line string) {
 		switch vm[1] {
 		case "ansible_host":
 			host.InstanceID = vm[2]
+		case "ansible_connection":
+			host.Connection = stripQuotes(vm[2])
 		case "dict_key":
 			host.DictKey = vm[2]
 		case "dns_domain":

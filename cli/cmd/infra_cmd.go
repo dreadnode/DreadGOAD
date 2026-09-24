@@ -495,11 +495,11 @@ func shouldBootstrapAWSBackend(operations rangeOperations, action string, reques
 // deleteSSMBucket removes the S3 bucket the Ansible SSM connection plugin
 // used for file transfer. Called after a successful infra destroy.
 func deleteSSMBucket(ctx context.Context, cfg *config.Config) error {
-	parsed, err := inv.Parse(cfg.InventoryPath())
-	if err != nil {
+	if !cfg.IsAWS() {
 		return nil
 	}
-	if !parsed.IsSSM() {
+	parsed, err := inv.Parse(cfg.InventoryPath())
+	if err != nil {
 		return nil
 	}
 	bucket := parsed.SSMBucketName()
