@@ -785,23 +785,7 @@ func ensureInventorySynced(ctx context.Context, cfg *config.Config, limit string
 	instances := providerInstanceUpdates(liveInstances)
 	expected, err := expectedAWSInventoryAddresses(parsed, instances)
 	if err != nil {
-		if limit != "" && !awsReconciliationOutsideLimit(err, limit, parsed) {
-			return &requiredInventorySyncError{cause: err}
-		}
-		if limit != "" && len(expected) > 0 {
-			_, updates, applyErr := applyInventoryAddressUpdates(invPath, expected)
-			if applyErr != nil {
-				return fmt.Errorf("apply resolvable AWS inventory addresses: %w", applyErr)
-			}
-			if validateErr := validateAWSInventoryAddresses(invPath, expected); validateErr != nil {
-				return validateErr
-			}
-			if updates > 0 {
-				slog.Info("reconciled resolvable AWS inventory addresses for limited run",
-					"hosts_updated", updates)
-			}
-		}
-		return err
+		return handleAWSReconciliationFailure(invPath, limit, parsed, expected, err)
 	}
 	var staleHosts []string
 	for name, want := range expected {
@@ -818,6 +802,32 @@ func ensureInventorySynced(ctx context.Context, cfg *config.Config, limit string
 	slog.Info("AWS inventory addresses are stale, auto-syncing from provider",
 		"hosts", strings.Join(staleHosts, ","))
 	return applyInstanceUpdatesForProvider(invPath, instances, true)
+}
+
+func handleAWSReconciliationFailure(
+	invPath, limit string,
+	parsed *inv.Inventory,
+	expected map[string]string,
+	reconcileErr error,
+) error {
+	if limit != "" && !awsReconciliationOutsideLimit(reconcileErr, limit, parsed) {
+		return &requiredInventorySyncError{cause: reconcileErr}
+	}
+	if limit == "" || len(expected) == 0 {
+		return reconcileErr
+	}
+	_, updates, err := applyInventoryAddressUpdates(invPath, expected)
+	if err != nil {
+		return fmt.Errorf("apply resolvable AWS inventory addresses: %w", err)
+	}
+	if err := validateAWSInventoryAddresses(invPath, expected); err != nil {
+		return err
+	}
+	if updates > 0 {
+		slog.Info("reconciled resolvable AWS inventory addresses for limited run",
+			"hosts_updated", updates)
+	}
+	return reconcileErr
 }
 
 func runProvision(cmd *cobra.Command, args []string) error {

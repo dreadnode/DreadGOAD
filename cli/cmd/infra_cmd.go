@@ -160,48 +160,8 @@ func materializeLabConfig(cfg *config.Config) error {
 	expected := cfg.MaterializedLabConfigPath()
 	dataDir := filepath.Dir(expected)
 	if cfg.ActiveEnvironment().Variant {
-		_, target := cfg.ResolvedVariantPaths()
-		if err := rejectSymlinkComponents(target, cfg.ProjectRoot); err != nil {
-			return fmt.Errorf("inspect variant target %s: %w", target, err)
-		}
-		targetInfo, err := os.Lstat(target)
-		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("variant target does not exist: %s", target)
-		}
-		if err != nil {
-			return fmt.Errorf("inspect variant target %s: %w", target, err)
-		}
-		if !targetInfo.IsDir() {
-			return fmt.Errorf("variant target exists but is not a directory: %s", target)
-		}
-		complete, err := variant.IsComplete(target)
-		if err != nil {
-			return fmt.Errorf("inspect variant target %s: %w", target, err)
-		}
-		if !complete {
-			return fmt.Errorf(
-				"variant directory is incomplete (missing %s): %s",
-				variant.CompletionMarkerName,
-				target,
-			)
-		}
-		marker := filepath.Join(target, variant.CompletionMarkerName)
-		if err := rejectSymlinkComponents(marker, cfg.ProjectRoot); err != nil {
-			return fmt.Errorf("inspect variant completion marker: %w", err)
-		}
-
-		if err := rejectSymlinkComponents(dataDir, cfg.ProjectRoot); err != nil {
-			return fmt.Errorf("inspect variant lab config directory: %w", err)
-		}
-		info, err := os.Lstat(dataDir)
-		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("variant lab config directory does not exist: %s", dataDir)
-		}
-		if err != nil {
-			return fmt.Errorf("inspect variant lab config directory: %w", err)
-		}
-		if !info.IsDir() {
-			return fmt.Errorf("variant lab config path is not a directory: %s", dataDir)
+		if err := validateVariantMaterializationTarget(cfg, dataDir); err != nil {
+			return err
 		}
 	}
 
@@ -231,6 +191,53 @@ func materializeLabConfig(cfg *config.Config) error {
 	}
 	if err := os.WriteFile(expected, data, 0o644); err != nil {
 		return fmt.Errorf("write lab config: %w", err)
+	}
+	return nil
+}
+
+func validateVariantMaterializationTarget(cfg *config.Config, dataDir string) error {
+	_, target := cfg.ResolvedVariantPaths()
+	if err := rejectSymlinkComponents(target, cfg.ProjectRoot); err != nil {
+		return fmt.Errorf("inspect variant target %s: %w", target, err)
+	}
+	targetInfo, err := os.Lstat(target)
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("variant target does not exist: %s", target)
+	}
+	if err != nil {
+		return fmt.Errorf("inspect variant target %s: %w", target, err)
+	}
+	if !targetInfo.IsDir() {
+		return fmt.Errorf("variant target exists but is not a directory: %s", target)
+	}
+	complete, err := variant.IsComplete(target)
+	if err != nil {
+		return fmt.Errorf("inspect variant target %s: %w", target, err)
+	}
+	if !complete {
+		return fmt.Errorf(
+			"variant directory is incomplete (missing %s): %s",
+			variant.CompletionMarkerName,
+			target,
+		)
+	}
+	marker := filepath.Join(target, variant.CompletionMarkerName)
+	if err := rejectSymlinkComponents(marker, cfg.ProjectRoot); err != nil {
+		return fmt.Errorf("inspect variant completion marker: %w", err)
+	}
+
+	if err := rejectSymlinkComponents(dataDir, cfg.ProjectRoot); err != nil {
+		return fmt.Errorf("inspect variant lab config directory: %w", err)
+	}
+	info, err := os.Lstat(dataDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("variant lab config directory does not exist: %s", dataDir)
+	}
+	if err != nil {
+		return fmt.Errorf("inspect variant lab config directory: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("variant lab config path is not a directory: %s", dataDir)
 	}
 	return nil
 }
