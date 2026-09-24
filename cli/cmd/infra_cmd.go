@@ -19,6 +19,7 @@ import (
 	"github.com/dreadnode/dreadgoad/internal/terraform"
 	"github.com/dreadnode/dreadgoad/internal/terragrunt"
 	"github.com/dreadnode/dreadgoad/internal/tfrender"
+	"github.com/dreadnode/dreadgoad/internal/variant"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
@@ -122,6 +123,29 @@ func materializeLabConfig(cfg *config.Config) error {
 	expected := cfg.MaterializedLabConfigPath()
 	dataDir := filepath.Dir(expected)
 	if cfg.ActiveEnvironment().Variant {
+		_, target := cfg.ResolvedVariantPaths()
+		targetInfo, err := os.Stat(target)
+		if errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("variant target does not exist: %s", target)
+		}
+		if err != nil {
+			return fmt.Errorf("inspect variant target %s: %w", target, err)
+		}
+		if !targetInfo.IsDir() {
+			return fmt.Errorf("variant target exists but is not a directory: %s", target)
+		}
+		complete, err := variant.IsComplete(target)
+		if err != nil {
+			return fmt.Errorf("inspect variant target %s: %w", target, err)
+		}
+		if !complete {
+			return fmt.Errorf(
+				"variant directory is incomplete (missing %s): %s",
+				variant.CompletionMarkerName,
+				target,
+			)
+		}
+
 		info, err := os.Stat(dataDir)
 		if errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("variant lab config directory does not exist: %s", dataDir)

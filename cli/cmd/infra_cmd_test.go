@@ -9,7 +9,19 @@ import (
 	"testing"
 
 	"github.com/dreadnode/dreadgoad/internal/config"
+	"github.com/dreadnode/dreadgoad/internal/variant"
 )
+
+func markVariantComplete(t *testing.T, target string) {
+	t.Helper()
+	if err := os.WriteFile(
+		filepath.Join(target, variant.CompletionMarkerName),
+		[]byte("complete\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestMaterializeLabConfigAllowsMissingOptionalConfig(t *testing.T) {
 	cfg := &config.Config{ProjectRoot: t.TempDir(), Env: "dev"}
@@ -37,7 +49,7 @@ func TestMaterializeLabConfigRejectsMissingVariantTarget(t *testing.T) {
 	}
 
 	err := materializeLabConfig(cfg)
-	if err == nil || !strings.Contains(err.Error(), "variant lab config directory does not exist") {
+	if err == nil || !strings.Contains(err.Error(), "variant target does not exist") {
 		t.Fatalf("materializeLabConfig() error = %v, want missing variant target error", err)
 	}
 	if _, statErr := os.Stat(filepath.Join(baseData, "kraken-config.json")); !errors.Is(statErr, os.ErrNotExist) {
@@ -51,6 +63,7 @@ func TestMaterializeLabConfigRejectsVariantTargetWithoutConfig(t *testing.T) {
 	if err := os.MkdirAll(variantData, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	markVariantComplete(t, filepath.Dir(variantData))
 	cfg := &config.Config{
 		ProjectRoot: root,
 		Env:         "kraken",
@@ -63,6 +76,34 @@ func TestMaterializeLabConfigRejectsVariantTargetWithoutConfig(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "resolve variant lab config") ||
 		!errors.Is(err, config.ErrLabConfigNotFound) {
 		t.Fatalf("materializeLabConfig() error = %v, want missing variant config error", err)
+	}
+}
+
+func TestMaterializeLabConfigRejectsIncompleteVariantTarget(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "ad", "GOAD-kraken")
+	variantData := filepath.Join(target, "data")
+	if err := os.MkdirAll(variantData, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(variantData, "config.json"), []byte(`{"partial":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		ProjectRoot: root,
+		Env:         "kraken",
+		Environments: map[string]config.EnvironmentConfig{
+			"kraken": {Variant: true, VariantTarget: "ad/GOAD-kraken"},
+		},
+	}
+
+	err := materializeLabConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "variant directory is incomplete") ||
+		!strings.Contains(err.Error(), variant.CompletionMarkerName) {
+		t.Fatalf("materializeLabConfig() error = %v, want incomplete variant error", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(variantData, "kraken-config.json")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("partial variant config was materialized: %v", statErr)
 	}
 }
 
@@ -142,6 +183,7 @@ func TestMaterializeLabConfigWritesVariantTarget(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(variantData, "config.json"), want, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	markVariantComplete(t, filepath.Dir(variantData))
 	cfg := &config.Config{
 		ProjectRoot: root,
 		Env:         "dev",
@@ -187,6 +229,7 @@ func TestMaterializeLabConfigWritesMergedVariantConfigToTarget(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+	markVariantComplete(t, filepath.Dir(variantData))
 	cfg := &config.Config{
 		ProjectRoot: root,
 		Env:         "kraken",
@@ -249,6 +292,7 @@ func TestMaterializeLabConfigReportsWriteFailure(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(variantData, "config.json"), []byte(`{}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	markVariantComplete(t, filepath.Dir(variantData))
 	destination := filepath.Join(variantData, "dev-config.json")
 	if err := os.MkdirAll(destination, 0o755); err != nil {
 		t.Fatal(err)
