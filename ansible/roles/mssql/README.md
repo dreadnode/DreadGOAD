@@ -28,7 +28,7 @@ Install and configure Microsoft SQL Server Express
 
 - **Locate sqlcmd binary** (ansible.windows.win_shell)
 - **Set sqlcmd path fact** (ansible.builtin.set_fact)
-- **Ensure BUILTIN\Administrators has SQL sysadmin** (ansible.windows.win_shell)
+- **Ensure SQL configuration identity has sysadmin** (ansible.windows.win_shell)
 - **Add MSSQL admin** (ansible.windows.win_shell)
 - **Log MSSQL admin errors** (ansible.builtin.debug) - Conditional
 - **Add IMPERSONATE on login** (ansible.windows.win_shell)

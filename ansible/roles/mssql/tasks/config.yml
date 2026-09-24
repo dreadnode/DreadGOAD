@@ -3,17 +3,16 @@
 # These tasks configure SQL Server after installation
 # They should ALWAYS run to ensure proper configuration (idempotent)
 #
-# The golden AMI build grants ssm-user an explicit SQL sysadmin login
-# (BUILTIN\Administrators alone is not sufficient due to UAC token
-# filtering on non-elevated SSM sessions).  Config tasks run as
-# ssm-user with that explicit login — no become/runas SYSTEM needed.
+# The configuration identity needs an explicit SQL sysadmin login.
+# BUILTIN\Administrators alone is not sufficient because UAC can filter
+# the local Administrators SID from remote-management logon tokens.
 #
 # The bootstrap task tries Windows auth first, then falls back to sa
 # auth (available after the first provision) so that re-runs work even
-# if ssm-user's SQL login was previously dropped.
+# if the connection identity's SQL login was previously dropped.
 #
-# ssm-user's SQL sysadmin is intentionally kept across runs so that
-# re-provisioning remains idempotent without a bootstrap problem.
+# The connection identity's SQL sysadmin is intentionally kept across runs
+# so that re-provisioning remains idempotent without a bootstrap problem.
 
 - name: Locate sqlcmd binary
   ansible.windows.win_shell: |
@@ -34,16 +33,44 @@
   ansible.builtin.set_fact:
     sqlcmd_exe: "{{ sqlcmd_lookup.stdout | trim }}"
 
-- name: Ensure BUILTIN\Administrators has SQL sysadmin
+- name: Ensure SQL configuration identity has sysadmin
   ansible.windows.win_shell: |
+    # sqlcmd failures are expected while probing bootstrap paths, so inspect
+    # LASTEXITCODE explicitly instead of letting native stderr terminate early.
     $ErrorActionPreference = "Continue"
     $sqlcmd = "{{ sqlcmd_exe }}"
     $instanceName = "{{ sql_instance_name }}"
-    $serviceName = "{{ mssql_service_name }}"
-    $saPassword = "{{ sa_password }}"
+    # Named-instance service names contain a literal dollar sign
+    # (for example MSSQL$SQLEXPRESS), so prevent PowerShell interpolation.
+    $serviceName = '{{ mssql_service_name }}'
+    $saPassword = [Text.Encoding]::UTF8.GetString(
+      [Convert]::FromBase64String("{{ sa_password | b64encode }}")
+    )
+    $saPasswordSql = $saPassword.Replace("'", "''")
+    $currentIdentity = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    $identityLiteral = "N'" + $currentIdentity.Replace("'", "''") + "'"
+    $identityIdentifier = "[" + $currentIdentity.Replace("]", "]]") + "]"
+
+    # Build multiline SQL from an array. PowerShell here-string terminators must
+    # start in column zero, which is unsafe inside an indented YAML block scalar.
+    $grantIdentityQuery = @(
+      "IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = $identityLiteral)"
+      "  CREATE LOGIN $identityIdentifier FROM WINDOWS WITH DEFAULT_DATABASE=[master];"
+      "IF NOT EXISTS ("
+      "  SELECT 1"
+      "  FROM sys.server_role_members srm"
+      "  JOIN sys.server_principals r ON srm.role_principal_id = r.principal_id"
+      "  JOIN sys.server_principals m ON srm.member_principal_id = m.principal_id"
+      "  WHERE r.name = N'sysadmin' AND m.name = $identityLiteral"
+      ")"
+      "  ALTER SERVER ROLE [sysadmin] ADD MEMBER $identityIdentifier;"
+    ) -join [Environment]::NewLine
+    $sysadminCheckQuery = "SET NOCOUNT ON; " +
+      "SELECT CASE WHEN IS_SRVROLEMEMBER('sysadmin')=1 " +
+      "THEN 'HAS_SYSADMIN' ELSE 'NO_SYSADMIN' END"
 
     # Test if current session already has SQL sysadmin via Windows auth
-    $test = & $sqlcmd {{ connection_type }} -Q "SET NOCOUNT ON; SELECT CASE WHEN IS_SRVROLEMEMBER('sysadmin')=1 THEN 'HAS_SYSADMIN' ELSE 'NO_SYSADMIN' END" 2>&1
+    $test = & $sqlcmd {{ connection_type }} -Q $sysadminCheckQuery 2>&1
     $hasSysadmin = ($LASTEXITCODE -eq 0) -and ($test -match 'HAS_SYSADMIN')
 
     if (-not $hasSysadmin) {
@@ -55,37 +82,66 @@
       if (-not $saWorks) {
         # Neither Windows auth nor sa auth works - bootstrap via single-user mode
         Write-Output "Bootstrapping SQL Server via single-user mode..."
-        Stop-Service $serviceName -Force
-        Start-Sleep -Seconds 3
+        $service = Get-CimInstance Win32_Service -Filter "Name='$serviceName'"
+        if (-not $service) { throw "SQL Server service not found: $serviceName" }
+        $pathMatch = [regex]::Match($service.PathName, '^\s*(?:"([^"]+)"|(.+?\.exe))', 'IgnoreCase')
+        if (-not $pathMatch.Success) { throw "Cannot parse sqlservr.exe path from: $($service.PathName)" }
+        $sqlServerExe = if ($pathMatch.Groups[1].Success) { $pathMatch.Groups[1].Value } else { $pathMatch.Groups[2].Value }
 
-        # Find sqlservr.exe path
-        $sqlVer = if ($instanceName -eq "SQLEXPRESS") { (Get-ChildItem "C:\Program Files\Microsoft SQL Server" -Directory | Where-Object { $_.Name -match "^MSSQL\d+" } | Sort-Object Name -Descending | Select-Object -First 1).Name } else { "{{ mssql_version_key }}.$instanceName" }
-        $sqlServerExe = "C:\Program Files\Microsoft SQL Server\$sqlVer\MSSQL\Binn\sqlservr.exe"
+        $proc = $null
+        try {
+          Stop-Service $serviceName -Force -ErrorAction Stop
+          Start-Sleep -Seconds 3
+          $proc = Start-Process -FilePath $sqlServerExe -ArgumentList "-s$instanceName", "-mSQLCMD" -PassThru -WindowStyle Hidden -ErrorAction Stop
 
-        $proc = Start-Process -FilePath $sqlServerExe -ArgumentList "-s$instanceName", "-m" -PassThru -NoNewWindow
-        Start-Sleep -Seconds 12
+          $ready = $false
+          for ($attempt = 1; $attempt -le 20; $attempt++) {
+            Start-Sleep -Seconds 2
+            $probe = & $sqlcmd -b -E -S "localhost\$instanceName" -Q "SELECT 1" 2>&1
+            if ($LASTEXITCODE -eq 0) { $ready = $true; break }
+          }
+          if (-not $ready) { throw "SQL Server single-user mode did not become ready: $probe" }
 
-        # In single-user mode, current user gets sysadmin
-        & $sqlcmd -E -S "localhost\$instanceName" -Q "EXEC xp_instance_regwrite N'HKEY_LOCAL_MACHINE', N'SOFTWARE\Microsoft\Microsoft SQL Server\$sqlVer\MSSQLServer', N'LoginMode', REG_DWORD, 2" 2>&1 | Out-Null
-        & $sqlcmd -E -S "localhost\$instanceName" -Q "ALTER LOGIN sa ENABLE; ALTER LOGIN sa WITH PASSWORD = N'$saPassword', CHECK_POLICY=OFF" 2>&1 | Out-Null
-        & $sqlcmd -E -S "localhost\$instanceName" -Q "IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = 'BUILTIN\Administrators') CREATE LOGIN [BUILTIN\Administrators] FROM WINDOWS; IF IS_SRVROLEMEMBER('sysadmin', 'BUILTIN\Administrators') = 0 EXEC sp_addsrvrolemember 'BUILTIN\Administrators', 'sysadmin'" 2>&1 | Out-Null
-
-        Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-        Start-Sleep -Seconds 5
-        Start-Service $serviceName
-        Start-Sleep -Seconds 5
-        Write-Output "SQL Server bootstrapped via single-user mode"
+          $bootstrapQuery = @(
+            "EXEC xp_instance_regwrite N'HKEY_LOCAL_MACHINE', N'Software\Microsoft\MSSQLServer\MSSQLServer', N'LoginMode', REG_DWORD, 2;"
+            "ALTER LOGIN sa ENABLE;"
+            "ALTER LOGIN sa WITH PASSWORD = N'$saPasswordSql', CHECK_POLICY=OFF;"
+            $grantIdentityQuery
+            "CHECKPOINT;"
+          ) -join [Environment]::NewLine
+          $bootstrap = & $sqlcmd -b -E -S "localhost\$instanceName" -Q $bootstrapQuery 2>&1
+          if ($LASTEXITCODE -ne 0) { throw "SQL single-user bootstrap failed: $bootstrap" }
+        }
+        finally {
+          if ($proc -and -not $proc.HasExited) {
+            Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            $proc.WaitForExit(15000)
+          }
+          Start-Service $serviceName -ErrorAction SilentlyContinue
+        }
+        Write-Output "SQL Server bootstrapped via single-user mode for $currentIdentity"
       } else {
-        # sa auth works - use it to grant BUILTIN\Administrators sysadmin
-        $r2 = & $sqlcmd @saArgs -Q "IF NOT EXISTS (SELECT 1 FROM sys.server_principals WHERE name = 'BUILTIN\Administrators') CREATE LOGIN [BUILTIN\Administrators] FROM WINDOWS WITH DEFAULT_DATABASE=[master]" 2>&1
-        if ($LASTEXITCODE -ne 0) { Write-Error "CREATE LOGIN BUILTIN\Administrators failed: $r2"; exit 1 }
-        $r3 = & $sqlcmd @saArgs -Q "IF IS_SRVROLEMEMBER('sysadmin', 'BUILTIN\Administrators') = 0 EXEC sp_addsrvrolemember 'BUILTIN\Administrators', 'sysadmin'" 2>&1
-        if ($LASTEXITCODE -ne 0) { Write-Error "sp_addsrvrolemember failed: $r3"; exit 1 }
-        Write-Output "SQL sysadmin bootstrapped via sa auth"
+        # sa auth works - grant the exact Windows identity used by Ansible.
+        $grant = & $sqlcmd @saArgs -Q $grantIdentityQuery 2>&1
+        if ($LASTEXITCODE -ne 0) { throw "Granting SQL sysadmin to $currentIdentity failed: $grant" }
+        Write-Output "SQL sysadmin bootstrapped via sa auth for $currentIdentity"
       }
     } else {
       Write-Output "SQL sysadmin access already available via Windows auth"
     }
+
+    # Do not let a bootstrap path claim success unless the same Windows auth
+    # used by every following task now resolves to an explicit sysadmin login.
+    $verified = $false
+    for ($attempt = 1; $attempt -le 20; $attempt++) {
+      $verify = & $sqlcmd {{ connection_type }} -Q $sysadminCheckQuery 2>&1
+      if (($LASTEXITCODE -eq 0) -and ($verify -match 'HAS_SYSADMIN')) {
+        $verified = $true
+        break
+      }
+      Start-Sleep -Seconds 2
+    }
+    if (-not $verified) { throw "SQL sysadmin verification failed for ${currentIdentity}: $verify" }
 
 - name: Add MSSQL admin
   ansible.windows.win_shell: |
@@ -205,13 +261,17 @@
     $ErrorActionPreference = "Continue"
     $sqlcmd = "{{ sqlcmd_exe }}"
     $errors = @()
+    $saPassword = [Text.Encoding]::UTF8.GetString(
+      [Convert]::FromBase64String("{{ sa_password | b64encode }}")
+    )
+    $saPasswordSql = $saPassword.Replace("'", "''")
 
     # Enable sa login
     $result1 = & $sqlcmd {{ connection_type }} -Q "ALTER LOGIN sa ENABLE" 2>&1
     if ($LASTEXITCODE -ne 0) { $errors += "ALTER LOGIN sa ENABLE failed: $result1" }
 
     # Set sa password
-    $result2 = & $sqlcmd {{ connection_type }} -Q "ALTER LOGIN sa WITH PASSWORD = '{{ sa_password }}' , CHECK_POLICY=OFF" 2>&1
+    $result2 = & $sqlcmd {{ connection_type }} -Q "ALTER LOGIN sa WITH PASSWORD = N'$saPasswordSql', CHECK_POLICY=OFF" 2>&1
     if ($LASTEXITCODE -ne 0) { $errors += "ALTER LOGIN sa WITH PASSWORD failed: $result2" }
 
     if ($errors.Count -gt 0) {
