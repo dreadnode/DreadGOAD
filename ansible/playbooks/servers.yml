@@ -9,7 +9,7 @@
   hosts: mssql
   # serial: 1  # Removed for parallel execution - saves ~15-20 minutes
   pre_tasks:
-    - name: Debug all MSSQL installation variables
+    - name: Display non-sensitive MSSQL installation variables
       ansible.builtin.debug:
         msg: |
           MSSQL Express Installation Variables:
@@ -17,15 +17,12 @@
           dict_key: {{ dict_key }}
           domain: {{ domain }}
           SQLSVCACCOUNT: {{ SQLSVCACCOUNT }}
-          SQLSVCPASSWORD: {{ SQLSVCPASSWORD }}
           SQLSYSADMIN: {{ SQLSYSADMIN }}
           domain_admin: {{ domain_admin }}
-          domain_admin_password: {{ domain_admin_password }}
           sql_sysadmins: {{ sql_sysadmins }}
           executeaslogin: {{ executeaslogin }}
           executeasuser: {{ executeasuser }}
-          sa_password: {{ sa_password }}
-          linked_servers: {{ linked_servers }}
+          linked_server_names: {{ linked_servers.keys() | list }}
       tags: always
 
   roles:

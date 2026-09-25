@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -125,6 +127,82 @@ func TestRunPlaybookWithRetryStopsOnCancelledContext(t *testing.T) {
 	if got := logBuf.String(); strings.Contains(got, "starting playbook") ||
 		strings.Contains(got, "retrying with") {
 		t.Fatalf("cancelled context still drove a retry attempt; log was:\n%s", got)
+	}
+}
+
+func TestRunPlaybookWithRetryRefreshesTransportBeforeEveryTransportRetry(t *testing.T) {
+	original := runPlaybookAttempt
+	t.Cleanup(func() { runPlaybookAttempt = original })
+
+	vars := map[string]string{"ansible_psrp_proxy": "proxy-0"}
+	var proxies []string
+	runPlaybookAttempt = func(_ context.Context, opts RunOptions) *RunResult {
+		proxies = append(proxies, opts.ExtraVars["ansible_psrp_proxy"])
+		if len(proxies) == 3 {
+			return &RunResult{Success: true}
+		}
+		return &RunResult{
+			ExitCode:    1,
+			ErrorType:   ErrTransport,
+			ErrorDetail: "fixture transport failure",
+			FailedHosts: []string{"srv02"},
+		}
+	}
+
+	refreshes := 0
+	err := RunPlaybookWithRetry(context.Background(), RetryOptions{
+		Playbook:      "fixture.yml",
+		Env:           "test",
+		ExtraVars:     vars,
+		MaxRetries:    2,
+		MaxRetriesSet: true,
+		RetryDelaySet: true,
+		RefreshTransport: func(context.Context) error {
+			refreshes++
+			vars["ansible_psrp_proxy"] = fmt.Sprintf("proxy-%d", refreshes)
+			return nil
+		},
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshes != 2 {
+		t.Errorf("transport refreshes = %d, want 2", refreshes)
+	}
+	want := []string{"proxy-0", "proxy-1", "proxy-2"}
+	if !slices.Equal(proxies, want) {
+		t.Errorf("attempt proxies = %v, want %v", proxies, want)
+	}
+}
+
+func TestRunPlaybookWithRetryDoesNotRetryWhenNoHostsMatch(t *testing.T) {
+	original := runPlaybookAttempt
+	t.Cleanup(func() { runPlaybookAttempt = original })
+
+	attempts := 0
+	runPlaybookAttempt = func(context.Context, RunOptions) *RunResult {
+		attempts++
+		return &RunResult{
+			ExitCode:    1,
+			ErrorType:   ErrNoMatchingHosts,
+			ErrorDetail: "inventory or --limit matched no Ansible hosts",
+		}
+	}
+
+	err := RunPlaybookWithRetry(context.Background(), RetryOptions{
+		Playbook:      "network_setup.yml",
+		Env:           "test",
+		MaxRetries:    3,
+		MaxRetriesSet: true,
+		RetryDelaySet: true,
+		Log:           slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err == nil || !strings.Contains(err.Error(), "matched no Ansible hosts") {
+		t.Fatalf("error = %v, want no-hosts failure", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("playbook attempts = %d, want exactly 1", attempts)
 	}
 }
 

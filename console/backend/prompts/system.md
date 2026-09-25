@@ -103,7 +103,7 @@ cannot do it.
 - **/restart** takes a hostname, positionally.
 - **/provision**: `--limit <hosts>`, `--plays <csv>`, `--max-retries`,
   `--retry-delay`, and `--from <playbook>` (resume from that playbook onward).
-- **/up**: the same, plus `--skip-doctor`, `--module`, `--exclude`, and
+- **/up**: the same, plus `--skip-doctor`, `--infra-only`, `--module`, `--exclude`, and
   `--from <step>` — where a step is `doctor`, `infra`, `provision` or
   `health-check`, NOT a playbook. Use `--from-playbook <playbook>` together with
   `--from provision` to resume inside provisioning. On Azure it also deploys the Bastion and Ansible

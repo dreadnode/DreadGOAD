@@ -140,6 +140,78 @@ func TestValidateUpProvisionResume(t *testing.T) {
 	}
 }
 
+func TestSelectUpStepsInfraOnlyStopsAfterInfrastructure(t *testing.T) {
+	all := []upStep{
+		{id: "doctor"},
+		{id: "infra"},
+		{id: "provision"},
+		{id: "health-check"},
+	}
+
+	steps, err := selectUpSteps(all, "", false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := upStepIDs(steps); !slices.Equal(got, []string{"doctor", "infra"}) {
+		t.Errorf("infra-only steps = %v, want doctor + infra", got)
+	}
+
+	steps, err = selectUpSteps(all, "", true, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := upStepIDs(steps); !slices.Equal(got, []string{"infra"}) {
+		t.Errorf("skip-doctor infra-only steps = %v, want infra", got)
+	}
+}
+
+func TestValidateUpExecutionOptionsRejectsKaliAsAnsibleLimit(t *testing.T) {
+	err := validateUpExecutionOptions(upExecutionOptions{
+		withKali: true,
+		limit:    "dc01, KALI",
+	})
+	if err == nil || !strings.Contains(err.Error(), "not an Ansible inventory host") ||
+		!strings.Contains(err.Error(), "--infra-only --module kali") {
+		t.Fatalf("error = %v, want Kali inventory guidance", err)
+	}
+}
+
+func TestValidateUpExecutionOptionsInfraOnlyRejectsProvisionFlags(t *testing.T) {
+	zero := 0
+	for _, tc := range []struct {
+		name string
+		opts upExecutionOptions
+	}{
+		{name: "limit", opts: upExecutionOptions{infraOnly: true, limit: "dc01"}},
+		{name: "plays", opts: upExecutionOptions{infraOnly: true, plays: "build.yml"}},
+		{name: "from playbook", opts: upExecutionOptions{infraOnly: true, fromPlaybook: "build.yml"}},
+		{name: "retry", opts: upExecutionOptions{infraOnly: true, retry: retryOverrides{maxRetries: &zero}}},
+		{name: "late start", opts: upExecutionOptions{infraOnly: true, fromStep: "provision"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := validateUpExecutionOptions(tc.opts); err == nil {
+				t.Fatal("incompatible infra-only options were accepted")
+			}
+		})
+	}
+
+	if err := validateUpExecutionOptions(upExecutionOptions{
+		infraOnly: true,
+		withKali:  true,
+		fromStep:  "infra",
+	}); err != nil {
+		t.Fatalf("valid Kali infra-only options rejected: %v", err)
+	}
+}
+
+func upStepIDs(steps []upStep) []string {
+	ids := make([]string, len(steps))
+	for i, step := range steps {
+		ids[i] = step.id
+	}
+	return ids
+}
+
 func TestUpResumeCommandNamesFailedPlaybook(t *testing.T) {
 	cause := errors.New("ansible failed")
 	failure := &provisionFailure{
@@ -221,6 +293,20 @@ func TestUpResumeCommandPreservesOverridesBeforeProvisioning(t *testing.T) {
 	got = upResumeCommand("health-check", errors.New("check failed"), opts)
 	if want := "dreadgoad up --from health-check"; got != want {
 		t.Errorf("health-check resume command = %q, want %q", got, want)
+	}
+}
+
+func TestUpResumeCommandPreservesKaliInfraOnlyMode(t *testing.T) {
+	opts := upResumeOptions{
+		infraModule: "kali",
+		withKali:    true,
+		infraOnly:   true,
+	}
+
+	got := upResumeCommand("infra", errors.New("terraform failed"), opts)
+	want := "dreadgoad up --from infra --module 'kali' --with-kali --infra-only"
+	if got != want {
+		t.Errorf("resume command = %q, want %q", got, want)
 	}
 }
 

@@ -294,6 +294,9 @@ def test_load_prompt_and_guidance_injection() -> None:
     assert "continues through provisioning" in up_prompt
     assert "dreadgoad infra apply" in up_prompt
     assert "--from-playbook" in up_prompt
+    assert "--infra-only --module kali" in up_prompt
+    assert "Never pass `--limit kali`" in up_prompt
+    assert "/up --with-kali --skip-doctor --limit kali" not in up_prompt
     print("PASS test_load_prompt_and_guidance_injection")
 
 

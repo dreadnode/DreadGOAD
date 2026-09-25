@@ -1009,7 +1009,11 @@ func provisionPlaybooks(ctx context.Context, cfg *config.Config, playbooks []str
 	} else if tunnel != nil {
 		socksTunnel = tunnel
 		socksVars = vars
-		defer socksTunnel.Close()
+		defer func() {
+			if socksTunnel != nil {
+				socksTunnel.Close()
+			}
+		}()
 	}
 
 	runVars := applyExtraVars(socksVars, extraVars)
@@ -1033,6 +1037,11 @@ func provisionPlaybooks(ctx context.Context, cfg *config.Config, playbooks []str
 			Debug:         cfg.Debug,
 			LogFile:       logFile,
 			ExtraVars:     runVars,
+		}
+		if socksTunnel != nil {
+			opts.RefreshTransport = func(retryCtx context.Context) error {
+				return refreshSOCKSTunnel(retryCtx, cfg, &socksTunnel, runVars, extraVars, maybeStartSOCKSTunnel)
+			}
 		}
 		retry.apply(&opts)
 
@@ -1060,6 +1069,43 @@ func provisionPlaybooks(ctx context.Context, cfg *config.Config, playbooks []str
 	fmt.Printf("All playbooks completed successfully at %s\n", time.Now().Format(time.RFC3339))
 	fmt.Printf("Full log: %s\n", logFile)
 	fmt.Println("===============================================")
+	return nil
+}
+
+type socksTunnelStarter func(context.Context, *config.Config) (closableTunnel, map[string]string, error)
+
+// refreshSOCKSTunnel discards a failed provider tunnel and updates runVars in
+// place so every RetryOptions copy observes the replacement proxy URL. User
+// extra-vars are layered again after the provider defaults, matching the
+// initial provisioning setup.
+func refreshSOCKSTunnel(
+	ctx context.Context,
+	cfg *config.Config,
+	current *closableTunnel,
+	runVars, extraVars map[string]string,
+	start socksTunnelStarter,
+) error {
+	if current == nil || *current == nil {
+		return fmt.Errorf("cannot refresh an unavailable SOCKS tunnel")
+	}
+
+	(*current).Close()
+	*current = nil
+
+	next, socksVars, err := start(ctx, cfg)
+	if err != nil {
+		return fmt.Errorf("reopen SOCKS tunnel: %w", err)
+	}
+	if next == nil {
+		return fmt.Errorf("reopen SOCKS tunnel: provider returned no tunnel")
+	}
+	*current = next
+
+	nextRunVars := applyExtraVars(socksVars, extraVars)
+	clear(runVars)
+	for key, value := range nextRunVars {
+		runVars[key] = value
+	}
 	return nil
 }
 

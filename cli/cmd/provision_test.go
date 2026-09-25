@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -14,6 +15,14 @@ import (
 	"github.com/dreadnode/dreadgoad/internal/variant"
 	"github.com/spf13/cobra"
 )
+
+type fakeClosableTunnel struct {
+	closed int
+}
+
+func (t *fakeClosableTunnel) Close() {
+	t.closed++
+}
 
 func TestProvisionFailureCarriesResumeDetails(t *testing.T) {
 	cause := errors.New("ansible failed")
@@ -33,6 +42,81 @@ func TestProvisionFailureCarriesResumeDetails(t *testing.T) {
 	var got *provisionFailure
 	if !errors.As(fmt.Errorf("outer: %w", err), &got) || got.Playbook != "ad-data.yml" || got.LogFile != "/tmp/provision.log" {
 		t.Errorf("errors.As() = %#v, want structured failure details", got)
+	}
+}
+
+func TestRefreshSOCKSTunnelReplacesTunnelAndVars(t *testing.T) {
+	oldTunnel := &fakeClosableTunnel{}
+	newTunnel := &fakeClosableTunnel{}
+	var current closableTunnel = oldTunnel
+	runVars := map[string]string{
+		"ansible_connection": "psrp",
+		"ansible_psrp_proxy": "socks5h://localhost:10001",
+		"stale":              "remove-me",
+	}
+	extraVars := map[string]string{"caller_override": "preserved"}
+
+	starts := 0
+	err := refreshSOCKSTunnel(
+		context.Background(),
+		&config.Config{},
+		&current,
+		runVars,
+		extraVars,
+		func(context.Context, *config.Config) (closableTunnel, map[string]string, error) {
+			starts++
+			return newTunnel, map[string]string{
+				"ansible_connection": "psrp",
+				"ansible_psrp_proxy": "socks5h://localhost:20002",
+			}, nil
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if starts != 1 {
+		t.Fatalf("tunnel starts = %d, want 1", starts)
+	}
+	if oldTunnel.closed != 1 {
+		t.Errorf("old tunnel closes = %d, want 1", oldTunnel.closed)
+	}
+	if current != newTunnel {
+		t.Errorf("current tunnel = %T %p, want replacement %p", current, current, newTunnel)
+	}
+	if got := runVars["ansible_psrp_proxy"]; got != "socks5h://localhost:20002" {
+		t.Errorf("proxy = %q, want replacement proxy", got)
+	}
+	if got := runVars["caller_override"]; got != "preserved" {
+		t.Errorf("caller override = %q, want preserved", got)
+	}
+	if _, exists := runVars["stale"]; exists {
+		t.Error("stale tunnel vars survived refresh")
+	}
+}
+
+func TestRefreshSOCKSTunnelFailsClosedWhenReplacementCannotStart(t *testing.T) {
+	oldTunnel := &fakeClosableTunnel{}
+	var current closableTunnel = oldTunnel
+	runVars := map[string]string{"ansible_psrp_proxy": "socks5h://localhost:10001"}
+
+	err := refreshSOCKSTunnel(
+		context.Background(),
+		&config.Config{},
+		&current,
+		runVars,
+		nil,
+		func(context.Context, *config.Config) (closableTunnel, map[string]string, error) {
+			return nil, nil, errors.New("fixture failure")
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "reopen SOCKS tunnel") {
+		t.Fatalf("error = %v, want replacement failure", err)
+	}
+	if oldTunnel.closed != 1 {
+		t.Errorf("old tunnel closes = %d, want 1", oldTunnel.closed)
+	}
+	if current != nil {
+		t.Errorf("current tunnel = %T, want nil after failed replacement", current)
 	}
 }
 

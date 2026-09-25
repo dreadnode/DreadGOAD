@@ -75,6 +75,27 @@ func TestMSSQLSecretsAreTransportedWithoutPowerShellInterpolation(t *testing.T) 
 	rolesRoot := filepath.Join(
 		filepath.Dir(sourceFile), "..", "..", "..", "ansible", "roles",
 	)
+	playbooksRoot := filepath.Join(rolesRoot, "..", "playbooks")
+
+	servers, err := os.ReadFile(filepath.Join(playbooksRoot, "servers.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	serversSource := string(servers)
+	diagnosticStart := strings.Index(serversSource, "- name: Display non-sensitive MSSQL installation variables")
+	if diagnosticStart < 0 {
+		t.Fatal("could not locate the MSSQL diagnostic task")
+	}
+	diagnosticEnd := strings.Index(serversSource[diagnosticStart:], "\n  roles:")
+	if diagnosticEnd < 0 {
+		t.Fatal("could not locate the end of the MSSQL diagnostic task")
+	}
+	diagnosticBlock := serversSource[diagnosticStart : diagnosticStart+diagnosticEnd]
+	for _, secret := range []string{"SQLSVCPASSWORD", "domain_admin_password", "sa_password", "linked_servers:"} {
+		if strings.Contains(diagnosticBlock, secret) {
+			t.Errorf("MSSQL diagnostic task logs secret-bearing field %q", secret)
+		}
+	}
 
 	config, err := os.ReadFile(filepath.Join(rolesRoot, "mssql", "tasks", "config.yml"))
 	if err != nil {

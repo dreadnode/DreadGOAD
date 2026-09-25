@@ -124,6 +124,18 @@ func TestDetectErrorType(t *testing.T) {
 			wantType: ErrUnclassified,
 		},
 		{
+			name:     "SOCKS host unreachable",
+			output:   `Failed to connect to the host via PSRP: SOCKSHTTPConnectionPool(host='10.0.0.7', port=5985): SOCKSConnection failed: 0x04: Host unreachable`,
+			wantType: ErrTransport,
+			wantMsg:  "remote WinRM transport",
+		},
+		{
+			name:     "inventory limit matches no hosts",
+			output:   `[ERROR]: Specified inventory, host pattern and/or --limit leaves us with no hosts to target.`,
+			wantType: ErrNoMatchingHosts,
+			wantMsg:  "matched no Ansible hosts",
+		},
+		{
 			name:     "unclassified error with fatal line",
 			output:   "fatal: [DC01]: FAILED! => {\"msg\": \"some unknown error\"}",
 			wantType: ErrUnclassified,

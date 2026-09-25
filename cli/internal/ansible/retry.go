@@ -32,6 +32,10 @@ type RetryOptions struct {
 	RetryDelaySet bool
 	LogFile       string
 	Log           *slog.Logger // optional; falls back to slog.Default()
+	// RefreshTransport replaces provider connection state before retrying a
+	// failed transport attempt. Provisioning uses it to rebuild Azure/Ludus
+	// SOCKS chains instead of repeatedly reusing a dead proxy connection.
+	RefreshTransport func(context.Context) error
 }
 
 func (o *RetryOptions) logger() *slog.Logger {
@@ -61,6 +65,7 @@ func RunPlaybookWithRetry(ctx context.Context, opts RetryOptions) error {
 	)
 
 	retryForks := 2 // limit SSM concurrency to avoid session saturation
+	var retryCause *RunResult
 	for attempt := range opts.MaxRetries {
 		// An interrupt reaches ansible-playbook directly (shared foreground
 		// process group), so the attempt comes back as an ordinary failure and
@@ -77,6 +82,9 @@ func RunPlaybookWithRetry(ctx context.Context, opts RetryOptions) error {
 			case <-ctx.Done():
 				return ctx.Err()
 			case <-time.After(opts.RetryDelay):
+			}
+			if err := refreshTransportForRetry(ctx, opts, retryCause, log); err != nil {
+				return fmt.Errorf("prepare playbook retry: %w", err)
 			}
 		}
 
@@ -97,6 +105,7 @@ func RunPlaybookWithRetry(ctx context.Context, opts RetryOptions) error {
 			log.Error("playbook timed out (idle timeout)", "playbook", opts.Playbook)
 			CleanupSSMSessions(ctx, opts.Env, log)
 			retryForks = 1
+			retryCause = result
 			continue
 		}
 
@@ -108,15 +117,22 @@ func RunPlaybookWithRetry(ctx context.Context, opts RetryOptions) error {
 		log.Warn("playbook failed", "playbook", opts.Playbook,
 			"error_type", result.ErrorType, "detail", result.ErrorDetail,
 			"failed_hosts", result.FailedHosts)
+		if result.ErrorType == ErrNoMatchingHosts {
+			return fmt.Errorf("playbook %s cannot run: %s", opts.Playbook, result.ErrorDetail)
+		}
 		if retriesDisabled {
 			continue
 		}
 
-		retryResult := retryWithErrorStrategy(ctx, opts, result, log)
+		retryResult, err := retryWithErrorStrategy(ctx, opts, result, log)
+		if err != nil {
+			return fmt.Errorf("prepare playbook retry: %w", err)
+		}
 		if retryResult != nil && retryResult.Success {
 			log.Info("playbook succeeded after error-specific retry", "playbook", opts.Playbook)
 			return nil
 		}
+		retryCause = retryResult
 	}
 
 	return fmt.Errorf("playbook %s failed after %d attempts", opts.Playbook, opts.MaxRetries)
@@ -141,7 +157,10 @@ func resolveRetrySettings(opts RetryOptions, configuredMaxRetries int, configure
 	return maxAttempts, retryDelay, retriesDisabled
 }
 
-func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *RunResult, log *slog.Logger) *RunResult {
+func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *RunResult, log *slog.Logger) (*RunResult, error) {
+	if err := refreshTransportForRetry(ctx, opts, failResult, log); err != nil {
+		return nil, err
+	}
 	limit := retryLimit(opts, failResult.FailedHosts)
 
 	baseOpts := RunOptions{
@@ -165,7 +184,7 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 		baseOpts.ExtraEnv = map[string]string{
 			"ANSIBLE_GATHERING": "explicit",
 		}
-		return runPlaybookAttempt(ctx, baseOpts)
+		return runPlaybookAttempt(ctx, baseOpts), nil
 
 	case ErrNetworkAdapter:
 		log.Info("retrying with network adapter fix")
@@ -173,7 +192,7 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 			"skip_network_adapter_config": "true",
 			"bypass_ethernet3_check":      "true",
 		})
-		return runPlaybookAttempt(ctx, baseOpts)
+		return runPlaybookAttempt(ctx, baseOpts), nil
 
 	case ErrSSMTransfer:
 		log.Info("SSM transfer error - fixing ssm-user accounts")
@@ -191,7 +210,7 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 			"ansible_aws_ssm_timeout":     "300",
 		})
 		baseOpts.ExtraEnv = map[string]string{"ANSIBLE_TIMEOUT": "300"}
-		return runPlaybookAttempt(ctx, baseOpts)
+		return runPlaybookAttempt(ctx, baseOpts), nil
 
 	case ErrSSMReconnection:
 		log.Info("SSM reconnection needed - waiting for systems to reboot")
@@ -209,7 +228,7 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 			"ansible_facts_gathering_timeout": "60",
 		})
 		baseOpts.ExtraEnv = map[string]string{"ANSIBLE_TIMEOUT": "180"}
-		return runPlaybookAttempt(ctx, baseOpts)
+		return runPlaybookAttempt(ctx, baseOpts), nil
 
 	case ErrPowerShell:
 		log.Info("retrying with PowerShell interactive mode fix")
@@ -218,7 +237,7 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 			"force_ps_module":    "true",
 			"ansible_ps_version": "5.1",
 		})
-		return runPlaybookAttempt(ctx, baseOpts)
+		return runPlaybookAttempt(ctx, baseOpts), nil
 
 	case ErrSSMUserAccount:
 		log.Info("SSM user account issue - recreating as domain account")
@@ -233,7 +252,7 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 			"ansible_aws_ssm_timeout":    "300",
 		})
 		baseOpts.ExtraEnv = map[string]string{"ANSIBLE_TIMEOUT": "180"}
-		return runPlaybookAttempt(ctx, baseOpts)
+		return runPlaybookAttempt(ctx, baseOpts), nil
 
 	case ErrMSIInstaller:
 		log.Info("MSI installer error - rebooting failed hosts before retry")
@@ -241,7 +260,7 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 		time.Sleep(30 * time.Second)
 
 		baseOpts.Forks = 1
-		return runPlaybookAttempt(ctx, baseOpts)
+		return runPlaybookAttempt(ctx, baseOpts), nil
 
 	case ErrWUACOM:
 		log.Info("WUA COM corruption - rebooting to clear pending registry deletions")
@@ -249,7 +268,7 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 		time.Sleep(30 * time.Second)
 
 		baseOpts.Forks = 1
-		return runPlaybookAttempt(ctx, baseOpts)
+		return runPlaybookAttempt(ctx, baseOpts), nil
 
 	case ErrPackageMgmt:
 		log.Info("PackageManagement DLL failure - rebooting to clear pending file operations")
@@ -257,7 +276,15 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 		time.Sleep(30 * time.Second)
 
 		baseOpts.Forks = 1
-		return runPlaybookAttempt(ctx, baseOpts)
+		return runPlaybookAttempt(ctx, baseOpts), nil
+
+	case ErrTransport:
+		log.Info("retrying after remote transport failure")
+		baseOpts.Forks = 1
+		baseOpts.ExtraEnv = map[string]string{
+			"ANSIBLE_TIMEOUT": "120",
+		}
+		return runPlaybookAttempt(ctx, baseOpts), nil
 
 	default:
 		log.Info("retrying with general robust settings")
@@ -266,8 +293,16 @@ func retryWithErrorStrategy(ctx context.Context, opts RetryOptions, failResult *
 			"ANSIBLE_SSH_RETRIES": "5",
 			"ANSIBLE_TIMEOUT":     "120",
 		}
-		return runPlaybookAttempt(ctx, baseOpts)
+		return runPlaybookAttempt(ctx, baseOpts), nil
 	}
+}
+
+func refreshTransportForRetry(ctx context.Context, opts RetryOptions, failResult *RunResult, log *slog.Logger) error {
+	if opts.RefreshTransport == nil || failResult == nil || failResult.ErrorType != ErrTransport {
+		return nil
+	}
+	log.Info("refreshing provider transport before retry")
+	return opts.RefreshTransport(ctx)
 }
 
 func retryLimit(opts RetryOptions, failedHosts []string) string {

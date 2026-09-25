@@ -21,6 +21,8 @@ const (
 	ErrMSIInstaller    ErrorType = "msi_installer_error"
 	ErrWUACOM          ErrorType = "wua_com_error"
 	ErrPackageMgmt     ErrorType = "package_management_dll"
+	ErrTransport       ErrorType = "remote_transport_error"
+	ErrNoMatchingHosts ErrorType = "no_matching_hosts"
 	ErrUnclassified    ErrorType = "unclassified"
 )
 
@@ -63,6 +65,16 @@ func DetectErrorType(output string) (ErrorType, string) {
 	case strings.Contains(strings.ToLower(output), "packagemanagement") &&
 		containsAny(output, "0x8000FFFF", "8000ffff", "Catastrophic failure"):
 		return ErrPackageMgmt, "PackageManagement DLL load failure (MOTW / 0x8000FFFF)"
+
+	case containsAny(output,
+		"SOCKSHTTPConnectionPool",
+		"SOCKSConnection",
+		"0x04: Host unreachable",
+		"Failed to connect to the host via PSRP"):
+		return ErrTransport, "remote WinRM transport through SOCKS/PSRP is unavailable"
+
+	case strings.Contains(output, "Specified inventory, host pattern and/or --limit leaves us with no hosts to target"):
+		return ErrNoMatchingHosts, "inventory or --limit matched no Ansible hosts"
 
 	default:
 		detail := extractFatalContext(output)

@@ -13,6 +13,7 @@ Flags (all optional — default is a clean full run, no args needed):
 - `--max-retries <n>`    provisioning retry attempts
 - `--retry-delay <sec>`  delay between retries (seconds)
 - `--with-kali`          deploy the optional Kali attack box
+- `--infra-only`         stop after infrastructure apply; skip Ansible and health
 
 Guidance:
 
@@ -29,8 +30,11 @@ Guidance:
   clarify it first. Once intent and arguments are clear, call the command; the
   backend separately shows the exact argv and requires operator approval before
   it executes.
-- When adding a component to an already-running range (e.g. `--with-kali` on a
-  healthy range), ALWAYS pass `--limit` to scope provisioning to the new host.
-  Infra apply is idempotent regardless, but without `--limit` every Ansible
-  playbook re-runs against every host — slow, noisy, and risks disturbing a
-  healthy range. Example: `/up --with-kali --skip-doctor --limit kali`.
+- Kali is infrastructure-managed and intentionally absent from the Ansible
+  inventory. Never pass `--limit kali`: it cannot match and Ansible has nothing
+  to configure on the attack box. For a fresh range, use `/up --with-kali` so
+  the Windows lab and Kali are created together. To add Kali to an already
+  healthy range, run only its infrastructure unit:
+  `/up --with-kali --skip-doctor --infra-only --module kali`.
+- For Ansible-managed components added to a healthy range, continue to use
+  `--limit <inventory-host>` so existing hosts are not reprovisioned.
