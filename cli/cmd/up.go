@@ -98,7 +98,6 @@ func runUp(cmd *cobra.Command, args []string) error {
 		limit:        upLimit,
 		plays:        upPlays,
 		fromPlaybook: upFromPlaybook,
-		withKali:     upWithKali,
 		infraOnly:    upInfraOnly,
 		retry:        retry,
 	}); err != nil {
@@ -209,13 +208,12 @@ type upExecutionOptions struct {
 	limit        string
 	plays        string
 	fromPlaybook string
-	withKali     bool
 	infraOnly    bool
 	retry        retryOverrides
 }
 
 func validateUpExecutionOptions(opts upExecutionOptions) error {
-	if opts.withKali && limitContainsHost(opts.limit, "kali") {
+	if limitContainsHost(opts.limit, "kali") {
 		return fmt.Errorf("kali is infrastructure-managed and is not an Ansible inventory host; use --with-kali --infra-only --module kali")
 	}
 	if !opts.infraOnly {

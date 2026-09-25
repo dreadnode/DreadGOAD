@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -15,6 +17,7 @@ from . import labconfig, paths, projectroot, scaffold
 
 
 _SAFE_ENV = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+_MATERIALIZATION_VERSION = 1
 
 
 @dataclass(frozen=True)
@@ -71,6 +74,42 @@ def _environment_settings(
     return document, settings
 
 
+def _materialization_marker(project_root: Path, env: str) -> Path:
+    return project_root / ".dreadgoad" / "cache" / f"{env}-materialization.json"
+
+
+def _owned_materialized_config(
+    project_root: Path, env: str, expected: Path
+) -> tuple[Path, ...]:
+    """Return a materialized config and marker only when their proof matches."""
+    marker = _materialization_marker(project_root, env)
+    try:
+        if marker.is_symlink() or not marker.is_file():
+            return ()
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return ()
+    if not isinstance(payload, dict):
+        return ()
+
+    candidate = Path(os.path.abspath(expected))
+    if payload.get("version") != _MATERIALIZATION_VERSION:
+        return ()
+    if payload.get("env") != env or payload.get("path") != str(candidate):
+        return ()
+    if not candidate.exists():
+        return (marker,)
+    if candidate.is_symlink() or not candidate.is_file():
+        return ()
+    try:
+        digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
+    except OSError:
+        return ()
+    if payload.get("sha256") != digest:
+        return ()
+    return candidate, marker
+
+
 def build_plan(session: dict[str, object]) -> PurgePlan:
     """Validate ownership and enumerate artifacts before cloud destruction starts."""
     anchor = session.get("anchor")
@@ -106,6 +145,7 @@ def build_plan(session: dict[str, object]) -> PurgePlan:
         project_root / ".dreadgoad" / "cache" / f"{env}-config.json",
     ]
 
+    lab = labconfig.resolve_lab(settings, document.get("lab"))
     is_variant = bool(settings.get("variant"))
     source: str | None = None
     variant_target: Path | None = None
@@ -125,15 +165,17 @@ def build_plan(session: dict[str, object]) -> PurgePlan:
             )
         candidates.append(variant_target)
     else:
-        lab = labconfig.resolve_lab(settings, document.get("lab"))
         if lab == "GOAD" or Path(lab).parts == ("ad", "GOAD"):
             data_dir = project_root / "ad" / "GOAD" / "data"
-            candidates.extend(
-                [
-                    data_dir / f"{env}-overlay.json",
-                    data_dir / f"{env}-config.json",
-                ]
-            )
+            candidates.append(data_dir / f"{env}-overlay.json")
+
+    lab_root = variant_target if is_variant else Path(lab)
+    if lab_root is None:
+        raise ValueError(f"variant target was not resolved for environment {env!r}")
+    if not lab_root.is_absolute():
+        lab_root = project_root / lab_root
+    materialized = lab_root / "data" / f"{env}-config.json"
+    candidates.extend(_owned_materialized_config(project_root, env, materialized))
 
     ownership_marker = scaffold.require_ownership(
         config_path,

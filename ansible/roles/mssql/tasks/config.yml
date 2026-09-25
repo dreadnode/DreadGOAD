@@ -142,6 +142,7 @@
       Start-Sleep -Seconds 2
     }
     if (-not $verified) { throw "SQL sysadmin verification failed for ${currentIdentity}: $verify" }
+  no_log: true
 
 - name: Add MSSQL admin
   ansible.windows.win_shell: |
@@ -280,6 +281,7 @@
     }
     Write-Output "Successfully enabled sa account"
   register: sa_result
+  no_log: true
 
 - name: Log sa account errors
   ansible.builtin.debug:

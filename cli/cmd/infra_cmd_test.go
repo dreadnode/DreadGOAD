@@ -1,8 +1,10 @@
 package cmd
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -192,6 +194,23 @@ func TestMaterializeLabConfigUsesActiveLab(t *testing.T) {
 	if string(got) != string(want) {
 		t.Errorf("materialized config = %s, want %s", got, want)
 	}
+	markerData, err := os.ReadFile(materializedConfigOwnershipPath(cfg))
+	if err != nil {
+		t.Fatalf("read materialization ownership marker: %v", err)
+	}
+	var marker materializedConfigOwnership
+	if err := json.Unmarshal(markerData, &marker); err != nil {
+		t.Fatalf("parse materialization ownership marker: %v", err)
+	}
+	absDestination, err := filepath.Abs(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if marker.Version != materializedConfigOwnershipVersion ||
+		marker.Env != cfg.Env || marker.Path != absDestination ||
+		marker.SHA256 != fmt.Sprintf("%x", sha256.Sum256(want)) {
+		t.Errorf("materialization ownership marker = %+v", marker)
+	}
 }
 
 func TestMaterializeLabConfigSurfacesResolutionFailure(t *testing.T) {
@@ -342,6 +361,10 @@ func TestMaterializeLabConfigLeavesLegacyDestinationUntouched(t *testing.T) {
 	}
 	if string(got) != string(want) {
 		t.Errorf("legacy config changed: got %s, want %s", got, want)
+	}
+	marker := materializedConfigOwnershipPath(&config.Config{ProjectRoot: root, Env: "dev"})
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("legacy config received generated ownership marker: %v", err)
 	}
 }
 

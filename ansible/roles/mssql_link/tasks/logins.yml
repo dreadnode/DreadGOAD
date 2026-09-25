@@ -76,3 +76,4 @@
   with_items: "{{ users_mapping }}"
   loop_control:
     loop_var: mapping_item
+  no_log: true

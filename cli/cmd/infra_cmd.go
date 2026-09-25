@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -23,6 +25,15 @@ import (
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
+
+const materializedConfigOwnershipVersion = 1
+
+type materializedConfigOwnership struct {
+	Version int    `json:"version"`
+	Env     string `json:"env"`
+	Path    string `json:"path"`
+	SHA256  string `json:"sha256"`
+}
 
 var infraCmd = &cobra.Command{
 	Use:   "infra",
@@ -191,6 +202,67 @@ func materializeLabConfig(cfg *config.Config) error {
 	}
 	if err := os.WriteFile(expected, data, 0o644); err != nil {
 		return fmt.Errorf("write lab config: %w", err)
+	}
+	if err := recordMaterializedConfigOwnership(cfg, expected, data); err != nil {
+		return fmt.Errorf("record materialized lab config ownership: %w", err)
+	}
+	return nil
+}
+
+func materializedConfigOwnershipPath(cfg *config.Config) string {
+	return filepath.Join(cfg.ProjectRoot, ".dreadgoad", "cache", cfg.Env+"-materialization.json")
+}
+
+func recordMaterializedConfigOwnership(cfg *config.Config, path string, data []byte) error {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolve materialized config path: %w", err)
+	}
+	marker := materializedConfigOwnershipPath(cfg)
+	if err := rejectSymlinkComponents(marker, cfg.ProjectRoot); err != nil {
+		return fmt.Errorf("inspect ownership marker path: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+		return fmt.Errorf("create ownership marker directory: %w", err)
+	}
+	payload, err := json.Marshal(materializedConfigOwnership{
+		Version: materializedConfigOwnershipVersion,
+		Env:     cfg.Env,
+		Path:    absPath,
+		SHA256:  fmt.Sprintf("%x", sha256.Sum256(data)),
+	})
+	if err != nil {
+		return fmt.Errorf("encode ownership marker: %w", err)
+	}
+	payload = append(payload, '\n')
+	temporary, err := os.CreateTemp(filepath.Dir(marker), "."+filepath.Base(marker)+".*")
+	if err != nil {
+		return fmt.Errorf("create ownership marker temporary file: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	cleanup := func() {
+		_ = temporary.Close()
+		_ = os.Remove(temporaryPath)
+	}
+	if err := temporary.Chmod(0o600); err != nil {
+		cleanup()
+		return fmt.Errorf("secure ownership marker temporary file: %w", err)
+	}
+	if _, err := temporary.Write(payload); err != nil {
+		cleanup()
+		return fmt.Errorf("write ownership marker: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		cleanup()
+		return fmt.Errorf("sync ownership marker: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		_ = os.Remove(temporaryPath)
+		return fmt.Errorf("close ownership marker: %w", err)
+	}
+	if err := os.Rename(temporaryPath, marker); err != nil {
+		_ = os.Remove(temporaryPath)
+		return fmt.Errorf("rename ownership marker: %w", err)
 	}
 	return nil
 }

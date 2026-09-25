@@ -166,10 +166,7 @@ func TestSelectUpStepsInfraOnlyStopsAfterInfrastructure(t *testing.T) {
 }
 
 func TestValidateUpExecutionOptionsRejectsKaliAsAnsibleLimit(t *testing.T) {
-	err := validateUpExecutionOptions(upExecutionOptions{
-		withKali: true,
-		limit:    "dc01, KALI",
-	})
+	err := validateUpExecutionOptions(upExecutionOptions{limit: "dc01, KALI"})
 	if err == nil || !strings.Contains(err.Error(), "not an Ansible inventory host") ||
 		!strings.Contains(err.Error(), "--infra-only --module kali") {
 		t.Fatalf("error = %v, want Kali inventory guidance", err)
@@ -197,10 +194,9 @@ func TestValidateUpExecutionOptionsInfraOnlyRejectsProvisionFlags(t *testing.T) 
 
 	if err := validateUpExecutionOptions(upExecutionOptions{
 		infraOnly: true,
-		withKali:  true,
 		fromStep:  "infra",
 	}); err != nil {
-		t.Fatalf("valid Kali infra-only options rejected: %v", err)
+		t.Fatalf("valid infra-only options rejected: %v", err)
 	}
 }
 

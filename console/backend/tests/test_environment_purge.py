@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import pathlib
 import sys
@@ -24,6 +26,24 @@ def _session(config: pathlib.Path) -> dict[str, t.Any]:
             "lab": "GOAD-ahab",
         },
     }
+
+
+def _record_materialization(
+    root: pathlib.Path, env: str, target: pathlib.Path
+) -> pathlib.Path:
+    marker = root / ".dreadgoad" / "cache" / f"{env}-materialization.json"
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "env": env,
+                "path": str(target.resolve()),
+                "sha256": hashlib.sha256(target.read_bytes()).hexdigest(),
+            }
+        )
+    )
+    return marker
 
 
 def test_variant_purge_removes_only_owned_artifacts() -> None:
@@ -115,6 +135,7 @@ def test_base_range_purge_removes_generated_data() -> None:
         overlay.write_text("{}")
         generated_config.write_text("{}")
         authored.write_text("{}")
+        materialization_marker = _record_materialization(root, "ahab", generated_config)
         marker = scaffold.record_ownership(
             config, "ahab", root, "azure", "goad-deployment"
         )
@@ -124,11 +145,73 @@ def test_base_range_purge_removes_generated_data() -> None:
         session["snapshot"]["lab"] = "ad/GOAD"
         plan = environment_purge.build_plan(session)
         assert overlay in plan.targets and generated_config in plan.targets
+        assert materialization_marker in plan.targets
         environment_purge.execute(plan)
 
         assert not overlay.exists() and not generated_config.exists()
+        assert not materialization_marker.exists()
         assert authored.exists(), "purge removed an authored base-range file"
     print("PASS test_base_range_purge_removes_generated_data")
+
+
+def test_purge_preserves_unowned_legacy_config() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory).resolve()
+        os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = str(
+            root / ".dreadgoad" / "console"
+        )
+        (root / "ansible").mkdir()
+        config = paths.configs_root() / "ahab.yaml"
+        config.write_text(
+            yaml.safe_dump({"environments": {"ahab": {"provider": "azure"}}})
+        )
+        data_dir = root / "ad" / "GOAD" / "data"
+        data_dir.mkdir(parents=True)
+        legacy = data_dir / "ahab-config.json"
+        legacy.write_text('{"authored":true}')
+        marker = scaffold.record_ownership(
+            config, "ahab", root, "azure", "goad-deployment"
+        )
+        assert marker is not None
+
+        plan = environment_purge.build_plan(_session(config))
+        assert legacy not in plan.targets
+        environment_purge.execute(plan)
+
+        assert legacy.read_text() == '{"authored":true}'
+    print("PASS test_purge_preserves_unowned_legacy_config")
+
+
+def test_purge_removes_owned_materialization_for_non_goad_lab() -> None:
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory).resolve()
+        os.environ["DREADGOAD_CONSOLE_STATE_ROOT"] = str(
+            root / ".dreadgoad" / "console"
+        )
+        (root / "ansible").mkdir()
+        config = paths.configs_root() / "ahab.yaml"
+        config.write_text(
+            yaml.safe_dump(
+                {"environments": {"ahab": {"provider": "azure", "lab": "SERVICE"}}}
+            )
+        )
+        data_dir = root / "ad" / "SERVICE" / "data"
+        data_dir.mkdir(parents=True)
+        materialized = data_dir / "ahab-config.json"
+        materialized.write_text('{"generated":true}')
+        materialization_marker = _record_materialization(root, "ahab", materialized)
+        marker = scaffold.record_ownership(
+            config, "ahab", root, "azure", "goad-deployment"
+        )
+        assert marker is not None
+
+        plan = environment_purge.build_plan(_session(config))
+        assert materialized in plan.targets
+        assert materialization_marker in plan.targets
+        environment_purge.execute(plan)
+
+        assert not materialized.exists() and not materialization_marker.exists()
+    print("PASS test_purge_removes_owned_materialization_for_non_goad_lab")
 
 
 def test_purge_rejects_imported_or_shared_configs() -> None:
@@ -432,6 +515,8 @@ def main() -> None:
     try:
         test_variant_purge_removes_only_owned_artifacts()
         test_base_range_purge_removes_generated_data()
+        test_purge_preserves_unowned_legacy_config()
+        test_purge_removes_owned_materialization_for_non_goad_lab()
         test_purge_rejects_imported_or_shared_configs()
         test_purge_requires_scaffold_ownership_proof()
         test_purge_ownership_is_bound_to_variant_settings()
