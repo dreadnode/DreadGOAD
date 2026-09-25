@@ -14,7 +14,12 @@ layout in Python, the same way lab discovery defers to ``lab list --json``.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import stat
+import tempfile
+from pathlib import Path
 
 from . import commands, paths, projectroot
 from .cli import Capture, capture
@@ -22,6 +27,133 @@ from .cli import Capture, capture
 # Mirrors viper's default (cli/internal/config/defaults.go:123). The console
 # writes configs without an `infra:` block, so this is what they resolve to.
 DEFAULT_DEPLOYMENT = "goad-deployment"
+_OWNERSHIP_VERSION = 2
+
+
+def ownership_marker_path(config_path: str | Path, env: str) -> Path:
+    """Return the private marker proving a managed scaffold completed."""
+    config = Path(config_path).expanduser().resolve(strict=False)
+    digest = hashlib.sha256(env.encode("utf-8")).hexdigest()[:16]
+    return config.with_name(f".{config.name}.{digest}.scaffold.json")
+
+
+def _variant_ownership(
+    env: str,
+    project_root: str | Path,
+    variant: bool,
+    variant_source: str | Path | None,
+    variant_target: str | Path | None,
+) -> dict[str, object]:
+    root = Path(project_root).resolve(strict=False)
+    if not variant:
+        return {"variant": False, "variant_source": None, "variant_target": None}
+
+    source = Path(variant_source or "ad/GOAD")
+    if not source.is_absolute():
+        source = root / source
+    source = Path(os.path.abspath(source))
+    target = Path(variant_target or (root / "ad" / f"{source.name}-{env}"))
+    if not target.is_absolute():
+        target = root / target
+    target = Path(os.path.abspath(target))
+    return {
+        "variant": True,
+        "variant_source": str(source),
+        "variant_target": str(target),
+    }
+
+
+def record_ownership(
+    config_path: str | Path,
+    env: str,
+    project_root: str | Path,
+    provider: str,
+    deployment: str,
+    *,
+    variant: bool = False,
+    variant_source: str | Path | None = None,
+    variant_target: str | Path | None = None,
+) -> Path | None:
+    """Persist proof that this console successfully scaffolded an environment."""
+    config = Path(config_path).expanduser().resolve(strict=False)
+    managed_root = paths.configs_root().resolve(strict=False)
+    if config.parent != managed_root:
+        return None
+
+    marker = ownership_marker_path(config, env)
+    payload = {
+        "version": _OWNERSHIP_VERSION,
+        "config_path": str(config),
+        "env": env,
+        "project_root": str(Path(project_root).resolve(strict=False)),
+        "provider": provider,
+        "deployment": deployment,
+        **_variant_ownership(
+            env, project_root, variant, variant_source, variant_target
+        ),
+    }
+    fd, temporary = tempfile.mkstemp(prefix=f".{marker.name}.", dir=marker.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, marker)
+    except Exception:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+    return marker
+
+
+def require_ownership(
+    config_path: str | Path,
+    env: str,
+    project_root: str | Path,
+    provider: str,
+    deployment: str,
+    *,
+    variant: bool = False,
+    variant_source: str | Path | None = None,
+    variant_target: str | Path | None = None,
+) -> Path:
+    """Validate and return the scaffold ownership marker for one environment."""
+    config = Path(config_path).expanduser().resolve(strict=False)
+    root = Path(project_root).resolve(strict=False)
+    marker = ownership_marker_path(config, env)
+    try:
+        mode = marker.lstat().st_mode
+    except FileNotFoundError as exc:
+        raise ValueError(
+            "refusing to purge project artifacts without a console scaffold "
+            f"ownership marker: {marker}"
+        ) from exc
+    if not stat.S_ISREG(mode) or marker.is_symlink():
+        raise ValueError(f"refusing invalid scaffold ownership marker: {marker}")
+    try:
+        payload = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid scaffold ownership marker {marker}: {exc}") from exc
+    expected = {
+        "version": _OWNERSHIP_VERSION,
+        "config_path": str(config),
+        "env": env,
+        "project_root": str(root),
+        "provider": provider,
+        "deployment": deployment,
+        **_variant_ownership(
+            env, project_root, variant, variant_source, variant_target
+        ),
+    }
+    if payload != expected:
+        raise ValueError(
+            f"scaffold ownership marker does not match this environment: {marker}"
+        )
+    return marker
 
 
 def infra_env_dir(
@@ -167,4 +299,21 @@ async def scaffold_env(
         return False, f"could not run dreadgoad env create: {exc}"
 
     output = (stdout or "") + (stderr or "")
+    if return_code == 0:
+        try:
+            record_ownership(
+                config_path,
+                env,
+                root,
+                provider,
+                deployment,
+                variant=variant,
+                variant_source=variant_source,
+                variant_target=variant_target,
+            )
+        except OSError as exc:
+            output += (
+                "\nWarning: infrastructure was scaffolded, but console ownership "
+                f"could not be recorded; /destroy --purge will be unavailable: {exc}"
+            )
     return return_code == 0, output.strip()

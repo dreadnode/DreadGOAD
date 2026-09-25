@@ -15,7 +15,12 @@ APPROVAL_TIMEOUT_SECONDS = 300.0
 
 
 async def require(
-    app: t.Any, session_id: str, command: str, argv: list[str]
+    app: t.Any,
+    session_id: str,
+    command: str,
+    argv: list[str],
+    *,
+    detail: str | None = None,
 ) -> tuple[bool, str | None]:
     """Wait for approval of exactly ``argv``; fail closed on timeout/cancel."""
     if command not in REQUIRED_COMMANDS:
@@ -30,7 +35,7 @@ async def require(
         id=secrets.token_urlsafe(24),
         command=command,
         argv=tuple(argv),
-        detail=commands.REGISTRY[command].detail,
+        detail=detail or commands.REGISTRY[command].detail,
         requested_at=datetime.now(timezone.utc).isoformat(),
         decision=loop.create_future(),
     )

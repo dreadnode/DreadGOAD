@@ -140,14 +140,15 @@ REGISTRY: dict[str, Command] = {
         long_running=True,
         cloud_ops=True,
         destructive=True,
-        description="Tear down all infrastructure for this environment",
+        description="Tear down infrastructure; add --purge to remove its local environment files",
         # Rendered verbatim in the confirmation dialog, so it has to be
         # unambiguous on first read. An earlier phrasing began "no host destroys
         # everything", which parses more naturally as "no host destroys
         # anything" — the opposite of what it does.
         detail=(
             "irreversible — with no hostname this destroys the whole "
-            "environment; with one, only that VM"
+            "environment; with one, only that VM; --purge also permanently "
+            "deletes console-managed local artifacts"
         ),
     ),
     "/instances": Command(
@@ -461,8 +462,9 @@ def _verb_for(cmd: Command, extra: list[str]) -> tuple[list[str], list[str]]:
         # confirms by reading stdin, and a console command has no terminal, so
         # without it the CLI prints "Aborted." and exits 0 — reporting success
         # for a VM it never touched.
-        if extra:
-            return ["lab", "destroy-vm", extra[0], "--yes"], extra[1:]
+        _purge, remaining = destroy_mode(extra)
+        if remaining:
+            return ["lab", "destroy-vm", remaining[0], "--yes"], remaining[1:]
         return list(cmd.verb), []
     if cmd.name in ("/start", "/stop"):
         # `lab start`/`lab stop` act on the whole range; `lab start-vm`/`stop-vm`
@@ -484,6 +486,21 @@ def _verb_for(cmd: Command, extra: list[str]) -> tuple[list[str], list[str]]:
             return ["score", "--report", extra[0]], extra[1:]
         return ["score"], []
     return list(cmd.verb), extra
+
+
+def destroy_mode(extra: list[str]) -> tuple[bool, list[str]]:
+    """Return (purge, remaining args), rejecting purge of only one host."""
+    purge_count = extra.count("--purge")
+    if purge_count > 1:
+        raise ValueError("/destroy accepts --purge only once")
+    purge = purge_count == 1
+    remaining = [arg for arg in extra if arg != "--purge"]
+    if purge and remaining:
+        raise ValueError(
+            "/destroy --purge applies only to the whole environment; "
+            "it cannot be combined with a hostname"
+        )
+    return purge, remaining
 
 
 # Flags that select WHICH range/cloud context the CLI acts on. The console
@@ -521,8 +538,8 @@ _DURATION_PART_RE = re.compile(r"(\d+(?:\.\d+)?)(ms|s|m|h)")
 # that shared builder too and retain the CLI's full path behavior. The agent
 # wrapper calls validate_agent_local_paths() before entering the shared runner.
 _AGENT_LOCAL_PATH_FLAGS: dict[str, frozenset[str]] = {
-    "/up": frozenset({"--module", "--plays"}),
-    "/provision": frozenset({"--plays"}),
+    "/up": frozenset({"--module", "--plays", "--from-playbook"}),
+    "/provision": frozenset({"--plays", "--from"}),
     "/reset": frozenset({"--plays"}),
     "/score": frozenset(
         {"--report", "--answer-key", "--output", "--ssh-key", "--range-artifacts"}
@@ -538,6 +555,9 @@ _AGENT_LOCAL_PATH_FLAGS: dict[str, frozenset[str]] = {
 # member to absorb enough ``..`` components to hide a later escaping member.
 _AGENT_PLAYBOOK_LIST_FLAGS = frozenset(
     {("/up", "--plays"), ("/provision", "--plays"), ("/reset", "--plays")}
+)
+_AGENT_PLAYBOOK_PATH_FLAGS = _AGENT_PLAYBOOK_LIST_FLAGS | frozenset(
+    {("/up", "--from-playbook"), ("/provision", "--from")}
 )
 
 
@@ -609,11 +629,12 @@ def validate_agent_local_paths(
         if not value:
             raise ValueError(f"{flag} requires a non-empty path")
         playbook_list = (name, flag) in _AGENT_PLAYBOOK_LIST_FLAGS
+        playbook_path = (name, flag) in _AGENT_PLAYBOOK_PATH_FLAGS
         values = value.split(",") if playbook_list else [value]
         if any(not item for item in values):
             raise ValueError(f"{flag} contains an empty path")
-        base = project / "ansible" / "playbooks" if playbook_list else project
-        allowed_roots = (base,) if playbook_list else roots
+        base = project / "ansible" / "playbooks" if playbook_path else project
+        allowed_roots = (base,) if playbook_path else roots
         for item in values:
             try:
                 path = Path(item)
@@ -627,7 +648,7 @@ def validate_agent_local_paths(
             if not confined:
                 boundary = (
                     "the range project's ansible/playbooks directory"
-                    if playbook_list
+                    if playbook_path
                     else "the range project or session workspace"
                 )
                 raise ValueError(f"{flag} must stay within {boundary}")

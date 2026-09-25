@@ -39,6 +39,7 @@ dreadgoad up --from provision      # resume from a step
 dreadgoad up --from provision --from-playbook ad-data.yml
 dreadgoad up --skip-doctor         # bypass pre-flight checks
 dreadgoad up --limit dc01          # narrow provisioning to one host
+dreadgoad up --with-kali --skip-doctor --infra-only --module kali
 ```
 
 | Flag | Description |
@@ -46,12 +47,18 @@ dreadgoad up --limit dc01          # narrow provisioning to one host
 | `--from string` | Resume from this step (`doctor`, `infra`, `provision`, `health-check`) |
 | `--from-playbook string` | Resume provisioning from this playbook onward |
 | `--skip-doctor` | Skip the doctor pre-flight checks |
+| `--infra-only` | Stop after infrastructure apply; skip provisioning and health-check |
 | `--limit string` | Limit provisioning to specific hosts |
 | `--plays string` | Comma-separated playbooks to run (default: all) |
 | `--max-retries int` | Max retry attempts for provisioning (`0` disables retries) |
 | `--retry-delay int` | Delay between retries in seconds (`0` disables delay) |
 | `--module string` | Target a specific infra module |
 | `--exclude string` | Exclude infra modules (comma-separated) |
+| `--with-kali` | Include the optional Kali attack box |
+
+Kali is managed by Terraform/cloud-init and is intentionally absent from the
+Ansible inventory. Do not use `--limit kali`; use the infrastructure-only form
+above when adding Kali to an already-running range.
 
 ### config
 

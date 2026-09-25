@@ -97,6 +97,37 @@ func TestSyncThenCredentialGatePasses(t *testing.T) {
 	}
 }
 
+func TestMaterializedPasswordsIgnoreStaleBaseConfigForVariant(t *testing.T) {
+	cfg := pwFixture(t,
+		"[default]\ndc01 ansible_host=10.1.1.5 ansible_password=variant-password\n",
+		map[string]string{"dc01": "stale-base-password"})
+	variantData := filepath.Join(cfg.ProjectRoot, "ad", "GOAD-kraken", "data")
+	if err := os.MkdirAll(variantData, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(variantData, "e1-config.json"),
+		[]byte(`{"lab":{"hosts":{"dc01":{"local_admin_password":"variant-password"}}}}`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Environments = map[string]config.EnvironmentConfig{
+		"e1": {Variant: true, VariantTarget: "ad/GOAD-kraken"},
+	}
+
+	passwords, err := materializedHostPasswords(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := passwords["dc01"]; got != "variant-password" {
+		t.Errorf("materialized password = %q, want variant target value", got)
+	}
+	if err := validateInventoryCredentials(cfg); err != nil {
+		t.Fatalf("stale base config caused a false credential mismatch: %v", err)
+	}
+}
+
 // Passwords carry shell metacharacters. "$" in particular would be read as a
 // capture-group reference by a naive regexp replacement, silently corrupting
 // the value.

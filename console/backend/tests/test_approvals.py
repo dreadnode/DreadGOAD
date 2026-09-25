@@ -159,8 +159,16 @@ async def test_command_runner_stops_before_spawn_when_approval_is_denied() -> No
     original_preflight = command_runner.projectroot.preflight
     original_spawn = command_runner._spawn_and_stream
 
-    async def deny(app_: object, sid: str, name: str, argv: list[str]):
+    async def deny(
+        app_: object,
+        sid: str,
+        name: str,
+        argv: list[str],
+        *,
+        detail: str | None = None,
+    ):
         assert name == "/destroy"
+        assert detail is None
         assert argv[-3:] == ["infra", "destroy", "--auto-approve"]
         return False, "approval-id"
 
@@ -195,13 +203,20 @@ async def test_execution_uses_the_exact_prepared_plan() -> None:
         argv=("dreadgoad", "--config", "/range/config.yml", "up"),
         cwd="/range",
         spec=command_runner.commands.REGISTRY["/up"],
+        approval_detail="exact operation detail",
     )
 
     async def approve(
-        app_: object, sid: str, name: str, argv: list[str]
+        app_: object,
+        sid: str,
+        name: str,
+        argv: list[str],
+        *,
+        detail: str | None = None,
     ) -> tuple[bool, str]:
         nonlocal approved_argv
         assert sid == "s-plan" and name == "/up"
+        assert detail == "exact operation detail"
         approved_argv = tuple(argv)
         return True, "approval-id"
 

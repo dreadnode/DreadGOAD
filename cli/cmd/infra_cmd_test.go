@@ -1,20 +1,173 @@
 package cmd
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/dreadnode/dreadgoad/internal/config"
+	"github.com/dreadnode/dreadgoad/internal/variant"
 )
+
+func markVariantComplete(t *testing.T, target string) {
+	t.Helper()
+	if err := os.WriteFile(
+		filepath.Join(target, variant.CompletionMarkerName),
+		[]byte("complete\n"),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func TestMaterializeLabConfigAllowsMissingOptionalConfig(t *testing.T) {
 	cfg := &config.Config{ProjectRoot: t.TempDir(), Env: "dev"}
 
 	if err := materializeLabConfig(cfg); err != nil {
 		t.Fatalf("materializeLabConfig() error = %v, want nil", err)
+	}
+}
+
+func TestMaterializeLabConfigRejectsMissingVariantTarget(t *testing.T) {
+	root := t.TempDir()
+	baseData := filepath.Join(root, "ad", "GOAD", "data")
+	if err := os.MkdirAll(baseData, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(baseData, "config.json"), []byte(`{"base":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		ProjectRoot: root,
+		Env:         "kraken",
+		Environments: map[string]config.EnvironmentConfig{
+			"kraken": {Variant: true, VariantTarget: "ad/GOAD-kraken"},
+		},
+	}
+
+	err := materializeLabConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "variant target does not exist") {
+		t.Fatalf("materializeLabConfig() error = %v, want missing variant target error", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(baseData, "kraken-config.json")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("base config was materialized despite missing variant target: %v", statErr)
+	}
+}
+
+func TestMaterializeLabConfigRejectsVariantTargetWithoutConfig(t *testing.T) {
+	root := t.TempDir()
+	variantData := filepath.Join(root, "ad", "GOAD-kraken", "data")
+	if err := os.MkdirAll(variantData, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	markVariantComplete(t, filepath.Dir(variantData))
+	cfg := &config.Config{
+		ProjectRoot: root,
+		Env:         "kraken",
+		Environments: map[string]config.EnvironmentConfig{
+			"kraken": {Variant: true, VariantTarget: "ad/GOAD-kraken"},
+		},
+	}
+
+	err := materializeLabConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "resolve variant lab config") ||
+		!errors.Is(err, config.ErrLabConfigNotFound) {
+		t.Fatalf("materializeLabConfig() error = %v, want missing variant config error", err)
+	}
+}
+
+func TestMaterializeLabConfigRejectsIncompleteVariantTarget(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "ad", "GOAD-kraken")
+	variantData := filepath.Join(target, "data")
+	if err := os.MkdirAll(variantData, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(variantData, "config.json"), []byte(`{"partial":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		ProjectRoot: root,
+		Env:         "kraken",
+		Environments: map[string]config.EnvironmentConfig{
+			"kraken": {Variant: true, VariantTarget: "ad/GOAD-kraken"},
+		},
+	}
+
+	err := materializeLabConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "variant directory is incomplete") ||
+		!strings.Contains(err.Error(), variant.CompletionMarkerName) {
+		t.Fatalf("materializeLabConfig() error = %v, want incomplete variant error", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(variantData, "kraken-config.json")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("partial variant config was materialized: %v", statErr)
+	}
+}
+
+func TestMaterializeLabConfigRejectsSymlinkedVariantTarget(t *testing.T) {
+	root := t.TempDir()
+	realTarget := filepath.Join(root, "real-variant")
+	if err := os.MkdirAll(filepath.Join(realTarget, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	markVariantComplete(t, realTarget)
+	target := filepath.Join(root, "ad", "GOAD-kraken")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(realTarget, target); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{
+		ProjectRoot: root,
+		Env:         "kraken",
+		Environments: map[string]config.EnvironmentConfig{
+			"kraken": {Variant: true, VariantTarget: "ad/GOAD-kraken"},
+		},
+	}
+
+	err := materializeLabConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "symlink component") {
+		t.Fatalf("materializeLabConfig() error = %v, want symlink rejection", err)
+	}
+}
+
+func TestMaterializeLabConfigRejectsSymlinkedVariantData(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "ad", "GOAD-kraken")
+	baseData := filepath.Join(root, "ad", "GOAD", "data")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(baseData, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(baseData, "config.json"), []byte(`{"base":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(baseData, filepath.Join(target, "data")); err != nil {
+		t.Fatal(err)
+	}
+	markVariantComplete(t, target)
+	cfg := &config.Config{
+		ProjectRoot: root,
+		Env:         "kraken",
+		Environments: map[string]config.EnvironmentConfig{
+			"kraken": {Variant: true, VariantTarget: "ad/GOAD-kraken"},
+		},
+	}
+
+	err := materializeLabConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "symlink component") {
+		t.Fatalf("materializeLabConfig() error = %v, want symlink rejection", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(baseData, "kraken-config.json")); !errors.Is(statErr, os.ErrNotExist) {
+		t.Errorf("config was materialized through data symlink: %v", statErr)
 	}
 }
 
@@ -40,6 +193,23 @@ func TestMaterializeLabConfigUsesActiveLab(t *testing.T) {
 	}
 	if string(got) != string(want) {
 		t.Errorf("materialized config = %s, want %s", got, want)
+	}
+	markerData, err := os.ReadFile(materializedConfigOwnershipPath(cfg))
+	if err != nil {
+		t.Fatalf("read materialization ownership marker: %v", err)
+	}
+	var marker materializedConfigOwnership
+	if err := json.Unmarshal(markerData, &marker); err != nil {
+		t.Fatalf("parse materialization ownership marker: %v", err)
+	}
+	absDestination, err := filepath.Abs(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if marker.Version != materializedConfigOwnershipVersion ||
+		marker.Env != cfg.Env || marker.Path != absDestination ||
+		marker.SHA256 != fmt.Sprintf("%x", sha256.Sum256(want)) {
+		t.Errorf("materialization ownership marker = %+v", marker)
 	}
 }
 
@@ -84,7 +254,7 @@ func TestMaterializeLabConfigRejectsOverlayWithoutBase(t *testing.T) {
 	}
 }
 
-func TestMaterializeLabConfigCreatesDestinationDirectory(t *testing.T) {
+func TestMaterializeLabConfigWritesVariantTarget(t *testing.T) {
 	root := t.TempDir()
 	variantData := filepath.Join(root, "ad", "custom-variant", "data")
 	if err := os.MkdirAll(variantData, 0o755); err != nil {
@@ -94,6 +264,7 @@ func TestMaterializeLabConfigCreatesDestinationDirectory(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(variantData, "config.json"), want, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	markVariantComplete(t, filepath.Dir(variantData))
 	cfg := &config.Config{
 		ProjectRoot: root,
 		Env:         "dev",
@@ -105,13 +276,67 @@ func TestMaterializeLabConfigCreatesDestinationDirectory(t *testing.T) {
 	if err := materializeLabConfig(cfg); err != nil {
 		t.Fatalf("materializeLabConfig() error: %v", err)
 	}
-	destination := filepath.Join(root, "ad", "GOAD", "data", "dev-config.json")
+	destination := filepath.Join(variantData, "dev-config.json")
 	got, err := os.ReadFile(destination)
 	if err != nil {
 		t.Fatalf("read materialized config: %v", err)
 	}
 	if string(got) != string(want) {
 		t.Errorf("materialized config = %s, want %s", got, want)
+	}
+	wrongDestination := filepath.Join(root, "ad", "GOAD", "data", "dev-config.json")
+	if _, err := os.Stat(wrongDestination); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("base-lab config unexpectedly materialized at %s: %v", wrongDestination, err)
+	}
+}
+
+func TestMaterializeLabConfigWritesMergedVariantConfigToTarget(t *testing.T) {
+	root := t.TempDir()
+	variantData := filepath.Join(root, "ad", "GOAD-kraken", "data")
+	if err := os.MkdirAll(variantData, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(variantData, "config.json"),
+		[]byte(`{"lab":{"name":"base","keep":true}}`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(variantData, "kraken-overlay.json"),
+		[]byte(`{"lab":{"name":"kraken"}}`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+	markVariantComplete(t, filepath.Dir(variantData))
+	cfg := &config.Config{
+		ProjectRoot: root,
+		Env:         "kraken",
+		Environments: map[string]config.EnvironmentConfig{
+			"kraken": {Variant: true, VariantTarget: "ad/GOAD-kraken"},
+		},
+	}
+
+	if err := materializeLabConfig(cfg); err != nil {
+		t.Fatalf("materializeLabConfig() error: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(variantData, "kraken-config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Lab struct {
+			Name string `json:"name"`
+			Keep bool   `json:"keep"`
+		} `json:"lab"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("parse materialized config: %v", err)
+	}
+	if got.Lab.Name != "kraken" || !got.Lab.Keep {
+		t.Errorf("materialized config did not merge base + overlay: %s", raw)
 	}
 }
 
@@ -137,31 +362,9 @@ func TestMaterializeLabConfigLeavesLegacyDestinationUntouched(t *testing.T) {
 	if string(got) != string(want) {
 		t.Errorf("legacy config changed: got %s, want %s", got, want)
 	}
-}
-
-func TestMaterializeLabConfigReportsDirectoryCreationFailure(t *testing.T) {
-	root := t.TempDir()
-	variantData := filepath.Join(root, "ad", "custom-variant", "data")
-	if err := os.MkdirAll(variantData, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(variantData, "config.json"), []byte(`{}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "ad", "GOAD"), []byte("not a directory"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cfg := &config.Config{
-		ProjectRoot: root,
-		Env:         "dev",
-		Environments: map[string]config.EnvironmentConfig{
-			"dev": {Variant: true, VariantTarget: "ad/custom-variant"},
-		},
-	}
-
-	err := materializeLabConfig(cfg)
-	if err == nil || !strings.Contains(err.Error(), "create lab config directory") {
-		t.Fatalf("materializeLabConfig() error = %v, want directory creation error", err)
+	marker := materializedConfigOwnershipPath(&config.Config{ProjectRoot: root, Env: "dev"})
+	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("legacy config received generated ownership marker: %v", err)
 	}
 }
 
@@ -174,7 +377,8 @@ func TestMaterializeLabConfigReportsWriteFailure(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(variantData, "config.json"), []byte(`{}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	destination := filepath.Join(root, "ad", "GOAD", "data", "dev-config.json")
+	markVariantComplete(t, filepath.Dir(variantData))
+	destination := filepath.Join(variantData, "dev-config.json")
 	if err := os.MkdirAll(destination, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -215,6 +419,43 @@ func TestShouldEnableAWSKali(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := shouldEnableAWSKali(tt.requested, tt.action, tt.path); got != tt.want {
 				t.Fatalf("shouldEnableAWSKali(%v, %q, %q) = %v, want %v", tt.requested, tt.action, tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSSMBucketCleanupTargetRequiresSSMTransport(t *testing.T) {
+	tests := []struct {
+		name      string
+		transport string
+		want      bool
+	}{
+		{name: "ssm", transport: "amazon.aws.aws_ssm", want: true},
+		{name: "ssh", transport: "ssh", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &config.Config{
+				ProjectRoot: t.TempDir(),
+				Env:         "range",
+				Provider:    "aws",
+				Region:      "us-east-2",
+			}
+			writeInventoryTestFile(t, cfg.InventoryPath(), "[default]\n\n[all:vars]\n"+
+				"ansible_connection="+tt.transport+"\n"+
+				"ansible_aws_ssm_bucket_name=user-bucket\n"+
+				"ansible_aws_ssm_region=us-east-2\n", 0o600)
+
+			bucket, region, cleanup, err := ssmBucketCleanupTarget(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cleanup != tt.want {
+				t.Fatalf("cleanup = %v, want %v", cleanup, tt.want)
+			}
+			if tt.want && (bucket != "user-bucket" || region != "us-east-2") {
+				t.Fatalf("target = %q/%q, want user-bucket/us-east-2", bucket, region)
 			}
 		})
 	}

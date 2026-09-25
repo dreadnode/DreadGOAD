@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -19,9 +21,19 @@ import (
 	"github.com/dreadnode/dreadgoad/internal/terraform"
 	"github.com/dreadnode/dreadgoad/internal/terragrunt"
 	"github.com/dreadnode/dreadgoad/internal/tfrender"
+	"github.com/dreadnode/dreadgoad/internal/variant"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
+
+const materializedConfigOwnershipVersion = 1
+
+type materializedConfigOwnership struct {
+	Version int    `json:"version"`
+	Env     string `json:"env"`
+	Path    string `json:"path"`
+	SHA256  string `json:"sha256"`
+}
 
 var infraCmd = &cobra.Command{
 	Use:   "infra",
@@ -115,21 +127,66 @@ func init() {
 }
 
 // materializeLabConfig ensures the merged lab config JSON exists at the path
-// terragrunt HCL expects (ad/GOAD/data/{env}-config.json). When an overlay
-// file exists, the base config.json is merged with the overlay and written
-// to disk so that terragrunt's file() function can read it directly.
+// terragrunt HCL expects (ad/<active-range>/data/{env}-config.json). When an
+// overlay file exists, the base config.json is merged with the overlay and
+// written to disk so that terragrunt's file() function can read it directly.
+func rejectSymlinkComponents(path, root string) error {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("resolve root path: %w", err)
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolve path: %w", err)
+	}
+	rel, err := filepath.Rel(absRoot, absPath)
+	if err != nil {
+		return fmt.Errorf("compare path with root: %w", err)
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return fmt.Errorf("path is outside project root: %s", path)
+	}
+
+	current := absRoot
+	for _, component := range strings.Split(rel, string(os.PathSeparator)) {
+		if component == "." || component == "" {
+			continue
+		}
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("inspect path component %s: %w", current, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("path contains symlink component: %s", current)
+		}
+	}
+	return nil
+}
+
 func materializeLabConfig(cfg *config.Config) error {
+	expected := cfg.MaterializedLabConfigPath()
+	dataDir := filepath.Dir(expected)
+	if cfg.ActiveEnvironment().Variant {
+		if err := validateVariantMaterializationTarget(cfg, dataDir); err != nil {
+			return err
+		}
+	}
+
 	resolved, err := cfg.ResolvedLabConfigPath()
 	if err != nil {
 		if errors.Is(err, config.ErrLabConfigNotFound) {
+			if cfg.ActiveEnvironment().Variant {
+				return fmt.Errorf("resolve variant lab config: %w", err)
+			}
 			slog.Debug("no lab config to materialize; continuing for standalone infrastructure", "error", err)
 			return nil
 		}
 		return fmt.Errorf("resolve lab config: %w", err)
 	}
-
-	dataDir := filepath.Join(cfg.LabPath(), "data")
-	expected := filepath.Join(dataDir, cfg.Env+"-config.json")
 
 	if resolved == expected {
 		return nil // already in the right place (legacy layout)
@@ -145,6 +202,114 @@ func materializeLabConfig(cfg *config.Config) error {
 	}
 	if err := os.WriteFile(expected, data, 0o644); err != nil {
 		return fmt.Errorf("write lab config: %w", err)
+	}
+	if err := recordMaterializedConfigOwnership(cfg, expected, data); err != nil {
+		return fmt.Errorf("record materialized lab config ownership: %w", err)
+	}
+	return nil
+}
+
+func materializedConfigOwnershipPath(cfg *config.Config) string {
+	return filepath.Join(cfg.ProjectRoot, ".dreadgoad", "cache", cfg.Env+"-materialization.json")
+}
+
+func recordMaterializedConfigOwnership(cfg *config.Config, path string, data []byte) error {
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return fmt.Errorf("resolve materialized config path: %w", err)
+	}
+	marker := materializedConfigOwnershipPath(cfg)
+	if err := rejectSymlinkComponents(marker, cfg.ProjectRoot); err != nil {
+		return fmt.Errorf("inspect ownership marker path: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(marker), 0o755); err != nil {
+		return fmt.Errorf("create ownership marker directory: %w", err)
+	}
+	payload, err := json.Marshal(materializedConfigOwnership{
+		Version: materializedConfigOwnershipVersion,
+		Env:     cfg.Env,
+		Path:    absPath,
+		SHA256:  fmt.Sprintf("%x", sha256.Sum256(data)),
+	})
+	if err != nil {
+		return fmt.Errorf("encode ownership marker: %w", err)
+	}
+	payload = append(payload, '\n')
+	temporary, err := os.CreateTemp(filepath.Dir(marker), "."+filepath.Base(marker)+".*")
+	if err != nil {
+		return fmt.Errorf("create ownership marker temporary file: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	cleanup := func() {
+		_ = temporary.Close()
+		_ = os.Remove(temporaryPath)
+	}
+	if err := temporary.Chmod(0o600); err != nil {
+		cleanup()
+		return fmt.Errorf("secure ownership marker temporary file: %w", err)
+	}
+	if _, err := temporary.Write(payload); err != nil {
+		cleanup()
+		return fmt.Errorf("write ownership marker: %w", err)
+	}
+	if err := temporary.Sync(); err != nil {
+		cleanup()
+		return fmt.Errorf("sync ownership marker: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		_ = os.Remove(temporaryPath)
+		return fmt.Errorf("close ownership marker: %w", err)
+	}
+	if err := os.Rename(temporaryPath, marker); err != nil {
+		_ = os.Remove(temporaryPath)
+		return fmt.Errorf("rename ownership marker: %w", err)
+	}
+	return nil
+}
+
+func validateVariantMaterializationTarget(cfg *config.Config, dataDir string) error {
+	_, target := cfg.ResolvedVariantPaths()
+	if err := rejectSymlinkComponents(target, cfg.ProjectRoot); err != nil {
+		return fmt.Errorf("inspect variant target %s: %w", target, err)
+	}
+	targetInfo, err := os.Lstat(target)
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("variant target does not exist: %s", target)
+	}
+	if err != nil {
+		return fmt.Errorf("inspect variant target %s: %w", target, err)
+	}
+	if !targetInfo.IsDir() {
+		return fmt.Errorf("variant target exists but is not a directory: %s", target)
+	}
+	complete, err := variant.IsComplete(target)
+	if err != nil {
+		return fmt.Errorf("inspect variant target %s: %w", target, err)
+	}
+	if !complete {
+		return fmt.Errorf(
+			"variant directory is incomplete (missing %s): %s",
+			variant.CompletionMarkerName,
+			target,
+		)
+	}
+	marker := filepath.Join(target, variant.CompletionMarkerName)
+	if err := rejectSymlinkComponents(marker, cfg.ProjectRoot); err != nil {
+		return fmt.Errorf("inspect variant completion marker: %w", err)
+	}
+
+	if err := rejectSymlinkComponents(dataDir, cfg.ProjectRoot); err != nil {
+		return fmt.Errorf("inspect variant lab config directory: %w", err)
+	}
+	info, err := os.Lstat(dataDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("variant lab config directory does not exist: %s", dataDir)
+	}
+	if err != nil {
+		return fmt.Errorf("inspect variant lab config directory: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("variant lab config path is not a directory: %s", dataDir)
 	}
 	return nil
 }
@@ -479,24 +644,35 @@ func shouldBootstrapAWSBackend(operations rangeOperations, action string, reques
 
 // deleteSSMBucket removes the S3 bucket the Ansible SSM connection plugin
 // used for file transfer. Called after a successful infra destroy.
-func deleteSSMBucket(ctx context.Context, cfg *config.Config) error {
+func ssmBucketCleanupTarget(cfg *config.Config) (string, string, bool, error) {
+	if !cfg.IsAWS() {
+		return "", "", false, nil
+	}
 	parsed, err := inv.Parse(cfg.InventoryPath())
 	if err != nil {
-		return nil
+		return "", "", false, nil
 	}
 	if !parsed.IsSSM() {
-		return nil
+		return "", "", false, nil
 	}
 	bucket := parsed.SSMBucketName()
 	if bucket == "" || strings.EqualFold(strings.TrimSpace(bucket), "AUTO") {
-		return nil
+		return "", "", false, nil
 	}
 	region := parsed.Region()
 	if region == "" {
 		region, err = cfg.ResolveRegion()
 		if err != nil {
-			return err
+			return "", "", false, err
 		}
+	}
+	return bucket, region, true, nil
+}
+
+func deleteSSMBucket(ctx context.Context, cfg *config.Config) error {
+	bucket, region, cleanup, err := ssmBucketCleanupTarget(cfg)
+	if err != nil || !cleanup {
+		return err
 	}
 	client, err := daws.NewClient(ctx, region, "")
 	if err != nil {

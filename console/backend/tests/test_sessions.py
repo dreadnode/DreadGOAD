@@ -21,15 +21,15 @@ from console.backend.sessions import SessionService, default_label  # noqa: E402
 
 _REPO = pathlib.Path(__file__).resolve().parents[3]
 
-_YAML = """\
+_ENV = "session-unit"
+
+_YAML = f"""\
 provider: azure
 region: centralus
 environments:
-  staging:
-    variant: true
-    variant_source: ad/GOAD
-    variant_target: ad/GOAD
-    variant_name: dreadindex
+  {_ENV}:
+    lab: GOAD
+    variant: false
     vpc_cidr: "10.1.0.0/16"
 """
 
@@ -63,12 +63,12 @@ async def test_create_attach_session() -> None:
         cfg.write_text(_YAML)
         svc = await _svc(tmp)
         try:
-            s = await svc.create_session(str(cfg), "staging", model="m")
+            s = await svc.create_session(str(cfg), _ENV, model="m")
             sid = s["id"]
 
             # session persisted with anchor + snapshot
             got = await svc.get_session(sid)
-            assert got is not None and got["anchor"]["env"] == "staging", got
+            assert got is not None and got["anchor"]["env"] == _ENV, got
             assert got["snapshot"]["provider"] == "azure", got
 
             # working dir created
@@ -78,7 +78,7 @@ async def test_create_attach_session() -> None:
             )
             assert stat.S_IMODE(svc.sessions_root.stat().st_mode) == 0o700
 
-            # range seeded from ad/GOAD/data/config.json (variant_target=ad/GOAD)
+            # range seeded from the base GOAD config
             rng = await svc.db.get_range(sid)
             assert rng is not None, "range row missing"
             ids = {h["id"] for h in rng["hosts"]}
@@ -126,7 +126,7 @@ async def test_delete_session_removes_dir_and_rows() -> None:
         cfg.write_text(_YAML)
         svc = await _svc(tmp)
         try:
-            s = await svc.create_session(str(cfg), "staging")
+            s = await svc.create_session(str(cfg), _ENV)
             sdir = s["session_dir"]
             assert os.path.isdir(sdir)
             ok = await svc.delete_session(s["id"])
@@ -158,7 +158,7 @@ async def test_create_session_records_initialization_results() -> None:
 
         sessions_module.lifecycle.initialize_session = initialized
         try:
-            session = await svc.create_session(str(cfg), "staging")
+            session = await svc.create_session(str(cfg), _ENV)
             events = await svc.db.get_events(session["id"])
             init_events = [
                 event
@@ -182,7 +182,7 @@ async def test_scaffold_retries_initialization_only_for_variants() -> None:
         cfg = tmp / "dreadgoad.yaml"
         cfg.write_text(_YAML)
         svc = await _svc(tmp)
-        session = await svc.create_session(str(cfg), "staging")
+        session = await svc.create_session(str(cfg), _ENV)
         initialized: list[str] = []
         original_scaffold = sessions_module.scaffold.scaffold_env
         original_initialize = svc._initialize
@@ -215,7 +215,7 @@ async def test_delete_refuses_working_dir_outside_session_root() -> None:
         cfg.write_text(_YAML)
         svc = await _svc(tmp)
         try:
-            session = await svc.create_session(str(cfg), "staging")
+            session = await svc.create_session(str(cfg), _ENV)
             outside = tmp / "must-not-delete"
             outside.mkdir()
             (outside / "sentinel").write_text("keep")

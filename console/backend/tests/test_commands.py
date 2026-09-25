@@ -12,6 +12,7 @@ import shutil
 import stat
 import sys
 import tempfile
+import types
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
@@ -292,6 +293,10 @@ def test_load_prompt_and_guidance_injection() -> None:
     assert "pipeline" in up_prompt.lower()
     assert "continues through provisioning" in up_prompt
     assert "dreadgoad infra apply" in up_prompt
+    assert "--from-playbook" in up_prompt
+    assert "--infra-only --module kali" in up_prompt
+    assert "Never pass `--limit kali`" in up_prompt
+    assert "/up --with-kali --skip-doctor --limit kali" not in up_prompt
     print("PASS test_load_prompt_and_guidance_injection")
 
 
@@ -323,6 +328,7 @@ def test_system_prompt_covers_the_registry() -> None:
     assert "$" not in rendered, "system.md has a placeholder agent.py doesn't fill"
     for value in ("us-west-2", "redteam", "10.0.0.0/16"):
         assert value in rendered, f"{value} missing from the rendered prompt"
+    assert "--from-playbook <playbook>" in rendered
 
     # A fresh session has no region/variant yet; the prompt must say so rather
     # than rendering the literal string "None", which reads as a real value.
@@ -403,7 +409,9 @@ def test_agent_local_paths_are_confined_without_changing_cli_builder() -> None:
 
         allowed = (
             ("/up", ["--module", "goad/dc01", "--plays=ad.yml,acl.yml"]),
+            ("/up", ["--from", "provision", "--from-playbook", "build.yml"]),
             ("/provision", ["--plays", "ad.yml,acl.yml"]),
+            ("/provision", ["--from=build.yml"]),
             ("/reset", ["--plays=ad.yml,acl.yml"]),
             (
                 "/score",
@@ -425,7 +433,9 @@ def test_agent_local_paths_are_confined_without_changing_cli_builder() -> None:
 
         blocked = (
             ("/up", ["--module", "../../outside"]),
+            ("/up", ["--from-playbook", "../../../outside.yml"]),
             ("/provision", ["--plays", "good/a/b/c.yml,../../../outside.yml"]),
+            ("/provision", ["--from=../../../outside.yml"]),
             # The first positional report is remote, but a repeated --report
             # would override the fetched session-local path (pflag last-wins).
             ("/score", ["remote.jsonl", "--report", "/etc/passwd"]),
@@ -443,6 +453,8 @@ def test_agent_local_paths_are_confined_without_changing_cli_builder() -> None:
                 )
             except ValueError as exc:
                 assert "must stay within" in str(exc), (name, args, exc)
+                if name == "/up" and "--from-playbook" in args:
+                    assert "ansible/playbooks" in str(exc), exc
             else:
                 raise AssertionError(f"escaped agent path accepted: {name} {args!r}")
 
@@ -917,6 +929,23 @@ def test_destroy_takes_an_optional_hostname() -> None:
     assert commands.REGISTRY["/destroy"].dispatch == "direct"
 
 
+def test_destroy_purge_is_whole_environment_only() -> None:
+    assert commands.destroy_mode(["--purge"]) == (True, [])
+    assert _argv("/destroy", ["--purge"])[5:] == [
+        "infra",
+        "destroy",
+        "--auto-approve",
+    ]
+    for args in (["dc01", "--purge"], ["--purge", "dc01"], ["--purge", "--purge"]):
+        try:
+            _argv("/destroy", list(args))
+        except ValueError as exc:
+            assert "--purge" in str(exc)
+        else:
+            raise AssertionError(f"unsafe destroy args accepted: {args}")
+    print("PASS test_destroy_purge_is_whole_environment_only")
+
+
 def test_login_registry_entry() -> None:
     """/login is direct, no verb, not cloud_ops (must not gate itself)."""
     cmd = commands.REGISTRY["/login"]
@@ -1336,6 +1365,234 @@ async def test_score_uses_session_answer_key_unless_explicitly_overridden() -> N
     print("PASS test_score_uses_session_answer_key_unless_explicitly_overridden")
 
 
+async def test_destroy_purge_runs_only_after_success() -> None:
+    from console.backend import chat_events, command_runner, environment_purge
+
+    events: list[tuple[str, dict]] = []
+    original_emit = chat_events.emit_event
+    original_check = command_runner.hook.run_check
+    original_build = environment_purge.build_plan
+
+    async def fake_emit(_app, _sid, kind, payload, **_kw):  # noqa: ANN001
+        events.append((kind, payload))
+
+    async def fake_check(_app, _sid, _capture):  # noqa: ANN001
+        return {}
+
+    chat_events.emit_event = fake_emit
+    command_runner.hook.run_check = fake_check
+    try:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory).resolve()
+            artifact = root / "range-inventory"
+            artifact.write_text("[all]\n")
+            config = root / "range.yaml"
+            purge = environment_purge.PurgePlan("range", root, config, (artifact,))
+            plan = command_runner._CommandPlan(
+                "/destroy",
+                ("dreadgoad", "infra", "destroy", "--auto-approve"),
+                str(root),
+                commands.REGISTRY["/destroy"],
+                purge,
+                "purge detail",
+            )
+
+            failed = command_runner._RunResult(1, "destroy failed", cancelled=False)
+            code, _ = await command_runner._finalize_command(None, "s", plan, failed)
+            assert code == 1 and artifact.exists(), "failed destroy purged local state"
+
+            cancelled = command_runner._RunResult(
+                130, "destroy cancelled", cancelled=True
+            )
+            try:
+                await command_runner._finalize_command(None, "s", plan, cancelled)
+            except asyncio.CancelledError:
+                pass
+            else:
+                raise AssertionError("cancelled destroy did not propagate cancellation")
+            assert artifact.exists(), "cancelled destroy purged local state"
+
+            succeeded = command_runner._RunResult(0, "destroyed", cancelled=False)
+            current_session = {
+                "id": "s",
+                "anchor": {"config_path": str(config), "env": "range"},
+            }
+
+            class FakeSessions:
+                async def get_session(self, _session_id):  # noqa: ANN001, ANN201
+                    return current_session
+
+                async def list_sessions(self):  # noqa: ANN201
+                    return [current_session]
+
+            app = types.SimpleNamespace(
+                state=types.SimpleNamespace(sessions=FakeSessions())
+            )
+            environment_purge.build_plan = lambda _session: purge
+            code, output = await command_runner._finalize_command(
+                app, "s", plan, succeeded
+            )
+            assert code == 0 and not artifact.exists()
+            assert "Purged environment range" in output
+            assert any(kind == "status" for kind, _ in events)
+    finally:
+        chat_events.emit_event = original_emit
+        command_runner.hook.run_check = original_check
+        environment_purge.build_plan = original_build
+    print("PASS test_destroy_purge_runs_only_after_success")
+
+
+async def test_destroy_purge_rechecks_config_sharing_before_deletion() -> None:
+    from console.backend import chat_events, command_runner, environment_purge
+
+    events: list[tuple[str, dict]] = []
+    original_emit = chat_events.emit_event
+
+    async def fake_emit(_app, _sid, kind, payload, **_kw):  # noqa: ANN001
+        events.append((kind, payload))
+
+    chat_events.emit_event = fake_emit
+    try:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory).resolve()
+            config = root / "range.yaml"
+            artifact = root / "range-inventory"
+            config.write_text("environments: {}\n")
+            artifact.write_text("[all]\n")
+            purge = environment_purge.PurgePlan(
+                "range", root, config, (artifact, config)
+            )
+            plan = command_runner._CommandPlan(
+                "/destroy",
+                ("dreadgoad", "infra", "destroy", "--auto-approve"),
+                str(root),
+                commands.REGISTRY["/destroy"],
+                purge,
+                "purge detail",
+            )
+            sessions = [
+                {"id": "s", "anchor": {"config_path": str(config)}},
+                {"id": "new", "anchor": {"config_path": str(config)}},
+            ]
+
+            class FakeSessions:
+                async def get_session(self, _session_id):  # noqa: ANN001, ANN201
+                    return sessions[0]
+
+                async def list_sessions(self):  # noqa: ANN201
+                    return sessions
+
+            app = types.SimpleNamespace(
+                state=types.SimpleNamespace(sessions=FakeSessions())
+            )
+            result = command_runner._RunResult(0, "destroyed", cancelled=False)
+            code, output = await command_runner._finalize_command(
+                app, "s", plan, result
+            )
+
+            assert code == 1 and "another console session" in output
+            assert artifact.exists() and config.exists()
+            assert any(kind == "error" for kind, _ in events)
+    finally:
+        chat_events.emit_event = original_emit
+    print("PASS test_destroy_purge_rechecks_config_sharing_before_deletion")
+
+
+async def test_destroy_purge_revalidates_plan_before_deletion() -> None:
+    from console.backend import chat_events, command_runner, environment_purge
+
+    events: list[tuple[str, dict]] = []
+    original_emit = chat_events.emit_event
+    original_build = environment_purge.build_plan
+    original_execute = environment_purge.execute
+
+    async def fake_emit(_app, _sid, kind, payload, **_kw):  # noqa: ANN001
+        events.append((kind, payload))
+
+    chat_events.emit_event = fake_emit
+    try:
+        with tempfile.TemporaryDirectory() as directory:
+            root = pathlib.Path(directory).resolve()
+            config = root / "range.yaml"
+            artifact = root / "range-inventory"
+            config.write_text("environments:\n  range: {}\n  other: {}\n")
+            artifact.write_text("[all]\n")
+            purge = environment_purge.PurgePlan(
+                "range", root, config, (artifact, config)
+            )
+            plan = command_runner._CommandPlan(
+                "/destroy",
+                ("dreadgoad", "infra", "destroy", "--auto-approve"),
+                str(root),
+                commands.REGISTRY["/destroy"],
+                purge,
+                "purge detail",
+            )
+            current_session = {
+                "id": "s",
+                "anchor": {"config_path": str(config), "env": "range"},
+            }
+
+            class FakeSessions:
+                async def get_session(self, _session_id):  # noqa: ANN001, ANN201
+                    return current_session
+
+                async def list_sessions(self):  # noqa: ANN201
+                    return [current_session]
+
+            def reject_shared(_session):  # noqa: ANN001, ANN202
+                raise ValueError("config now contains more than one environment")
+
+            executed = False
+
+            def track_execute(_plan):  # noqa: ANN001, ANN202
+                nonlocal executed
+                executed = True
+
+            environment_purge.build_plan = reject_shared
+            environment_purge.execute = track_execute
+            app = types.SimpleNamespace(
+                state=types.SimpleNamespace(sessions=FakeSessions())
+            )
+            result = command_runner._RunResult(0, "destroyed", cancelled=False)
+            code, output = await command_runner._finalize_command(
+                app, "s", plan, result
+            )
+
+            assert code == 1 and "more than one environment" in output
+            assert not executed and artifact.exists() and config.exists()
+            assert any(kind == "error" for kind, _ in events)
+
+            current_session["anchor"]["config_path"] = str(root / "other.yaml")
+            code, output = await command_runner._finalize_command(
+                app, "s", plan, result
+            )
+            assert code == 1 and "session config changed" in output
+            assert not executed and artifact.exists() and config.exists()
+    finally:
+        chat_events.emit_event = original_emit
+        environment_purge.build_plan = original_build
+        environment_purge.execute = original_execute
+    print("PASS test_destroy_purge_revalidates_plan_before_deletion")
+
+
+def test_purge_config_identity_resolves_aliases() -> None:
+    from console.backend import command_runner
+
+    with tempfile.TemporaryDirectory() as directory:
+        root = pathlib.Path(directory)
+        config = root / "range.yaml"
+        alias = root / "alias.yaml"
+        config.write_text("environments: {}\n")
+        alias.symlink_to(config)
+        direct = {"anchor": {"config_path": str(config)}}
+        indirect = {"anchor": {"config_path": str(alias)}}
+        assert command_runner._config_identity(
+            direct
+        ) == command_runner._config_identity(indirect)
+    print("PASS test_purge_config_identity_resolves_aliases")
+
+
 def main() -> None:
     test_argv_injects_config_and_env()
     test_argv_multiword_and_flag_verbs()
@@ -1363,6 +1620,7 @@ def main() -> None:
     test_destroy_carries_auto_approve()
     test_start_stop_take_an_optional_hostname()
     test_destroy_takes_an_optional_hostname()
+    test_destroy_purge_is_whole_environment_only()
     test_catalog_exposes_destructive_for_the_confirm_gate()
     test_catalog_applies_range_capabilities_without_changing_safety()
     test_no_console_command_can_block_on_a_prompt()
@@ -1370,6 +1628,7 @@ def main() -> None:
     test_login_registry_entry()
     test_build_argv_rejects_empty_verb()
     if _HAS_COMMAND_RUNNER:
+        test_purge_config_identity_resolves_aliases()
         test_login_argv_aws_with_profile()
         test_login_argv_aws_no_profile()
         test_login_argv_azure()
@@ -1383,6 +1642,9 @@ def main() -> None:
         asyncio.run(test_spawn_and_stream_oserror_returns_not_started())
         asyncio.run(test_spawn_and_stream_success_returns_result())
         asyncio.run(test_score_uses_session_answer_key_unless_explicitly_overridden())
+        asyncio.run(test_destroy_purge_runs_only_after_success())
+        asyncio.run(test_destroy_purge_rechecks_config_sharing_before_deletion())
+        asyncio.run(test_destroy_purge_revalidates_plan_before_deletion())
     else:
         print("SKIP command_runner tests (dreadnode not installed)")
     test_system_prompt_covers_the_registry()

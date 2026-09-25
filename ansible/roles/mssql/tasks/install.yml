@@ -86,16 +86,24 @@
     src: files/sql_conf.ini.{{ sql_version }}.j2
     dest: c:\setup\mssql\sql_conf.ini
 
-- name: Check if installation media already exists
-  ansible.windows.win_stat:
-    path: c:\setup\mssql\sql_installer.exe
-  register: installer_file
-
 - name: Download SQL Server installation media
   ansible.windows.win_get_url:
     url: "{{ download_url }}"
     dest: c:\setup\mssql\sql_installer.exe
-  when: not installer_file.stat.exists
+    force: true
+    timeout: 600
+  register: installer_download
+  retries: 3
+  delay: 10
+  until: installer_download is succeeded
+
+- name: Validate SQL Server bootstrap installer
+  ansible.windows.win_stat:
+    path: c:\setup\mssql\sql_installer.exe
+  register: installer_file
+  failed_when: >-
+    not installer_file.stat.exists or
+    (installer_file.stat.size | default(0) | int) < 1048576
 
 - name: Add service account to Log on as a service
   ansible.windows.win_user_right:

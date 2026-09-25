@@ -283,6 +283,21 @@ func (c *Config) LabConfigPath() string {
 	return filepath.Join(c.labConfigDataDir(), c.Env+"-config.json")
 }
 
+// MaterializedLabConfigPath returns the environment-specific config path that
+// infrastructure consumes. Unlike the general-purpose resolver, this never
+// falls back from a configured variant to the base lab: Terragrunt for a
+// variant is scaffolded to read from the variant target unconditionally.
+func (c *Config) MaterializedLabConfigPath() string {
+	dataDir := filepath.Join(c.LabPath(), "data")
+	if c.ActiveEnvironment().Variant {
+		_, target := c.ResolvedVariantPaths()
+		if target != "" {
+			dataDir = filepath.Join(target, "data")
+		}
+	}
+	return filepath.Join(dataDir, c.Env+"-config.json")
+}
+
 // ResolvedLabConfigPath returns the path to a ready-to-use lab config JSON.
 // When an overlay file ({env}-overlay.json) exists alongside the base
 // config.json, it merges them using RFC 7386 JSON Merge Patch semantics

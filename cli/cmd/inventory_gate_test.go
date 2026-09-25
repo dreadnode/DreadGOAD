@@ -85,9 +85,8 @@ func TestValidateInventoryResolvedIgnoresCommentedHosts(t *testing.T) {
 	}
 }
 
-// The Azure sync runs before the gate and can hard-fail on its own. If it did
-// so unconditionally it would override --limit and block a partial run that
-// the gate would have allowed — the two must agree on the policy.
+// A limit only permits a failure that AWS reconciliation has already proven is
+// outside the selected hosts. Ordinary discovery/sync failures remain fatal.
 func TestInventorySyncFailureRespectsLimit(t *testing.T) {
 	boom := errors.New("srv99 still has placeholder ansible_host")
 
@@ -97,8 +96,21 @@ func TestInventorySyncFailureRespectsLimit(t *testing.T) {
 		t.Errorf("wrapped error lost the cause: %v", err)
 	}
 
-	if err := inventorySyncFailure(boom, "dc01"); err != nil {
-		t.Errorf("--limit run was blocked by a sync failure: %v", err)
+	if err := inventorySyncFailure(boom, "dc01"); err == nil {
+		t.Error("--limit downgraded an ordinary sync failure without scope evidence")
+	}
+
+	outOfScope := &awsInventoryReconcileError{
+		message:       "srv99 still has placeholder ansible_host",
+		affectedHosts: map[string]bool{"srv99": true},
+	}
+	if err := inventorySyncFailure(outOfScope, "dc01"); err != nil {
+		t.Errorf("--limit run was blocked by a proven out-of-scope failure: %v", err)
+	}
+
+	required := &requiredInventorySyncError{cause: outOfScope}
+	if err := inventorySyncFailure(required, "dc01"); err == nil {
+		t.Error("--limit downgraded a reconciliation failure affecting a required host")
 	}
 
 	if err := inventorySyncFailure(nil, ""); err != nil {

@@ -90,7 +90,7 @@ loop.
 | `/start [host]` | `lab start` / `lab start-vm` | ⚡ direct | Power on the range or one VM |
 | `/stop [host]` | `lab stop` / `lab stop-vm` | ⚡ direct | Power off the range or one VM |
 | `/scrub` | `score reset` | ⚡ direct | Run the selected range's engagement cleanup (add `dry` to preview) |
-| `/destroy [host]` | `infra destroy` / `lab destroy-vm` | ⚡ direct | Tear down the range or one VM (operator-confirmed) |
+| `/destroy [host]` | `infra destroy` / `lab destroy-vm` | ⚡ direct | Tear down the range or one VM (operator-confirmed); use `/destroy --purge` to remove console-managed local environment files after a successful full destroy |
 | `/login` | provider login flow | ⚡ direct | Re-authenticate with AWS SSO or Azure |
 | `/help` | — | browser | Show the range workflow guide |
 | `/copy` | — | browser | Copy all or part of the conversation |

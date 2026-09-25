@@ -27,6 +27,7 @@ var (
 	upInfraModule      string
 	upInfraExclude     string
 	upWithKali         bool
+	upInfraOnly        bool
 	upBackendBootstrap bool
 )
 
@@ -55,7 +56,8 @@ directly; provisioning will then need another route to the hosts.`,
   dreadgoad up --from provision
   dreadgoad up --from provision --from-playbook ad-data.yml
   dreadgoad up --limit dc01
-  dreadgoad up --with-kali        # also deploy the Kali attack box`,
+  dreadgoad up --with-kali        # also deploy the Kali attack box
+  dreadgoad up --with-kali --infra-only --module kali  # add Kali to an existing range`,
 	RunE: runUp,
 }
 
@@ -72,6 +74,7 @@ func init() {
 	upCmd.Flags().StringVar(&upInfraModule, "module", "", "Target a specific infra module (default: all)")
 	upCmd.Flags().StringVar(&upInfraExclude, "exclude", "", "Exclude infra modules (comma-separated)")
 	upCmd.Flags().BoolVar(&upWithKali, "with-kali", false, "Also deploy the optional Kali Linux attack box")
+	upCmd.Flags().BoolVar(&upInfraOnly, "infra-only", false, "Stop after infrastructure apply (skip provisioning and health-check)")
 	upCmd.Flags().BoolVar(&upBackendBootstrap, "backend-bootstrap", false, "Auto-create remote-state backend (S3 bucket / DynamoDB table)")
 }
 
@@ -86,8 +89,24 @@ func runUp(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := requireUpHealth(cfg); err != nil {
+	retry, err := retryOverridesFromFlags(cmd)
+	if err != nil {
 		return err
+	}
+	if err := validateUpExecutionOptions(upExecutionOptions{
+		fromStep:     upFromStep,
+		limit:        upLimit,
+		plays:        upPlays,
+		fromPlaybook: upFromPlaybook,
+		infraOnly:    upInfraOnly,
+		retry:        retry,
+	}); err != nil {
+		return err
+	}
+	if !upInfraOnly {
+		if err := requireUpHealth(cfg); err != nil {
+			return err
+		}
 	}
 
 	steps := []upStep{
@@ -96,25 +115,9 @@ func runUp(cmd *cobra.Command, args []string) error {
 		{id: "provision", name: "Configuration provisioning", run: runUpProvision},
 		{id: "health-check", name: "Lab health check", run: runUpHealthCheck},
 	}
-
-	if upFromStep != "" {
-		idx := -1
-		for i, s := range steps {
-			if s.id == upFromStep {
-				idx = i
-				break
-			}
-		}
-		if idx < 0 {
-			valid := make([]string, len(steps))
-			for i, s := range steps {
-				valid[i] = s.id
-			}
-			return fmt.Errorf("--from %q is not a valid step (one of: %s)", upFromStep, strings.Join(valid, ", "))
-		}
-		steps = steps[idx:]
-	} else if upSkipDoctor {
-		steps = steps[1:]
+	steps, err = selectUpSteps(steps, upFromStep, upSkipDoctor, upInfraOnly)
+	if err != nil {
+		return err
 	}
 	if err := validateUpProvisionResume(steps, upPlays, upFromPlaybook); err != nil {
 		return err
@@ -134,9 +137,44 @@ func runUp(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println()
+	if upInfraOnly {
+		color.Green("✓ Infrastructure apply complete. Total time: %s", time.Since(start).Round(time.Second))
+		return nil
+	}
 	color.Green("✓ Lab is up. Total time: %s", time.Since(start).Round(time.Second))
 	fmt.Println(upNextStep())
 	return nil
+}
+
+func selectUpSteps(steps []upStep, fromStep string, skipDoctor, infraOnly bool) ([]upStep, error) {
+	if fromStep != "" {
+		idx := -1
+		for i, s := range steps {
+			if s.id == fromStep {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			valid := make([]string, len(steps))
+			for i, s := range steps {
+				valid[i] = s.id
+			}
+			return nil, fmt.Errorf("--from %q is not a valid step (one of: %s)", fromStep, strings.Join(valid, ", "))
+		}
+		steps = steps[idx:]
+	} else if skipDoctor {
+		steps = steps[1:]
+	}
+	if infraOnly {
+		for i, step := range steps {
+			if step.id == "infra" {
+				steps = steps[:i+1]
+				break
+			}
+		}
+	}
+	return steps, nil
 }
 
 func requireUpHealth(cfg *config.Config) error {
@@ -165,12 +203,49 @@ func validateUpProvisionResume(steps []upStep, plays, fromPlaybook string) error
 	return fmt.Errorf("--from-playbook cannot be used when the provision step is skipped")
 }
 
+type upExecutionOptions struct {
+	fromStep     string
+	limit        string
+	plays        string
+	fromPlaybook string
+	infraOnly    bool
+	retry        retryOverrides
+}
+
+func validateUpExecutionOptions(opts upExecutionOptions) error {
+	if limitContainsHost(opts.limit, "kali") {
+		return fmt.Errorf("kali is infrastructure-managed and is not an Ansible inventory host; use --with-kali --infra-only --module kali")
+	}
+	if !opts.infraOnly {
+		return nil
+	}
+	if opts.fromStep != "" && opts.fromStep != "doctor" && opts.fromStep != "infra" {
+		return fmt.Errorf("--infra-only cannot start from %q; use --from doctor or --from infra", opts.fromStep)
+	}
+	if opts.limit != "" || opts.plays != "" || opts.fromPlaybook != "" ||
+		opts.retry.maxRetries != nil || opts.retry.retryDelay != nil {
+		return fmt.Errorf("--infra-only cannot be combined with provisioning flags (--limit, --plays, --from-playbook, --max-retries, or --retry-delay)")
+	}
+	return nil
+}
+
+func limitContainsHost(limit, host string) bool {
+	for token := range strings.SplitSeq(limit, ",") {
+		if strings.EqualFold(strings.TrimSpace(token), host) {
+			return true
+		}
+	}
+	return false
+}
+
 type upResumeOptions struct {
 	plays        string
 	fromPlaybook string
 	limit        string
 	infraModule  string
 	infraExclude string
+	withKali     bool
+	infraOnly    bool
 	retry        retryOverrides
 }
 
@@ -181,6 +256,8 @@ func currentUpResumeOptions(cmd *cobra.Command) upResumeOptions {
 		limit:        upLimit,
 		infraModule:  upInfraModule,
 		infraExclude: upInfraExclude,
+		withKali:     upWithKali,
+		infraOnly:    upInfraOnly,
 	}
 	if cmd.Flags().Changed("max-retries") {
 		value := upMaxRetries
@@ -198,16 +275,34 @@ func upResumeCommand(stepID string, err error, opts upResumeOptions) string {
 	if stepID == "health-check" {
 		return command
 	}
-
-	if stepID == "doctor" || stepID == "infra" {
-		if opts.infraModule != "" {
-			command += " --module " + shellQuoteResumeArg(opts.infraModule)
-		}
-		if opts.infraExclude != "" {
-			command += " --exclude " + shellQuoteResumeArg(opts.infraExclude)
-		}
+	command = appendUpInfraResumeFlags(command, stepID, opts)
+	command = appendUpProvisionResumeFlags(command, stepID, err, opts)
+	if opts.limit != "" {
+		command += " --limit " + shellQuoteResumeArg(opts.limit)
 	}
+	return appendUpRetryResumeFlags(command, opts.retry)
+}
 
+func appendUpInfraResumeFlags(command, stepID string, opts upResumeOptions) string {
+	if stepID != "doctor" && stepID != "infra" {
+		return command
+	}
+	if opts.infraModule != "" {
+		command += " --module " + shellQuoteResumeArg(opts.infraModule)
+	}
+	if opts.infraExclude != "" {
+		command += " --exclude " + shellQuoteResumeArg(opts.infraExclude)
+	}
+	if opts.withKali {
+		command += " --with-kali"
+	}
+	if opts.infraOnly {
+		command += " --infra-only"
+	}
+	return command
+}
+
+func appendUpProvisionResumeFlags(command, stepID string, err error, opts upResumeOptions) string {
 	var failure *provisionFailure
 	switch {
 	case stepID == "provision" && errors.As(err, &failure) && failure.Playbook != "":
@@ -221,14 +316,15 @@ func upResumeCommand(stepID string, err error, opts upResumeOptions) string {
 	case opts.fromPlaybook != "":
 		command += " --from-playbook " + shellQuoteResumeArg(opts.fromPlaybook)
 	}
-	if opts.limit != "" {
-		command += " --limit " + shellQuoteResumeArg(opts.limit)
+	return command
+}
+
+func appendUpRetryResumeFlags(command string, retry retryOverrides) string {
+	if retry.maxRetries != nil {
+		command += " --max-retries " + strconv.Itoa(*retry.maxRetries)
 	}
-	if opts.retry.maxRetries != nil {
-		command += " --max-retries " + strconv.Itoa(*opts.retry.maxRetries)
-	}
-	if opts.retry.retryDelay != nil {
-		command += " --retry-delay " + strconv.Itoa(*opts.retry.retryDelay)
+	if retry.retryDelay != nil {
+		command += " --retry-delay " + strconv.Itoa(*retry.retryDelay)
 	}
 	return command
 }

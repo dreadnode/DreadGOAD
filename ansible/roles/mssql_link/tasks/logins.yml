@@ -14,10 +14,10 @@
         Start-Sleep -Seconds 10
 
         # Try to use dedicated admin connection to set multi-user mode
-        & $sqlcmd -E -S "localhost\SQLEXPRESS" -A -Q "ALTER DATABASE master SET MULTI_USER WITH ROLLBACK IMMEDIATE"
+        & $sqlcmd -b -E -S "localhost\SQLEXPRESS" -A -Q "ALTER DATABASE master SET MULTI_USER WITH ROLLBACK IMMEDIATE"
 
         # Test if we can connect normally now
-        $testOutput = & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q "SELECT 1 AS ConnectionTest" 2>&1
+        $testOutput = & $sqlcmd -b -E -S "localhost\SQLEXPRESS" -Q "SELECT 1 AS ConnectionTest" 2>&1
         if ($LASTEXITCODE -ne 0) {
           Write-Error "Still cannot connect to SQL Server: $testOutput"
           exit 1
@@ -43,16 +43,26 @@
         exit 1
       }
 
+      $remotePassword = [Text.Encoding]::UTF8.GetString(
+        [Convert]::FromBase64String("{{ mapping_item.remote_password | b64encode }}")
+      )
+      $remotePasswordSql = $remotePassword.Replace("'", "''")
+
       # Always drop and recreate the login mapping to ensure password is correct
       # This is necessary because sp_addlinkedsrvlogin doesn't update passwords
       $dropQuery = "EXEC master.dbo.sp_droplinkedsrvlogin @rmtsrvname = N'{{ linked_server }}', @locallogin = N'{{ mapping_item.local_login }}'"
-      $addQuery = "EXEC master.dbo.sp_addlinkedsrvlogin @rmtsrvname = N'{{ linked_server }}', @locallogin = N'{{ mapping_item.local_login }}', @useself = N'False', @rmtuser = N'{{ mapping_item.remote_login }}', @rmtpassword = N'{{ mapping_item.remote_password }}'"
+      $addQuery = "EXEC master.dbo.sp_addlinkedsrvlogin " +
+        "@rmtsrvname = N'{{ linked_server }}', " +
+        "@locallogin = N'{{ mapping_item.local_login }}', " +
+        "@useself = N'False', " +
+        "@rmtuser = N'{{ mapping_item.remote_login }}', " +
+        "@rmtpassword = N'$remotePasswordSql'"
 
       # Drop existing mapping (ignore errors if it doesn't exist)
-      & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q $dropQuery 2>&1 | Out-Null
+      & $sqlcmd -b -E -S "localhost\SQLEXPRESS" -Q $dropQuery 2>&1 | Out-Null
 
       # Add the login mapping with correct password
-      $result = & $sqlcmd -E -S "localhost\SQLEXPRESS" -Q $addQuery 2>&1
+      $result = & $sqlcmd -b -E -S "localhost\SQLEXPRESS" -Q $addQuery 2>&1
       if ($LASTEXITCODE -ne 0) {
         Write-Error "Failed to add linked server login: $result"
         exit 1
@@ -66,3 +76,4 @@
   with_items: "{{ users_mapping }}"
   loop_control:
     loop_var: mapping_item
+  no_log: true

@@ -749,7 +749,17 @@ func scaffoldInventoryForPlan(ctx scaffoldContext) error {
 				return fmt.Errorf("repoint inventory domain_name: %w", err)
 			}
 		}
-		return filterInventoryHosts(ctx.inventoryPath, ctx.hostFilter)
+		if err := filterInventoryHosts(ctx.inventoryPath, ctx.hostFilter); err != nil {
+			return err
+		}
+		topologyRoot := ctx.plan.LabPath
+		if ctx.useVariant {
+			topologyRoot = variantTargetFor(ctx.projectRoot, ctx.envName, ctx.variantSource)
+		}
+		return ensureInventoryTopologyFromSource(
+			ctx.inventoryPath,
+			filepath.Join(topologyRoot, "data", "inventory"),
+		)
 	}
 	template := filepath.Join(ctx.plan.LabPath, "providers", ctx.provider, "inventory")
 	raw, err := os.ReadFile(template)

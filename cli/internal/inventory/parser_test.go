@@ -9,7 +9,7 @@ import (
 const testInventory = `; GOAD inventory - auto-generated
 [default]
 DC01 ansible_host=i-0e428dfc02f5007dd dict_key=dc01 dns_domain=sevenkingdoms.local ansible_user=vagrant
-DC02 ansible_host=i-0abc123def456789a dict_key=dc02 dns_domain=north.sevenkingdoms.local ansible_user=vagrant
+DC02 ansible_host=i-0abc123def456789a dict_key=dc02 dns_domain=north.sevenkingdoms.local ansible_connection=ssh ansible_user=vagrant
 SRV01 ansible_host=i-0fff999888777666a dict_key=srv01 dns_domain=sevenkingdoms.local ansible_user=vagrant
 
 [all:vars]
@@ -72,6 +72,16 @@ func TestParse_HostAttributes(t *testing.T) {
 	}
 	if dc01.User != "vagrant" {
 		t.Errorf("User = %q, want %q", dc01.User, "vagrant")
+	}
+}
+
+func TestParseHostConnectionOverride(t *testing.T) {
+	inv := parseTestInventory(t)
+	if got := inv.Hosts["DC02"].Connection; got != "ssh" {
+		t.Errorf("Connection = %q, want ssh", got)
+	}
+	if got := inv.Hosts["DC01"].Connection; got != "" {
+		t.Errorf("inherited Connection = %q, want empty host override", got)
 	}
 }
 

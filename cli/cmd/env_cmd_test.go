@@ -88,11 +88,19 @@ func TestScaffoldInventoryLeavesDomainAloneWithoutVariant(t *testing.T) {
 func TestScaffoldInventoryRepointsNonGOADBaseLab(t *testing.T) {
 	root := t.TempDir()
 	reference := "staging"
+	labPath := filepath.Join(root, "ad", "GOAD-Mini")
+	if err := os.MkdirAll(filepath.Join(labPath, "data"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(labPath, "data", "inventory"), []byte(
+		"[domain]\ndc01\n\n[dc]\ndc01\n\n[extensions]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	body := "[all:vars]\ndomain_name=GOAD\nenv=staging\nansible_aws_ssm_region=us-west-1\n[default]\ndc01 ansible_host=i-1234\n"
 	if err := os.WriteFile(filepath.Join(root, reference+"-inventory.example"), []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	plan := scaffoldPlan{Lab: "GOAD-Mini", Profile: rangeconfig.ProfileActiveDir}
+	plan := scaffoldPlan{Lab: "GOAD-Mini", LabPath: labPath, Profile: rangeconfig.ProfileActiveDir}
 	ctx := scaffoldContext{
 		scaffoldRequest: scaffoldRequest{envName: "mini", region: "us-east-1", reference: reference},
 		projectRoot:     root,
