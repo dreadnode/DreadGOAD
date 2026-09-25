@@ -216,7 +216,7 @@ type upExecutionOptions struct {
 
 func validateUpExecutionOptions(opts upExecutionOptions) error {
 	if opts.withKali && limitContainsHost(opts.limit, "kali") {
-		return fmt.Errorf("Kali is infrastructure-managed and is not an Ansible inventory host; use --with-kali --infra-only --module kali")
+		return fmt.Errorf("kali is infrastructure-managed and is not an Ansible inventory host; use --with-kali --infra-only --module kali")
 	}
 	if !opts.infraOnly {
 		return nil
@@ -277,22 +277,34 @@ func upResumeCommand(stepID string, err error, opts upResumeOptions) string {
 	if stepID == "health-check" {
 		return command
 	}
-
-	if stepID == "doctor" || stepID == "infra" {
-		if opts.infraModule != "" {
-			command += " --module " + shellQuoteResumeArg(opts.infraModule)
-		}
-		if opts.infraExclude != "" {
-			command += " --exclude " + shellQuoteResumeArg(opts.infraExclude)
-		}
-		if opts.withKali {
-			command += " --with-kali"
-		}
-		if opts.infraOnly {
-			command += " --infra-only"
-		}
+	command = appendUpInfraResumeFlags(command, stepID, opts)
+	command = appendUpProvisionResumeFlags(command, stepID, err, opts)
+	if opts.limit != "" {
+		command += " --limit " + shellQuoteResumeArg(opts.limit)
 	}
+	return appendUpRetryResumeFlags(command, opts.retry)
+}
 
+func appendUpInfraResumeFlags(command, stepID string, opts upResumeOptions) string {
+	if stepID != "doctor" && stepID != "infra" {
+		return command
+	}
+	if opts.infraModule != "" {
+		command += " --module " + shellQuoteResumeArg(opts.infraModule)
+	}
+	if opts.infraExclude != "" {
+		command += " --exclude " + shellQuoteResumeArg(opts.infraExclude)
+	}
+	if opts.withKali {
+		command += " --with-kali"
+	}
+	if opts.infraOnly {
+		command += " --infra-only"
+	}
+	return command
+}
+
+func appendUpProvisionResumeFlags(command, stepID string, err error, opts upResumeOptions) string {
 	var failure *provisionFailure
 	switch {
 	case stepID == "provision" && errors.As(err, &failure) && failure.Playbook != "":
@@ -306,14 +318,15 @@ func upResumeCommand(stepID string, err error, opts upResumeOptions) string {
 	case opts.fromPlaybook != "":
 		command += " --from-playbook " + shellQuoteResumeArg(opts.fromPlaybook)
 	}
-	if opts.limit != "" {
-		command += " --limit " + shellQuoteResumeArg(opts.limit)
+	return command
+}
+
+func appendUpRetryResumeFlags(command string, retry retryOverrides) string {
+	if retry.maxRetries != nil {
+		command += " --max-retries " + strconv.Itoa(*retry.maxRetries)
 	}
-	if opts.retry.maxRetries != nil {
-		command += " --max-retries " + strconv.Itoa(*opts.retry.maxRetries)
-	}
-	if opts.retry.retryDelay != nil {
-		command += " --retry-delay " + strconv.Itoa(*opts.retry.retryDelay)
+	if retry.retryDelay != nil {
+		command += " --retry-delay " + strconv.Itoa(*retry.retryDelay)
 	}
 	return command
 }

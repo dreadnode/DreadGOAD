@@ -67,21 +67,30 @@ func TestMSSQLInstallerUsesStableDownloadAndRejectsStaleFiles(t *testing.T) {
 	}
 }
 
-func TestMSSQLSecretsAreTransportedWithoutPowerShellInterpolation(t *testing.T) {
+func ansibleRolesRoot(t *testing.T) string {
+	t.Helper()
 	_, sourceFile, _, ok := runtime.Caller(0)
 	if !ok {
 		t.Fatal("cannot locate test source")
 	}
-	rolesRoot := filepath.Join(
+	return filepath.Join(
 		filepath.Dir(sourceFile), "..", "..", "..", "ansible", "roles",
 	)
-	playbooksRoot := filepath.Join(rolesRoot, "..", "playbooks")
+}
 
-	servers, err := os.ReadFile(filepath.Join(playbooksRoot, "servers.yml"))
+func readRoleTestFile(t *testing.T, path string) string {
+	t.Helper()
+	contents, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	serversSource := string(servers)
+	return string(contents)
+}
+
+func TestMSSQLDiagnosticOmitsSecrets(t *testing.T) {
+	rolesRoot := ansibleRolesRoot(t)
+	playbooksRoot := filepath.Join(rolesRoot, "..", "playbooks")
+	serversSource := readRoleTestFile(t, filepath.Join(playbooksRoot, "servers.yml"))
 	diagnosticStart := strings.Index(serversSource, "- name: Display non-sensitive MSSQL installation variables")
 	if diagnosticStart < 0 {
 		t.Fatal("could not locate the MSSQL diagnostic task")
@@ -96,12 +105,12 @@ func TestMSSQLSecretsAreTransportedWithoutPowerShellInterpolation(t *testing.T) 
 			t.Errorf("MSSQL diagnostic task logs secret-bearing field %q", secret)
 		}
 	}
+}
 
-	config, err := os.ReadFile(filepath.Join(rolesRoot, "mssql", "tasks", "config.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	configSource := string(config)
+func TestMSSQLConfigTransportsSecretsSafely(t *testing.T) {
+	configSource := readRoleTestFile(
+		t, filepath.Join(ansibleRolesRoot(t), "mssql", "tasks", "config.yml"),
+	)
 	for _, unsafe := range []string{
 		`$saPassword = "{{ sa_password }}"`,
 		`PASSWORD = '{{ sa_password }}'`,
@@ -133,12 +142,12 @@ func TestMSSQLSecretsAreTransportedWithoutPowerShellInterpolation(t *testing.T) 
 			t.Errorf("MSSQL bootstrap is missing %q", required)
 		}
 	}
+}
 
-	linkedLogins, err := os.ReadFile(filepath.Join(rolesRoot, "mssql_link", "tasks", "logins.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	linkedSource := string(linkedLogins)
+func TestMSSQLLinkedServerTransportsPasswordsSafely(t *testing.T) {
+	linkedSource := readRoleTestFile(
+		t, filepath.Join(ansibleRolesRoot(t), "mssql_link", "tasks", "logins.yml"),
+	)
 	if strings.Contains(linkedSource, `@rmtpassword = N'{{ mapping_item.remote_password }}'`) {
 		t.Fatal("linked-server password is still interpolated directly into PowerShell")
 	}

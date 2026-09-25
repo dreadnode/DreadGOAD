@@ -261,7 +261,7 @@ def render_svg(mmd_path, svg_path):
         "-c", str(config_path),
         "-p", str(puppeteer_config_path),
         "-b", "#1a1a2e",
-        "-w", "1600",
+        "--width", "1600",
     ]
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True)

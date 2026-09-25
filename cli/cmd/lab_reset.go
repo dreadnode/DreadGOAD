@@ -394,39 +394,9 @@ func purgeUnmanaged(ctx context.Context, cfg *config.Config, opts purgeOptions) 
 		opts.classes = []string{"user", "computer", "group"}
 	}
 
-	if !cfg.IsAWS() {
-		return fmt.Errorf("purge-unmanaged currently requires the AWS provider")
-	}
-	if err := ensureAWSInventoryTransport(cfg); err != nil {
-		return fmt.Errorf("AWS inventory transport: %w", err)
-	}
-	parsed, err := inv.Parse(cfg.InventoryPath())
-	if err != nil {
-		return fmt.Errorf("parse inventory: %w", err)
-	}
-	if len(parsed.Groups["dc"]) == 0 {
-		return fmt.Errorf("no hosts in [dc] group of inventory %s", cfg.InventoryPath())
-	}
-
-	prov, err := cfg.NewProvider(ctx)
-	if err != nil {
-		return fmt.Errorf("create AWS provider: %w", err)
-	}
-	liveInstances, err := prov.DiscoverInstances(ctx, cfg.Env)
-	if err != nil {
-		return fmt.Errorf("discover live purge targets: %w", err)
-	}
-	if len(liveInstances) == 0 {
-		return fmt.Errorf("no running instances found for env=%s", cfg.Env)
-	}
-	targets, err := collectDCTargets(
-		parsed, opts.hostFilter, providerInstanceUpdates(liveInstances),
-	)
+	parsed, targets, err := liveDCTargets(ctx, cfg, opts.hostFilter)
 	if err != nil {
 		return err
-	}
-	if len(targets) == 0 {
-		return fmt.Errorf("no DC instance IDs available; sync the inventory first")
 	}
 
 	allow, err := labconfig.Load(cfg.LabConfigPath())
@@ -478,6 +448,46 @@ func purgeUnmanaged(ctx context.Context, cfg *config.Config, opts purgeOptions) 
 		fmt.Printf("\nTotal flagged: %d (dry-run; rerun with --apply to delete)\n", totalFlagged)
 	}
 	return nil
+}
+
+func liveDCTargets(
+	ctx context.Context, cfg *config.Config, hostFilter []string,
+) (*inv.Inventory, []dcTarget, error) {
+	if !cfg.IsAWS() {
+		return nil, nil, fmt.Errorf("purge-unmanaged currently requires the AWS provider")
+	}
+	if err := ensureAWSInventoryTransport(cfg); err != nil {
+		return nil, nil, fmt.Errorf("AWS inventory transport: %w", err)
+	}
+	parsed, err := inv.Parse(cfg.InventoryPath())
+	if err != nil {
+		return nil, nil, fmt.Errorf("parse inventory: %w", err)
+	}
+	if len(parsed.Groups["dc"]) == 0 {
+		return nil, nil, fmt.Errorf("no hosts in [dc] group of inventory %s", cfg.InventoryPath())
+	}
+
+	prov, err := cfg.NewProvider(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create AWS provider: %w", err)
+	}
+	liveInstances, err := prov.DiscoverInstances(ctx, cfg.Env)
+	if err != nil {
+		return nil, nil, fmt.Errorf("discover live purge targets: %w", err)
+	}
+	if len(liveInstances) == 0 {
+		return nil, nil, fmt.Errorf("no running instances found for env=%s", cfg.Env)
+	}
+	targets, err := collectDCTargets(
+		parsed, hostFilter, providerInstanceUpdates(liveInstances),
+	)
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(targets) == 0 {
+		return nil, nil, fmt.Errorf("no DC instance IDs available; sync the inventory first")
+	}
+	return parsed, targets, nil
 }
 
 // parsePurgeResult extracts the JSON payload that follows the marker line.
