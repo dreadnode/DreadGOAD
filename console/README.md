@@ -5,6 +5,10 @@ Directory lab ranges. A chat pane (left) drives an LLM agent + a fixed set of
 slash-commands; a live RangeView (right) shows the range topology and per-host
 status/health. Each browser tab is an independent range/agent **session**.
 
+The console is a local, single-operator control plane with access to cloud and
+host credentials. Read the [security model](SECURITY.md) before exposing it,
+importing external range content, or using mutating commands.
+
 Adapted from the ALFRED two-pane shell. The backend never reimplements cloud
 logic — it shells out to the `dreadgoad` CLI for everything.
 
@@ -52,17 +56,28 @@ for normal range creation.
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `OPENROUTER_API_KEY` | — | LLM key for the agent. Reads work without it; agent turns don't. |
+| `OPENROUTER_API_KEY` | — | LLM key for the default OpenRouter model. Reads work without it; agent turns don't. |
 | `DREADGOAD_CONSOLE_PORT` | `24749` | HTTP port |
 | `DREADGOAD_CONSOLE_MODEL` | `openrouter/anthropic/claude-sonnet-5` | Default agent model |
 | `DREADGOAD_CONSOLE_STATE_ROOT` | `.dreadgoad/console/` | SQLite DB + per-session working dirs |
 | `DREADGOAD_CONSOLE_DB` | `<state_root>/state.db` | Override the DB path |
 | `DREADGOAD_CONSOLE_FRONTEND_DIST` | — | Static SPA dir (set by the launcher) |
 
+For another model provider, export its native credential variable and name it
+with `--api-key-env`; for example, use
+`--model anthropic/... --api-key-env ANTHROPIC_API_KEY`. The launcher does not
+rename one provider's credential into another provider's variable. The selected
+name is shown in Settings and its value is removed from CLI, cloud CLI,
+Terraform, Ansible, and helper subprocesses.
+
 The state root and session/config directories are restricted to the console user
 (`0700`), and the SQLite database and sidecars use `0600`. Startup repairs modes
 left by older console versions and fails rather than silently accepting a state
 location it cannot make private.
+
+For the supported deployment boundary, token and approval behavior, retained
+data, hardening checklist, and known residual risks, see
+[SECURITY.md](SECURITY.md).
 
 ## Commands
 
@@ -168,6 +183,36 @@ Agent prompt content lives as editable markdown in `backend/prompts/`:
 Adding guidance to a command is a drop-in file; no code change. Editing the system
 prompt is just editing `system.md`.
 
+## Security
+
+The console is a local, authenticated, single-operator control plane. The agent
+has no general local shell: it can select only backend-allowlisted `dreadgoad`
+commands for the active range, and the console removes registered LLM credentials
+before starting CLI, cloud CLI, Terraform, Ansible, or helper subprocesses.
+
+Cloud credentials are not console-managed settings. The console and its child
+processes use the ambient credentials available to the launcher, such as AWS or
+Azure environment variables, profile selectors, and provider CLI caches. The
+console does not collect, persist, refresh, rotate, or revoke those credentials;
+`/login` only delegates authentication to `aws` or `az`. Credential scope,
+lifetime, storage, and revocation remain the operator's responsibility.
+
+### Accepted risk: agent-initiated `/exec`
+
+`/exec` runs scripts on range hosts with administrator authority and has no dry
+run. It intentionally does **not** require a separate approval for every call;
+repeated confirmations would make iterative agent troubleshooting substantially
+less useful. This means malicious imported range guidance, untrusted command
+output, or model error could influence the agent to run an unintended script.
+Argument validation limits hosts, flags, script size, and runtime, but cannot
+determine whether a valid script matches the operator's intent.
+
+Accept this tradeoff only for disposable, network-isolated training ranges using
+least-privilege cloud credentials. Treat imported ranges and their guidance as
+trusted executable inputs, and do not give lab hosts access to production or
+sensitive networks. See [SECURITY.md](SECURITY.md) for the complete trust model,
+hardening checklist, retained-data policy, and other residual risks.
+
 ## Architecture
 
 ```text
@@ -205,6 +250,7 @@ second tab is rejected with a 409 rather than overwriting the newer layout.
 | `range_capabilities.py` | Validated CLI-backed command metadata and optional range-owned agent guidance |
 | `summary.py` | Condenses CLI output into bounded tool results (structured, else clipped with a marker) |
 | `cli.py` | Subprocess runner (streaming + cancel; `capture` for JSON reads) |
+| `subprocess_env.py` | Removes registered LLM credentials from command subprocess environments |
 | `hook.py` | Compatibility facade for post-command synchronization |
 | `inventory_sync.py` | Instance→host overlay, cloud metadata, attack-box sync |
 | `health_sync.py` | Health-report parsing and per-host health overlays |
@@ -229,7 +275,7 @@ second tab is rejected with a 409 rather than overwriting the newer layout.
 .venv/bin/python console/backend/tests/test_commands.py
 # ... test_chat.py, test_configstore.py, test_db.py, test_fetch.py, test_hook.py,
 #     test_hostdetail.py, test_labconfig.py, test_labs.py, test_lifecycle.py, test_longops.py,
-#     test_server_rest.py,
+#     test_server_rest.py, test_subprocess_env.py,
 #     test_sessions.py, test_summary.py
 
 # Or the whole suite at once. asyncio_mode=auto is required — without it every

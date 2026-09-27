@@ -47,6 +47,7 @@ export interface AppConfig {
   version: string
   default_model: string
   default_config_path: string
+  api_key_env: string
   api_key_set: boolean
   // Providers the console can drive end to end. Sent by the backend rather
   // than hardcoded here so the two cannot drift; the CLI supports more

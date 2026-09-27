@@ -28,6 +28,7 @@ from . import (
     lifecycle,
     paths,
     projectroot,
+    subprocess_env,
     summary,
 )
 from .cli import start_capture, start_command
@@ -454,6 +455,7 @@ async def _check_credentials(session: dict[str, t.Any]) -> str | None:
     try:
         proc = await asyncio.create_subprocess_exec(
             *argv,
+            env=subprocess_env.child_env(),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

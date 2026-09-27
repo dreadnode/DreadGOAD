@@ -10,8 +10,9 @@ One socket carries a ``session_id`` on every message. Dispatch (§5.1):
   - free-text goes to the agent.
 All events are persisted to the event log and replayed on resume.
 
-Live behavior needs an LLM key (OPENROUTER_API_KEY); the structural wiring is
-import-verifiable without one.
+Live behavior needs the selected provider's LLM key; the default OpenRouter
+model uses ``OPENROUTER_API_KEY``. Structural wiring is import-verifiable
+without one.
 """
 
 from __future__ import annotations

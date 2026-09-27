@@ -6,6 +6,7 @@ Standalone:  python console/backend/tests/test_commands.py
 from __future__ import annotations
 
 import asyncio
+import os
 import pathlib
 import re
 import shutil
@@ -1042,6 +1043,50 @@ async def test_check_credentials_skips_missing_provider() -> None:
     print("PASS test_check_credentials_skips_missing_provider")
 
 
+async def test_check_credentials_uses_scrubbed_environment() -> None:
+    """The direct cloud CLI spawn must not bypass the child-env policy."""
+    from console.backend import command_runner
+
+    previous_llm = os.environ.get("OPENROUTER_API_KEY")
+    previous_cloud = os.environ.get("AWS_SESSION_TOKEN")
+    os.environ["OPENROUTER_API_KEY"] = "llm-secret"
+    os.environ["AWS_SESSION_TOKEN"] = "cloud-token"
+    original = command_runner.asyncio.create_subprocess_exec
+    seen_env: dict[str, str] | None = None
+
+    class OkProc:
+        returncode = 0
+
+        async def communicate(self):  # noqa: ANN201
+            return b"123456789012", b""
+
+    async def fake_exec(*args, **kwargs):  # noqa: ANN002, ANN003
+        nonlocal seen_env
+        seen_env = kwargs.get("env")
+        return OkProc()
+
+    command_runner.asyncio.create_subprocess_exec = fake_exec
+    try:
+        result = await command_runner._check_credentials(
+            {"snapshot": {"provider": "aws"}}
+        )
+        assert result is None
+        assert seen_env is not None
+        assert "OPENROUTER_API_KEY" not in seen_env
+        assert seen_env["AWS_SESSION_TOKEN"] == "cloud-token"
+    finally:
+        command_runner.asyncio.create_subprocess_exec = original
+        if previous_llm is None:
+            os.environ.pop("OPENROUTER_API_KEY", None)
+        else:
+            os.environ["OPENROUTER_API_KEY"] = previous_llm
+        if previous_cloud is None:
+            os.environ.pop("AWS_SESSION_TOKEN", None)
+        else:
+            os.environ["AWS_SESSION_TOKEN"] = previous_cloud
+    print("PASS test_check_credentials_uses_scrubbed_environment")
+
+
 async def test_check_credentials_aws_expired() -> None:
     """An SSO-expired AWS error triggers the right message."""
     from console.backend import command_runner
@@ -1635,6 +1680,7 @@ def main() -> None:
         test_login_argv_unknown_provider()
         test_login_argv_missing_provider()
         asyncio.run(test_check_credentials_skips_missing_provider())
+        asyncio.run(test_check_credentials_uses_scrubbed_environment())
         asyncio.run(test_check_credentials_aws_expired())
         asyncio.run(test_check_credentials_timeout_kills_proc())
         asyncio.run(test_check_credentials_missing_binary())
