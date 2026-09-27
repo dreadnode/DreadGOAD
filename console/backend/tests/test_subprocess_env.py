@@ -65,12 +65,12 @@ def test_child_env_scrubs_only_registered_llm_credentials() -> None:
         _restore_environment(previous)
 
 
-def test_launcher_selected_provider_key_is_not_renamed_or_inherited() -> None:
-    """Startup metadata selects and scrubs the provider's native variable."""
-    provider_key = "ANTHROPIC_API_KEY"
+def test_launcher_scrubs_only_the_selected_provider_key() -> None:
+    """Startup metadata scrubs the selected provider's native variable only."""
+    provider_key = "DREADGOAD_TEST_PROVIDER_API_KEY"
     env = os.environ.copy()
     env[LLM_SECRET_ENV_SETTING] = provider_key
-    env[provider_key] = "anthropic-secret"
+    env[provider_key] = "provider-secret"
     env["OPENROUTER_API_KEY"] = "openrouter-secret"
     code = (
         "import json, os; "
@@ -94,9 +94,9 @@ def test_launcher_selected_provider_key_is_not_renamed_or_inherited() -> None:
     values = json.loads(result.stdout)
     assert values == {
         "active": provider_key,
-        "provider_value": "anthropic-secret",
+        "provider_value": "provider-secret",
         "provider_in_child": False,
-        "openrouter_in_child": False,
+        "openrouter_in_child": True,
         "metadata_in_child": False,
     }
 
@@ -180,7 +180,7 @@ async def test_captured_command_uses_scrubbed_environment() -> None:
 
 def main() -> None:
     test_child_env_scrubs_only_registered_llm_credentials()
-    test_launcher_selected_provider_key_is_not_renamed_or_inherited()
+    test_launcher_scrubs_only_the_selected_provider_key()
     test_launcher_preserves_provider_native_key_name()
     test_launcher_scrubs_provider_key_before_build_helpers()
     asyncio.run(test_streaming_command_uses_scrubbed_environment())

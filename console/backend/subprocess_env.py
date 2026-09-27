@@ -34,9 +34,10 @@ if _configured_secret_env in _INFRASTRUCTURE_CREDENTIAL_ENV_NAMES:
         f"{_configured_secret_env}"
     )
 
-# Rebinding an immutable snapshot lets child_env() iterate safely if a Settings
-# request registers another key name at the same time as a command is starting.
-_llm_secret_env_names = frozenset({DEFAULT_LLM_SECRET_ENV, _configured_secret_env})
+# Start with only the configured provider credential. Rebinding an immutable
+# snapshot lets child_env() iterate safely if a Settings request registers
+# another key name at the same time as a command is starting.
+_llm_secret_env_names = frozenset({_configured_secret_env})
 _active_llm_secret_env = _configured_secret_env
 
 
