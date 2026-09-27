@@ -96,7 +96,10 @@ def test_settings_registers_llm_key_and_protects_cloud_credentials(
 ) -> None:
     key_name = "DREADGOAD_ROUTE_TEST_API_KEY"
     previous_key = os.environ.get(key_name)
-    previous_cloud = os.environ.get("AWS_SESSION_TOKEN")
+    previous_cloud = {
+        name: os.environ.get(name)
+        for name in ("AWS_SECURITY_TOKEN", "AWS_SESSION_TOKEN")
+    }
     try:
         response = client.post(
             "/api/settings",
@@ -106,12 +109,13 @@ def test_settings_registers_llm_key_and_protects_cloud_credentials(
         assert os.environ[key_name] == "llm-secret"
         assert key_name not in subprocess_env.child_env()
 
-        response = client.post(
-            "/api/settings",
-            json={"api_key": "not-a-cloud-token", "api_key_env": "AWS_SESSION_TOKEN"},
-        )
-        assert response.status_code == 400, response.text
-        assert os.environ.get("AWS_SESSION_TOKEN") == previous_cloud
+        for name, previous_value in previous_cloud.items():
+            response = client.post(
+                "/api/settings",
+                json={"api_key": "not-a-cloud-token", "api_key_env": name},
+            )
+            assert response.status_code == 400, response.text
+            assert os.environ.get(name) == previous_value
     finally:
         if previous_key is None:
             os.environ.pop(key_name, None)
@@ -202,13 +206,17 @@ def main() -> None:
                 == 400
             ), bad
         assert os.environ.get("PATH") != "x", "PATH must never be overwritten"
-        previous_cloud_token = os.environ.get("AWS_SESSION_TOKEN")
-        r = client.post(
-            "/api/settings",
-            json={"api_key": "wrong", "api_key_env": "AWS_SESSION_TOKEN"},
-        )
-        assert r.status_code == 400, r.text
-        assert os.environ.get("AWS_SESSION_TOKEN") == previous_cloud_token
+        previous_cloud_tokens = {
+            name: os.environ.get(name)
+            for name in ("AWS_SECURITY_TOKEN", "AWS_SESSION_TOKEN")
+        }
+        for name, previous_value in previous_cloud_tokens.items():
+            r = client.post(
+                "/api/settings",
+                json={"api_key": "wrong", "api_key_env": name},
+            )
+            assert r.status_code == 400, r.text
+            assert os.environ.get(name) == previous_value
         os.environ.pop("DG_TEST_API_KEY", None)
         print("PASS settings")
 

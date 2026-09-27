@@ -189,7 +189,7 @@ if ! [[ "$API_KEY_ENV" =~ ^[A-Z][A-Z0-9_]*_(API_KEY|KEY|TOKEN)$ ]]; then
 	exit 2
 fi
 case "$API_KEY_ENV" in
-AWS_ACCESS_KEY_ID | AWS_SECRET_ACCESS_KEY | AWS_SESSION_TOKEN)
+AWS_ACCESS_KEY_ID | AWS_SECRET_ACCESS_KEY | AWS_SESSION_TOKEN | AWS_SECURITY_TOKEN)
 	printf 'dreadgoad-console: --api-key-env cannot use infrastructure credential %s\n' \
 		"$API_KEY_ENV" >&2
 	exit 2

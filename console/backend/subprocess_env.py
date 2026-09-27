@@ -21,6 +21,7 @@ _INFRASTRUCTURE_CREDENTIAL_ENV_NAMES = frozenset(
     {
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
+        "AWS_SECURITY_TOKEN",
         "AWS_SESSION_TOKEN",
     }
 )

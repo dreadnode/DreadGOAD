@@ -113,6 +113,22 @@ def test_launcher_preserves_provider_native_key_name() -> None:
     )
 
 
+def test_launcher_rejects_infrastructure_credential_names() -> None:
+    """AWS session-token aliases cannot be selected as LLM credentials."""
+    repo_root = pathlib.Path(__file__).resolve().parents[3]
+    launcher = repo_root / "dreadgoad-console"
+    for name in ("AWS_SECURITY_TOKEN", "AWS_SESSION_TOKEN"):
+        result = subprocess.run(  # noqa: S603
+            ["bash", str(launcher), "--api-key-env", name],
+            cwd=repo_root,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 2
+        assert f"cannot use infrastructure credential {name}" in result.stderr
+
+
 def test_launcher_scrubs_provider_key_before_build_helpers() -> None:
     """The real launcher prefix removes the key before dependency setup."""
     repo_root = pathlib.Path(__file__).resolve().parents[3]
@@ -182,6 +198,7 @@ def main() -> None:
     test_child_env_scrubs_only_registered_llm_credentials()
     test_launcher_scrubs_only_the_selected_provider_key()
     test_launcher_preserves_provider_native_key_name()
+    test_launcher_rejects_infrastructure_credential_names()
     test_launcher_scrubs_provider_key_before_build_helpers()
     asyncio.run(test_streaming_command_uses_scrubbed_environment())
     asyncio.run(test_captured_command_uses_scrubbed_environment())
