@@ -107,6 +107,49 @@ def test_launcher_preserves_provider_native_key_name() -> None:
     source = launcher.read_text(encoding="utf-8")
     assert 'export DREADGOAD_CONSOLE_LLM_SECRET_ENV="$API_KEY_ENV"' in source
     assert 'export OPENROUTER_API_KEY="$API_KEY_VALUE"' not in source
+    assert source.count('export "$API_KEY_ENV=$LLM_API_KEY_VALUE"') == 1
+    assert source.index('unset "$API_KEY_ENV"') < source.index(
+        "# --- Python venv + backend deps"
+    )
+
+
+def test_launcher_scrubs_provider_key_before_build_helpers() -> None:
+    """The real launcher prefix removes the key before dependency setup."""
+    repo_root = pathlib.Path(__file__).resolve().parents[3]
+    launcher = repo_root / "dreadgoad-console"
+    source = launcher.read_text(encoding="utf-8")
+    prefix = source.split("# --- Python venv + backend deps", maxsplit=1)[0]
+    probe = (
+        "\nprintf 'VERIFY:%s:%s:%s\\n' "
+        '"${ANTHROPIC_API_KEY-unset}" "$LLM_API_KEY_VALUE" '
+        '"$DREADGOAD_CONSOLE_LLM_SECRET_ENV"\n'
+    )
+    env = os.environ.copy()
+    env.update(
+        {
+            "ANTHROPIC_API_KEY": "anthropic-secret",
+            "DREADGOAD_CONSOLE_PORT": "0",
+            "NO_COLOR": "1",
+        }
+    )
+    result = subprocess.run(  # noqa: S603
+        [
+            "bash",
+            "-c",
+            prefix + probe,
+            "./dreadgoad-console",
+            "--api-key-env",
+            "ANTHROPIC_API_KEY",
+        ],
+        cwd=repo_root,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert result.stdout.splitlines()[-1] == (
+        "VERIFY:unset:anthropic-secret:ANTHROPIC_API_KEY"
+    )
 
 
 async def test_streaming_command_uses_scrubbed_environment() -> None:
@@ -139,6 +182,7 @@ def main() -> None:
     test_child_env_scrubs_only_registered_llm_credentials()
     test_launcher_selected_provider_key_is_not_renamed_or_inherited()
     test_launcher_preserves_provider_native_key_name()
+    test_launcher_scrubs_provider_key_before_build_helpers()
     asyncio.run(test_streaming_command_uses_scrubbed_environment())
     asyncio.run(test_captured_command_uses_scrubbed_environment())
     print("ALL PASS")
