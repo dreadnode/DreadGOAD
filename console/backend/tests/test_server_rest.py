@@ -47,9 +47,16 @@ except ModuleNotFoundError:
 from fastapi import WebSocketDisconnect  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
-from console.backend import auth, chat, chat_runtime, commands  # noqa: E402
+from console.backend import (  # noqa: E402
+    auth,
+    chat,
+    chat_runtime,
+    commands,
+    subprocess_env,
+)
 from console.backend.db import Database  # noqa: E402
 from console.backend.server import (  # noqa: E402
+    BROWSER_SECURITY_HEADERS,
     WS_MAX_CONTENT_CHARS,
     WS_MAX_MESSAGE_CHARS,
     WS_MAX_SESSION_ID_CHARS,
@@ -84,6 +91,73 @@ def client() -> Iterator[TestClient]:
         yield started
 
 
+def test_settings_registers_llm_key_and_protects_cloud_credentials(
+    client: TestClient,
+) -> None:
+    key_name = "DREADGOAD_ROUTE_TEST_API_KEY"
+    previous_key = os.environ.get(key_name)
+    previous_cloud = {
+        name: os.environ.get(name)
+        for name in ("AWS_SECURITY_TOKEN", "AWS_SESSION_TOKEN")
+    }
+    try:
+        response = client.post(
+            "/api/settings",
+            json={"api_key": "llm-secret", "api_key_env": key_name},
+        )
+        assert response.status_code == 200, response.text
+        assert os.environ[key_name] == "llm-secret"
+        assert key_name not in subprocess_env.child_env()
+
+        for name, previous_value in previous_cloud.items():
+            response = client.post(
+                "/api/settings",
+                json={"api_key": "not-a-cloud-token", "api_key_env": name},
+            )
+            assert response.status_code == 400, response.text
+            assert os.environ.get(name) == previous_value
+    finally:
+        if previous_key is None:
+            os.environ.pop(key_name, None)
+        else:
+            os.environ[key_name] = previous_key
+
+
+def test_config_reports_active_llm_key(client: TestClient) -> None:
+    """Config names the selected provider key and reports its live presence."""
+    key_name = "DREADGOAD_CONFIG_TEST_API_KEY"
+    previous_key = os.environ.get(key_name)
+    previous_active = subprocess_env.active_llm_secret_env()
+    previous_setting = os.environ.get(subprocess_env.LLM_SECRET_ENV_SETTING)
+    try:
+        response = client.post(
+            "/api/settings",
+            json={"api_key": "provider-secret", "api_key_env": key_name},
+        )
+        assert response.status_code == 200, response.text
+
+        config = client.get("/api/config")
+        assert config.status_code == 200, config.text
+        assert config.json()["api_key_env"] == key_name
+        assert config.json()["api_key_set"] is True
+
+        os.environ.pop(key_name)
+        config = client.get("/api/config")
+        assert config.status_code == 200, config.text
+        assert config.json()["api_key_env"] == key_name
+        assert config.json()["api_key_set"] is False
+    finally:
+        if previous_key is None:
+            os.environ.pop(key_name, None)
+        else:
+            os.environ[key_name] = previous_key
+        subprocess_env.register_llm_secret_env(previous_active)
+        if previous_setting is None:
+            os.environ.pop(subprocess_env.LLM_SECRET_ENV_SETTING, None)
+        else:
+            os.environ[subprocess_env.LLM_SECRET_ENV_SETTING] = previous_setting
+
+
 def main() -> None:
     cfg = pathlib.Path(_TMP) / "dreadgoad.yaml"
     cfg.write_text(_YAML)
@@ -95,8 +169,13 @@ def main() -> None:
         assert client.get("/api/health").json()["status"] == "ok"
 
         # config exposes the key-set indicator
-        assert "api_key_set" in client.get("/api/config").json()
+        config = client.get("/api/config").json()
+        assert "api_key_set" in config
+        assert config["api_key_env"] == subprocess_env.active_llm_secret_env()
         print("PASS config")
+
+        test_config_reports_active_llm_key(client)
+        print("PASS active LLM key config")
 
         # settings: store a key into a throwaway env var (in-memory, not persisted)
         r = client.post(
@@ -107,6 +186,10 @@ def main() -> None:
             r.text
         )
         assert os.environ.get("DG_TEST_API_KEY") == "sk-test-xyz"
+        assert "DG_TEST_API_KEY" not in subprocess_env.child_env()
+        config = client.get("/api/config").json()
+        assert config["api_key_env"] == "DG_TEST_API_KEY"
+        assert config["api_key_set"] is True
         # key-shaped env-var name but unset, no key provided → 400
         assert (
             client.post(
@@ -123,6 +206,17 @@ def main() -> None:
                 == 400
             ), bad
         assert os.environ.get("PATH") != "x", "PATH must never be overwritten"
+        previous_cloud_tokens = {
+            name: os.environ.get(name)
+            for name in ("AWS_SECURITY_TOKEN", "AWS_SESSION_TOKEN")
+        }
+        for name, previous_value in previous_cloud_tokens.items():
+            r = client.post(
+                "/api/settings",
+                json={"api_key": "wrong", "api_key_env": name},
+            )
+            assert r.status_code == 400, r.text
+            assert os.environ.get(name) == previous_value
         os.environ.pop("DG_TEST_API_KEY", None)
         print("PASS settings")
 
@@ -406,6 +500,7 @@ def main() -> None:
 
         test_ws_origin_allowed()
         test_control_plane_authentication(client)
+        test_browser_security_headers(client)
         test_parse_ws_message_validation()
         test_ws_rejects_cross_origin(client)
         test_ws_invalid_message_does_not_close_connection(client)
@@ -558,6 +653,37 @@ def test_control_plane_authentication(client: TestClient) -> None:
     ) as websocket:
         assert websocket.accepted_subprotocol == auth.WS_PROTOCOL
     print("PASS test_control_plane_authentication")
+
+
+def test_browser_security_headers(client: TestClient) -> None:
+    """Framing and browser sniffing stay blocked on representative responses."""
+    error_path = "/__test__/unhandled-security-header"
+
+    def unhandled_error() -> None:
+        raise RuntimeError("verification-only failure")
+
+    if not any(getattr(route, "path", None) == error_path for route in app.routes):
+        app.add_api_route(error_path, unhandled_error)
+
+    error_client = TestClient(
+        app,
+        headers={"Authorization": auth.authorization_value()},
+        raise_server_exceptions=False,
+    )
+    error_response = error_client.get(error_path)
+    error_client.close()
+    responses = (
+        client.get("/api/health"),
+        client.get("/api/health", headers={"Authorization": "Bearer wrong"}),
+        # Static/bootstrap responses travel through the same outer middleware.
+        client.get("/", headers={"Authorization": ""}),
+        error_response,
+    )
+    assert [response.status_code for response in responses] == [200, 401, 404, 500]
+    for response in responses:
+        for name, value in BROWSER_SECURITY_HEADERS.items():
+            assert response.headers[name] == value, (response.status_code, name)
+    print("PASS test_browser_security_headers")
 
 
 def test_parse_ws_message_validation() -> None:

@@ -15,6 +15,8 @@ import time
 import typing as t
 from pathlib import Path
 
+from .subprocess_env import child_env
+
 OnLine = t.Callable[[str], t.Any]
 
 Capture = t.Callable[[list[str], str], t.Awaitable[tuple[int, str, str]]]
@@ -267,6 +269,7 @@ async def start_command(argv: list[str], cwd: str | Path) -> RunningCommand:
     proc = await asyncio.create_subprocess_exec(
         *argv,
         cwd=str(cwd),
+        env=child_env(),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         start_new_session=True,  # own process group → cancel() signals the whole tree
@@ -298,6 +301,7 @@ async def start_capture(argv: list[str], cwd: str | Path) -> RunningCommand:
     proc = await asyncio.create_subprocess_exec(
         *argv,
         cwd=str(cwd),
+        env=child_env(),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         start_new_session=True,

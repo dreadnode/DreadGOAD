@@ -20,6 +20,18 @@ DreadGOAD extends the upstream GOAD project with:
 - **Ansible collection (`dreadnode.goad`)** -- 120+ roles packaged as a reusable collection
 - **Multi-provider support** -- VirtualBox, VMware, Proxmox, AWS, Azure, and Ludus
 
+## Console
+
+The DreadGOAD Console is a local agentic web UI for creating, deploying,
+monitoring, troubleshooting, and validating lab ranges. It pairs chat-driven
+operations with a live topology view while delegating infrastructure actions to
+the `dreadgoad` CLI.
+
+[![DreadGOAD Console showing the agent and live range topology](dg-console.png)](console/README.md)
+
+See the [Console guide](console/README.md) for setup, commands, and security
+details.
+
 ## Lab Environments
 
 | Lab | VMs | Forests | Domains | Description |

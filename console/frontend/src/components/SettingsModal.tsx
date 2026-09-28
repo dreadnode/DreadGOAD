@@ -12,7 +12,7 @@ export default function SettingsModal({ cfg, model, onModelChange, onClose, onSa
 }) {
   const [modelInput, setModelInput] = useState(model ?? '')
   const [apiKey, setApiKey] = useState('')
-  const [apiKeyEnv, setApiKeyEnv] = useState('OPENROUTER_API_KEY')
+  const [apiKeyEnv, setApiKeyEnv] = useState(cfg.api_key_env || 'OPENROUTER_API_KEY')
   const [err, setErr] = useState('')
   const [saving, setSaving] = useState(false)
 
@@ -22,8 +22,10 @@ export default function SettingsModal({ cfg, model, onModelChange, onClose, onSa
     try {
       const nextModel = modelInput.trim()
       if (onModelChange && nextModel && nextModel !== model) await onModelChange(nextModel)
-      if (apiKey.trim()) {
-        await api.setSettings({ api_key: apiKey.trim(), api_key_env: apiKeyEnv.trim() || undefined })
+      const nextApiKey = apiKey.trim()
+      const nextApiKeyEnv = apiKeyEnv.trim() || 'OPENROUTER_API_KEY'
+      if (nextApiKey || nextApiKeyEnv !== cfg.api_key_env) {
+        await api.setSettings({ api_key: nextApiKey || undefined, api_key_env: nextApiKeyEnv })
       }
       onSaved()
     } catch (error) {
@@ -50,10 +52,15 @@ export default function SettingsModal({ cfg, model, onModelChange, onClose, onSa
         </div>
       )}
 
-      <Field label="API key" value={apiKey} onChange={setApiKey} placeholder="sk-or-…  (stored in memory, never saved)" type="password" />
+      <Field label="API key" value={apiKey} onChange={setApiKey} placeholder="provider key  (stored in memory, never saved)" type="password" />
       <Field label="API key env var" value={apiKeyEnv} onChange={setApiKeyEnv} placeholder="OPENROUTER_API_KEY" />
+      <div style={{ color: 'var(--dn-text-dim)', fontSize: 10, marginTop: -8, marginBottom: 12 }}>
+        Use the variable native to the model provider, such as ANTHROPIC_API_KEY.
+      </div>
       <div style={{ color: cfg.api_key_set ? 'var(--dn-success)' : 'var(--dn-warning)', fontSize: 11, marginTop: -4, marginBottom: 12 }}>
-        {cfg.api_key_set ? '● API key is set (leave blank to keep)' : '○ No API key set — agent turns will fail'}
+        {cfg.api_key_set
+          ? `● ${cfg.api_key_env} is set (leave blank to keep)`
+          : `○ ${cfg.api_key_env} is not set — matching agent turns will fail`}
       </div>
 
       {err && <div style={{ color: 'var(--dn-error)', fontSize: 11, marginBottom: 8 }}>{err}</div>}

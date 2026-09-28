@@ -79,22 +79,47 @@ async def _lifespan(app: FastAPI) -> t.AsyncIterator[None]:
 
 app = FastAPI(title="DreadGOAD Console", lifespan=_lifespan)
 
+BROWSER_SECURITY_HEADERS = {
+    # The console is a control plane, never embeddable UI. The CSP directive is
+    # the modern policy; X-Frame-Options retains coverage for older browsers.
+    "Content-Security-Policy": "frame-ancestors 'none'",
+    "X-Frame-Options": "DENY",
+    # The launch credential starts in a URL fragment and is removed immediately,
+    # but control-plane navigation should not send any referrer information.
+    "Referrer-Policy": "no-referrer",
+    "X-Content-Type-Options": "nosniff",
+}
+
+
+@app.exception_handler(Exception)
+async def harden_unhandled_error(_request: Request, _exc: Exception) -> Response:
+    """Return a generic, browser-hardened response for unexpected failures."""
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "internal server error"},
+        headers=BROWSER_SECURITY_HEADERS,
+    )
+
 
 @app.middleware("http")
 async def authenticate_api(
     request: Request,
     call_next: t.Callable[[Request], t.Awaitable[Response]],
 ) -> Response:
-    """Require the per-launch bearer token for every control-plane API call."""
+    """Authenticate API calls and harden every browser-visible response."""
     if request.url.path.startswith("/api/") and not auth.bearer_authorized(
         request.headers.get("authorization")
     ):
-        return JSONResponse(
+        response: Response = JSONResponse(
             status_code=401,
             content={"detail": "authentication required"},
             headers={"WWW-Authenticate": "Bearer"},
         )
-    return await call_next(request)
+    else:
+        response = await call_next(request)
+    for name, value in BROWSER_SECURITY_HEADERS.items():
+        response.headers[name] = value
+    return response
 
 
 app.include_router(config_router)

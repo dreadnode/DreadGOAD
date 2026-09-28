@@ -348,8 +348,8 @@ def create_agent(
 ) -> TaskAgent:
     """Build a configured agent for a session.
 
-    The LLM key must be in the environment (e.g. OPENROUTER_API_KEY). The
-    default model is Sonnet 5 via OpenRouter (see server config). The agent's
+    The provider-native LLM key must be in the environment. The default model
+    is Sonnet 5 via OpenRouter and uses ``OPENROUTER_API_KEY``. The agent's
     only range-mutating tool is ``run_dreadgoad`` (constrained to this session);
     file writes are sandboxed to the session dir. No general shell tool.
     """

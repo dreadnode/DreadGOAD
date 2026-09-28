@@ -10,7 +10,15 @@ import yaml
 from fastapi import APIRouter, HTTPException, Request
 
 from . import __version__ as VERSION
-from . import commands, configstore, labconfig, labs, paths, range_capabilities
+from . import (
+    commands,
+    configstore,
+    labconfig,
+    labs,
+    paths,
+    range_capabilities,
+    subprocess_env,
+)
 
 router = APIRouter()
 
@@ -28,11 +36,13 @@ async def health() -> dict[str, t.Any]:
 @router.get("/api/config")
 async def get_config() -> dict[str, t.Any]:
     """Return bootstrap values needed before a session exists."""
+    api_key_env = subprocess_env.active_llm_secret_env()
     return {
         "version": VERSION,
         "default_model": paths.default_model(),
         "default_config_path": configstore.default_config_path(),
-        "api_key_set": bool(os.environ.get("OPENROUTER_API_KEY")),
+        "api_key_env": api_key_env,
+        "api_key_set": bool(os.environ.get(api_key_env)),
         # The create UI offers these and no others; sending the list keeps the
         # frontend from carrying its own copy that can drift from the backend's.
         "providers": list(configstore.PROVIDERS),
@@ -125,12 +135,18 @@ async def update_settings(body: dict[str, t.Any]) -> dict[str, t.Any]:
                 f"(e.g. *_API_KEY, *_KEY, *_TOKEN); got {api_key_env!r}"
             ),
         )
+    if subprocess_env.is_infrastructure_credential_env(api_key_env):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{api_key_env} is reserved for infrastructure commands",
+        )
     if api_key:
         os.environ[api_key_env] = api_key
     elif not os.environ.get(api_key_env):
         raise HTTPException(
             status_code=400, detail=f"{api_key_env} is not set; provide an api_key"
         )
+    subprocess_env.register_llm_secret_env(api_key_env)
     return {"ok": True, "api_key_env": api_key_env}
 
 

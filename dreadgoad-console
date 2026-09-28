@@ -104,20 +104,21 @@ usage() {
 	help_opt "--dev" "vite dev server + backend, with hot reload"
 	help_opt "--model NAME" "agent model for new sessions"
 	help_cont "default: $(resolved_model)"
-	help_opt "--api-key-env VAR" "read the LLM key from VAR"
+	help_opt "--api-key-env VAR" "use the provider-native LLM key in VAR"
 	help_cont "default: $API_KEY_ENV"
 	help_opt "-h, --help" "show this message and exit"
 
 	help_head "ENVIRONMENT"
 	help_env "DREADGOAD_CONSOLE_PORT" "port to serve on (default 24749)"
 	help_env "DREADGOAD_CONSOLE_MODEL" "agent model (same as --model)"
-	help_env "OPENROUTER_API_KEY" "LLM key, or set one in-app via the gear icon"
+	help_env "OPENROUTER_API_KEY" "key for the default OpenRouter model"
 	help_env "NO_COLOR" "disable coloured output"
 
 	help_head "NOTES"
 	printf '    %sThe key itself is never taken as an argument — it would land in%s\n' "$DIM" "$RESET"
 	printf '    %sshell history and in ps output. --api-key-env names the variable%s\n' "$DIM" "$RESET"
-	printf '    %sholding it, and its value is passed to the backend.%s\n' "$DIM" "$RESET"
+	printf '    %sholding it. The name is preserved so each provider reads its own key.%s\n' "$DIM" "$RESET"
+	printf '    %s--model selects the provider; use that provider\x27s native key variable.%s\n' "$DIM" "$RESET"
 	printf '\n'
 }
 
@@ -183,10 +184,17 @@ fi
 # environment of every subprocess the console launches.
 if ! [[ "$API_KEY_ENV" =~ ^[A-Z][A-Z0-9_]*_(API_KEY|KEY|TOKEN)$ ]]; then
 	printf 'dreadgoad-console: --api-key-env must name a credential variable\n' >&2
-	printf '  expected something like OPENROUTER_API_KEY, ANTHROPIC_API_KEY or CI_TOKEN\n' >&2
+	printf '  expected a provider variable like OPENROUTER_API_KEY or ANTHROPIC_API_KEY\n' >&2
 	printf '  got: %s\n' "$API_KEY_ENV" >&2
 	exit 2
 fi
+case "$API_KEY_ENV" in
+AWS_ACCESS_KEY_ID | AWS_SECRET_ACCESS_KEY | AWS_SESSION_TOKEN | AWS_SECURITY_TOKEN)
+	printf 'dreadgoad-console: --api-key-env cannot use infrastructure credential %s\n' \
+		"$API_KEY_ENV" >&2
+	exit 2
+	;;
+esac
 
 banner() {
 	# The wordmark is 74 cols wide; fall back to a one-liner in narrow terminals.
@@ -262,27 +270,34 @@ else
 fi
 
 # --- credentials and model reach the backend through the environment --------
-# uvicorn is exec'd (or backgrounded) from this shell, so exporting here is how
-# --model and --api-key-env take effect. Previously MODEL was computed for the
-# banner and never exported, so the summary reported a model the backend had
-# no idea about unless the caller had already exported it themselves.
+# Uvicorn is exec'd (or backgrounded) from this shell. The model can remain
+# exported, while the credential is held privately until start_backend restores
+# it. Previously MODEL was computed for the banner and never exported, so the
+# summary reported a model the backend had no idea about unless the caller had
+# already exported it themselves.
 if [ -n "$MODEL" ]; then
 	export DREADGOAD_CONSOLE_MODEL="$MODEL"
 fi
 
-# Indirect expansion, defaulted, because `set -u` aborts on an unset name.
-API_KEY_VALUE="${!API_KEY_ENV:-}"
+# The selected name is provider-native: ANTHROPIC_API_KEY stays Anthropic,
+# OPENAI_API_KEY stays OpenAI, and the default remains OpenRouter. Keep its
+# value in an unexported shell variable while dependencies and frontend assets
+# are built, then restore it only in the Uvicorn process. The backend receives
+# the name as scrub-policy metadata; the secret value is never renamed.
 if [ "$API_KEY_ENV" != "OPENROUTER_API_KEY" ]; then
-	if [ -z "$API_KEY_VALUE" ]; then
+	if [ -z "${!API_KEY_ENV:-}" ]; then
 		printf '\n'
 		fail "--api-key-env named $API_KEY_ENV, but that variable is empty or unset."
 		fail "export it first, or drop the flag to use OPENROUTER_API_KEY."
 		exit 1
 	fi
-	# The backend reads OPENROUTER_API_KEY; copy the value across rather than
-	# teaching it a second variable name.
-	export OPENROUTER_API_KEY="$API_KEY_VALUE"
 fi
+LLM_API_KEY_VALUE="${!API_KEY_ENV:-}"
+# Assignment preserves an inherited export attribute in Bash. Force this
+# holding variable to remain shell-private before any build helper starts.
+export -n LLM_API_KEY_VALUE
+unset "$API_KEY_ENV"
+export DREADGOAD_CONSOLE_LLM_SECRET_ENV="$API_KEY_ENV"
 
 # One credential per launch protects the loopback API from other local users
 # and unrelated processes. It is carried to the browser in a URL fragment (not
@@ -296,7 +311,7 @@ field "python" "$PY_V"
 field "node" "$NODE_V" "$([ "$NODE_V" = "not found" ] && echo "$RED" || echo "$DIM")"
 field "cli" "${CLI_PATH:-not found}$CLI_NOTE" "$([ -z "$CLI_PATH" ] && echo "$RED" || echo "$DIM")"
 field "model" "$(resolved_model)" "$BLUE"
-if [ -n "${OPENROUTER_API_KEY:-}" ]; then
+if [ -n "$LLM_API_KEY_VALUE" ]; then
 	field "api key" "● set ($API_KEY_ENV)" "$GREEN"
 else
 	field "api key" "○ not set — add one in-app via ⚙" "$AMBER"
@@ -382,6 +397,19 @@ ready() {
 	printf '  %s╰%s╯%s\n\n' "$BRAND" "$bar" "$RESET"
 }
 
+# Give the selected provider credential only to the backend. This function runs
+# in a background subshell in development and replaces the launcher in normal
+# mode, so the export cannot leak back into npm, Vite, Go, or package installers.
+start_backend() {
+	if [ -n "$LLM_API_KEY_VALUE" ]; then
+		export "$API_KEY_ENV=$LLM_API_KEY_VALUE"
+	else
+		unset "$API_KEY_ENV"
+	fi
+	export DREADGOAD_CONSOLE_AUTH_TOKEN="$AUTH_TOKEN"
+	exec "$VENV/bin/uvicorn" "$@"
+}
+
 if [ "$DEV" = 1 ]; then
 	step "starting vite dev server + uvicorn (--reload)"
 	ready
@@ -393,8 +421,7 @@ if [ "$DEV" = 1 ]; then
 	# trees. Same path covers `kill` of this script and either side crashing.
 	(cd "$FRONTEND" && npm install && npm run dev) &
 	VITE_PID=$!
-	DREADGOAD_CONSOLE_AUTH_TOKEN="$AUTH_TOKEN" \
-		"$VENV/bin/uvicorn" console.backend.server:app --reload --port "$PORT" &
+	start_backend console.backend.server:app --reload --port "$PORT" &
 	API_PID=$!
 
 	# Signal a process and its descendants. npm → vite and uvicorn → its reloader
@@ -477,6 +504,5 @@ fi
 step "serving"
 ready
 # mount_frontend() is invoked by an app-factory shim so the static dir is wired.
-DREADGOAD_CONSOLE_FRONTEND_DIST="$FRONTEND/dist" \
-	DREADGOAD_CONSOLE_AUTH_TOKEN="$AUTH_TOKEN" \
-	exec "$VENV/bin/uvicorn" console.backend.server:app --port "$PORT"
+export DREADGOAD_CONSOLE_FRONTEND_DIST="$FRONTEND/dist"
+start_backend console.backend.server:app --port "$PORT"
