@@ -139,12 +139,15 @@ def test_launcher_scrubs_provider_key_before_build_helpers() -> None:
         "\nprintf 'VERIFY:%s:%s:%s\\n' "
         '"${ANTHROPIC_API_KEY-unset}" "$LLM_API_KEY_VALUE" '
         '"$DREADGOAD_CONSOLE_LLM_SECRET_ENV"\n'
+        'python3 -c \'import os; print("CHILD:" + '
+        'os.environ.get("LLM_API_KEY_VALUE", "unset"))\'\n'
     )
     env = os.environ.copy()
     env.update(
         {
             "ANTHROPIC_API_KEY": "anthropic-secret",
             "DREADGOAD_CONSOLE_PORT": "0",
+            "LLM_API_KEY_VALUE": "attacker-seed",
             "NO_COLOR": "1",
         }
     )
@@ -163,9 +166,10 @@ def test_launcher_scrubs_provider_key_before_build_helpers() -> None:
         capture_output=True,
         text=True,
     )
-    assert result.stdout.splitlines()[-1] == (
-        "VERIFY:unset:anthropic-secret:ANTHROPIC_API_KEY"
-    )
+    assert result.stdout.splitlines()[-2:] == [
+        "VERIFY:unset:anthropic-secret:ANTHROPIC_API_KEY",
+        "CHILD:unset",
+    ]
 
 
 async def test_streaming_command_uses_scrubbed_environment() -> None:

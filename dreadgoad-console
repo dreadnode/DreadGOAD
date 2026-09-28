@@ -293,6 +293,9 @@ if [ "$API_KEY_ENV" != "OPENROUTER_API_KEY" ]; then
 	fi
 fi
 LLM_API_KEY_VALUE="${!API_KEY_ENV:-}"
+# Assignment preserves an inherited export attribute in Bash. Force this
+# holding variable to remain shell-private before any build helper starts.
+export -n LLM_API_KEY_VALUE
 unset "$API_KEY_ENV"
 export DREADGOAD_CONSOLE_LLM_SECRET_ENV="$API_KEY_ENV"
 
