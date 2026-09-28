@@ -5,6 +5,8 @@ Directory lab ranges. A chat pane (left) drives an LLM agent + a fixed set of
 slash-commands; a live RangeView (right) shows the range topology and per-host
 status/health. Each browser tab is an independent range/agent **session**.
 
+![DreadGOAD Console showing the agent and live range topology](../dg-console.png)
+
 The console is a local, single-operator control plane with access to cloud and
 host credentials. Read the [security model](SECURITY.md) before exposing it,
 importing external range content, or using mutating commands.
