@@ -196,7 +196,7 @@ if ! [[ "$API_KEY_ENV" =~ ^[A-Z][A-Z0-9_]*_(API_KEY|KEY|TOKEN)$ ]]; then
 	exit 2
 fi
 case "$API_KEY_ENV" in
-AWS_ACCESS_KEY_ID | AWS_SECRET_ACCESS_KEY | AWS_SESSION_TOKEN | AWS_SECURITY_TOKEN)
+ARM_OIDC_TOKEN | AWS_ACCESS_KEY_ID | AWS_CONTAINER_AUTHORIZATION_TOKEN | AWS_SECRET_ACCESS_KEY | AWS_SESSION_TOKEN | AWS_SECURITY_TOKEN | LUDUS_API_KEY)
 	printf 'dreadgoad-console: --api-key-env cannot use infrastructure credential %s\n' \
 		"$API_KEY_ENV" >&2
 	exit 2
@@ -225,9 +225,14 @@ step() { printf '\n  %s▸%s %s%s%s\n' "$BRAND" "$RESET" "$BOLD" "$1" "$RESET"; 
 warn() { printf '  %s!%s %s%s%s\n' "$AMBER" "$RESET" "$AMBER" "$1" "$RESET"; }
 fail() { printf '  %s✕%s %s%s%s\n' "$RED" "$RESET" "$RED" "$1" "$RESET"; }
 
-# Capture every credential name known to this launch before dependency, build,
-# or frontend helpers run. The documented OpenRouter default remains sensitive
-# even when another provider is selected explicitly.
+# Register supported LLM provider credentials explicitly. Any custom selected
+# provider is appended below; infrastructure credentials are never inferred
+# from broad *_KEY or *_TOKEN patterns.
+LLM_SECRET_ENV_NAMES=(
+	"OPENROUTER_API_KEY"
+	"ANTHROPIC_API_KEY"
+	"OPENAI_API_KEY"
+)
 if [ "$API_KEY_ENV" != "OPENROUTER_API_KEY" ] && [ -z "${!API_KEY_ENV:-}" ]; then
 	printf '\n'
 	fail "--api-key-env named $API_KEY_ENV, but that variable is empty or unset."
@@ -238,19 +243,23 @@ LLM_API_KEY_VALUE="${!API_KEY_ENV:-}"
 # Assignment preserves an inherited export attribute in Bash. Force this
 # holding variable to remain shell-private before any build helper starts.
 export -n LLM_API_KEY_VALUE
-LLM_SECRET_ENV_NAMES=("OPENROUTER_API_KEY")
-LLM_SECRET_ENV_VALUES=("${OPENROUTER_API_KEY:-}")
-if [ "$API_KEY_ENV" != "OPENROUTER_API_KEY" ]; then
+LLM_SECRET_ENV_SELECTED=0
+for secret_name in "${LLM_SECRET_ENV_NAMES[@]}"; do
+	if [ "$secret_name" = "$API_KEY_ENV" ]; then
+		LLM_SECRET_ENV_SELECTED=1
+		break
+	fi
+done
+if [ "$LLM_SECRET_ENV_SELECTED" = 0 ]; then
 	LLM_SECRET_ENV_NAMES+=("$API_KEY_ENV")
-	LLM_SECRET_ENV_VALUES+=("$LLM_API_KEY_VALUE")
 fi
 # Arrays are not placed in a child environment by Bash, but clear any inherited
-# export attributes as defense in depth before they hold credential values.
-export -n LLM_SECRET_ENV_NAMES LLM_SECRET_ENV_VALUES
+# export attribute before the registry is used by helper commands.
+export -n LLM_SECRET_ENV_NAMES
 for secret_name in "${LLM_SECRET_ENV_NAMES[@]}"; do
 	unset "$secret_name"
 done
-unset secret_name
+unset LLM_SECRET_ENV_SELECTED secret_name
 LLM_SECRET_ENV_LIST="$(
 	IFS=,
 	printf '%s' "${LLM_SECRET_ENV_NAMES[*]}"
@@ -417,22 +426,16 @@ ready() {
 	printf '  %s╰%s╯%s\n\n' "$BRAND" "$bar" "$RESET"
 }
 
-# Give launcher-known provider credentials only to the backend. This function
-# runs in a background subshell in development and replaces the launcher in
-# normal mode, so the export cannot leak back into npm, Vite, Go, or package
-# installers.
+# Give only the selected provider credential to the backend. This function runs
+# in a background subshell in development and replaces the launcher in normal
+# mode, so the export cannot leak back into npm, Vite, Go, or package installers.
 start_backend() {
-	export -n secret_name secret_value
-	local index secret_name secret_value
-	for ((index = 0; index < ${#LLM_SECRET_ENV_NAMES[@]}; index++)); do
-		secret_name="${LLM_SECRET_ENV_NAMES[$index]}"
-		secret_value="${LLM_SECRET_ENV_VALUES[$index]}"
-		if [ -n "$secret_value" ]; then
-			export "$secret_name=$secret_value"
-		else
-			unset "$secret_name"
-		fi
-	done
+	export -n LLM_API_KEY_VALUE
+	if [ -n "$LLM_API_KEY_VALUE" ]; then
+		export "$API_KEY_ENV=$LLM_API_KEY_VALUE"
+	else
+		unset "$API_KEY_ENV"
+	fi
 	export DREADGOAD_CONSOLE_AUTH_TOKEN="$AUTH_TOKEN"
 	exec "$VENV/bin/uvicorn" "$@"
 }
