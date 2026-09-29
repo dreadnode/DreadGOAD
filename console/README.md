@@ -69,7 +69,8 @@ For another model provider, export its native credential variable and name it
 with `--api-key-env`; for example, use
 `--model anthropic/... --api-key-env ANTHROPIC_API_KEY`. The launcher does not
 rename one provider's credential into another provider's variable. The selected
-name is shown in Settings and its value is removed from CLI, cloud CLI,
+name is shown in Settings. The default OpenRouter credential and selected
+provider credential are removed from dependency, build, CLI, cloud CLI,
 Terraform, Ansible, and helper subprocesses.
 
 The state root and session/config directories are restricted to the console user

@@ -9,14 +9,17 @@ import asyncio
 import json
 import os
 import pathlib
+import shlex
 import subprocess
 import sys
+import tempfile
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
 from console.backend.cli import capture, run_command  # noqa: E402
 from console.backend.subprocess_env import (  # noqa: E402
     LLM_SECRET_ENV_SETTING,
+    LLM_SECRET_ENVS_SETTING,
     child_env,
     register_llm_secret_env,
 )
@@ -65,11 +68,12 @@ def test_child_env_scrubs_only_registered_llm_credentials() -> None:
         _restore_environment(previous)
 
 
-def test_launcher_scrubs_only_the_selected_provider_key() -> None:
-    """Startup metadata scrubs the selected provider's native variable only."""
+def test_backend_scrubs_all_launcher_registered_provider_keys() -> None:
+    """Startup metadata registers both the default and selected provider keys."""
     provider_key = "DREADGOAD_TEST_PROVIDER_API_KEY"
     env = os.environ.copy()
     env[LLM_SECRET_ENV_SETTING] = provider_key
+    env[LLM_SECRET_ENVS_SETTING] = f"OPENROUTER_API_KEY,{provider_key}"
     env[provider_key] = "provider-secret"
     env["OPENROUTER_API_KEY"] = "openrouter-secret"
     code = (
@@ -79,9 +83,11 @@ def test_launcher_scrubs_only_the_selected_provider_key() -> None:
         "child = child_env(); "
         f"print(json.dumps({{'active': active_llm_secret_env(), "
         f"'provider_value': os.environ.get({provider_key!r}), "
+        "'openrouter_value': os.environ.get('OPENROUTER_API_KEY'), "
         f"'provider_in_child': {provider_key!r} in child, "
         "'openrouter_in_child': 'OPENROUTER_API_KEY' in child, "
-        f"'metadata_in_child': {LLM_SECRET_ENV_SETTING!r} in child}}))"
+        f"'metadata_in_child': {LLM_SECRET_ENV_SETTING!r} in child, "
+        f"'metadata_list_in_child': {LLM_SECRET_ENVS_SETTING!r} in child}}))"
     )
     result = subprocess.run(  # noqa: S603
         [sys.executable, "-c", code],
@@ -95,9 +101,11 @@ def test_launcher_scrubs_only_the_selected_provider_key() -> None:
     assert values == {
         "active": provider_key,
         "provider_value": "provider-secret",
+        "openrouter_value": "openrouter-secret",
         "provider_in_child": False,
-        "openrouter_in_child": True,
+        "openrouter_in_child": False,
         "metadata_in_child": False,
+        "metadata_list_in_child": False,
     }
 
 
@@ -106,11 +114,118 @@ def test_launcher_preserves_provider_native_key_name() -> None:
     launcher = pathlib.Path(__file__).resolve().parents[3] / "dreadgoad-console"
     source = launcher.read_text(encoding="utf-8")
     assert 'export DREADGOAD_CONSOLE_LLM_SECRET_ENV="$API_KEY_ENV"' in source
+    assert 'export DREADGOAD_CONSOLE_LLM_SECRET_ENVS="$LLM_SECRET_ENV_LIST"' in source
     assert 'export OPENROUTER_API_KEY="$API_KEY_VALUE"' not in source
-    assert source.count('export "$API_KEY_ENV=$LLM_API_KEY_VALUE"') == 1
-    assert source.index('unset "$API_KEY_ENV"') < source.index(
+    assert 'LLM_SECRET_ENV_NAMES=("OPENROUTER_API_KEY")' in source
+    assert 'export "$secret_name=$secret_value"' in source
+    assert source.index('unset "$secret_name"') < source.index(
         "# --- Python venv + backend deps"
     )
+
+
+def test_launcher_help_runs_without_external_tools() -> None:
+    """Even early help rendering must not expose credentials to a child tool."""
+    repo_root = pathlib.Path(__file__).resolve().parents[3]
+    launcher = repo_root / "dreadgoad-console"
+    env = os.environ.copy()
+    env.update(
+        {
+            "PATH": "",
+            "OPENROUTER_API_KEY": "openrouter-secret",
+            "ANTHROPIC_API_KEY": "anthropic-secret",
+        }
+    )
+    result = subprocess.run(  # noqa: S603
+        ["/bin/bash", str(launcher), "--api-key-env", "ANTHROPIC_API_KEY", "--help"],
+        cwd=repo_root,
+        env=env,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "USAGE" in result.stdout
+
+
+def test_launcher_restores_registered_keys_only_for_backend() -> None:
+    """The real start_backend function handles every launch credential matrix."""
+    repo_root = pathlib.Path(__file__).resolve().parents[3]
+    source = (repo_root / "dreadgoad-console").read_text(encoding="utf-8")
+    start = source.index("start_backend() {")
+    end = source.index('\n}\n\nif [ "$DEV"', start) + 2
+    function_source = source[start:end]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        venv_bin = pathlib.Path(temp_dir) / "bin"
+        venv_bin.mkdir()
+        fake_uvicorn = venv_bin / "uvicorn"
+        fake_uvicorn.write_text(
+            "#!/usr/bin/env python3\n"
+            "import json, os\n"
+            'names = ["OPENROUTER_API_KEY", '
+            '"DREADGOAD_TEST_PROVIDER_API_KEY", '
+            '"DREADGOAD_CONSOLE_AUTH_TOKEN", '
+            '"LLM_SECRET_ENV_VALUES", "secret_name", "secret_value"]\n'
+            "print(json.dumps({name: os.environ.get(name) for name in names}))\n",
+            encoding="utf-8",
+        )
+        fake_uvicorn.chmod(0o755)
+        cases = (
+            (
+                "default only",
+                '("OPENROUTER_API_KEY")',
+                '("openrouter-secret")',
+                "openrouter-secret",
+                None,
+            ),
+            (
+                "selected only",
+                '("OPENROUTER_API_KEY" "DREADGOAD_TEST_PROVIDER_API_KEY")',
+                '("" "provider-secret")',
+                None,
+                "provider-secret",
+            ),
+            (
+                "default and selected",
+                '("OPENROUTER_API_KEY" "DREADGOAD_TEST_PROVIDER_API_KEY")',
+                '("openrouter-secret" "provider-secret")',
+                "openrouter-secret",
+                "provider-secret",
+            ),
+        )
+        for label, names, secrets, openrouter_value, provider_value in cases:
+            script = (
+                f"{function_source}\n"
+                f"LLM_SECRET_ENV_NAMES={names}\n"
+                f"LLM_SECRET_ENV_VALUES={secrets}\n"
+                f"VENV={shlex.quote(temp_dir)}\n"
+                'AUTH_TOKEN="browser-token"\n'
+                "start_backend console.backend.server:app\n"
+            )
+            env = os.environ.copy()
+            env.update(
+                {
+                    "LLM_SECRET_ENV_VALUES": "attacker-array-seed",
+                    "secret_name": "attacker-name-seed",
+                    "secret_value": "attacker-value-seed",
+                }
+            )
+            result = subprocess.run(  # noqa: S603
+                ["bash", "-c", script],
+                cwd=repo_root,
+                env=env,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            values = json.loads(result.stdout)
+            assert values == {
+                "OPENROUTER_API_KEY": openrouter_value,
+                "DREADGOAD_TEST_PROVIDER_API_KEY": provider_value,
+                "DREADGOAD_CONSOLE_AUTH_TOKEN": "browser-token",
+                "LLM_SECRET_ENV_VALUES": None,
+                "secret_name": None,
+                "secret_value": None,
+            }, label
 
 
 def test_launcher_rejects_infrastructure_credential_names() -> None:
@@ -129,6 +244,23 @@ def test_launcher_rejects_infrastructure_credential_names() -> None:
         assert f"cannot use infrastructure credential {name}" in result.stderr
 
 
+def test_backend_rejects_infrastructure_credential_metadata() -> None:
+    """Launcher metadata cannot classify cloud credentials as LLM secrets."""
+    repo_root = pathlib.Path(__file__).resolve().parents[3]
+    env = os.environ.copy()
+    env[LLM_SECRET_ENVS_SETTING] = "OPENROUTER_API_KEY,AWS_SESSION_TOKEN"
+    result = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", "import console.backend.subprocess_env"],
+        cwd=repo_root,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "cannot name infrastructure credential AWS_SESSION_TOKEN" in result.stderr
+
+
 def test_launcher_scrubs_provider_key_before_build_helpers() -> None:
     """The real launcher prefix removes the key before dependency setup."""
     repo_root = pathlib.Path(__file__).resolve().parents[3]
@@ -136,16 +268,20 @@ def test_launcher_scrubs_provider_key_before_build_helpers() -> None:
     source = launcher.read_text(encoding="utf-8")
     prefix = source.split("# --- Python venv + backend deps", maxsplit=1)[0]
     probe = (
-        "\nprintf 'VERIFY:%s:%s:%s\\n' "
-        '"${ANTHROPIC_API_KEY-unset}" "$LLM_API_KEY_VALUE" '
-        '"$DREADGOAD_CONSOLE_LLM_SECRET_ENV"\n'
-        'python3 -c \'import os; print("CHILD:" + '
-        'os.environ.get("LLM_API_KEY_VALUE", "unset"))\'\n'
+        "\nprintf 'VERIFY:%s:%s:%s:%s:%s\\n' "
+        '"${ANTHROPIC_API_KEY-unset}" "${OPENROUTER_API_KEY-unset}" '
+        '"$LLM_API_KEY_VALUE" "$DREADGOAD_CONSOLE_LLM_SECRET_ENV" '
+        '"$DREADGOAD_CONSOLE_LLM_SECRET_ENVS"\n'
+        'python3 -c \'import os; print("CHILD:%s:%s:%s" % '
+        '(os.environ.get("ANTHROPIC_API_KEY", "unset"), '
+        'os.environ.get("OPENROUTER_API_KEY", "unset"), '
+        'os.environ.get("LLM_API_KEY_VALUE", "unset")))\'\n'
     )
     env = os.environ.copy()
     env.update(
         {
             "ANTHROPIC_API_KEY": "anthropic-secret",
+            "OPENROUTER_API_KEY": "openrouter-secret",
             "DREADGOAD_CONSOLE_PORT": "0",
             "LLM_API_KEY_VALUE": "attacker-seed",
             "NO_COLOR": "1",
@@ -167,8 +303,9 @@ def test_launcher_scrubs_provider_key_before_build_helpers() -> None:
         text=True,
     )
     assert result.stdout.splitlines()[-2:] == [
-        "VERIFY:unset:anthropic-secret:ANTHROPIC_API_KEY",
-        "CHILD:unset",
+        "VERIFY:unset:unset:anthropic-secret:ANTHROPIC_API_KEY:"
+        "OPENROUTER_API_KEY,ANTHROPIC_API_KEY",
+        "CHILD:unset:unset:unset",
     ]
 
 
@@ -200,9 +337,12 @@ async def test_captured_command_uses_scrubbed_environment() -> None:
 
 def main() -> None:
     test_child_env_scrubs_only_registered_llm_credentials()
-    test_launcher_scrubs_only_the_selected_provider_key()
+    test_backend_scrubs_all_launcher_registered_provider_keys()
     test_launcher_preserves_provider_native_key_name()
+    test_launcher_help_runs_without_external_tools()
+    test_launcher_restores_registered_keys_only_for_backend()
     test_launcher_rejects_infrastructure_credential_names()
+    test_backend_rejects_infrastructure_credential_metadata()
     test_launcher_scrubs_provider_key_before_build_helpers()
     asyncio.run(test_streaming_command_uses_scrubbed_environment())
     asyncio.run(test_captured_command_uses_scrubbed_environment())

@@ -82,8 +82,10 @@ The provider-native LLM API key selected by the launcher or entered in Settings
 is kept in the backend process environment and is not returned by the API or
 written to the console database. `OPENROUTER_API_KEY` remains the default for
 the default OpenRouter model; other providers retain their own variable names.
-Every registered LLM credential is removed from the environment passed to CLI,
-cloud CLI, Terraform, Ansible, and helper subprocesses.
+The launcher registers both that default and the selected provider variable,
+then removes their values before dependency, build, and frontend helpers run.
+Every registered LLM credential is also removed from the environment passed to
+CLI, cloud CLI, Terraform, Ansible, and other backend subprocesses.
 
 Cloud credentials are not collected or managed by the console. Provider tooling
 uses the ambient credentials available to the launcher through environment
