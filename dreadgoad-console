@@ -251,7 +251,10 @@ for secret_name in "${LLM_SECRET_ENV_NAMES[@]}"; do
 	unset "$secret_name"
 done
 unset secret_name
-LLM_SECRET_ENV_LIST="$(IFS=,; printf '%s' "${LLM_SECRET_ENV_NAMES[*]}")"
+LLM_SECRET_ENV_LIST="$(
+	IFS=,
+	printf '%s' "${LLM_SECRET_ENV_NAMES[*]}"
+)"
 export DREADGOAD_CONSOLE_LLM_SECRET_ENV="$API_KEY_ENV"
 export DREADGOAD_CONSOLE_LLM_SECRET_ENVS="$LLM_SECRET_ENV_LIST"
 
