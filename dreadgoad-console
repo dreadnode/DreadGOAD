@@ -9,7 +9,12 @@
 # (or at cli/dreadgoad) — the backend shells out to it. See design §10.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+# Resolve the repository root with Bash built-ins only. LLM credentials are
+# still ambient at this point, so no external executable may run yet.
+LAUNCHER_DIR="${0%/*}"
+if [ "$LAUNCHER_DIR" = "$0" ]; then LAUNCHER_DIR="."; fi
+ROOT="$(cd "$LAUNCHER_DIR" && pwd)"
+unset LAUNCHER_DIR
 BACKEND="$ROOT/console/backend"
 FRONTEND="$ROOT/console/frontend"
 VENV="$ROOT/.venv"
@@ -54,8 +59,6 @@ else
 	RESET=''
 fi
 
-COLS="$(tput cols 2>/dev/null || echo 80)"
-
 # resolved_model — what a new session will actually run on.
 #
 # Asks the backend rather than repeating its fallback: paths.py is stdlib-only
@@ -86,7 +89,7 @@ help_cont() { printf '    %-18s %s%s%s\n' "" "$FAINT" "$1" "$RESET"; }
 
 usage() {
 	local self
-	self="$(basename "$0")"
+	self="${0##*/}"
 	# The compact wordmark, matching banner()'s narrow-terminal form — help is
 	# reference material, not a launch, so it does not get the full six-line
 	# ASCII lockup.
@@ -103,7 +106,11 @@ usage() {
 	help_opt "(none)" "build the frontend and serve it on :$PORT"
 	help_opt "--dev" "vite dev server + backend, with hot reload"
 	help_opt "--model NAME" "agent model for new sessions"
-	help_cont "default: $(resolved_model)"
+	if [ -n "$MODEL" ]; then
+		help_cont "default: $MODEL"
+	else
+		help_cont "default: backend default"
+	fi
 	help_opt "--api-key-env VAR" "use the provider-native LLM key in VAR"
 	help_cont "default: $API_KEY_ENV"
 	help_opt "-h, --help" "show this message and exit"
@@ -189,7 +196,7 @@ if ! [[ "$API_KEY_ENV" =~ ^[A-Z][A-Z0-9_]*_(API_KEY|KEY|TOKEN)$ ]]; then
 	exit 2
 fi
 case "$API_KEY_ENV" in
-AWS_ACCESS_KEY_ID | AWS_SECRET_ACCESS_KEY | AWS_SESSION_TOKEN | AWS_SECURITY_TOKEN)
+ARM_OIDC_TOKEN | AWS_ACCESS_KEY_ID | AWS_CONTAINER_AUTHORIZATION_TOKEN | AWS_SECRET_ACCESS_KEY | AWS_SESSION_TOKEN | AWS_SECURITY_TOKEN | LUDUS_API_KEY)
 	printf 'dreadgoad-console: --api-key-env cannot use infrastructure credential %s\n' \
 		"$API_KEY_ENV" >&2
 	exit 2
@@ -218,6 +225,49 @@ step() { printf '\n  %s▸%s %s%s%s\n' "$BRAND" "$RESET" "$BOLD" "$1" "$RESET"; 
 warn() { printf '  %s!%s %s%s%s\n' "$AMBER" "$RESET" "$AMBER" "$1" "$RESET"; }
 fail() { printf '  %s✕%s %s%s%s\n' "$RED" "$RESET" "$RED" "$1" "$RESET"; }
 
+# Register supported LLM provider credentials explicitly. Any custom selected
+# provider is appended below; infrastructure credentials are never inferred
+# from broad *_KEY or *_TOKEN patterns.
+LLM_SECRET_ENV_NAMES=(
+	"OPENROUTER_API_KEY"
+	"ANTHROPIC_API_KEY"
+	"OPENAI_API_KEY"
+)
+if [ "$API_KEY_ENV" != "OPENROUTER_API_KEY" ] && [ -z "${!API_KEY_ENV:-}" ]; then
+	printf '\n'
+	fail "--api-key-env named $API_KEY_ENV, but that variable is empty or unset."
+	fail "export it first, or drop the flag to use OPENROUTER_API_KEY."
+	exit 1
+fi
+LLM_API_KEY_VALUE="${!API_KEY_ENV:-}"
+# Assignment preserves an inherited export attribute in Bash. Force this
+# holding variable to remain shell-private before any build helper starts.
+export -n LLM_API_KEY_VALUE
+LLM_SECRET_ENV_SELECTED=0
+for secret_name in "${LLM_SECRET_ENV_NAMES[@]}"; do
+	if [ "$secret_name" = "$API_KEY_ENV" ]; then
+		LLM_SECRET_ENV_SELECTED=1
+		break
+	fi
+done
+if [ "$LLM_SECRET_ENV_SELECTED" = 0 ]; then
+	LLM_SECRET_ENV_NAMES+=("$API_KEY_ENV")
+fi
+# Arrays are not placed in a child environment by Bash, but clear any inherited
+# export attribute before the registry is used by helper commands.
+export -n LLM_SECRET_ENV_NAMES
+for secret_name in "${LLM_SECRET_ENV_NAMES[@]}"; do
+	unset "$secret_name"
+done
+unset LLM_SECRET_ENV_SELECTED secret_name
+LLM_SECRET_ENV_LIST="$(
+	IFS=,
+	printf '%s' "${LLM_SECRET_ENV_NAMES[*]}"
+)"
+export DREADGOAD_CONSOLE_LLM_SECRET_ENV="$API_KEY_ENV"
+export DREADGOAD_CONSOLE_LLM_SECRET_ENVS="$LLM_SECRET_ENV_LIST"
+
+COLS="$(tput cols 2>/dev/null || echo 80)"
 banner
 printf '  %sActive Directory range control plane%s %s·%s %s%s%s\n\n' \
 	"$DIM" "$RESET" "$FAINT" "$RESET" "$CORAL" \
@@ -269,35 +319,14 @@ else
 	CLI_PATH=""
 fi
 
-# --- credentials and model reach the backend through the environment --------
+# --- model reaches the backend through the environment ----------------------
 # Uvicorn is exec'd (or backgrounded) from this shell. The model can remain
-# exported, while the credential is held privately until start_backend restores
-# it. Previously MODEL was computed for the banner and never exported, so the
-# summary reported a model the backend had no idea about unless the caller had
-# already exported it themselves.
+# exported. Previously MODEL was computed for the banner and never exported,
+# so the summary reported a model the backend had no idea about unless the
+# caller had already exported it themselves.
 if [ -n "$MODEL" ]; then
 	export DREADGOAD_CONSOLE_MODEL="$MODEL"
 fi
-
-# The selected name is provider-native: ANTHROPIC_API_KEY stays Anthropic,
-# OPENAI_API_KEY stays OpenAI, and the default remains OpenRouter. Keep its
-# value in an unexported shell variable while dependencies and frontend assets
-# are built, then restore it only in the Uvicorn process. The backend receives
-# the name as scrub-policy metadata; the secret value is never renamed.
-if [ "$API_KEY_ENV" != "OPENROUTER_API_KEY" ]; then
-	if [ -z "${!API_KEY_ENV:-}" ]; then
-		printf '\n'
-		fail "--api-key-env named $API_KEY_ENV, but that variable is empty or unset."
-		fail "export it first, or drop the flag to use OPENROUTER_API_KEY."
-		exit 1
-	fi
-fi
-LLM_API_KEY_VALUE="${!API_KEY_ENV:-}"
-# Assignment preserves an inherited export attribute in Bash. Force this
-# holding variable to remain shell-private before any build helper starts.
-export -n LLM_API_KEY_VALUE
-unset "$API_KEY_ENV"
-export DREADGOAD_CONSOLE_LLM_SECRET_ENV="$API_KEY_ENV"
 
 # One credential per launch protects the loopback API from other local users
 # and unrelated processes. It is carried to the browser in a URL fragment (not
@@ -397,10 +426,11 @@ ready() {
 	printf '  %s╰%s╯%s\n\n' "$BRAND" "$bar" "$RESET"
 }
 
-# Give the selected provider credential only to the backend. This function runs
+# Give only the selected provider credential to the backend. This function runs
 # in a background subshell in development and replaces the launcher in normal
 # mode, so the export cannot leak back into npm, Vite, Go, or package installers.
 start_backend() {
+	export -n LLM_API_KEY_VALUE
 	if [ -n "$LLM_API_KEY_VALUE" ]; then
 		export "$API_KEY_ENV=$LLM_API_KEY_VALUE"
 	else

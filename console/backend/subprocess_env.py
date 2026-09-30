@@ -13,6 +13,7 @@ import os
 
 DEFAULT_LLM_SECRET_ENV = "OPENROUTER_API_KEY"
 LLM_SECRET_ENV_SETTING = "DREADGOAD_CONSOLE_LLM_SECRET_ENV"
+LLM_SECRET_ENVS_SETTING = "DREADGOAD_CONSOLE_LLM_SECRET_ENVS"
 
 # These names pass the Settings route's credential-shaped-name validation, but
 # they belong to infrastructure commands rather than the LLM. Treating one as
@@ -20,25 +21,35 @@ LLM_SECRET_ENV_SETTING = "DREADGOAD_CONSOLE_LLM_SECRET_ENV"
 _INFRASTRUCTURE_CREDENTIAL_ENV_NAMES = frozenset(
     {
         "AWS_ACCESS_KEY_ID",
+        "AWS_CONTAINER_AUTHORIZATION_TOKEN",
         "AWS_SECRET_ACCESS_KEY",
         "AWS_SECURITY_TOKEN",
         "AWS_SESSION_TOKEN",
+        "ARM_OIDC_TOKEN",
+        "LUDUS_API_KEY",
     }
 )
 
 _configured_secret_env = (
     os.environ.get(LLM_SECRET_ENV_SETTING, "").strip() or DEFAULT_LLM_SECRET_ENV
 )
-if _configured_secret_env in _INFRASTRUCTURE_CREDENTIAL_ENV_NAMES:
-    raise RuntimeError(
-        f"{LLM_SECRET_ENV_SETTING} cannot name infrastructure credential "
-        f"{_configured_secret_env}"
-    )
+_configured_secret_env_names = {DEFAULT_LLM_SECRET_ENV, _configured_secret_env}
+_configured_secret_env_names.update(
+    name.strip()
+    for name in os.environ.get(LLM_SECRET_ENVS_SETTING, "").split(",")
+    if name.strip()
+)
+for _secret_env_name in _configured_secret_env_names:
+    if _secret_env_name in _INFRASTRUCTURE_CREDENTIAL_ENV_NAMES:
+        raise RuntimeError(
+            f"LLM secret metadata cannot name infrastructure credential "
+            f"{_secret_env_name}"
+        )
 
-# Start with only the configured provider credential. Rebinding an immutable
-# snapshot lets child_env() iterate safely if a Settings request registers
-# another key name at the same time as a command is starting.
-_llm_secret_env_names = frozenset({_configured_secret_env})
+# Start with every credential name registered by the launcher. Rebinding an
+# immutable snapshot lets child_env() iterate safely if a Settings request
+# registers another key name at the same time as a command is starting.
+_llm_secret_env_names = frozenset(_configured_secret_env_names)
 _active_llm_secret_env = _configured_secret_env
 
 
@@ -52,6 +63,7 @@ def register_llm_secret_env(name: str) -> None:
     _llm_secret_env_names = _llm_secret_env_names | {name}
     _active_llm_secret_env = name
     os.environ[LLM_SECRET_ENV_SETTING] = name
+    os.environ[LLM_SECRET_ENVS_SETTING] = ",".join(sorted(_llm_secret_env_names))
 
 
 def active_llm_secret_env() -> str:
@@ -70,4 +82,5 @@ def child_env() -> dict[str, str]:
     for name in _llm_secret_env_names:
         env.pop(name, None)
     env.pop(LLM_SECRET_ENV_SETTING, None)
+    env.pop(LLM_SECRET_ENVS_SETTING, None)
     return env
