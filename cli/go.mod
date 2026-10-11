@@ -16,7 +16,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.114.1
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.79.1
 	github.com/aws/aws-sdk-go-v2/service/sts v1.51.2
-	github.com/aws/smithy-go v1.28.2
+	github.com/aws/smithy-go v1.28.5
 	github.com/cowdogmoo/warpgate/v3 v3.2.1-0.20260812020456-d61652ca51b8
 	github.com/fatih/color v1.19.0
 	github.com/go-viper/mapstructure/v2 v2.5.0
