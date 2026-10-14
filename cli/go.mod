@@ -3,7 +3,7 @@ module github.com/dreadnode/dreadgoad
 go 1.26.5
 
 require (
-	charm.land/bubbletea/v2 v2.0.10
+	charm.land/bubbletea/v2 v2.1.0
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.3
 	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.1
@@ -54,8 +54,8 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.38.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.43.2 // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
-	github.com/charmbracelet/ultraviolet v0.0.0-20260811164956-006e29f97886 // indirect
-	github.com/charmbracelet/x/ansi v0.11.8 // indirect
+	github.com/charmbracelet/ultraviolet v0.0.0-20261008173134-6b8d4baf91b4 // indirect
+	github.com/charmbracelet/x/ansi v0.11.9 // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
 	github.com/charmbracelet/x/termios v0.1.1 // indirect
 	github.com/charmbracelet/x/windows v0.2.2 // indirect
@@ -83,7 +83,7 @@ require (
 	github.com/masterzen/simplexml v0.0.0-20190410153822-31eea3082786 // indirect
 	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
-	github.com/mattn/go-runewidth v0.0.24 // indirect
+	github.com/mattn/go-runewidth v0.0.30 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
 	github.com/opencontainers/go-digest v1.0.0 // indirect
 	github.com/opencontainers/image-spec v1.1.1 // indirect
@@ -95,7 +95,7 @@ require (
 	github.com/spf13/afero v1.15.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/subosito/gotenv v1.6.0 // indirect
-	github.com/xo/terminfo v0.0.0-20220910002029-abceb7e1c41e // indirect
+	github.com/xo/terminfo v1.0.0 // indirect
 	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/sys v0.49.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
