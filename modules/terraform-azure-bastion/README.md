@@ -143,7 +143,7 @@ module "bastion" {
 
 | Name | Version |
 | ---- | ------- |
-| <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | 5.10.0 |
+| <a name="provider_azurerm"></a> [azurerm](#provider\_azurerm) | 5.11.0 |
 
 ## Modules
 
