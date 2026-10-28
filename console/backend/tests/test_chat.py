@@ -883,6 +883,53 @@ def test_instructions_renders_system_prompt() -> None:
     print("PASS test_instructions_renders_system_prompt")
 
 
+def test_create_agent_derives_commands_from_capabilities() -> None:
+    """The factory gives its prompt and tool one capability-derived command set."""
+    with tempfile.TemporaryDirectory() as session_dir:
+        session = {
+            "session_dir": session_dir,
+            "anchor": {"config_path": str(_REPO / "dreadgoad.yaml"), "env": "dev"},
+            "snapshot": {},
+        }
+        capabilities = {
+            "/score": {"supported": True},
+            "/health": {"supported": False},
+        }
+        captured: dict[str, object] = {}
+
+        def fake_task_agent(**kwargs):  # noqa: ANN003, ANN202
+            captured.update(kwargs)
+            return types.SimpleNamespace(**kwargs)
+
+        async def fake_run_cli(*_args):  # noqa: ANN002, ANN202
+            return (0, "")
+
+        original = agent.LocalTaskAgent
+        agent.LocalTaskAgent = fake_task_agent
+        try:
+            agent.create_agent(
+                "openrouter/test/model",
+                session,
+                object(),
+                "s-1",
+                fake_run_cli,
+                capabilities,
+            )
+        finally:
+            agent.LocalTaskAgent = original
+
+        instructions = str(captured["instructions"])
+        catalog = instructions.split("## Authoritative commands for this session", 1)[
+            1
+        ].split("## Current session context", 1)[0]
+        run_tool = captured["tools"][1]  # type: ignore[index]
+        assert "`/score`" in catalog and "`/health`" not in catalog, catalog
+        assert (
+            "/score" in run_tool.description and "/health" not in run_tool.description
+        )
+    print("PASS test_create_agent_derives_commands_from_capabilities")
+
+
 async def test_health_emits_report_and_suppresses_json() -> None:
     """/health emits a structured health_report, not raw JSON, and stays running."""
     with tempfile.TemporaryDirectory() as d:
@@ -1731,6 +1778,7 @@ async def _main() -> None:
         await test_run_dreadgoad_tool_validates_and_runs()
         await test_direct_command_rejects_extra_args()
         test_instructions_renders_system_prompt()
+        test_create_agent_derives_commands_from_capabilities()
         await test_health_emits_report_and_suppresses_json()
         await test_swap_model_preserves_thread_and_persists()
         await test_thread_persisted_and_restored_on_agent_rebuild()
