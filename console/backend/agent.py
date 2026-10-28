@@ -147,6 +147,7 @@ def _instructions(
     ]
     for name in sorted(available):
         command = commands.REGISTRY[name]
+        capability = capabilities.get(name) if capabilities is not None else None
         row = catalog[name]
         policy = "state-changing" if command.cloud_ops else "read-only"
         if name in approvals.REQUIRED_COMMANDS:
@@ -163,6 +164,9 @@ def _instructions(
                 f"  Backend policy: {policy}.",
             ]
         )
+        guidance = commands.agent_command_guidance(name, capability)
+        if guidance:
+            lines.append(f"  Agent default: {guidance}")
     sections.append("\n".join(lines))
     sections.append(
         "## Current session context\n\n"
@@ -188,6 +192,7 @@ def _make_run_dreadgoad(
     project_root: str,
     session_dir: str,
     allowed_commands: t.AbstractSet[str] | None = None,
+    capabilities: t.Mapping[str, t.Mapping[str, t.Any]] | None = None,
 ):  # noqa: ANN202
     """Build the session-bound run_dreadgoad tool.
 
@@ -213,7 +218,8 @@ def _make_run_dreadgoad(
                 f"Refused: {command!r} is not runnable through this tool. "
                 f"Valid commands for this session: {sorted(available)}."
             )
-        tool_args = list(args or [])
+        capability = capabilities.get(command) if capabilities is not None else None
+        tool_args = commands.apply_agent_defaults(command, list(args or []), capability)
         try:
             commands.validate_agent_local_paths(
                 command,
@@ -342,8 +348,7 @@ def create_agent(
     app: t.Any,
     session_id: str,
     run_cli: RunCli,
-    allowed_commands: t.AbstractSet[str] | None = None,
-    capabilities: t.Mapping[str, t.Mapping[str, t.Any]] | None = None,
+    capabilities: t.Mapping[str, t.Mapping[str, t.Any]],
     range_prompt: str | None = None,
 ) -> TaskAgent:
     """Build a configured agent for a session.
@@ -351,7 +356,8 @@ def create_agent(
     The provider-native LLM key must be in the environment. The default model
     is Sonnet 5 via OpenRouter and uses ``OPENROUTER_API_KEY``. The agent's
     only range-mutating tool is ``run_dreadgoad`` (constrained to this session);
-    file writes are sandboxed to the session dir. No general shell tool.
+    file writes are sandboxed to the session dir. Runnable commands are derived
+    from the same capability snapshot used by the prompt. No general shell tool.
     """
     session_dir = session.get("session_dir")
     if not session_dir:
@@ -363,6 +369,7 @@ def create_agent(
     if not config_path:
         raise ValueError("session has no config_path — cannot confine agent paths")
     agent_project_root = str(projectroot.resolve_root(config_path)[0])
+    allowed_commands = commands.agent_runnable_for(capabilities)
     tools: list[t.Any] = [
         fs,
         _make_run_dreadgoad(
@@ -372,6 +379,7 @@ def create_agent(
             project_root=agent_project_root,
             session_dir=str(session_dir),
             allowed_commands=allowed_commands,
+            capabilities=capabilities,
         ),
     ]
     lab_reader = _make_read_lab_file(session)

@@ -35,6 +35,43 @@ def load_prompt(stem: str) -> str | None:
 
 
 @dataclass(frozen=True)
+class AgentPolicy:
+    """Console-owned agent behavior for one range capability implementation."""
+
+    guidance: str
+    default_flags: tuple[str, ...] = ()
+    handler_type: str | None = None
+    profile: str | None = None
+
+    def matches(self, capability: t.Mapping[str, t.Any] | None) -> bool:
+        """Return whether this policy applies to the resolved range capability."""
+        if self.handler_type is not None and (
+            capability is None or capability.get("handler_type") != self.handler_type
+        ):
+            return False
+        if self.profile is not None and (
+            capability is None or capability.get("profile") != self.profile
+        ):
+            return False
+        return True
+
+    def apply_defaults(
+        self,
+        args: list[str],
+        capability: t.Mapping[str, t.Any] | None,
+    ) -> list[str]:
+        """Append missing default flags without overriding explicit values."""
+        result = list(args)
+        if not result or not self.matches(capability):
+            return result
+        for default in self.default_flags:
+            option = default.split("=", 1)[0]
+            if not any(arg == option or arg.startswith(f"{option}=") for arg in result):
+                result.append(default)
+        return result
+
+
+@dataclass(frozen=True)
 class Command:
     """One slash command and how it maps onto the dreadgoad CLI."""
 
@@ -70,6 +107,9 @@ class Command:
     # what it destroys, or what it depends on. Wording is taken from the CLI's
     # own command help so the two can't drift into disagreeing.
     detail: str = ""
+    # Optional console-owned policy for defaults that apply only to an agent and
+    # a particular range capability implementation.
+    agent_policy: AgentPolicy | None = None
 
 
 # The slash commands (§5.2). `/help` is not here: it runs nothing, so it is
@@ -204,6 +244,16 @@ REGISTRY: dict[str, Command] = {
         takes_args=True,
         description="Score an agent's report against the answer key",
         detail="give it the report path on the attack box; it is fetched for you",
+        agent_policy=AgentPolicy(
+            guidance=(
+                "Built-in Active Directory scoring uses live verification by "
+                "default. Pass --live-verify=false only when the operator "
+                "explicitly requests static scoring."
+            ),
+            default_flags=("--live-verify",),
+            handler_type="builtin",
+            profile="active-directory",
+        ),
     ),
     "/scrub": Command(
         "/scrub",
@@ -238,6 +288,37 @@ REGISTRY: dict[str, Command] = {
         detail="opens a browser; run when commands fail with expired credentials",
     ),
 }
+
+
+def _agent_policy_for(
+    name: str,
+    capability: t.Mapping[str, t.Any] | None,
+) -> AgentPolicy | None:
+    """Return the command's policy when it matches the range implementation."""
+    command = REGISTRY.get(name)
+    policy = command.agent_policy if command is not None else None
+    return policy if policy is not None and policy.matches(capability) else None
+
+
+def agent_command_guidance(
+    name: str,
+    capability: t.Mapping[str, t.Any] | None,
+) -> str | None:
+    """Return concise, non-overridable guidance for an agent command."""
+    policy = _agent_policy_for(name, capability)
+    return policy.guidance if policy is not None and policy.guidance else None
+
+
+def apply_agent_defaults(
+    name: str,
+    args: list[str],
+    capability: t.Mapping[str, t.Any] | None,
+) -> list[str]:
+    """Apply range-aware defaults before an agent command reaches the runner."""
+    result = list(args)
+    policy = _agent_policy_for(name, capability)
+    return policy.apply_defaults(result, capability) if policy is not None else result
+
 
 # Concrete commands the agent may run via its run_dreadgoad tool. Composite
 # console conveniences such as /status have no CLI verb and are expanded into

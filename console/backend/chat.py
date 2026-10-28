@@ -209,7 +209,6 @@ async def _get_agent(app: t.Any, session_id: str) -> t.Any | None:
         app,
         session_id,
         run_cli,
-        allowed_commands=allowed_commands,
         capabilities=capabilities,
         range_prompt=capabilities.agent_prompt,
     )
@@ -253,7 +252,6 @@ async def swap_model(
                 app,
                 session_id,
                 run_cli,
-                allowed_commands=allowed_commands,
                 capabilities=capabilities,
                 range_prompt=capabilities.agent_prompt,
             )

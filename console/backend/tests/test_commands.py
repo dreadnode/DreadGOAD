@@ -6,6 +6,7 @@ Standalone:  python console/backend/tests/test_commands.py
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import os
 import pathlib
 import re
@@ -258,6 +259,51 @@ def test_expand_command_prompt() -> None:
     print("PASS test_expand_command_prompt")
 
 
+def test_agent_score_defaults_are_range_aware() -> None:
+    builtin_ad = {
+        "handler_type": "builtin",
+        "profile": "active-directory",
+    }
+    report = ["/home/kali/report.jsonl"]
+    assert commands.apply_agent_defaults("/score", report, builtin_ad) == [
+        *report,
+        "--live-verify",
+    ]
+    assert commands.apply_agent_defaults(
+        "/score", [*report, "--live-verify=false"], builtin_ad
+    ) == [*report, "--live-verify=false"]
+    assert (
+        commands.apply_agent_defaults(
+            "/score",
+            report,
+            {"handler_type": "executable", "profile": "custom"},
+        )
+        == report
+    )
+    assert commands.apply_agent_defaults("/score", [], builtin_ad) == []
+
+    policy = commands.REGISTRY["/score"].agent_policy
+    assert policy is not None
+    assert policy.default_flags == ("--live-verify",)
+    assert "--live-verify=false" in policy.guidance
+
+    # Runtime defaults remain independent from the human-facing wording.
+    original = commands.REGISTRY["/score"]
+    commands.REGISTRY["/score"] = dataclasses.replace(
+        original,
+        agent_policy=dataclasses.replace(policy, guidance=""),
+    )
+    try:
+        assert commands.apply_agent_defaults("/score", report, builtin_ad) == [
+            *report,
+            "--live-verify",
+        ]
+        assert commands.agent_command_guidance("/score", builtin_ad) is None
+    finally:
+        commands.REGISTRY["/score"] = original
+    print("PASS test_agent_score_defaults_are_range_aware")
+
+
 def test_console_readme_covers_command_catalog() -> None:
     """The documented command table must match backend + client commands."""
     readme = pathlib.Path(__file__).resolve().parents[2] / "README.md"
@@ -342,6 +388,20 @@ def test_system_prompt_covers_the_registry() -> None:
     # /scrub's console default is inverted vs the CLI's, so the prompt has to say
     # so — otherwise the agent treats a bare /scrub as the CLI's dry run.
     assert "deletes for real; add 'dry' to preview" in rendered
+
+    rendered_ad = agent._instructions(
+        {
+            "anchor": {"config_path": "/r/dreadgoad.yaml", "env": "dev"},
+            "snapshot": {"provider": "aws", "lab": "ad/GOAD"},
+        },
+        capabilities={
+            "/score": {
+                "handler_type": "builtin",
+                "profile": "active-directory",
+            }
+        },
+    )
+    assert "--live-verify=false" in rendered_ad
     print("PASS test_system_prompt_covers_the_registry")
 
 
@@ -1647,6 +1707,7 @@ def main() -> None:
     test_dispatch_and_agent_commands()
     test_agent_runnable_commands_follow_range_capabilities()
     test_expand_command_prompt()
+    test_agent_score_defaults_are_range_aware()
     test_console_readme_covers_command_catalog()
     test_load_prompt_and_guidance_injection()
     test_exec_verb_and_json_flag()

@@ -15,8 +15,9 @@ Built-in Active Directory scoring supports:
 Guidance:
 
 - Always pass the report path as args[0].
-- For an Active Directory range, include `--live-verify` unless the operator
-  explicitly asks for static scoring. Do not assume another range implements
-  that option or uses an answer key.
+- For an Active Directory range, live verification is the console-agent default.
+  Pass `--live-verify=false` only when the operator explicitly asks for static
+  scoring. Do not assume another range implements that option or uses an answer
+  key.
 - If the operator does not provide a report path, ask for one.
 - Do not override cloud selectors; the session fixes the range context.
