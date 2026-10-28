@@ -3,7 +3,7 @@ collections:
   - name: ansible.windows
     version: ">=2.5.0"
   - name: community.general
-    version: ">=13.4.0,<13.5.0"
+    version: ">=13.5.0,<13.6.0"
   - name: community.windows
     version: ">=2.3.0"
   - name: chocolatey.chocolatey
@@ -15,7 +15,7 @@ collections:
   - name: microsoft.ad
     version: 1.12.1
   - name: amazon.aws
-    version: 11.4.0
+    version: 11.5.0
 
 roles:
   - name: geerlingguy.mysql
