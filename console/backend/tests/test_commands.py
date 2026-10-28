@@ -280,6 +280,23 @@ def test_agent_score_defaults_are_range_aware() -> None:
         == report
     )
     assert commands.apply_agent_defaults("/score", [], builtin_ad) == []
+
+    policy = commands.REGISTRY["/score"].agent_policy
+    assert policy is not None
+    assert policy.default_flags == ("--live-verify",)
+    assert "--live-verify=false" in policy.guidance
+
+    # Runtime defaults remain independent from the human-facing wording.
+    quiet_policy = commands.AgentPolicy(
+        guidance="",
+        default_flags=policy.default_flags,
+        handler_type=policy.handler_type,
+        profile=policy.profile,
+    )
+    assert quiet_policy.apply_defaults(report, builtin_ad) == [
+        *report,
+        "--live-verify",
+    ]
     print("PASS test_agent_score_defaults_are_range_aware")
 
 
