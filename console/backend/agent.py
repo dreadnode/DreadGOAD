@@ -147,6 +147,7 @@ def _instructions(
     ]
     for name in sorted(available):
         command = commands.REGISTRY[name]
+        capability = capabilities.get(name) if capabilities is not None else None
         row = catalog[name]
         policy = "state-changing" if command.cloud_ops else "read-only"
         if name in approvals.REQUIRED_COMMANDS:
@@ -163,6 +164,9 @@ def _instructions(
                 f"  Backend policy: {policy}.",
             ]
         )
+        guidance = commands.agent_command_guidance(name, capability)
+        if guidance:
+            lines.append(f"  Agent default: {guidance}")
     sections.append("\n".join(lines))
     sections.append(
         "## Current session context\n\n"
@@ -188,6 +192,7 @@ def _make_run_dreadgoad(
     project_root: str,
     session_dir: str,
     allowed_commands: t.AbstractSet[str] | None = None,
+    capabilities: t.Mapping[str, t.Mapping[str, t.Any]] | None = None,
 ):  # noqa: ANN202
     """Build the session-bound run_dreadgoad tool.
 
@@ -213,7 +218,8 @@ def _make_run_dreadgoad(
                 f"Refused: {command!r} is not runnable through this tool. "
                 f"Valid commands for this session: {sorted(available)}."
             )
-        tool_args = list(args or [])
+        capability = capabilities.get(command) if capabilities is not None else None
+        tool_args = commands.apply_agent_defaults(command, list(args or []), capability)
         try:
             commands.validate_agent_local_paths(
                 command,
@@ -278,11 +284,26 @@ def _make_run_dreadgoad(
         # fragment as the whole (see summary.py).
         return f"`dreadgoad {command}` {status}.\n{summary.summarize(command, output)}"
 
+    guidance_lines = [
+        f"    - {name}: {guidance}"
+        for name in sorted(available)
+        if (
+            guidance := commands.agent_command_guidance(
+                name,
+                capabilities.get(name) if capabilities is not None else None,
+            )
+        )
+    ]
+    guidance_block = (
+        "\n\n    Command defaults:\n" + "\n".join(guidance_lines)
+        if guidance_lines
+        else ""
+    )
     run_dreadgoad.__doc__ = f"""Run a dreadgoad command for THIS session.
 
     Available commands for this session: {", ".join(sorted(available))}.
     Commands absent from that list are unsupported by the selected range or
-    are not agent-runnable. Do not pass --config/--env; the range is fixed.
+    are not agent-runnable. Do not pass --config/--env; the range is fixed.{guidance_block}
 
     Args:
         command: One exact slash command from the available list above.
@@ -372,6 +393,7 @@ def create_agent(
             project_root=agent_project_root,
             session_dir=str(session_dir),
             allowed_commands=allowed_commands,
+            capabilities=capabilities,
         ),
     ]
     lab_reader = _make_read_lab_file(session)

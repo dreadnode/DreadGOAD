@@ -695,6 +695,34 @@ async def test_run_dreadgoad_tool_validates_and_runs() -> None:
     assert calls == [("/up", ["--from", "x"])], calls
     assert "succeeded" in out, out
 
+    # Built-in AD scoring is live by default even on ordinary prose turns,
+    # where command-specific slash guidance is not injected.
+    score_tool = agent._make_run_dreadgoad(
+        object(),
+        "s-1",
+        fake_run_cli,
+        project_root="/repo",
+        session_dir="/session",
+        capabilities={
+            "/score": {
+                "handler_type": "builtin",
+                "profile": "active-directory",
+            }
+        },
+    )
+    assert "--live-verify=false" in score_tool.description
+    calls.clear()
+    await score_tool.fn(command="/score", args=["/home/kali/report.jsonl"])
+    assert calls == [("/score", ["/home/kali/report.jsonl", "--live-verify"])], calls
+    calls.clear()
+    await score_tool.fn(
+        command="/score",
+        args=["/home/kali/report.jsonl", "--live-verify=false"],
+    )
+    assert calls == [("/score", ["/home/kali/report.jsonl", "--live-verify=false"])], (
+        calls
+    )
+
     # a read command → also runnable by the agent now
     calls.clear()
     await tool.fn(command="/instances", args=[])

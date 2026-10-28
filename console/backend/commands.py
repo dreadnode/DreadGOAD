@@ -34,6 +34,55 @@ def load_prompt(stem: str) -> str | None:
         return None
 
 
+_BUILTIN_AD_SCORE_GUIDANCE = (
+    "Built-in Active Directory scoring uses live verification by default. "
+    "Pass --live-verify=false only when the operator explicitly requests static "
+    "scoring."
+)
+
+
+def agent_command_guidance(
+    name: str,
+    capability: t.Mapping[str, t.Any] | None,
+) -> str | None:
+    """Return concise, non-overridable guidance for an agent command.
+
+    Range descriptions explain what a command does, but they are not a stable
+    argument contract. Keep console-owned defaults here so ordinary prose turns
+    see the same critical behavior as literal slash-command turns.
+    """
+    if (
+        name == "/score"
+        and capability is not None
+        and capability.get("handler_type") == "builtin"
+        and capability.get("profile") == "active-directory"
+    ):
+        return _BUILTIN_AD_SCORE_GUIDANCE
+    return None
+
+
+def apply_agent_defaults(
+    name: str,
+    args: list[str],
+    capability: t.Mapping[str, t.Any] | None,
+) -> list[str]:
+    """Apply range-aware defaults before an agent command reaches the runner.
+
+    The standalone CLI intentionally supports offline static scoring by default.
+    The console agent has a live range and historically promises full AD scoring,
+    so make that default mechanical instead of relying on the model to remember a
+    flag. An explicit boolean false remains the static-scoring escape hatch.
+    """
+    result = list(args)
+    if not result or agent_command_guidance(name, capability) is None:
+        return result
+    if any(
+        arg == "--live-verify" or arg.startswith("--live-verify=") for arg in result
+    ):
+        return result
+    return [*result, "--live-verify"]
+
+
 @dataclass(frozen=True)
 class Command:
     """One slash command and how it maps onto the dreadgoad CLI."""

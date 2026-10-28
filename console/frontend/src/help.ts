@@ -85,7 +85,7 @@ export const WORKFLOW: WorkflowPhase[] = [
     commands: [
       {
         name: '/score',
-        guidance: "Grades an agent report with the selected range's scorer; provide its path on the attack box.",
+        guidance: "Grades an agent report with the selected range's scorer; built-in AD scoring verifies live by default. Provide the report path on the attack box.",
       },
     ],
   },
