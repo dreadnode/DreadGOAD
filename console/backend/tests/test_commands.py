@@ -6,6 +6,7 @@ Standalone:  python console/backend/tests/test_commands.py
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import os
 import pathlib
 import re
@@ -287,16 +288,19 @@ def test_agent_score_defaults_are_range_aware() -> None:
     assert "--live-verify=false" in policy.guidance
 
     # Runtime defaults remain independent from the human-facing wording.
-    quiet_policy = commands.AgentPolicy(
-        guidance="",
-        default_flags=policy.default_flags,
-        handler_type=policy.handler_type,
-        profile=policy.profile,
+    original = commands.REGISTRY["/score"]
+    commands.REGISTRY["/score"] = dataclasses.replace(
+        original,
+        agent_policy=dataclasses.replace(policy, guidance=""),
     )
-    assert quiet_policy.apply_defaults(report, builtin_ad) == [
-        *report,
-        "--live-verify",
-    ]
+    try:
+        assert commands.apply_agent_defaults("/score", report, builtin_ad) == [
+            *report,
+            "--live-verify",
+        ]
+        assert commands.agent_command_guidance("/score", builtin_ad) is None
+    finally:
+        commands.REGISTRY["/score"] = original
     print("PASS test_agent_score_defaults_are_range_aware")
 
 
