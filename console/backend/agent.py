@@ -284,26 +284,11 @@ def _make_run_dreadgoad(
         # fragment as the whole (see summary.py).
         return f"`dreadgoad {command}` {status}.\n{summary.summarize(command, output)}"
 
-    guidance_lines = [
-        f"    - {name}: {guidance}"
-        for name in sorted(available)
-        if (
-            guidance := commands.agent_command_guidance(
-                name,
-                capabilities.get(name) if capabilities is not None else None,
-            )
-        )
-    ]
-    guidance_block = (
-        "\n\n    Command defaults:\n" + "\n".join(guidance_lines)
-        if guidance_lines
-        else ""
-    )
     run_dreadgoad.__doc__ = f"""Run a dreadgoad command for THIS session.
 
     Available commands for this session: {", ".join(sorted(available))}.
     Commands absent from that list are unsupported by the selected range or
-    are not agent-runnable. Do not pass --config/--env; the range is fixed.{guidance_block}
+    are not agent-runnable. Do not pass --config/--env; the range is fixed.
 
     Args:
         command: One exact slash command from the available list above.
@@ -363,8 +348,7 @@ def create_agent(
     app: t.Any,
     session_id: str,
     run_cli: RunCli,
-    allowed_commands: t.AbstractSet[str] | None = None,
-    capabilities: t.Mapping[str, t.Mapping[str, t.Any]] | None = None,
+    capabilities: t.Mapping[str, t.Mapping[str, t.Any]],
     range_prompt: str | None = None,
 ) -> TaskAgent:
     """Build a configured agent for a session.
@@ -372,7 +356,8 @@ def create_agent(
     The provider-native LLM key must be in the environment. The default model
     is Sonnet 5 via OpenRouter and uses ``OPENROUTER_API_KEY``. The agent's
     only range-mutating tool is ``run_dreadgoad`` (constrained to this session);
-    file writes are sandboxed to the session dir. No general shell tool.
+    file writes are sandboxed to the session dir. Runnable commands are derived
+    from the same capability snapshot used by the prompt. No general shell tool.
     """
     session_dir = session.get("session_dir")
     if not session_dir:
@@ -384,6 +369,7 @@ def create_agent(
     if not config_path:
         raise ValueError("session has no config_path — cannot confine agent paths")
     agent_project_root = str(projectroot.resolve_root(config_path)[0])
+    allowed_commands = commands.agent_runnable_for(capabilities)
     tools: list[t.Any] = [
         fs,
         _make_run_dreadgoad(

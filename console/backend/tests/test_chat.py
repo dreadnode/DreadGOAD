@@ -710,7 +710,6 @@ async def test_run_dreadgoad_tool_validates_and_runs() -> None:
             }
         },
     )
-    assert "--live-verify=false" in score_tool.description
     calls.clear()
     await score_tool.fn(command="/score", args=["/home/kali/report.jsonl"])
     assert calls == [("/score", ["/home/kali/report.jsonl", "--live-verify"])], calls
