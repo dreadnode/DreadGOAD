@@ -20,7 +20,7 @@ require (
 	github.com/cowdogmoo/warpgate/v3 v3.2.1-0.20260812020456-d61652ca51b8
 	github.com/fatih/color v1.19.0
 	github.com/go-viper/mapstructure/v2 v2.5.0
-	github.com/masterzen/winrm v0.0.0-20261004123143-57b335310d59
+	github.com/masterzen/winrm v0.0.0-20261114181639-d693523ae428
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.1.0
 	github.com/spf13/viper v1.21.0
@@ -34,7 +34,7 @@ require (
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.13.0 // indirect
-	github.com/Azure/go-ntlmssp v0.1.2-0.20260824092057-1c8077778c2c // indirect
+	github.com/Azure/go-ntlmssp v0.1.2-0.20261111092545-5846b35b583b // indirect
 	github.com/AzureAD/microsoft-authentication-library-for-go v1.10.1 // indirect
 	github.com/ChrisTrenkamp/goxpath v0.0.0-20210404020558-97928f7e12b6 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.26 // indirect
