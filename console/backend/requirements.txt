@@ -12,5 +12,10 @@ pyyaml>=6.0
 # which silently stripped 44 lines of documentation out of a tracked
 # dreadgoad.yaml when the console added an environment to it.
 ruamel.yaml>=0.18.0
-dreadnode>=1.17.0
+# 1.17.1+: agent.py passes `guidance=` to the summarize_when_long hook, which
+# 1.17.0 does not accept.
+# <2: the console imports `dreadnode.agent`; 2.x replaced it with a redesigned
+# `dreadnode.agents`. Installs only stay on 1.x today because rigging pins
+# xmltodict<0.14, which 2.x can't satisfy — don't rely on that accident.
+dreadnode>=1.17.1,<2
 rigging>=3.0.0

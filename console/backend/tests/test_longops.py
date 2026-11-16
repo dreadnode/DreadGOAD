@@ -39,6 +39,18 @@ async def test_stream_lines_live() -> None:
     print("PASS test_stream_lines_live")
 
 
+async def test_stream_lines_accepts_line_over_default_limit() -> None:
+    """A single-line --json report past asyncio's 64 KiB default must stream whole."""
+    stub = _script("head -c 204800 /dev/zero | tr '\\0' x\necho\necho after\nexit 0\n")
+    rc = await start_command([stub], cwd=".")
+    got = [line async for line in rc.stream_lines()]
+    assert len(got) == 2, [len(line) for line in got]
+    assert got[0] == "x" * 204800, len(got[0])
+    assert got[1] == "after", got[1]
+    assert rc.returncode == 0, rc.returncode
+    print("PASS test_stream_lines_accepts_line_over_default_limit")
+
+
 async def test_cancel_sigint_stops_before_completion() -> None:
     # Prints 'started', sleeps, then would print 'done'. SIGINT kills it first.
     stub = _script("echo started\nsleep 5\necho done\n")
@@ -137,6 +149,7 @@ async def test_capture_surviving_child_does_not_hold_pipes_open() -> None:
 
 async def _main() -> None:
     await test_stream_lines_live()
+    await test_stream_lines_accepts_line_over_default_limit()
     await test_cancel_sigint_stops_before_completion()
     await test_capture_separates_stdout_stderr()
     await test_cancelled_capture_kills_its_process_group()

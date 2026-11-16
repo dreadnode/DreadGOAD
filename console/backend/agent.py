@@ -19,6 +19,7 @@ from rigging.error import Stop
 from dreadnode.agent import TaskAgent
 from dreadnode.agent.agent import CommitBehavior
 from dreadnode.agent.events import AgentEvent
+from dreadnode.agent.hooks import Hook, summarize_when_long
 from dreadnode.agent.thread import Thread
 from dreadnode.agent.tools import tool
 from dreadnode.agent.tools.fs import Filesystem
@@ -81,6 +82,37 @@ class LocalTaskAgent(TaskAgent):
                 self._stream(thread, messages, commit=commit)
             ) as events:
                 yield events
+
+
+# The session thread is persisted and re-sent on every turn, so without a bound a
+# long session eventually exceeds the model's context window — and then every
+# later turn fails the same way, because the thread only grows. dreadnode's hook
+# summarizes older messages once a call's input passes this many tokens, and
+# also summarizes-and-retries if the provider rejects a call for context length.
+# It keeps tool calls paired with their results; the system prompt is injected
+# at generation time and never lives in the thread, so it cannot be summarized
+# away. Well under the default model's window, leaving room for one turn's tool
+# results on top.
+_SUMMARIZE_AT_TOKENS = 100_000
+
+# The hook's built-in prompt is written for coding agents; steer it toward what
+# a range operator needs carried forward.
+_SUMMARY_GUIDANCE = (
+    "This is a DreadGOAD range-operations session. Preserve the environment, "
+    "provider, region, host names, and IPs in play; every dreadgoad command run "
+    "and its outcome; failures and their causes; and any operator request that "
+    "is still pending. Drop raw command output once its outcome is recorded."
+)
+
+
+def _context_hooks() -> list[Hook]:
+    """Hooks that keep the persisted thread within the model's context window."""
+    return [
+        summarize_when_long(
+            max_tokens=_SUMMARIZE_AT_TOKENS,
+            guidance=_SUMMARY_GUIDANCE,
+        )
+    ]
 
 
 # Minimal fallback if prompts/system.md is somehow missing (packaging bug) — the
@@ -397,4 +429,5 @@ def create_agent(
         ),
         max_steps=50,
         tools=tools,
+        hooks=_context_hooks(),
     )

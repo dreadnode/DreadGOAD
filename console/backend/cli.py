@@ -31,6 +31,15 @@ _POLL_INTERVAL = 0.25
 # enough to flush output the CLI itself had buffered at exit.
 _DRAIN_BUDGET = 2.0
 
+# Longest single line ``stream_lines`` will accept. asyncio's default is 64 KiB,
+# and ``readline()`` raises ValueError past it — failing the turn and losing the
+# command's result. The ``--json`` reports from health-check, security-check and
+# validate are each written as ONE line on this streamed path, so a report over
+# 64 KiB (a large range) would be lost after the command had already finished.
+# This bounds one line, not total output; memory is only used when a line that
+# long actually arrives.
+_STREAM_LINE_LIMIT = 16 * 1024 * 1024
+
 # How long to wait for exit after the pipe closes, before giving up on it.
 _EXIT_GRACE = 30.0
 
@@ -273,6 +282,7 @@ async def start_command(argv: list[str], cwd: str | Path) -> RunningCommand:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         start_new_session=True,  # own process group → cancel() signals the whole tree
+        limit=_STREAM_LINE_LIMIT,
     )
     return RunningCommand(proc)
 
