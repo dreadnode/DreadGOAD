@@ -51,6 +51,55 @@ async def test_stream_lines_accepts_line_over_default_limit() -> None:
     print("PASS test_stream_lines_accepts_line_over_default_limit")
 
 
+async def test_line_past_cap_is_yielded_in_bounded_pieces() -> None:
+    """A line beyond the cap streams in pieces instead of buffering unbounded."""
+    original = cli._MAX_LINE_BYTES
+    cli._MAX_LINE_BYTES = 100_000
+    try:
+        stub = _script("head -c 250000 /dev/zero | tr '\\0' y\necho\necho after\n")
+        rc = await start_command([stub], cwd=".")
+        got = [line async for line in rc.stream_lines()]
+    finally:
+        cli._MAX_LINE_BYTES = original
+    assert got[-1] == "after", got[-1]
+    pieces = got[:-1]
+    assert len(pieces) > 1, [len(p) for p in pieces]
+    assert "".join(pieces) == "y" * 250_000, [len(p) for p in pieces]
+    # Each piece stops at the first read that crosses the cap.
+    assert all(len(p) < 100_000 + 256 * 1024 for p in pieces), [len(p) for p in pieces]
+    print("PASS test_line_past_cap_is_yielded_in_bounded_pieces")
+
+
+async def test_slow_reader_still_gets_final_line_after_fast_burst() -> None:
+    """A fast writer must not outrun a slow reader past the post-exit drain.
+
+    ``stream_lines`` stops reading ``_DRAIN_BUDGET`` seconds after exit. Pipe
+    backpressure keeps the writer blocked until the reader is nearly caught up,
+    so only a small tail is left at exit. Without it, the whole burst is
+    buffered in memory, the writer exits at once, and the final line — where
+    the ``--json`` reports go — is dropped.
+    """
+    # 2 MiB burst in 20k lines: enough to outlast the drain budget if it is all
+    # buffered up front, few enough lines to keep the test quick.
+    lines = 20_000
+    code = (
+        "import sys\n"
+        f"sys.stdout.write(('x' * 99 + '\\n') * {lines})\n"
+        "sys.stdout.write('FINAL\\n')\n"
+    )
+    rc = await start_command([sys.executable, "-c", code], cwd=".")
+    seen = 0
+    last = ""
+    async for line in rc.stream_lines():
+        seen += 1
+        last = line
+        if seen % 1000 == 0:
+            await asyncio.sleep(0.2)  # ~4 s total: well past the drain budget
+    assert last == "FINAL", (seen, last)
+    assert seen == lines + 1, seen
+    print("PASS test_slow_reader_still_gets_final_line_after_fast_burst")
+
+
 async def test_cancel_sigint_stops_before_completion() -> None:
     # Prints 'started', sleeps, then would print 'done'. SIGINT kills it first.
     stub = _script("echo started\nsleep 5\necho done\n")
@@ -150,6 +199,8 @@ async def test_capture_surviving_child_does_not_hold_pipes_open() -> None:
 async def _main() -> None:
     await test_stream_lines_live()
     await test_stream_lines_accepts_line_over_default_limit()
+    await test_line_past_cap_is_yielded_in_bounded_pieces()
+    await test_slow_reader_still_gets_final_line_after_fast_burst()
     await test_cancel_sigint_stops_before_completion()
     await test_capture_separates_stdout_stderr()
     await test_cancelled_capture_kills_its_process_group()

@@ -31,14 +31,19 @@ _POLL_INTERVAL = 0.25
 # enough to flush output the CLI itself had buffered at exit.
 _DRAIN_BUDGET = 2.0
 
-# Longest single line ``stream_lines`` will accept. asyncio's default is 64 KiB,
-# and ``readline()`` raises ValueError past it — failing the turn and losing the
-# command's result. The ``--json`` reports from health-check, security-check and
-# validate are each written as ONE line on this streamed path, so a report over
-# 64 KiB (a large range) would be lost after the command had already finished.
-# This bounds one line, not total output; memory is only used when a line that
-# long actually arrives.
-_STREAM_LINE_LIMIT = 16 * 1024 * 1024
+# Longest line ``stream_lines`` assembles before yielding it in pieces. The
+# ``--json`` reports from health-check, security-check and validate are each
+# written as ONE line on this streamed path, and a large range's report can pass
+# the StreamReader's 64 KiB limit — where ``readline()`` raises ValueError,
+# failing the turn after the command had already finished.
+#
+# The StreamReader limit itself stays at its default: it also sets the pipe's
+# backpressure threshold (reading pauses past twice the limit). Raising it let a
+# fast writer dump tens of MiB into memory and exit before a slow consumer
+# caught up — and the post-exit drain budget then dropped the rest, final report
+# included. Long lines are instead assembled from limit-sized pieces in
+# ``_read_line``, so only an actually-long line costs memory.
+_MAX_LINE_BYTES = 16 * 1024 * 1024
 
 # How long to wait for exit after the pipe closes, before giving up on it.
 _EXIT_GRACE = 30.0
@@ -160,7 +165,7 @@ class RunningCommand:
         try:
             while True:
                 if line_task is None:
-                    line_task = asyncio.ensure_future(stdout.readline())
+                    line_task = asyncio.ensure_future(_read_line(stdout))
                 budget = _POLL_INTERVAL
                 if deadline is not None:
                     budget = min(budget, deadline - time.monotonic())
@@ -268,6 +273,30 @@ class RunningCommand:
         )
 
 
+async def _read_line(reader: asyncio.StreamReader) -> bytes:
+    """``readline()`` without its ValueError past the reader's limit.
+
+    Returns one line including its newline, or ``b""`` at EOF, like
+    ``readline()``. A line longer than the reader's limit is assembled from
+    limit-sized pieces; one longer than ``_MAX_LINE_BYTES`` is returned in
+    pieces of about that size rather than buffered without bound.
+    """
+    parts = bytearray()
+    while True:
+        try:
+            parts += await reader.readuntil(b"\n")
+            return bytes(parts)
+        except asyncio.IncompleteReadError as exc:  # EOF before a newline
+            parts += exc.partial
+            return bytes(parts)
+        except asyncio.LimitOverrunError as exc:
+            # ``consumed`` bytes are already buffered and contain no newline
+            # (or end just before it); take them and keep looking.
+            parts += await reader.readexactly(exc.consumed)
+            if len(parts) >= _MAX_LINE_BYTES:
+                return bytes(parts)
+
+
 def _suppress() -> contextlib.AbstractContextManager[None]:
     """Swallow OS-level errors from killpg (benign races against exited processes)."""
     return contextlib.suppress(OSError)
@@ -282,7 +311,6 @@ async def start_command(argv: list[str], cwd: str | Path) -> RunningCommand:
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
         start_new_session=True,  # own process group → cancel() signals the whole tree
-        limit=_STREAM_LINE_LIMIT,
     )
     return RunningCommand(proc)
 

@@ -503,6 +503,42 @@ async def test_turn_failure_still_reaches_ui_when_store_fails() -> None:
     print("PASS test_turn_failure_still_reaches_ui_when_store_fails")
 
 
+async def test_cancel_reaches_ui_when_store_fails() -> None:
+    """A cancel during a store outage still releases the UI and stays a cancel."""
+
+    class BrokenDB:
+        async def append_event(self, _sid, _kind, _payload):  # noqa: ANN001, ANN202
+            raise OSError("database is locked")
+
+    started = asyncio.Event()
+    orig = chat.handle_message
+
+    async def hang(app_, sid_, content):  # noqa: ANN001
+        started.set()
+        await asyncio.Event().wait()
+
+    sid = "s-cancel-broken-db"
+    app = types.SimpleNamespace(state=types.SimpleNamespace(db=BrokenDB()))
+    ws = FakeWS()
+    chat.handle_message = hang
+    try:
+        chat.register_conn(sid, ws)
+        task = chat.dispatch(app, sid, "hi")
+        assert task is not None
+        await started.wait()
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        assert task.cancelled(), "a store error must not replace the cancellation"
+        assert [e["kind"] for e in ws.sent] == ["agent_end"], ws.sent
+        assert ws.sent[0]["cancelled"] is True
+    finally:
+        chat.handle_message = orig
+        chat.unregister_conn(ws)
+        await chat.cleanup_session(sid)
+    print("PASS test_cancel_reaches_ui_when_store_fails")
+
+
 async def test_turn_failure_without_message_names_the_type() -> None:
     """An exception with no text must not leave a dangling ': ' in the UI."""
 
@@ -1867,6 +1903,7 @@ async def _main() -> None:
         await test_unexpected_turn_failure_is_visible_and_logged()
         await test_turn_failure_still_reaches_ui_when_store_fails()
         await test_turn_failure_without_message_names_the_type()
+        await test_cancel_reaches_ui_when_store_fails()
         await test_reattach_targets_current_conn()
         await test_agent_command_routes_to_agent()
         await test_range_commands_are_isolated_and_rejected_before_model()

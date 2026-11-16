@@ -104,7 +104,10 @@ def dispatch(app: t.Any, session_id: str, content: str) -> asyncio.Task[t.Any] |
             async with runtime.lock:
                 await handle_message(app, session_id, content)
         except asyncio.CancelledError:
-            await emit_event(
+            # Best-effort for the same reason as below: if the store is failing,
+            # a raising emit would replace the cancellation with a store error
+            # and leave the UI processing forever.
+            await _emit_best_effort(
                 app,
                 session_id,
                 "agent_end",
@@ -470,14 +473,36 @@ async def _run_agent(app: t.Any, session_id: str, prompt: str) -> None:
                 },
             )
 
+    # An AgentError is held back for one event: dreadnode yields it before its
+    # hooks run, and a hook (the context summarizer) may answer with a Retry
+    # that recovers the turn. Emitting it immediately left a red error in live
+    # chat and replay for a turn that then succeeded.
+    pending_error: dict[str, t.Any] | None = None
     try:
         async with agent.stream(prompt) as events:
             async for event in events:
+                if pending_error is not None:
+                    recovered = chat_events.retry_recovery_status(event)
+                    if recovered is not None:
+                        pending_error = None
+                        await emit_event(
+                            app, session_id, "status", {"content": recovered}
+                        )
+                        continue
+                    await emit_event(app, session_id, "error", pending_error)
+                    pending_error = None
                 formatted = chat_events.format_agent_event(event)
                 if formatted:
                     kind = formatted.pop("kind")
+                    if kind == "error":
+                        pending_error = formatted
+                        continue
                     await emit_event(app, session_id, kind, formatted)
+        if pending_error is not None:
+            await emit_event(app, session_id, "error", pending_error)
     except Exception as exc:  # noqa: BLE001 - surface any agent error to the client
+        if pending_error is not None:
+            await emit_event(app, session_id, "error", pending_error)
         await emit_event(app, session_id, "error", {"message": f"agent error: {exc}"})
         await emit_event(app, session_id, "agent_end", {"failed": True})
     finally:
