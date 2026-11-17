@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import os
 import pathlib
 import sys
@@ -422,6 +423,132 @@ async def test_turn_flag_cleared_when_turn_raises() -> None:
     finally:
         chat.handle_message = orig
         await chat.cleanup_session("s-boom")
+
+
+class _ListHandler(logging.Handler):
+    """Collect log records so a test can assert a traceback was logged."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.records.append(record)
+
+
+async def _run_failing_turn(
+    sid: str, db: object, exc: Exception | None = None
+) -> tuple[FakeWS, _ListHandler]:
+    """Dispatch a turn whose handler raises; return the socket and captured logs."""
+    orig = chat.handle_message
+    failure = exc if exc is not None else RuntimeError("turn blew up")
+
+    async def boom(app_, sid_, content):  # noqa: ANN001
+        raise failure
+
+    app = types.SimpleNamespace(state=types.SimpleNamespace(db=db))
+    ws = FakeWS()
+    handler = _ListHandler()
+    logger = logging.getLogger(chat.__name__)
+    logger.addHandler(handler)
+    chat.handle_message = boom
+    try:
+        chat.register_conn(sid, ws)
+        task = chat.dispatch(app, sid, "hi")
+        assert task is not None, "an idle session must accept a turn"
+        with contextlib.suppress(type(failure)):
+            await task
+    finally:
+        chat.handle_message = orig
+        logger.removeHandler(handler)
+        chat.unregister_conn(ws)
+        await chat.cleanup_session(sid)
+    return ws, handler
+
+
+async def test_unexpected_turn_failure_is_visible_and_logged() -> None:
+    """agent_end alone renders nothing; the operator must see why the turn stopped."""
+
+    class RecordingDB:
+        def __init__(self) -> None:
+            self.kinds: list[str] = []
+
+        async def append_event(self, _sid, kind, _payload):  # noqa: ANN001, ANN202
+            self.kinds.append(kind)
+
+    db = RecordingDB()
+    ws, handler = await _run_failing_turn("s-visible", db)
+    kinds = [event["kind"] for event in ws.sent]
+    assert kinds == ["error", "agent_end"], kinds
+    assert (
+        ws.sent[0]["message"] == "turn failed unexpectedly: RuntimeError: turn blew up"
+    )
+    assert ws.sent[1]["failed"] is True
+    assert db.kinds == ["error", "agent_end"], "both events must persist for replay"
+    assert len(handler.records) == 1, handler.records
+    assert handler.records[0].exc_info is not None, "traceback must be logged"
+    print("PASS test_unexpected_turn_failure_is_visible_and_logged")
+
+
+async def test_turn_failure_still_reaches_ui_when_store_fails() -> None:
+    """If the store is what broke, events still go live so the UI is released."""
+
+    class BrokenDB:
+        async def append_event(self, _sid, _kind, _payload):  # noqa: ANN001, ANN202
+            raise OSError("database is locked")
+
+    ws, _handler = await _run_failing_turn("s-broken-db", BrokenDB())
+    kinds = [event["kind"] for event in ws.sent]
+    assert kinds == ["error", "agent_end"], kinds
+    print("PASS test_turn_failure_still_reaches_ui_when_store_fails")
+
+
+async def test_cancel_reaches_ui_when_store_fails() -> None:
+    """A cancel during a store outage still releases the UI and stays a cancel."""
+
+    class BrokenDB:
+        async def append_event(self, _sid, _kind, _payload):  # noqa: ANN001, ANN202
+            raise OSError("database is locked")
+
+    started = asyncio.Event()
+    orig = chat.handle_message
+
+    async def hang(app_, sid_, content):  # noqa: ANN001
+        started.set()
+        await asyncio.Event().wait()
+
+    sid = "s-cancel-broken-db"
+    app = types.SimpleNamespace(state=types.SimpleNamespace(db=BrokenDB()))
+    ws = FakeWS()
+    chat.handle_message = hang
+    try:
+        chat.register_conn(sid, ws)
+        task = chat.dispatch(app, sid, "hi")
+        assert task is not None
+        await started.wait()
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+        assert task.cancelled(), "a store error must not replace the cancellation"
+        assert [e["kind"] for e in ws.sent] == ["agent_end"], ws.sent
+        assert ws.sent[0]["cancelled"] is True
+    finally:
+        chat.handle_message = orig
+        chat.unregister_conn(ws)
+        await chat.cleanup_session(sid)
+    print("PASS test_cancel_reaches_ui_when_store_fails")
+
+
+async def test_turn_failure_without_message_names_the_type() -> None:
+    """An exception with no text must not leave a dangling ': ' in the UI."""
+
+    class RecordingDB:
+        async def append_event(self, _sid, _kind, _payload):  # noqa: ANN001, ANN202
+            return None
+
+    ws, _handler = await _run_failing_turn("s-no-text", RecordingDB(), TimeoutError())
+    assert ws.sent[0]["message"] == "turn failed unexpectedly: TimeoutError", ws.sent
+    print("PASS test_turn_failure_without_message_names_the_type")
 
 
 async def test_reattach_targets_current_conn() -> None:
@@ -927,6 +1054,8 @@ def test_create_agent_derives_commands_from_capabilities() -> None:
         assert (
             "/score" in run_tool.description and "/health" not in run_tool.description
         )
+        hook_names = [getattr(h, "__name__", None) for h in captured["hooks"]]  # type: ignore[attr-defined]
+        assert "summarize_when_long" in hook_names, hook_names
     print("PASS test_create_agent_derives_commands_from_capabilities")
 
 
@@ -1771,6 +1900,10 @@ async def _main() -> None:
         await test_replay_matches_live_event_shape()
         await test_resume_reports_in_flight_turn()
         await test_turn_flag_cleared_when_turn_raises()
+        await test_unexpected_turn_failure_is_visible_and_logged()
+        await test_turn_failure_still_reaches_ui_when_store_fails()
+        await test_turn_failure_without_message_names_the_type()
+        await test_cancel_reaches_ui_when_store_fails()
         await test_reattach_targets_current_conn()
         await test_agent_command_routes_to_agent()
         await test_range_commands_are_isolated_and_rejected_before_model()

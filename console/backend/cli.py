@@ -31,6 +31,20 @@ _POLL_INTERVAL = 0.25
 # enough to flush output the CLI itself had buffered at exit.
 _DRAIN_BUDGET = 2.0
 
+# Longest line ``stream_lines`` assembles before yielding it in pieces. The
+# ``--json`` reports from health-check, security-check and validate are each
+# written as ONE line on this streamed path, and a large range's report can pass
+# the StreamReader's 64 KiB limit — where ``readline()`` raises ValueError,
+# failing the turn after the command had already finished.
+#
+# The StreamReader limit itself stays at its default: it also sets the pipe's
+# backpressure threshold (reading pauses past twice the limit). Raising it let a
+# fast writer dump tens of MiB into memory and exit before a slow consumer
+# caught up — and the post-exit drain budget then dropped the rest, final report
+# included. Long lines are instead assembled from limit-sized pieces in
+# ``_read_line``, so only an actually-long line costs memory.
+_MAX_LINE_BYTES = 16 * 1024 * 1024
+
 # How long to wait for exit after the pipe closes, before giving up on it.
 _EXIT_GRACE = 30.0
 
@@ -51,6 +65,7 @@ class RunningCommand:
     def __init__(self, proc: asyncio.subprocess.Process) -> None:
         self._proc = proc
         self.lines: list[str] = []
+        self._line_open = False  # last recorded piece ended mid-line
         self.cancelled = False
         self._kill_task: asyncio.Task[None] | None = None
         self._closed = False
@@ -124,8 +139,15 @@ class RunningCommand:
         return "\n".join(self.lines)
 
     def _record(self, raw: bytes) -> str:
-        line = raw.decode("utf-8", errors="replace").rstrip("\n")
-        self.lines.append(line)
+        text = raw.decode("utf-8", errors="replace")
+        line = text.rstrip("\n")
+        # A piece of a line past _MAX_LINE_BYTES has no newline: extend the
+        # open line so ``output`` keeps the original line boundaries.
+        if self._line_open:
+            self.lines[-1] += line
+        else:
+            self.lines.append(line)
+        self._line_open = not text.endswith("\n")
         return line
 
     async def stream_lines(self) -> t.AsyncIterator[str]:
@@ -151,7 +173,7 @@ class RunningCommand:
         try:
             while True:
                 if line_task is None:
-                    line_task = asyncio.ensure_future(stdout.readline())
+                    line_task = asyncio.ensure_future(_read_line(stdout))
                 budget = _POLL_INTERVAL
                 if deadline is not None:
                     budget = min(budget, deadline - time.monotonic())
@@ -257,6 +279,30 @@ class RunningCommand:
             out.decode("utf-8", errors="replace"),
             err.decode("utf-8", errors="replace"),
         )
+
+
+async def _read_line(reader: asyncio.StreamReader) -> bytes:
+    """``readline()`` without its ValueError past the reader's limit.
+
+    Returns one line including its newline, or ``b""`` at EOF, like
+    ``readline()``. A line longer than the reader's limit is assembled from
+    limit-sized pieces; one longer than ``_MAX_LINE_BYTES`` is returned in
+    pieces of about that size rather than buffered without bound.
+    """
+    parts = bytearray()
+    while True:
+        try:
+            parts += await reader.readuntil(b"\n")
+            return bytes(parts)
+        except asyncio.IncompleteReadError as exc:  # EOF before a newline
+            parts += exc.partial
+            return bytes(parts)
+        except asyncio.LimitOverrunError as exc:
+            # ``consumed`` bytes are already buffered and contain no newline
+            # (or end just before it); take them and keep looking.
+            parts += await reader.readexactly(exc.consumed)
+            if len(parts) >= _MAX_LINE_BYTES:
+                return bytes(parts)
 
 
 def _suppress() -> contextlib.AbstractContextManager[None]:

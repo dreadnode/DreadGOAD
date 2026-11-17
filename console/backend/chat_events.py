@@ -9,9 +9,11 @@ from dreadnode.agent.events import (
     AgentEnd,
     AgentError,
     GenerationEnd,
+    Reacted,
     ToolEnd,
     ToolStart,
 )
+from dreadnode.agent.reactions import Retry, RetryWithFeedback
 
 from . import chat_runtime
 
@@ -33,6 +35,22 @@ CHAT_KINDS = [
     "exec_report",
     "security_report",
 ]
+
+
+def retry_recovery_status(event: t.Any) -> str | None:
+    """Status text when a hook answered the preceding error by retrying.
+
+    dreadnode yields ``AgentError`` *before* running hooks, then ``Reacted`` if
+    a hook handled it. A ``Retry`` means the step is re-run — the error was
+    recovered, not fatal — so the caller swaps the pending error for this.
+    """
+    if not isinstance(event, Reacted):
+        return None
+    if not isinstance(event.reaction, Retry | RetryWithFeedback):
+        return None
+    if event.hook_name == "summarize_when_long":
+        return "Context limit reached — summarized older history and retried."
+    return f"Recovered from an error ({event.hook_name}); retrying."
 
 
 def format_agent_event(event: t.Any) -> dict[str, t.Any] | None:

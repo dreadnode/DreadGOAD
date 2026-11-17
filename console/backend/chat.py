@@ -18,7 +18,9 @@ without one.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
+import logging
 import typing as t
 from copy import deepcopy
 
@@ -35,6 +37,8 @@ from . import (
     thread_repair,
 )
 from .agent import create_agent
+
+log = logging.getLogger(__name__)
 
 # Public facade used by server.py. Internal state remains owned and tested in
 # chat_runtime rather than being mirrored here.
@@ -100,20 +104,34 @@ def dispatch(app: t.Any, session_id: str, content: str) -> asyncio.Task[t.Any] |
             async with runtime.lock:
                 await handle_message(app, session_id, content)
         except asyncio.CancelledError:
-            await emit_event(
+            # Best-effort for the same reason as below: if the store is failing,
+            # a raising emit would replace the cancellation with a store error
+            # and leave the UI processing forever.
+            await _emit_best_effort(
                 app,
                 session_id,
                 "agent_end",
                 {"failed": False, "cancelled": True},
             )
             raise
-        except Exception:
+        except Exception as exc:
             # Any non-cancel exception (db error, corrupt thread, agent setup
-            # failure) must still release the frontend's processing state.
-            try:
-                await emit_event(app, session_id, "agent_end", {"failed": True})
-            except Exception:  # noqa: BLE001
-                pass
+            # failure) must still release the frontend's processing state. It
+            # must also be *visible*: agent_end alone renders nothing, so the
+            # spinner just stopped — indistinguishable from success — and
+            # _turn_task_done only retrieves the exception, so no traceback
+            # was recorded anywhere either.
+            log.exception("turn failed unexpectedly (session %s)", session_id)
+            # Some exceptions carry no text (TimeoutError()); don't leave a
+            # dangling ": " after the type name.
+            reason = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+            await _emit_best_effort(
+                app,
+                session_id,
+                "error",
+                {"message": f"turn failed unexpectedly: {reason}"},
+            )
+            await _emit_best_effort(app, session_id, "agent_end", {"failed": True})
             raise
         finally:
             if runtime.turn is turn:
@@ -129,6 +147,23 @@ def dispatch(app: t.Any, session_id: str, content: str) -> asyncio.Task[t.Any] |
     chat_runtime.tasks.add(task)
     task.add_done_callback(lambda finished: _turn_task_done(session_id, turn, finished))
     return task
+
+
+async def _emit_best_effort(
+    app: t.Any, session_id: str, kind: str, payload: dict[str, t.Any]
+) -> None:
+    """Emit on a failure path, falling back to live-only delivery.
+
+    The failure being reported may be the store itself (SQLite locked, disk
+    full), in which case the persisting emit raises before anything is sent.
+    Retrying with ``persist=False`` still reaches the connected UI, which is
+    what releases its processing state; only replay-after-reconnect is lost.
+    """
+    try:
+        await emit_event(app, session_id, kind, payload)
+    except Exception:  # noqa: BLE001
+        with contextlib.suppress(Exception):
+            await emit_event(app, session_id, kind, payload, persist=False)
 
 
 def _turn_task_done(
@@ -438,14 +473,36 @@ async def _run_agent(app: t.Any, session_id: str, prompt: str) -> None:
                 },
             )
 
+    # An AgentError is held back for one event: dreadnode yields it before its
+    # hooks run, and a hook (the context summarizer) may answer with a Retry
+    # that recovers the turn. Emitting it immediately left a red error in live
+    # chat and replay for a turn that then succeeded.
+    pending_error: dict[str, t.Any] | None = None
     try:
         async with agent.stream(prompt) as events:
             async for event in events:
+                if pending_error is not None:
+                    recovered = chat_events.retry_recovery_status(event)
+                    if recovered is not None:
+                        pending_error = None
+                        await emit_event(
+                            app, session_id, "status", {"content": recovered}
+                        )
+                        continue
+                    await emit_event(app, session_id, "error", pending_error)
+                    pending_error = None
                 formatted = chat_events.format_agent_event(event)
                 if formatted:
                     kind = formatted.pop("kind")
+                    if kind == "error":
+                        pending_error = formatted
+                        continue
                     await emit_event(app, session_id, kind, formatted)
+        if pending_error is not None:
+            await emit_event(app, session_id, "error", pending_error)
     except Exception as exc:  # noqa: BLE001 - surface any agent error to the client
+        if pending_error is not None:
+            await emit_event(app, session_id, "error", pending_error)
         await emit_event(app, session_id, "error", {"message": f"agent error: {exc}"})
         await emit_event(app, session_id, "agent_end", {"failed": True})
     finally:
