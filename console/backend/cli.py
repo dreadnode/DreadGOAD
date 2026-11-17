@@ -65,6 +65,7 @@ class RunningCommand:
     def __init__(self, proc: asyncio.subprocess.Process) -> None:
         self._proc = proc
         self.lines: list[str] = []
+        self._line_open = False  # last recorded piece ended mid-line
         self.cancelled = False
         self._kill_task: asyncio.Task[None] | None = None
         self._closed = False
@@ -138,8 +139,15 @@ class RunningCommand:
         return "\n".join(self.lines)
 
     def _record(self, raw: bytes) -> str:
-        line = raw.decode("utf-8", errors="replace").rstrip("\n")
-        self.lines.append(line)
+        text = raw.decode("utf-8", errors="replace")
+        line = text.rstrip("\n")
+        # A piece of a line past _MAX_LINE_BYTES has no newline: extend the
+        # open line so ``output`` keeps the original line boundaries.
+        if self._line_open:
+            self.lines[-1] += line
+        else:
+            self.lines.append(line)
+        self._line_open = not text.endswith("\n")
         return line
 
     async def stream_lines(self) -> t.AsyncIterator[str]:

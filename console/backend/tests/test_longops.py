@@ -56,15 +56,20 @@ async def test_line_past_cap_is_yielded_in_bounded_pieces() -> None:
     original = cli._MAX_LINE_BYTES
     cli._MAX_LINE_BYTES = 100_000
     try:
-        stub = _script("head -c 250000 /dev/zero | tr '\\0' y\necho\necho after\n")
-        rc = await start_command([stub], cwd=".")
+        report = json.dumps({"hosts": "y" * 250_000})
+        code = f"import sys\nsys.stdout.write({report!r} + '\\nafter\\n')\n"
+        rc = await start_command([sys.executable, "-c", code], cwd=".")
         got = [line async for line in rc.stream_lines()]
     finally:
         cli._MAX_LINE_BYTES = original
     assert got[-1] == "after", got[-1]
     pieces = got[:-1]
     assert len(pieces) > 1, [len(p) for p in pieces]
-    assert "".join(pieces) == "y" * 250_000, [len(p) for p in pieces]
+    assert "".join(pieces) == report, [len(p) for p in pieces]
+    # The captured output keeps the real line boundaries, so the report parses.
+    first, last = rc.output.split("\n")
+    assert json.loads(first) == {"hosts": "y" * 250_000}
+    assert last == "after", last
     # Each piece stops at the first read that crosses the cap.
     assert all(len(p) < 100_000 + 256 * 1024 for p in pieces), [len(p) for p in pieces]
     print("PASS test_line_past_cap_is_yielded_in_bounded_pieces")
